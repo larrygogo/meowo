@@ -211,6 +211,7 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "queue_session_settings",
     "queued_session_settings",
     "take_queued_session_settings",
+    "cancel_queued_session_settings",
     "new_session",
     // 分叉会话（2026-11-04 用户决定放行）：与 new_session 同级——在原会话目录起一个新的托管
     // 会话，参数只有会话 id 和终端尺寸，不给路径、不给 argv。
@@ -1640,6 +1641,10 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             let a = args!(SessionArg);
             reply_ok(crate::session_settings::take_queued_session_settings(a.session_id))
         }
+        "cancel_queued_session_settings" => {
+            let a = args!(SessionArg);
+            reply_ok(crate::session_settings::cancel_queued_session_settings(a.session_id))
+        }
         "session_live_settings" => {
             let a = args!(SessionArg);
             reply(crate::session_settings::session_live_settings(app.clone(), state, a.session_id).await)
@@ -2821,7 +2826,7 @@ mod tests {
             "session_live_settings" => parse::<SessionArg>(br#"{"sessionId":42}"#).map(|_| ()),
             "record_session_settings" => parse::<RecordSessionSettingsArgs>(br#"{"sessionId":42,"model":"kimi-code/k3","modes":{"permission":"manual"}}"#).map(|_| ()),
             "queue_session_settings" => parse::<QueueSessionSettingsArgs>(br#"{"sessionId":42,"request":{"modes":{"work":"plan"},"label":"x"}}"#).map(|_| ()),
-            "queued_session_settings" | "take_queued_session_settings" => parse::<SessionArg>(br#"{"sessionId":42}"#).map(|_| ()),
+            "queued_session_settings" | "take_queued_session_settings" | "cancel_queued_session_settings" => parse::<SessionArg>(br#"{"sessionId":42}"#).map(|_| ()),
             "agent_launch_defaults" => {
                 parse::<AgentLaunchDefaultsArgs>(br#"{"provider":"kimi","cwd":null}"#).map(|_| ())
             }

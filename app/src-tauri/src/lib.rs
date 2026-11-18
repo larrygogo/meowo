@@ -1720,6 +1720,7 @@ pub fn run() {
             session_settings::queue_session_settings,
             session_settings::queued_session_settings,
             session_settings::take_queued_session_settings,
+            session_settings::cancel_queued_session_settings,
             agent_updates::check_agent_updates,
             agent_updates::installed_agent_versions,
             profile::list_profiles,

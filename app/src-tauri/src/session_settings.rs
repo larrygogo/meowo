@@ -1927,6 +1927,12 @@ pub(crate) fn queued_session_settings(session_id: i64) -> Option<serde_json::Val
     queue().get(&session_id).map(|q| q.request.clone())
 }
 
+/// 用户在对话页点「撤销」：不管有没有等待条件都撤掉。返回是否真的撤掉了一条（已经执行了就是 false）。
+#[tauri::command]
+pub(crate) fn cancel_queued_session_settings(session_id: i64) -> bool {
+    queue().remove(&session_id).is_some()
+}
+
 /// 前端在回合结束时取走执行。宿主标了等待条件的（Lead 关卡 / 等会话打开）不给：前端看不到那些条件。
 #[tauri::command]
 pub(crate) fn take_queued_session_settings(session_id: i64) -> Option<serde_json::Value> {
@@ -2420,6 +2426,11 @@ mod tests {
         let sid = 987_655;
         enqueue_waiting(sid, request_json(Some("kimi-code/k3"), None, &modes), "lead");
         assert_eq!(take_queued_session_settings(sid), None);
+        // 用户点「撤销」：带等待条件的也撤得掉；再撤一次说明已经没了。
+        assert!(cancel_queued_session_settings(sid));
+        assert!(!cancel_queued_session_settings(sid));
+        assert_eq!(queued_session_settings(sid), None);
+        enqueue_waiting(sid, request_json(Some("kimi-code/k3"), None, &modes), "lead");
         let merged = enqueue(sid, &serde_json::json!({ "model": { "id": "kimi-code/k3", "label": "K3" }, "label": "K3" }));
         assert_eq!(merged["waitFor"], "lead");
         assert_eq!(merged["label"], "K3");

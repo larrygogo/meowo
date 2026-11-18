@@ -16,6 +16,7 @@ import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 
 import { listen } from "@tauri-apps/api/event";
 import {
   applySessionSettings,
+  cancelQueuedSessionSettings,
   queueSessionSettings,
   queuedSessionSettings,
   recordSessionSettings,
@@ -513,5 +514,11 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
     : nextOpen === deps.sessionId ? t.chat.settingsNextOpen
     : info && info.sessionId === deps.sessionId ? info.text
     : null;
-  return { request, applying, notice, syncLive, deferredRequest: queued?.sessionId === deps.sessionId ? queued.request : null };
+  /// 撤销排着的切换：先撤宿主那份（手机页、别的窗口也跟着没了），再清本地。已经执行了就什么都不做。
+  const cancelDeferred = async () => {
+    const { sessionId } = depsRef.current;
+    await attempt(() => cancelQueuedSessionSettings(sessionId), false);
+    if (depsRef.current.sessionId === sessionId) setQueued((current) => current?.sessionId === sessionId ? null : current);
+  };
+  return { request, applying, notice, syncLive, cancelDeferred, deferredRequest: queued?.sessionId === deps.sessionId ? queued.request : null };
 }

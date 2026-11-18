@@ -1511,6 +1511,11 @@ export function takeQueuedSessionSettings(sessionId: number): Promise<unknown> {
   return invoke<unknown>("take_queued_session_settings", { sessionId } satisfies SessionArg);
 }
 
+/** 撤掉排着的切换（不管等待条件）；返回是否真的撤掉了（已经执行了就是 false）。 */
+export function cancelQueuedSessionSettings(sessionId: number): Promise<boolean> {
+  return invoke<boolean>("cancel_queued_session_settings", { sessionId } satisfies SessionArg);
+}
+
 /** 会话此刻的模型与模式（后端 session_settings::LiveSettings）：会话服务机制读 rollout 最新段，
  *  TUI 对话框机制读最后一条用户消息；带参重启的两家返回空（transcript 增量负责）。 */
 export type LiveSettings = { model: string | null; effort: string | null; modes: { dimension: string; value: string }[] };

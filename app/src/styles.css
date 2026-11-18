@@ -5535,6 +5535,13 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-send-error > span { flex: 1 1 auto; min-width: 200px; }
 /* 输入框里的提示条：文字左缘与输入框占位文字对齐（同为 textarea 的左内边距 --sp-8，第三轮 C9，量得两者同 x）。 */
 .chat-compose > .chat-send-error { padding-left: var(--sp-8); padding-right: var(--sp-8); }
+/* 排着的模型 / 模式切换：一行弱化小字 + 时钟 + 「撤销」，不画成灰底提示框（那是出错和拦截的样子）。
+   位置与提示条相同（order 3，输入框下方），文字左缘同样对齐占位文字。 */
+.chat-deferred { order: 3; width: 100%; display: flex; align-items: center; gap: var(--sp-6); min-width: 0; padding: var(--sp-2) var(--sp-8) var(--sp-4); color: var(--cc-text-faint); font-size: var(--text-xs); line-height: var(--leading-normal); }
+.chat-deferred-icon { flex: none; }
+.chat-deferred-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-deferred-cancel { flex: none; padding: 0 var(--sp-4); border: 0; border-radius: var(--radius-sm); color: var(--cc-text-dim); background: transparent; font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.chat-deferred-cancel:hover { color: var(--cc-text); background: var(--fill-hover); }
 
 /* 重设计段的骨架/消息/输入框基础规则已并入上方唯一定义；此处起只保留重设计新增的部分
    （扁平活动行、待办、子任务等），不再重复同名声明。 */

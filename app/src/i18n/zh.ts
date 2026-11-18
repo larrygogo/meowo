@@ -543,15 +543,17 @@ export const zh = {
     emptyStarting: "会话正在启动…",
     // 切模型 / 模式（任务 20261114-tui-model-switch）：运行中或有待批审批时不写终端、不重启，排到这一轮之后。
     // 队列存在 Meowo 进程里：Meowo 重启会清空，界面写明（复核 M3）。
-    settingsDeferred: (name: string) => `这一轮结束后切换到「${name}」（关闭应用会取消）`,
+    settingsDeferredTip: "排在 Meowo 里，关闭 Meowo 会取消这次切换",
+    settingsDeferredCancel: "撤销",
+    settingsDeferred: (name: string) => `这一轮结束后切换到「${name}」`,
     // Lead 关卡等待中：带参重启会杀掉会话内的关卡等待器，接回后没有回合、没人再起等待器，答复后不会自动
     // 继续（做空 N3；B7 真机探针 Kimi/Gemini 均证实，evidence/round3-n3），排到续跑那一轮跑完之后。
-    settingsDeferredLead: (name: string) => `关卡答复后那一轮跑完再切换到「${name}」（关闭应用会取消）`,
+    settingsDeferredLead: (name: string) => `关卡答复后那一轮跑完再切换到「${name}」`,
     // 会话没在运行：Codex/OpenCode 恢复时不回放模型，打开后由宿主经会话服务补设（做空 N6）。
-    settingsDeferredOpen: (name: string) => `打开会话后切换到「${name}」（关闭应用会取消）`,
+    settingsDeferredOpen: (name: string) => `打开会话后切换到「${name}」`,
     // 排了 30 分钟这一轮还没结束（或宿主一直没等到空闲）：出队，告诉用户（做空 N5）。
     // 对话页执行时会话服务 / TUI 还没就绪：交给宿主等就绪再切（做空 R5）。
-    settingsDeferredReady: (name: string) => `会话就绪后切换到「${name}」（关闭应用会取消）`,
+    settingsDeferredReady: (name: string) => `会话就绪后切换到「${name}」`,
     // Codex 会话内首次切进要沙箱的档（必要时询问 / 自动审查）：带沙箱参数重开了会话（第五轮 P3），≤20 字。
     settingsSandboxReopen: (name: string) => `已带沙箱重开会话，切到「${name}」`,
     settingsQueueExpired: "等太久没切成，已取消，请重新选择",

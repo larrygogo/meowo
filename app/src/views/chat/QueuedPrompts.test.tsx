@@ -52,28 +52,35 @@ const three = () => [
 const grips = () => screen.getAllByRole("button", { name: "拖拽排序，或按上下方向键调整" });
 
 describe("排队消息拖拽排序（对照 Kimi Code 客户端）", () => {
-  it("把第 3 条拖到第 1 条上方：按新顺序整批提交", async () => {
+  function touchEvent(element: HTMLElement, type: string, y: number, pointerType = "touch", button = 0) {
+    const event = new MouseEvent(type, { bubbles: true, clientX: 20, clientY: y, button });
+    Object.defineProperties(event, { pointerId: { value: 1 }, pointerType: { value: pointerType }, isPrimary: { value: true } });
+    fireEvent(element, event);
+  }
+
+  // Windows 上对话窗接管了系统拖放（文件拖入），网页内的 HTML 拖放不触发：鼠标也必须走指针事件。
+  it("鼠标把第 3 条拖到第 1 条上方：按新顺序整批提交，拖动中标出落点", async () => {
     const props = renderQueue(three());
     vi.mocked(promptQueueReorder).mockResolvedValue(true);
-    const rows = document.querySelectorAll(".chat-queued-turn");
-    const dataTransfer = { setData: vi.fn(), effectAllowed: "", dropEffect: "" };
-    fireEvent.dragStart(grips()[2], { dataTransfer });
-    fireEvent.pointerCancel(grips()[2], { pointerType: "mouse", pointerId: 1 });
-    fireEvent.lostPointerCapture(grips()[2], { pointerType: "mouse", pointerId: 1 });
-    // jsdom 的行高是 0：落点 y=0 不在下半，算「上方」。
-    fireEvent.dragOver(rows[0], { dataTransfer, clientY: 0 });
-    expect(rows[0].classList.contains("drop-before")).toBe(true);
-    fireEvent.drop(rows[0], { dataTransfer });
+    const handles = touchRows();
+    expect(handles[2].getAttribute("draggable")).toBeNull();
+    touchEvent(handles[2], "pointerdown", 250, "mouse");
+    touchEvent(handles[2], "pointermove", 20, "mouse");
+    expect(document.querySelectorAll(".chat-queued-turn")[0].classList.contains("drop-before")).toBe(true);
+    touchEvent(handles[2], "pointerup", 20, "mouse");
     await waitFor(() => expect(promptQueueReorder).toHaveBeenCalledWith(42, [3, 1, 2]));
     expect(props.onChanged).toHaveBeenCalled();
     expect(props.onError).not.toHaveBeenCalled();
   });
 
-  function touchEvent(element: HTMLElement, type: string, y: number) {
-    const event = new MouseEvent(type, { bubbles: true, clientX: 20, clientY: y });
-    Object.defineProperties(event, { pointerId: { value: 1 }, pointerType: { value: "touch" }, isPrimary: { value: true } });
-    fireEvent(element, event);
-  }
+  it("鼠标右键按住拖不算排序", () => {
+    renderQueue(three());
+    const handles = touchRows();
+    touchEvent(handles[2], "pointerdown", 250, "mouse", 2);
+    touchEvent(handles[2], "pointermove", 20, "mouse", 2);
+    touchEvent(handles[2], "pointerup", 20, "mouse", 2);
+    expect(promptQueueReorder).not.toHaveBeenCalled();
+  });
 
   function touchRows() {
     const handles = grips();

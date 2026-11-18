@@ -145,7 +145,7 @@ import { agentAssets, tintStyle } from "../providers";
 import appLogoUrl from "../../src-tauri/icons/64x64.png";
 import { Icon } from "../icons/Icon";
 import { modeIconGlyph, modeIconName } from "./chat/modeIcon";
-import { icArrowLeftRight, icArrowUp, icChevronLeft, icCollapse, icExpand, icFile, icMessage, icShield, icSidebarLeft, icSparkles, icStop, icUndo } from "../icons/glyphs.chat";
+import { icArrowLeftRight, icArrowUp, icChevronLeft, icClock, icCollapse, icExpand, icFile, icMessage, icShield, icSidebarLeft, icSparkles, icStop, icUndo } from "../icons/glyphs.chat";
 import { icAlert, icCheck, icChevronDown, icClose, icPencil, icRefreshCw } from "../icons/glyphs";
 
 
@@ -3411,7 +3411,8 @@ export function ChatWindow() {
     }
   };
   const deliverQueued = async (item: QueuedPromptDto) => {
-    if (queueBusy) return;
+    // sendPrompt 发往当前页的会话：不是这一会话的排队消息绝不能认领（会串到别的会话里发出去）。
+    if (queueBusy || item.sessionId !== sessionId || !isCurrentOperation()) return;
     setQueueBusy(true);
     let claimed = false;
     let handedOff = false;
@@ -5367,7 +5368,15 @@ export function ChatWindow() {
         </div>}
         {attachmentNotice && <div className="chat-send-error" role="status"><span>{attachmentNotice}</span></div>}
         {/* 在跑或有待批审批时选的模型 / 模式：不写终端、不重启，这一轮结束后自动切（useSessionSettings）。 */}
-        {sessionSettings.notice && <div className="chat-send-error" role="status"><span>{sessionSettings.notice}</span></div>}
+        {/* 排着的切换是一件「待办」，不是出错：一行小字 + 时钟，能撤销；「关闭应用会取消」放进悬停提示，
+            不再占一整条灰底提示框（2026-11-18 用户截图：「这个能不能优化一下」）。 */}
+        {sessionSettings.notice && (sessionSettings.deferredRequest ? (
+          <div className="chat-deferred" role="status" data-tip={t.chat.settingsDeferredTip}>
+            <Icon glyph={icClock} size={12} className="chat-deferred-icon" />
+            <span className="chat-deferred-text">{sessionSettings.notice}</span>
+            <button type="button" className="chat-deferred-cancel" onClick={() => void sessionSettings.cancelDeferred()}>{t.chat.settingsDeferredCancel}</button>
+          </div>
+        ) : <div className="chat-send-error" role="status"><span>{sessionSettings.notice}</span></div>)}
         <textarea
           ref={promptInputRef}
           value={prompt}
