@@ -56,7 +56,7 @@ fn token() -> Token {
 
 fn run(api: &Api, prefs: &Path, dir: &str, args: &[&str]) -> CmdOut {
     let token = token();
-    Builtin { http: api, token: Some(&token), on_auth: &|_| {}, prefs }.run(dir, args)
+    Builtin { http: api, token: Some(&token), on_auth: &|_| {}, prefs, ends: crate::forge::builtin::Endpoints::github_com() }.run(dir, args)
 }
 
 fn json_out(out: &CmdOut) -> Value {
@@ -358,7 +358,7 @@ fn 登录状态_401_与没登录_forge_都认成没登录_401_通知重新登录
         }
     };
     let token = token();
-    let builtin = Builtin { http: &api, token: Some(&token), on_auth: &flag, prefs: &prefs };
+    let builtin = Builtin { http: &api, token: Some(&token), on_auth: &flag, prefs: &prefs, ends: crate::forge::builtin::Endpoints::github_com() };
     let out = builtin.run(".", &["auth", "status", "--hostname", "github.com"]);
     assert_eq!(out.code, Some(1));
     assert!(says_unauthed(&out));
@@ -369,7 +369,7 @@ fn 登录状态_401_与没登录_forge_都认成没登录_401_通知重新登录
     assert_eq!(caches.gh_state(&gh, true), GhState::Unauthed);
     assert_eq!(view_pr(&gh, &caches, ".", Some("acme/repo"), Some("feat")), Err("gh/not_authed".into()));
     // Meowo 模式没登录：不发请求，同样是没登录。
-    let none = Builtin { http: &api, token: None, on_auth: &flag, prefs: &prefs };
+    let none = Builtin { http: &api, token: None, on_auth: &flag, prefs: &prefs, ends: crate::forge::builtin::Endpoints::github_com() };
     let calls = api.calls().len();
     let out = none.run(".", &["auth", "status", "--hostname", "github.com"]);
     assert!(out.code == Some(1) && says_unauthed(&out));
@@ -390,7 +390,7 @@ fn 断网_按查询失败处理() {
     }
     let prefs = std::env::temp_dir().join("meowo-builtin-none.json");
     let token = token();
-    let builtin = Builtin { http: &Down, token: Some(&token), on_auth: &|_| {}, prefs: &prefs };
+    let builtin = Builtin { http: &Down, token: Some(&token), on_auth: &|_| {}, prefs: &prefs, ends: crate::forge::builtin::Endpoints::github_com() };
     let gh = |dir: &str, args: &[&str]| Some(builtin.run(dir, args));
     let err = view_pr(&gh, &Caches::default(), ".", Some("acme/repo"), Some("feat")).unwrap_err();
     assert!(err.starts_with("gh/failed") && err.contains("error connecting"), "{err}");
@@ -425,7 +425,7 @@ fn forge_全流程_在内置实现上() {
     });
     let gh = |dir: &str, args: &[&str]| Some(run(&api, &prefs, dir, args));
     let caches = Caches::default();
-    let ctx = Ctx { gh: &gh, caches: &caches, prefs: prefs.clone(), env: &[] };
+    let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches: &caches, prefs: prefs.clone(), env: &[] };
     let dto = forge_status_with(&ctx, &s(&repo), false).unwrap();
     assert_eq!(dto.gh, "ok");
     assert!(!dto.gh_too_old);
@@ -443,7 +443,7 @@ fn 关闭时状态标为_off() {
     let sb = Sandbox::new("builtin-off");
     let repo = github_repo(&sb);
     let gh = |_: &str, _: &[&str]| -> Option<CmdOut> { None };
-    let ctx = Ctx { gh: &gh, caches: &Caches::default(), prefs: sb.root.join("forge.json"), env: &[] };
+    let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches: &Caches::default(), prefs: sb.root.join("forge.json"), env: &[] };
     let mut dto = forge_status_with(&ctx, &s(&repo), false).unwrap();
     label_connection(&mut dto, "off");
     assert_eq!((dto.gh.as_str(), dto.connection.as_deref()), ("off", Some("off")));
@@ -618,7 +618,7 @@ fn with_retry(run: impl Fn() -> Option<CmdOut>) -> CmdOut {
 fn live_对照_gh() {
     let token = Token::new(&std::env::var("GH_TOKEN").expect("设 GH_TOKEN")).expect("令牌格式");
     let prefs = std::env::temp_dir().join("meowo-live-none.json");
-    let builtin = Builtin { http: &crate::github::RealHttp, token: Some(&token), on_auth: &|_| {}, prefs: &prefs };
+    let builtin = Builtin { http: &crate::github::RealHttp, token: Some(&token), on_auth: &|_| {}, prefs: &prefs, ends: crate::forge::builtin::Endpoints::github_com() };
     let dir = std::env::temp_dir();
     let dir = dir.to_string_lossy();
     let cli_pr = with_retry(|| real_gh(&dir, &["pr", "list", "--repo", "cli/cli", "--state", "merged", "--limit", "1", "--json", "number"]));
@@ -708,7 +708,7 @@ fn live_写路径_g7() {
     assert!(base.starts_with("meowo-g7-base-") && head.starts_with("meowo-g7-head-"), "只许对临时分支操作");
     let slug = "larrygogo/meowo";
     let prefs = std::env::temp_dir().join("meowo-live-none.json");
-    let builtin = Builtin { http: &crate::github::RealHttp, token: Some(&token), on_auth: &|_| {}, prefs: &prefs };
+    let builtin = Builtin { http: &crate::github::RealHttp, token: Some(&token), on_auth: &|_| {}, prefs: &prefs, ends: crate::forge::builtin::Endpoints::github_com() };
     let dir = std::env::temp_dir();
     let dir = dir.to_string_lossy();
     let ours = |args: &[&str]| with_retry(|| Some(builtin.run(&dir, args)));

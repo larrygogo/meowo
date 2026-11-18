@@ -25,7 +25,7 @@ pub(crate) mod device;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use credential::{SystemVault, Vault};
+pub(crate) use credential::{KeyVault, SystemVault, Vault};
 
 /// OAuth App 的 Client ID（larrygogo 名下的「Meowo」，已开 Device Flow）。Client ID 本身可公开；
 /// 设备码流程不需要 client secret，代码里也没有。构建时可用 MEOWO_GITHUB_CLIENT_ID 覆盖（自建分发用）。
@@ -42,7 +42,7 @@ pub(crate) const TOKEN_URL: &str = "https://github.com/login/oauth/access_token"
 pub(crate) const CHANGED_EVENT: &str = "github-connection-changed";
 /// 一次设备码登录结束：`{ state: ok|expired|denied|error, error? }`。取消不发（前端自己收起）。
 pub(crate) const LOGIN_EVENT: &str = "github-login-finished";
-const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
 // ═══ 方式 ═══
 
@@ -85,6 +85,13 @@ impl Token {
     pub(crate) fn new(raw: &str) -> Option<Token> {
         let raw = raw.trim();
         let valid = !raw.is_empty() && raw.len() <= 512 && raw.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'.');
+        valid.then(|| Token(raw.to_string()))
+    }
+    /// 各平台的个人访问令牌（GitLab `glpat-…`、Gitea 十六进制、Atlassian API token 带 `=` 等）：可见 ASCII，
+    /// 不含空白、引号、反斜杠与反引号（拼进请求头、交给 security 命令行都安全）。
+    pub(crate) fn secret(raw: &str) -> Option<Token> {
+        let raw = raw.trim();
+        let valid = !raw.is_empty() && raw.len() <= 1024 && raw.bytes().all(|b| b.is_ascii_graphic() && !matches!(b, b'"' | b'\'' | b'\\' | b'`'));
         valid.then(|| Token(raw.to_string()))
     }
     pub(crate) fn expose(&self) -> &str {
@@ -159,7 +166,7 @@ pub(crate) fn follow_redirects(raw: &dyn Fn(&Request) -> Result<Response, String
 }
 
 /// Meowo 专用的 ureq Agent：不让 ureq 自己跟重定向（见 [`follow_redirects`]），代理与 ports.rs 同一套解析。
-fn agent(proxy: Option<&str>) -> ureq::Agent {
+pub(crate) fn agent(proxy: Option<&str>) -> ureq::Agent {
     static CACHE: Mutex<Option<std::collections::HashMap<String, ureq::Agent>>> = Mutex::new(None);
     let key = proxy.unwrap_or_default().to_string();
     let mut guard = lock(&CACHE);
@@ -209,7 +216,7 @@ impl Http for RealHttp {
 
 /// 传输层失败（连不上、TLS 握手失败或 EOF、DNS 临时失败、超时，还没收到任何回包）后的重试间隔。
 /// 经 TUN 代理上网时到 GitHub 的握手偶发失败，gh / git push 也一样，重试即成功（leader 安装版实测）。
-const RETRY_DELAYS: [Duration; 3] = [Duration::from_millis(500), Duration::from_secs(1), Duration::from_secs(2)];
+pub(crate) const RETRY_DELAYS: [Duration; 3] = [Duration::from_millis(500), Duration::from_secs(1), Duration::from_secs(2)];
 
 /// 能不能安全重发：读（GET / HEAD）、GraphQL 查询（不是 mutation）、设备码申请与令牌轮询。
 /// 写操作（建 PR、合并、评论、评审、入队等 REST 写与 GraphQL mutation）不重发：可能已经生效、只是回包丢了，
@@ -248,7 +255,7 @@ pub(crate) fn with_retry(raw: &dyn Fn(&Request) -> Result<Response, String>, req
 
 /// GraphQL 带上 gh 一直带的预览头：mergeStateStatus 早年是预览字段。2026-11-18 用 gh 2.96 实测 cli/cli，
 /// 不带也能拿到（见 progress.md），这里与 gh 保持一致，防 GitHub 对老账号 / 企业设置收紧。
-const GRAPHQL_ACCEPT: &str = "application/vnd.github.merge-info-preview+json, application/vnd.github+json";
+pub(crate) const GRAPHQL_ACCEPT: &str = "application/vnd.github.merge-info-preview+json, application/vnd.github+json";
 
 /// 一次请求，不跟重定向。
 fn raw_send(req: &Request) -> Result<Response, String> {
@@ -389,12 +396,17 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// 启动时记下的 AppHandle（代码托管账号的登录结果也经它发事件）。
+pub(crate) fn app() -> Option<&'static tauri::AppHandle> {
+    APP.get()
+}
+
 /// 启动时记下 AppHandle：令牌在后台线程里被拒时要通知前端。
 pub(crate) fn init(app: &tauri::AppHandle) {
     let _ = APP.set(app.clone());
 }
 
-fn emit_changed() {
+pub(crate) fn emit_changed() {
     if let Some(app) = APP.get() {
         let _ = app.emit(CHANGED_EVENT, ());
     }

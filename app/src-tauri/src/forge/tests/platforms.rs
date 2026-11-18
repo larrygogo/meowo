@@ -1,0 +1,814 @@
+//! GitLab / Gitea（Forgejo、Codeberg）/ Bitbucket Cloud / GitHub 企业版的平台实现：HTTP 是假的（按方法与地址
+//! 回包），不打真网络。
+//!
+//! 样例来源（forge/fixtures/platforms，2026-11-18 不带令牌的只读 GET 原样存下，体积大的裁掉了与映射无关的字段）：
+//! - gitlab_*：gitlab.com `gitlab-org/cli`（MR !4365 来自 fork、带 head_pipeline；!4468 草稿；!4453 合并结果流水线），
+//!   jobs 分别录自 fork 项目 88359063 与目标项目 34675721 的流水线，`gitlab_user_401.json` 是 `/api/v4/user` 的 401。
+//!   讨论（discussions）匿名拿不到（401），用 docs.gitlab.com/api/discussions 的示例形状。
+//! - gitea_*：codeberg.org `forgejo/forgejo`（PR #15303 来自 fork mfenniak/forgejo；#15307 标题 WIP: 是草稿；#15271 的
+//!   评审与行内评论；`commits/6b42eac1…/status` 含 skipped 与相对 target_url）。409 / 405 的原话取自 Gitea 源码
+//!   routers/api/v1/repo/pull.go 与 models/issues/pull.go。
+//! - bitbucket_*：bitbucket.org `atlassian/atlassian-connect-express`（PR #604 打开、一人批准；#552 草稿、FAILED 构建、
+//!   带行内评论；按分支查的列表；diffstat 跟随 302 后的结果）。错误体形状取自官方 OpenAPI（swagger.v3.json）的 error。
+
+use super::super::api::{ForgeApi, NewPr, Target};
+use super::super::bitbucket::{self, Bitbucket};
+use super::super::gitea::{self, Gitea};
+use super::super::gitlab::{self, Gitlab};
+use super::super::http::{Auth, Client, ForgeHttp, Req};
+use super::super::GhState;
+use crate::github::{Body, Response, Token};
+use serde_json::{json, Value};
+use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+
+fn fixture(name: &str) -> Value {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/forge/fixtures/platforms").join(name);
+    serde_json::from_str(&std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))).unwrap()
+}
+
+type Handler = dyn Fn(&str, &str, &Value) -> Response + Sync;
+/// (方法, 地址, JSON 体, 认证头)。
+type Call = (String, String, Value, Option<String>);
+
+/// 假平台：记下每次请求（方法、地址、JSON 体、认证头），回包由测试给的函数决定。
+struct Fake {
+    handler: Box<Handler>,
+    calls: Mutex<Vec<Call>>,
+}
+
+impl Fake {
+    fn new(handler: impl Fn(&str, &str, &Value) -> Response + Sync + 'static) -> Self {
+        Fake {
+            handler: Box::new(handler),
+            calls: Mutex::new(Vec::new()),
+        }
+    }
+    fn calls(&self) -> Vec<Call> {
+        self.calls.lock().unwrap().clone()
+    }
+    fn urls(&self) -> Vec<String> {
+        self.calls().into_iter().map(|(m, u, _, _)| format!("{m} {u}")).collect()
+    }
+}
+
+impl ForgeHttp for Fake {
+    fn send(&self, req: &Req) -> Result<Response, String> {
+        let body = match &req.body {
+            Some(Body::Json(v)) => v.clone(),
+            _ => Value::Null,
+        };
+        self.calls
+            .lock()
+            .unwrap()
+            .push((req.method.to_string(), req.url.to_string(), body.clone(), req.auth.map(Auth::header)));
+        Ok((self.handler)(req.method, req.url, &body))
+    }
+}
+
+fn resp(status: u16, body: Value) -> Response {
+    Response {
+        status,
+        body: body.to_string(),
+        ..Default::default()
+    }
+}
+
+fn token() -> Token {
+    Token::secret("glpat-TEST").unwrap()
+}
+
+fn client<'a>(fake: &'a Fake, auth: Auth, flags: &'a Mutex<Vec<bool>>) -> Client<'a> {
+    Client {
+        http: Box::new(fake),
+        auth: Some(auth),
+        on_auth: Box::new(move |ok| flags.lock().unwrap().push(ok)),
+    }
+}
+
+fn gitlab<'a>(fake: &'a Fake, flags: &'a Mutex<Vec<bool>>) -> Gitlab<'a> {
+    Gitlab {
+        client: client(fake, Auth::Bearer(token()), flags),
+        host: "gitlab.com".into(),
+        state: GhState::Ok,
+        login: Some("me".into()),
+    }
+}
+
+fn gitea<'a>(fake: &'a Fake, flags: &'a Mutex<Vec<bool>>) -> Gitea<'a> {
+    Gitea {
+        client: client(fake, Auth::Token(token()), flags),
+        host: "codeberg.org".into(),
+        state: GhState::Ok,
+        login: Some("me".into()),
+    }
+}
+
+fn bitbucket<'a>(fake: &'a Fake, flags: &'a Mutex<Vec<bool>>) -> Bitbucket<'a> {
+    Bitbucket {
+        client: client(
+            fake,
+            Auth::Basic {
+                user: "me@example.com".into(),
+                token: token(),
+            },
+            flags,
+        ),
+        state: GhState::Ok,
+        login: Some("me".into()),
+    }
+}
+
+fn branch(name: &str) -> Target<'_> {
+    Target::Branch {
+        qualified: name,
+        branch: name,
+        head_slug: None,
+    }
+}
+
+// ═══ GitLab ═══
+
+#[test]
+fn gitlab_mr_映射_fork_的流水线_job_手动与允许失败不挡() {
+    let mr = fixture("gitlab_mr_4365.json");
+    let jobs = fixture("gitlab_jobs_3082056756.json");
+    let pr = gitlab::map_mr(&mr, jobs.as_array().map(Vec::as_slice)).unwrap();
+    assert_eq!((pr.number, pr.state.as_str(), pr.forge.as_deref()), (4365, "open", Some("gitlab")));
+    assert_eq!(pr.url, "https://gitlab.com/gitlab-org/cli/-/merge_requests/4365");
+    assert_eq!(
+        (pr.base_ref.as_deref(), pr.head_ref.as_deref()),
+        (Some("main"), Some("feat/login-detect-ssh-host"))
+    );
+    assert_eq!(pr.head_oid.as_deref(), Some("afce14513e44f97e36e28a68e843111e3ce8bd73"));
+    // requested_changes：可以合并（没冲突），但被挡住。
+    assert_eq!((pr.mergeable.as_deref(), pr.merge_state.as_deref()), (Some("MERGEABLE"), Some("BLOCKED")));
+    assert_eq!(pr.checks.len(), 13);
+    assert!(
+        pr.checks.iter().all(|c| c.state == "pass" || c.state == "skipped"),
+        "手动 job（allow_failure）算跳过"
+    );
+    assert!(pr
+        .checks
+        .iter()
+        .all(|c| c.workflow.is_some() && c.url.as_deref().is_some_and(|u| u.starts_with("https://gitlab.com/"))));
+    assert_eq!(pr.checks_summary.as_deref(), Some("pass"));
+    // 拿不到 job 明细：用流水线整体状态当一项。
+    let pr = gitlab::map_mr(&mr, None).unwrap();
+    assert_eq!(
+        (pr.checks.len(), pr.checks[0].state.as_str(), pr.checks_summary.as_deref()),
+        (1, "pass", Some("pass"))
+    );
+    // 草稿。
+    let draft = gitlab::map_mr(&fixture("gitlab_mr_4468_draft.json"), None).unwrap();
+    assert_eq!((draft.state.as_str(), draft.merge_state.as_deref()), ("draft", Some("DRAFT")));
+}
+
+#[test]
+fn gitlab_合并状态与_job_状态_全部取值() {
+    // docs.gitlab.com/api/merge_requests 的 detailed_merge_status 全集。
+    let cases = [
+        ("mergeable", "MERGEABLE", "CLEAN"),
+        ("conflict", "CONFLICTING", "DIRTY"),
+        ("broken_status", "CONFLICTING", "DIRTY"),
+        ("checking", "UNKNOWN", "UNKNOWN"),
+        ("unchecked", "UNKNOWN", "UNKNOWN"),
+        ("preparing", "UNKNOWN", "UNKNOWN"),
+        ("approvals_syncing", "UNKNOWN", "UNKNOWN"),
+        ("draft_status", "MERGEABLE", "DRAFT"),
+        ("need_rebase", "MERGEABLE", "BEHIND"),
+        ("not_approved", "MERGEABLE", "BLOCKED"),
+        ("requested_changes", "MERGEABLE", "BLOCKED"),
+        ("ci_must_pass", "MERGEABLE", "BLOCKED"),
+        ("ci_still_running", "MERGEABLE", "BLOCKED"),
+        ("discussions_not_resolved", "MERGEABLE", "BLOCKED"),
+        ("not_open", "MERGEABLE", "BLOCKED"),
+        ("merge_request_blocked", "MERGEABLE", "BLOCKED"),
+        ("commits_status", "MERGEABLE", "BLOCKED"),
+        ("jira_association_missing", "MERGEABLE", "BLOCKED"),
+        ("merge_time", "MERGEABLE", "BLOCKED"),
+        ("security_policy_violations", "MERGEABLE", "BLOCKED"),
+        ("security_policy_pipeline_check", "MERGEABLE", "BLOCKED"),
+        ("status_checks_must_pass", "MERGEABLE", "BLOCKED"),
+        ("locked_paths", "MERGEABLE", "BLOCKED"),
+        ("locked_lfs_files", "MERGEABLE", "BLOCKED"),
+        ("title_regex", "MERGEABLE", "BLOCKED"),
+    ];
+    for (status, mergeable, state) in cases {
+        let got = gitlab::merge_status(&json!({ "detailed_merge_status": status, "has_conflicts": false, "draft": false }));
+        assert_eq!(got, (mergeable.to_string(), state.to_string()), "{status}");
+    }
+    assert_eq!(
+        gitlab::merge_status(&json!({ "detailed_merge_status": "need_rebase", "has_conflicts": true })).0,
+        "CONFLICTING"
+    );
+    // docs.gitlab.com/api/jobs 的状态全集。
+    for (status, want) in [
+        ("success", "pass"),
+        ("failed", "fail"),
+        ("canceled", "fail"),
+        ("canceling", "fail"),
+        ("skipped", "skipped"),
+        ("created", "pending"),
+        ("pending", "pending"),
+        ("running", "pending"),
+        ("preparing", "pending"),
+        ("scheduled", "pending"),
+        ("waiting_for_resource", "pending"),
+        ("waiting_for_callback", "pending"),
+        ("manual", "pending"),
+    ] {
+        assert_eq!(gitlab::job_state(status, false), want, "{status}");
+    }
+    assert_eq!(gitlab::job_state("failed", true), "skipped", "允许失败的 job 失败不挡合并");
+    assert_eq!(gitlab::job_state("manual", true), "skipped");
+}
+
+/// 按分支找 fork 来的 MR：列表 → 源项目 id → 单个 MR → 源项目流水线的 job，共 4 个请求。
+#[test]
+fn gitlab_按分支找_fork_mr_流水线按源项目查() {
+    let fake = Fake::new(|_, url, _| match url {
+        u if u.starts_with("https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/merge_requests?source_branch=feat%2Flogin-detect-ssh-host") => {
+            resp(200, json!([fixture("gitlab_mr_4365.json")]))
+        }
+        "https://gitlab.com/api/v4/projects/johan.walles%2Fcli" => resp(200, json!({ "id": 88359063 })),
+        "https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/merge_requests/4365" => resp(200, fixture("gitlab_mr_4365.json")),
+        "https://gitlab.com/api/v4/projects/88359063/pipelines/3082056756/jobs?per_page=100" => resp(200, fixture("gitlab_jobs_3082056756.json")),
+        _ => resp(404, json!({ "message": "404 Not Found" })),
+    });
+    let flags = Mutex::new(Vec::new());
+    let gl = gitlab(&fake, &flags);
+    let target = Target::Branch {
+        qualified: "johan.walles:feat/login-detect-ssh-host",
+        branch: "feat/login-detect-ssh-host",
+        head_slug: Some("johan.walles/cli"),
+    };
+    let pr = gl.find(".", Some("gitlab-org/cli"), &target).unwrap().unwrap();
+    assert_eq!((pr.number, pr.checks.len()), (4365, 13));
+    assert_eq!(fake.calls().len(), 4, "{:?}", fake.urls());
+    assert!(fake.calls().iter().all(|(_, _, _, auth)| auth.as_deref() == Some("Bearer glpat-TEST")));
+    // 同仓库按这个分支找：列表里只有 fork 来的，不算。
+    let none = gl.find(".", Some("gitlab-org/cli"), &branch("feat/login-detect-ssh-host")).unwrap();
+    assert_eq!(none, None);
+}
+
+#[test]
+fn gitlab_默认分支上只剩已合并的_不算() {
+    let mut merged = fixture("gitlab_mr_4453.json");
+    merged["state"] = "merged".into();
+    merged["source_project_id"] = merged["target_project_id"].clone();
+    merged["source_branch"] = "main".into();
+    let list = json!([merged]);
+    let fake = Fake::new(move |_, url, _| match url {
+        u if u.contains("/merge_requests?source_branch=main") => resp(200, list.clone()),
+        "https://gitlab.com/api/v4/projects/gitlab-org%2Fcli" => resp(200, json!({ "id": 34675721, "default_branch": "main" })),
+        _ => resp(500, json!({})),
+    });
+    let flags = Mutex::new(Vec::new());
+    assert_eq!(gitlab(&fake, &flags).find(".", Some("gitlab-org/cli"), &branch("main")).unwrap(), None);
+}
+
+#[test]
+fn gitlab_合并_钉住头提交_各种拒绝说清楚() {
+    let pr = gitlab::map_mr(&fixture("gitlab_mr_4365.json"), None).unwrap();
+    let status = std::sync::Arc::new(Mutex::new((200u16, json!({}))));
+    let detailed = std::sync::Arc::new(Mutex::new("mergeable".to_string()));
+    let user_ok = std::sync::Arc::new(AtomicUsize::new(1));
+    let (s2, d2, u2) = (status.clone(), detailed.clone(), user_ok.clone());
+    let fake = Fake::new(move |method, url, _| match (method, url) {
+        ("PUT", u) if u.ends_with("/merge_requests/4365/merge") => {
+            let (code, body) = s2.lock().unwrap().clone();
+            resp(code, body)
+        }
+        ("GET", u) if u.ends_with("/merge_requests/4365") => {
+            let mut mr = fixture("gitlab_mr_4365.json");
+            mr["detailed_merge_status"] = d2.lock().unwrap().clone().into();
+            resp(200, mr)
+        }
+        ("GET", "https://gitlab.com/api/v4/user") => {
+            if u2.load(Ordering::SeqCst) == 1 {
+                resp(200, json!({ "username": "me" }))
+            } else {
+                resp(401, fixture("gitlab_user_401.json"))
+            }
+        }
+        _ => resp(404, json!({})),
+    });
+    let flags = Mutex::new(Vec::new());
+    let gl = gitlab(&fake, &flags);
+    let head = pr.head_oid.clone().unwrap();
+    assert_eq!(gl.merge(".", "gitlab-org/cli", &pr, "squash", &head), Ok(false));
+    let (_, _, body, _) = fake.calls().into_iter().find(|(m, _, _, _)| m == "PUT").unwrap();
+    assert_eq!(body, json!({ "sha": head, "squash": true, "should_remove_source_branch": false }));
+    // 源码 lib/api/helpers.rb：sha 不符回 409。
+    *status.lock().unwrap() = (409, json!({ "message": "SHA does not match HEAD of source branch: abc" }));
+    assert_eq!(gl.merge(".", "gitlab-org/cli", &pr, "merge", &head), Err("gh/head_changed".into()));
+    // 405 / 422：按 MR 当前的 detailed_merge_status 说原因。
+    for (detail, want) in [
+        ("not_approved", "gh/review_required".to_string()),
+        ("conflict", format!("gh/merge_conflict: {}", pr.url)),
+        ("ci_still_running", "gh/checks_pending".to_string()),
+        ("discussions_not_resolved", "gh/merge_blocked: discussions_not_resolved".to_string()),
+    ] {
+        *status.lock().unwrap() = (405, json!({ "message": "405 Method Not Allowed" }));
+        *detailed.lock().unwrap() = detail.into();
+        assert_eq!(gl.merge(".", "gitlab-org/cli", &pr, "merge", &head), Err(want), "{detail}");
+    }
+    *status.lock().unwrap() = (422, json!({ "message": "Branch cannot be merged" }));
+    *detailed.lock().unwrap() = "need_rebase".into();
+    assert_eq!(
+        gl.merge(".", "gitlab-org/cli", &pr, "merge", &head),
+        Err("gh/merge_blocked: need_rebase".into())
+    );
+    // 没有合并权限也回 401：令牌本身好用（/user 成功）就是权限问题。
+    *status.lock().unwrap() = (401, json!({ "message": "401 Unauthorized" }));
+    assert_eq!(
+        gl.merge(".", "gitlab-org/cli", &pr, "merge", &head),
+        Err("forge/forbidden: 401 Unauthorized".into())
+    );
+    // 令牌真的失效：/user 也 401 → 要重新登录。
+    user_ok.store(0, Ordering::SeqCst);
+    assert_eq!(gl.merge(".", "gitlab-org/cli", &pr, "merge", &head), Err("gh/not_authed".into()));
+    assert_eq!(flags.lock().unwrap().last(), Some(&false), "401 回报给账号（标要重新登录）");
+}
+
+#[test]
+fn gitlab_开_mr_草稿前缀_fork_带目标项目_已有时给链接() {
+    let reply = std::sync::Arc::new(Mutex::new(resp(201, json!({ "web_url": "https://gitlab.com/o/r/-/merge_requests/8" }))));
+    let r2 = reply.clone();
+    let fake = Fake::new(move |method, url, _| match (method, url) {
+        ("GET", "https://gitlab.com/api/v4/projects/o%2Fr") => resp(200, json!({ "id": 11 })),
+        ("POST", _) => r2.lock().unwrap().clone(),
+        _ => resp(404, json!({})),
+    });
+    let flags = Mutex::new(Vec::new());
+    let gl = gitlab(&fake, &flags);
+    let new = NewPr {
+        title: "Fix",
+        body: "- Fix",
+        base: "main",
+        head: "me:feat",
+        branch: "feat",
+        head_slug: Some("me/r"),
+        draft: true,
+    };
+    assert_eq!(gl.create(".", Some("o/r"), &new), Ok("https://gitlab.com/o/r/-/merge_requests/8".into()));
+    let (_, url, body, _) = fake.calls().into_iter().find(|(m, _, _, _)| m == "POST").unwrap();
+    assert_eq!(url, "https://gitlab.com/api/v4/projects/me%2Fr/merge_requests", "fork 在源项目上建");
+    assert_eq!(
+        body,
+        json!({ "source_branch": "feat", "target_branch": "main", "title": "Draft: Fix", "description": "- Fix", "target_project_id": 11 })
+    );
+    // 源码 app/models/merge_request.rb：已有打开的 MR 回 409，message 是数组。
+    *reply.lock().unwrap() = resp(
+        409,
+        json!({ "message": ["Another open merge request already exists for this source branch: !7"] }),
+    );
+    let same = NewPr {
+        head_slug: None,
+        head: "feat",
+        draft: false,
+        ..new
+    };
+    assert_eq!(
+        gl.create(".", Some("o/r"), &same),
+        Err("gh/pr_exists: https://gitlab.com/o/r/-/merge_requests/7".into())
+    );
+}
+
+#[test]
+fn gitlab_评审_讨论批准改动文件_行内评论钉在_diff_refs() {
+    // 同仓库的分支：把样例（来自 fork）的源项目改成目标项目。
+    let mut mr = fixture("gitlab_mr_4365.json");
+    mr["source_project_id"] = mr["target_project_id"].clone();
+    // docs.gitlab.com/api/discussions 的示例形状：一条系统备注、一条普通评论、一条 DiffNote。
+    let discussions = json!([
+        { "id": "a", "notes": [{ "id": 1, "type": null, "body": "added 1 commit", "author": { "username": "bot" }, "created_at": "2026-11-01T00:00:00Z", "system": true }] },
+        { "id": "b", "notes": [{ "id": 2, "type": "DiscussionNote", "body": "looks good", "author": { "username": "alice" }, "created_at": "2026-11-02T00:00:00Z", "system": false }] },
+        { "id": "c", "notes": [{ "id": 3, "type": "DiffNote", "body": "nit", "author": { "username": "bob" }, "created_at": "2026-11-03T00:00:00Z", "system": false,
+            "position": { "base_sha": "x", "start_sha": "y", "head_sha": "z", "old_path": "a.go", "new_path": "a.go", "position_type": "text", "old_line": null, "new_line": 12 } }] }
+    ]);
+    let mr2 = mr.clone();
+    let fake = Fake::new(move |method, url, _| match (method, url) {
+        ("GET", u) if u.contains("/merge_requests?source_branch=") => resp(200, json!([mr2.clone()])),
+        ("GET", u) if u.ends_with("/merge_requests/4365") => resp(200, mr2.clone()),
+        ("GET", u) if u.contains("/jobs") => resp(200, json!([])),
+        ("GET", u) if u.contains("/discussions") => resp(200, discussions.clone()),
+        ("GET", u) if u.ends_with("/approvals") => resp(200, fixture("gitlab_approvals_4365.json")),
+        ("GET", u) if u.contains("/diffs") => resp(200, fixture("gitlab_diffs_4365.json")),
+        ("POST", _) => resp(201, json!({})),
+        _ => resp(404, json!({})),
+    });
+    let flags = Mutex::new(Vec::new());
+    let gl = gitlab(&fake, &flags);
+    let review = gl.review(".", "gitlab-org/cli", "feat/login-detect-ssh-host").unwrap().unwrap();
+    assert_eq!(review.pr.number, 4365);
+    assert_eq!(
+        review.comments.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+        ["comment:2", "comment:3"],
+        "系统备注不算评论"
+    );
+    let inline = &review.comments[1];
+    assert_eq!(
+        (inline.path.as_deref(), inline.line, inline.side.as_deref()),
+        (Some("a.go"), Some(12), Some("RIGHT"))
+    );
+    assert!(inline.url.as_deref().unwrap().ends_with("/merge_requests/4365#note_3"));
+    let approvals = fixture("gitlab_approvals_4365.json");
+    assert_eq!(review.reviews.len(), approvals["approved_by"].as_array().unwrap().len());
+    let files = fixture("gitlab_diffs_4365.json");
+    assert_eq!(review.files.len(), files.as_array().unwrap().len());
+    let (add, del) = gitlab::count_lines(files[0]["diff"].as_str().unwrap());
+    assert_eq!((review.files[0].additions, review.files[0].deletions), (add, del));
+    assert!(review.files.iter().all(|f| f.patch.is_some()));
+    // 行内评论：position 的三个 sha 取自 MR 的 diff_refs，删除行只写 old_line。
+    gl.line_comment(".", "gitlab-org/cli", 4365, "a.go", 7, "OLD", "why?").unwrap();
+    let (_, url, body, _) = fake.calls().into_iter().rfind(|(m, _, _, _)| m == "POST").unwrap();
+    assert_eq!(url, "https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/merge_requests/4365/discussions");
+    assert_eq!(body["position"]["base_sha"], mr["diff_refs"]["base_sha"]);
+    assert_eq!(body["position"]["start_sha"], mr["diff_refs"]["start_sha"]);
+    assert_eq!(body["position"]["head_sha"], mr["diff_refs"]["head_sha"]);
+    assert_eq!(body["position"]["old_line"], 7);
+    assert!(body["position"].get("new_line").is_none());
+}
+
+#[test]
+fn gitlab_401_标要重新登录() {
+    let fake = Fake::new(|_, _, _| resp(401, fixture("gitlab_user_401.json")));
+    let flags = Mutex::new(Vec::new());
+    let err = gitlab(&fake, &flags).find(".", Some("o/r"), &branch("x")).unwrap_err();
+    assert_eq!(err, "gh/not_authed");
+    assert_eq!(*flags.lock().unwrap(), vec![false]);
+}
+
+// ═══ Gitea / Forgejo ═══
+
+#[test]
+fn gitea_pr_映射_相对链接拼主机_草稿不当冲突() {
+    let checks = gitea::map_statuses("codeberg.org", &fixture("gitea_status_6b42eac1.json"));
+    assert!(!checks.is_empty());
+    assert!(
+        checks.iter().all(|c| c
+            .url
+            .as_deref()
+            .is_none_or(|u| u.starts_with("https://codeberg.org/forgejo/forgejo/actions/runs/"))),
+        "{checks:?}"
+    );
+    assert!(checks.iter().any(|c| c.state == "skipped"));
+    let pr = gitea::map_pull(&fixture("gitea_pull_15303.json"), checks).unwrap();
+    assert_eq!((pr.number, pr.state.as_str(), pr.forge.as_deref()), (15303, "open", Some("gitea")));
+    assert_eq!(pr.url, "https://codeberg.org/forgejo/forgejo/pulls/15303");
+    assert_eq!(
+        (pr.base_ref.as_deref(), pr.head_ref.as_deref(), pr.head_oid.as_deref()),
+        (
+            Some("v15.0/forgejo"),
+            Some("v15-backport-15270"),
+            Some("b9160301251f5115810a5083975dd91077fbd3d5")
+        )
+    );
+    assert_eq!((pr.mergeable.as_deref(), pr.merge_state.as_deref()), (Some("MERGEABLE"), Some("CLEAN")));
+    assert_eq!(pr.checks_summary.as_deref(), Some("pass"));
+    // 标题 WIP: → 草稿；Codeberg 这时 mergeable 也是 false，不当冲突。
+    let wip = gitea::map_pull(&fixture("gitea_pull_15307_wip.json"), Vec::new()).unwrap();
+    assert_eq!(
+        (wip.state.as_str(), wip.mergeable.as_deref(), wip.merge_state.as_deref()),
+        ("draft", Some("MERGEABLE"), Some("DRAFT"))
+    );
+    // 状态取值（Forgejo swagger 的 CommitStatusState）。
+    for (s, want) in [
+        ("success", "pass"),
+        ("warning", "pass"),
+        ("failure", "fail"),
+        ("error", "fail"),
+        ("pending", "pending"),
+        ("skipped", "skipped"),
+    ] {
+        assert_eq!(gitea::status_state(s), want, "{s}");
+    }
+}
+
+#[test]
+fn gitea_按分支找_fork_的_pr_先看打开的() {
+    let fake = Fake::new(|_, url, _| match url {
+        u if u.starts_with("https://codeberg.org/api/v1/repos/forgejo/forgejo/pulls?state=open&head=v15-backport-15270") => {
+            resp(200, fixture("gitea_pulls_open_head.json"))
+        }
+        u if u.starts_with("https://codeberg.org/api/v1/repos/forgejo/forgejo/pulls?state=closed") => resp(200, json!([])),
+        u if u.contains("/commits/b9160301251f5115810a5083975dd91077fbd3d5/status") => resp(200, fixture("gitea_status_6b42eac1.json")),
+        _ => resp(404, json!({ "message": "not found" })),
+    });
+    let flags = Mutex::new(Vec::new());
+    let ge = gitea(&fake, &flags);
+    let target = Target::Branch {
+        qualified: "mfenniak:v15-backport-15270",
+        branch: "v15-backport-15270",
+        head_slug: Some("mfenniak/forgejo"),
+    };
+    let pr = ge.find(".", Some("forgejo/forgejo"), &target).unwrap().unwrap();
+    assert_eq!(pr.number, 15303);
+    assert_eq!(fake.calls().len(), 2, "打开的列表 + 头提交的状态：{:?}", fake.urls());
+    assert!(fake.calls().iter().all(|(_, _, _, auth)| auth.as_deref() == Some("token glpat-TEST")));
+    // 同仓库同名分支没有：打开的、最近关闭的都看过，没有。
+    assert_eq!(ge.find(".", Some("forgejo/forgejo"), &branch("v15-backport-15270")).unwrap(), None);
+}
+
+#[test]
+fn gitea_合并_钉住头提交_拒绝原话归类() {
+    let pr = gitea::map_pull(&fixture("gitea_pull_15303.json"), Vec::new()).unwrap();
+    let reply = std::sync::Arc::new(Mutex::new(resp(200, json!({}))));
+    let r2 = reply.clone();
+    let fake = Fake::new(move |_, _, _| r2.lock().unwrap().clone());
+    let flags = Mutex::new(Vec::new());
+    let ge = gitea(&fake, &flags);
+    assert_eq!(ge.merge(".", "forgejo/forgejo", &pr, "squash", "b916"), Ok(false));
+    let (_, url, body, _) = fake.calls().pop().unwrap();
+    assert_eq!(url, "https://codeberg.org/api/v1/repos/forgejo/forgejo/pulls/15303/merge");
+    assert_eq!(
+        body,
+        json!({ "Do": "squash", "head_commit_id": "b916", "delete_branch_after_merge": false })
+    );
+    let cases = [
+        (409, "head out of date", "gh/head_changed".to_string()),
+        (
+            405,
+            "squash is not allowed an allowed merge style for this repository",
+            "gh/method_not_allowed".to_string(),
+        ),
+        (405, "Work in progress PRs cannot be merged", "gh/merge_blocked: draft".to_string()),
+        (405, "Please try again later", "gh/checks_pending".to_string()),
+        (
+            405,
+            "User not allowed to merge PR",
+            "forge/forbidden: User not allowed to merge PR".to_string(),
+        ),
+        (409, "Merge Conflict", format!("gh/merge_conflict: {}", pr.url)),
+        (423, "repo is archived", "gh/merge_blocked: repo is archived".to_string()),
+    ];
+    for (code, message, want) in cases {
+        *reply.lock().unwrap() = resp(code, json!({ "message": message, "url": "https://codeberg.org/api/swagger" }));
+        assert_eq!(ge.merge(".", "forgejo/forgejo", &pr, "squash", "b916"), Err(want), "{code} {message}");
+    }
+    *reply.lock().unwrap() = resp(405, json!({ "message": "The PR is already merged" }));
+    assert_eq!(ge.merge(".", "forgejo/forgejo", &pr, "squash", "b916"), Ok(false), "已经合了按成功");
+}
+
+#[test]
+fn gitea_合并方式_开_pr_已存在给链接() {
+    let fake = Fake::new(|method, url, _| match (method, url) {
+        ("GET", "https://codeberg.org/api/v1/repos/forgejo/forgejo") => resp(200, fixture("gitea_repo.json")),
+        ("POST", _) => resp(
+            409,
+            json!({ "message": "pull request already exists for these targets [id: 1, issue_id: 42, head_repo_id: 2, base_repo_id: 2, head_branch: feat, base_branch: forgejo]" }),
+        ),
+        _ => resp(404, json!({})),
+    });
+    let flags = Mutex::new(Vec::new());
+    let ge = gitea(&fake, &flags);
+    assert_eq!(ge.merge_methods(".", "forgejo/forgejo").unwrap(), vec!["merge", "squash", "rebase"]);
+    let new = NewPr {
+        title: "Fix",
+        body: "",
+        base: "forgejo",
+        head: "feat",
+        branch: "feat",
+        head_slug: None,
+        draft: true,
+    };
+    assert_eq!(
+        ge.create(".", Some("forgejo/forgejo"), &new),
+        Err("gh/pr_exists: https://codeberg.org/forgejo/forgejo/pulls/42".into())
+    );
+    let (_, _, body, _) = fake.calls().into_iter().find(|(m, _, _, _)| m == "POST").unwrap();
+    assert_eq!(body["title"], "WIP: Fix", "草稿用 WIP: 前缀");
+}
+
+#[test]
+fn gitea_评审_请求评审不算结论_行内评论带文件行() {
+    let reviews = gitea::map_reviews(fixture("gitea_reviews_15271.json").as_array().unwrap());
+    assert_eq!(
+        reviews.iter().map(|r| r.state.as_deref().unwrap()).collect::<Vec<_>>(),
+        ["COMMENT", "APPROVED"]
+    );
+    assert!(reviews.iter().all(|r| r.id.starts_with("review:")));
+    let inline = gitea::map_comments(fixture("gitea_review_comments_2303344.json").as_array().unwrap());
+    assert_eq!(inline.len(), 2);
+    assert_eq!(
+        (inline[0].path.as_deref(), inline[0].line, inline[0].side.as_deref()),
+        (Some("templates/repo/diff/range_diff.tmpl"), Some(65), Some("RIGHT"))
+    );
+    let issue = gitea::map_comments(fixture("gitea_issue_comments_15271.json").as_array().unwrap());
+    assert!(issue
+        .iter()
+        .all(|c| c.path.is_none() && c.line.is_none() && c.url.as_deref().is_some_and(|u| u.contains("#issuecomment-"))));
+    let files = gitea::map_files(fixture("gitea_files_15303.json").as_array().unwrap());
+    assert_eq!(
+        files
+            .iter()
+            .map(|f| (f.path.as_str(), f.status.as_str(), f.additions, f.deletions))
+            .collect::<Vec<_>>(),
+        [
+            ("services/actions/task.go", "modified", 1, 1),
+            ("services/actions/task_test.go", "modified", 36, 0)
+        ]
+    );
+}
+
+// ═══ Bitbucket Cloud ═══
+
+#[test]
+fn bitbucket_pr_映射_短_hash_草稿_构建失败() {
+    let statuses = fixture("bitbucket_statuses_604.json");
+    let pr = bitbucket::map_pr(
+        &fixture("bitbucket_pr_604.json"),
+        bitbucket::map_statuses(statuses["values"].as_array().unwrap()),
+    )
+    .unwrap();
+    assert_eq!((pr.number, pr.state.as_str(), pr.forge.as_deref()), (604, "open", Some("bitbucket")));
+    assert_eq!(pr.url, "https://bitbucket.org/atlassian/atlassian-connect-express/pull-requests/604");
+    assert_eq!(
+        (pr.head_ref.as_deref(), pr.head_oid.as_deref(), pr.base_ref.as_deref()),
+        (Some("renovate/prettier-3.x"), Some("e0949d3373fd"), Some("master"))
+    );
+    assert_eq!((pr.checks.len(), pr.checks_summary.as_deref()), (3, Some("pass")));
+    let statuses = fixture("bitbucket_statuses_552.json");
+    let draft = bitbucket::map_pr(
+        &fixture("bitbucket_pr_552_draft.json"),
+        bitbucket::map_statuses(statuses["values"].as_array().unwrap()),
+    )
+    .unwrap();
+    assert_eq!(
+        (draft.state.as_str(), draft.merge_state.as_deref(), draft.checks_summary.as_deref()),
+        ("draft", Some("DRAFT"), Some("fail"))
+    );
+    for (s, want) in [("SUCCESSFUL", "pass"), ("FAILED", "fail"), ("STOPPED", "fail"), ("INPROGRESS", "pending")] {
+        assert_eq!(bitbucket::status_state(s), want);
+    }
+    // 评审结论来自参与者：#604 有一人批准。
+    let reviews = bitbucket::map_reviews(&fixture("bitbucket_pr_604.json"));
+    assert_eq!(reviews.iter().map(|r| r.state.as_deref().unwrap()).collect::<Vec<_>>(), ["APPROVED"]);
+}
+
+#[test]
+fn bitbucket_按分支找_打开的优先_只取要的字段() {
+    let fake = Fake::new(|_, url, _| match url {
+        u if u.starts_with("https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests?q=") => {
+            resp(200, fixture("bitbucket_prs_branch.json"))
+        }
+        u if u.contains("/pullrequests/604/statuses") => resp(200, fixture("bitbucket_statuses_604.json")),
+        _ => resp(404, json!({ "type": "error", "error": { "message": "not found" } })),
+    });
+    let flags = Mutex::new(Vec::new());
+    let bb = bitbucket(&fake, &flags);
+    let pr = bb
+        .find(".", Some("atlassian/atlassian-connect-express"), &branch("renovate/prettier-3.x"))
+        .unwrap()
+        .unwrap();
+    assert_eq!((pr.number, pr.state.as_str()), (604, "open"));
+    let calls = fake.calls();
+    assert_eq!(calls.len(), 2, "{:?}", fake.urls());
+    let list = &calls[0].1;
+    assert!(list.contains("q=source.branch.name%3D%22renovate%2Fprettier-3.x%22"), "{list}");
+    assert!(list.contains("&fields=") && list.contains("&state=DECLINED"), "{list}");
+    assert_eq!(
+        calls[0].3.as_deref(),
+        Some("Basic bWVAZXhhbXBsZS5jb206Z2xwYXQtVEVTVA=="),
+        "API token：邮箱 + 令牌的 Basic 认证"
+    );
+}
+
+#[test]
+fn bitbucket_合并_没有_sha_参数_先核对头提交与允许的方式() {
+    let pr = bitbucket::map_pr(&fixture("bitbucket_pr_604.json"), Vec::new()).unwrap();
+    let reply = std::sync::Arc::new(Mutex::new(resp(200, json!({}))));
+    let r2 = reply.clone();
+    let fake = Fake::new(move |method, url, _| match (method, url) {
+        ("GET", u) if u.ends_with("/pullrequests/604") => {
+            let mut fresh = fixture("bitbucket_pr_604.json");
+            fresh["destination"]["branch"]["merge_strategies"] = json!(["merge_commit", "squash"]);
+            resp(200, fresh)
+        }
+        ("POST", _) => r2.lock().unwrap().clone(),
+        _ => resp(404, json!({})),
+    });
+    let flags = Mutex::new(Vec::new());
+    let bb = bitbucket(&fake, &flags);
+    assert_eq!(
+        bb.merge(".", "atlassian/atlassian-connect-express", &pr, "rebase", "e0949d3373fd"),
+        Err("gh/method_not_allowed".into())
+    );
+    assert_eq!(
+        bb.merge(".", "atlassian/atlassian-connect-express", &pr, "squash", "0000000"),
+        Err("gh/head_changed".into())
+    );
+    assert!(!fake.calls().iter().any(|(m, _, _, _)| m == "POST"), "核对没过就不发合并");
+    assert_eq!(
+        bb.merge(".", "atlassian/atlassian-connect-express", &pr, "squash", "e0949d3373fd"),
+        Ok(false)
+    );
+    let (_, url, body, _) = fake.calls().into_iter().find(|(m, _, _, _)| m == "POST").unwrap();
+    assert_eq!(
+        url,
+        "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/604/merge"
+    );
+    assert_eq!(body, json!({ "merge_strategy": "squash", "close_source_branch": false }));
+    *reply.lock().unwrap() = resp(202, json!({}));
+    assert_eq!(
+        bb.merge(".", "atlassian/atlassian-connect-express", &pr, "merge", "e0949d3373fd"),
+        Ok(true),
+        "202 = 转成异步或进了队列"
+    );
+    *reply.lock().unwrap() = resp(
+        400,
+        json!({ "type": "error", "error": { "message": "You can't merge until you resolve all merge conflicts." } }),
+    );
+    assert_eq!(
+        bb.merge(".", "atlassian/atlassian-connect-express", &pr, "merge", "e0949d3373fd"),
+        Err(format!("gh/merge_conflict: {}", pr.url))
+    );
+    *reply.lock().unwrap() = resp(409, json!({}));
+    assert_eq!(
+        bb.merge(".", "atlassian/atlassian-connect-express", &pr, "merge", "e0949d3373fd"),
+        Err("gh/head_changed".into())
+    );
+}
+
+#[test]
+fn bitbucket_开_pr_已有打开的直接给链接_评论与改动文件() {
+    let fake = Fake::new(|method, url, _| match (method, url) {
+        ("GET", u) if u.contains("/pullrequests?q=") => resp(200, fixture("bitbucket_prs_branch.json")),
+        _ => resp(500, json!({})),
+    });
+    let flags = Mutex::new(Vec::new());
+    let bb = bitbucket(&fake, &flags);
+    let new = NewPr {
+        title: "x",
+        body: "",
+        base: "master",
+        head: "renovate/prettier-3.x",
+        branch: "renovate/prettier-3.x",
+        head_slug: None,
+        draft: false,
+    };
+    assert_eq!(
+        bb.create(".", Some("atlassian/atlassian-connect-express"), &new),
+        Err("gh/pr_exists: https://bitbucket.org/atlassian/atlassian-connect-express/pull-requests/604".into())
+    );
+    assert!(fake.calls().iter().all(|(m, _, _, _)| m == "GET"), "已有就不再建");
+    let comments = bitbucket::map_comments(fixture("bitbucket_comments_552.json")["values"].as_array().unwrap());
+    assert_eq!(
+        (comments[0].path.as_deref(), comments[0].line, comments[0].side.as_deref()),
+        (Some("lib/store/redis.js"), Some(99), Some("RIGHT"))
+    );
+    assert!(comments.iter().any(|c| c.path.is_none()), "普通评论没有文件行");
+    let files = bitbucket::map_files(fixture("bitbucket_diffstat_604.json")["values"].as_array().unwrap());
+    assert_eq!(
+        files
+            .iter()
+            .map(|f| (f.path.as_str(), f.status.as_str(), f.additions, f.deletions))
+            .collect::<Vec<_>>(),
+        [("package.json", "modified", 1, 1)]
+    );
+}
+
+// ═══ GitHub 企业版 ═══
+
+#[test]
+fn 企业版_内置实现走_api_v3_与_api_graphql_只发往这台主机() {
+    let fake = Fake::new(|method, url, body| match (method, url) {
+        ("GET", "https://ghe.example.com/api/v3/user") => resp(200, json!({ "login": "octo", "name": "Octo Cat" })),
+        ("POST", "https://ghe.example.com/api/graphql") => {
+            assert!(body["query"].as_str().unwrap().contains("mergeCommitAllowed"));
+            resp(
+                200,
+                json!({ "data": { "repository": { "mergeCommitAllowed": true, "squashMergeAllowed": false, "rebaseMergeAllowed": true } } }),
+            )
+        }
+        _ => resp(404, json!({ "message": "Not Found" })),
+    });
+    assert_eq!(
+        super::super::ghe::current_user(&fake, "ghe.example.com", &token()),
+        Ok(("octo".into(), Some("Octo Cat".into())))
+    );
+    let flags = Mutex::new(Vec::new());
+    let forge = super::super::ghe::forge(
+        Box::new(&fake),
+        "ghe.example.com",
+        Some(token()),
+        GhState::Ok,
+        std::env::temp_dir().join("meowo-ghe-forge.json"),
+        Box::new(|ok| flags.lock().unwrap().push(ok)),
+    );
+    assert_eq!(forge.state(false), GhState::Ok);
+    assert!(!forge.too_old(), "企业版走内置实现，总能钉住头提交");
+    assert_eq!(forge.merge_methods(".", "team/app").unwrap(), vec!["merge", "rebase"]);
+    let calls = fake.calls();
+    assert!(
+        calls
+            .iter()
+            .all(|(_, url, _, auth)| url.starts_with("https://ghe.example.com/api/") && auth.as_deref() == Some("Bearer glpat-TEST")),
+        "{:?}",
+        fake.urls()
+    );
+    assert_eq!(*flags.lock().unwrap(), vec![true], "成功的回包回报令牌好用");
+}

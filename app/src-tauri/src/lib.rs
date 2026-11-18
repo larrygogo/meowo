@@ -19,6 +19,7 @@ mod envpath;
 mod exit_report;
 mod forge;
 mod fsutil;
+mod forge_accounts;
 mod github;
 mod git;
 mod git_target;
@@ -1606,6 +1607,11 @@ pub fn run() {
             github::github_login_start,
             github::github_login_cancel,
             github::github_logout,
+            forge_accounts::forge_accounts,
+            forge_accounts::forge_account_add,
+            forge_accounts::forge_account_remove,
+            forge_accounts::forge_login_start,
+            forge_accounts::forge_login_cancel,
             forge::badge::sidebar_git_badges,
             forge::review::pr_review,
             forge::review::pr_comment,

@@ -667,7 +667,7 @@ fn github_repo(sb: &Sandbox) -> PathBuf {
 
 fn status(fake: &FakeGh, caches: &Caches, prefs: &Path, repo: &Path, force: bool) -> ForgeStatusDto {
     let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches, prefs: prefs.to_path_buf(), env: &[] };
+    let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches, prefs: prefs.to_path_buf(), env: &[] };
     forge_status_with(&ctx, &s(repo), force).unwrap()
 }
 
@@ -693,9 +693,24 @@ fn 状态_没登录与不是_github() {
     let dto = status(&fake, &Caches::default(), &sb.root.join("forge.json"), &repo, false);
     assert_eq!(dto.gh, "unauthenticated");
     assert_eq!(fake.count("pr view"), 0, "没登录不去查 PR");
+    // 认不出平台的主机（没加账号的自建实例）：照旧按「不是 GitHub」，不发请求。
+    sb.git(&repo, &["remote", "set-url", "origin", "https://git.example.com/o/r.git"]);
+    let fake = FakeGh::new();
+    let dto = status(&fake, &Caches::default(), &sb.root.join("forge.json"), &repo, false);
+    assert_eq!((dto.gh.as_str(), dto.compare_url, dto.forge), ("not_github", None, None));
+    assert!(fake.calls.lock().unwrap().is_empty(), "{:?}", fake.calls.lock().unwrap());
+    // gitlab.com 认得出平台，但设置里没有账号：引导去添加账号，不报错、一个请求都不发（gh 也不碰）。
     sb.git(&repo, &["remote", "set-url", "origin", "https://gitlab.com/o/r.git"]);
-    let dto = status(&FakeGh::new(), &Caches::default(), &sb.root.join("forge.json"), &repo, false);
-    assert_eq!((dto.gh.as_str(), dto.compare_url), ("not_github", None));
+    let fake = FakeGh::new();
+    let dto = status(&fake, &Caches::default(), &sb.root.join("forge.json"), &repo, false);
+    assert_eq!((dto.gh.as_str(), dto.forge.as_deref(), dto.forge_host.as_deref()), ("no_account", Some("gitlab"), Some("gitlab.com")));
+    assert_eq!(dto.repo_url.as_deref(), Some("https://gitlab.com/o/r"));
+    assert_eq!(
+        dto.compare_url.as_deref(),
+        Some("https://gitlab.com/o/r/-/merge_requests/new?merge_request%5Bsource_branch%5D=meowo%2Fdrill&merge_request%5Btarget_branch%5D=main")
+    );
+    assert!(dto.pr.is_none() && dto.merge_methods.is_empty() && dto.pr_defaults.is_some());
+    assert!(fake.calls.lock().unwrap().is_empty(), "{:?}", fake.calls.lock().unwrap());
 }
 
 #[test]
@@ -729,7 +744,7 @@ fn 状态_有_gh_每仓库_60_秒最多查一次_手动刷新最短_10_秒() {
 
 fn merge(fake: &FakeGh, caches: &Caches, prefs: &Path, repo: &Path, method: &str, head: &str) -> Result<MergeResultDto, String> {
     let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches, prefs: prefs.to_path_buf(), env: &[] };
+    let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches, prefs: prefs.to_path_buf(), env: &[] };
     pr_merge_with(&ctx, &s(repo), 12, method, head)
 }
 
@@ -838,7 +853,7 @@ fn 开_pr_没装_gh_报错_前端改开网页() {
     let repo = github_repo(&sb);
     let fake = FakeGh { installed: false, ..FakeGh::new() };
     let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches: &Caches::default(), prefs: sb.root.join("forge.json"), env: &[] };
+    let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches: &Caches::default(), prefs: sb.root.join("forge.json"), env: &[] };
     let err = pr_create_with(&ctx, &s(&repo), None, None, None, false, &|_| panic!("没 gh 不该推")).unwrap_err();
     assert_eq!(err, "gh/not_installed");
 }
@@ -850,7 +865,7 @@ fn 开_pr_先推再建_默认标题正文_已有_pr_带回链接() {
     let fake = FakeGh::new().views(vec![ok(&fixture("derived_pr_no_checks.json"))]);
     let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
     let caches = Caches::default();
-    let ctx = Ctx { gh: &gh, caches: &caches, prefs: sb.root.join("forge.json"), env: &[] };
+    let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches: &caches, prefs: sb.root.join("forge.json"), env: &[] };
     let pushed = std::sync::atomic::AtomicUsize::new(0);
     let push = |_: &str| {
         pushed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -867,7 +882,7 @@ fn 开_pr_先推再建_默认标题正文_已有_pr_带回链接() {
         ..FakeGh::new()
     };
     let gh = |dir: &str, args: &[&str]| exists.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches: &Caches::default(), prefs: sb.root.join("forge.json"), env: &[] };
+    let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches: &Caches::default(), prefs: sb.root.join("forge.json"), env: &[] };
     let err = pr_create_with(&ctx, &s(&repo), Some("自定义标题"), Some("正文"), Some("main"), true, &push).unwrap_err();
     assert_eq!(err, "gh/pr_exists: https://github.com/larrygogo/meowo-pr-drill/pull/7");
     let create = exists.calls.lock().unwrap().iter().find(|c| c.starts_with("pr create")).cloned().unwrap();
@@ -884,7 +899,7 @@ fn 开_pr_上游是_origin_main_先推同名分支_head_是功能分支_不碰_m
     let owned = sb.env();
     let env: Vec<(&str, Option<&str>)> = owned.iter().map(|(k, v)| (*k, v.as_deref())).collect();
     let caches = Caches::default();
-    let ctx = Ctx { gh: &gh, caches: &caches, prefs: sb.root.join("forge.json"), env: &env };
+    let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches: &caches, prefs: sb.root.join("forge.json"), env: &env };
     let real_push = |dir: &str| push_with(dir, &env, Duration::from_secs(60));
     pr_create_with(&ctx, &s(&repo), None, None, None, false, &real_push).unwrap();
     assert_eq!(sb.git(&remote, &["rev-parse", "main"]), main_before, "开 PR 前的推送不能进 main");
@@ -923,13 +938,13 @@ fn 多个_github_远端没定_查状态按_origin_开_pr_合并要先选_选了�
     assert_eq!(merge(&fake, &caches, &prefs, &repo, "squash", HEAD), Err("gh/ambiguous_repo".into()));
     assert_eq!(fake.count("pr merge 12"), 0);
     let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches: &caches, prefs: prefs.clone(), env: &[] };
+    let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches: &caches, prefs: prefs.clone(), env: &[] };
     assert_eq!(pr_create_with(&ctx, &s(&repo), None, None, None, false, &|_| panic!("没定仓库不该推")), Err("gh/ambiguous_repo".into()));
     assert_eq!(fake.count("pr create"), 0);
 
     // 界面上选了 upstream：记在测试的 forge.json 里，按公共 .git 目录。
-    assert_eq!(choose_repo_with(&prefs, &s(&repo), "nope", &[]), Err("git/no_remote".into()));
-    choose_repo_with(&prefs, &s(&repo), "upstream", &[]).unwrap();
+    assert_eq!(choose_repo_with(&prefs, &s(&repo), "nope", &[], &crate::forge::platform::NO_ACCOUNTS), Err("git/no_remote".into()));
+    choose_repo_with(&prefs, &s(&repo), "upstream", &[], &crate::forge::platform::NO_ACCOUNTS).unwrap();
     assert!(std::fs::read_to_string(&prefs).unwrap().contains("\"repoRemote\""));
     let fake = FakeGh { require_repo: true, ..FakeGh::new().views(vec![open.clone(), open.clone(), ok(&fixture("derived_pr_no_checks_merged.json"))]) };
     let dto = status(&fake, &caches, &prefs, &repo, false);
@@ -946,7 +961,7 @@ fn 多个_github_远端没定_查状态按_origin_开_pr_合并要先选_选了�
 
     let fake = FakeGh { require_repo: true, ..FakeGh::new().views(vec![open]) };
     let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches: &Caches::default(), prefs: prefs.clone(), env: &[] };
+    let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches: &Caches::default(), prefs: prefs.clone(), env: &[] };
     let push = |_: &str| Ok(PushResultDto { remote: "origin".into(), branch: "meowo/drill".into(), set_upstream: true, pushed: 1 });
     pr_create_with(&ctx, &s(&repo), None, None, None, false, &push).unwrap();
     let create = fake.calls.lock().unwrap().iter().find(|c| c.starts_with("pr create")).cloned().unwrap();
@@ -1042,7 +1057,7 @@ fn 目标判定_跟踪不同名的功能分支_pr_按上游分支查和开() {
 
     let fake = FakeGh::new().views(vec![ok(&fixture("derived_pr_no_checks.json"))]);
     let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches: &Caches::default(), prefs, env: &[] };
+    let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches: &Caches::default(), prefs, env: &[] };
     pr_create_with(&ctx, &s(&repo), None, None, None, false, &|_| panic!("已推到上游，不该再推")).unwrap();
     let create = fake.calls.lock().unwrap().iter().find(|c| c.starts_with("pr create")).cloned().unwrap();
     assert!(create.contains("--base main --head bugfix-123 --repo larrygogo/meowo-pr-drill"), "{create}");
@@ -1104,7 +1119,7 @@ fn 目标判定_fork_工作流_认_gh_set_default_head_带_fork_owner() {
 
     let fake = FakeGh::new().views(vec![ok(&fixture("derived_pr_no_checks.json"))]);
     let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches: &Caches::default(), prefs, env: &[] };
+    let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches: &Caches::default(), prefs, env: &[] };
     let push = |_: &str| Ok(PushResultDto { remote: "origin".into(), branch: "meowo/drill".into(), set_upstream: true, pushed: 1 });
     pr_create_with(&ctx, &s(&repo), None, None, None, false, &push).unwrap();
     let create = fake.calls.lock().unwrap().iter().find(|c| c.starts_with("pr create")).cloned().unwrap();
@@ -1118,3 +1133,6 @@ mod title_pr;
 
 // Meowo 登录模式的内置 gh（forge/builtin.rs）。
 mod builtin;
+
+// GitLab / Gitea / Bitbucket / GitHub 企业版的平台实现。
+mod platforms;

@@ -9,7 +9,7 @@ const DIRTY: Option<DiffCounts> = Some((12, 3, 2));
 
 fn run(fake: &FakeGh, caches: &Caches, diffs: &DiffCache, prefs: &Path, cwds: &[String], online: bool, counts: Option<DiffCounts>) -> Vec<SidebarGitBadgeDto> {
     let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches, prefs: prefs.to_path_buf(), env: &[] };
+    let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches, prefs: prefs.to_path_buf(), env: &[] };
     badges_with(&ctx, diffs, cwds, online, &|_| counts)
 }
 
@@ -112,7 +112,7 @@ fn 侧栏_改动数按目录缓存() {
     let prefs = sb.root.join("forge.json");
     let counted = std::sync::atomic::AtomicUsize::new(0);
     let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches: &caches, prefs, env: &[] };
+    let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches: &caches, prefs, env: &[] };
     let compute = |_: &str| {
         counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         DIRTY
@@ -150,21 +150,21 @@ fn 侧栏_读_head_文件与_symbolic_ref_得到同一个_pr_键() {
     let repo = github_repo(&sb);
     let dir = s(&repo);
     let prefs = sb.root.join("forge.json");
-    let full = repo_info(&dir, &[], &prefs).unwrap();
-    let (fast, _, _) = repo_head(&dir, &[], &prefs, true).unwrap();
+    let full = repo_info(&dir, &[], &prefs, &crate::forge::platform::NO_ACCOUNTS).unwrap();
+    let (fast, _, _) = repo_head(&dir, &[], &prefs, &crate::forge::platform::NO_ACCOUNTS, true).unwrap();
     assert!(pr_key(&full).is_some());
     assert_eq!(pr_key(&fast), pr_key(&full));
     assert_eq!(fast.branch.as_deref(), Some("meowo/drill"));
     // detached：两边都没有分支。
     sb.git(&repo, &["switch", "-q", "--detach"]);
-    let (fast, _, _) = repo_head(&dir, &[], &prefs, true).unwrap();
+    let (fast, _, _) = repo_head(&dir, &[], &prefs, &crate::forge::platform::NO_ACCOUNTS, true).unwrap();
     assert_eq!(fast.branch, None);
-    assert_eq!(repo_info(&dir, &[], &prefs).unwrap().branch, None);
+    assert_eq!(repo_info(&dir, &[], &prefs, &crate::forge::platform::NO_ACCOUNTS).unwrap().branch, None);
     // worktree：HEAD 在 worktree 自己的 .git 目录里，键里的公共目录仍是主仓库的。
     let wt = sb.root.join("gh-wt");
     sb.git(&repo, &["worktree", "add", "-q", "-b", "meowo/wt", &wt.to_string_lossy()]);
-    let (fast, _, _) = repo_head(&s(&wt), &[], &prefs, true).unwrap();
-    let full = repo_info(&s(&wt), &[], &prefs).unwrap();
+    let (fast, _, _) = repo_head(&s(&wt), &[], &prefs, &crate::forge::platform::NO_ACCOUNTS, true).unwrap();
+    let full = repo_info(&s(&wt), &[], &prefs, &crate::forge::platform::NO_ACCOUNTS).unwrap();
     assert_eq!(fast.branch.as_deref(), Some("meowo/wt"));
     assert_eq!(pr_key(&fast), pr_key(&full));
 }
@@ -270,7 +270,7 @@ fn bench_sidebar_badges_20_dirs() {
     let cold = |list: &[String]| {
         crate::git::invalidate_caches();
         let (caches, diffs) = (Caches::default(), DiffCache::default());
-        let ctx = Ctx { gh: &gh, caches: &caches, prefs: prefs.clone(), env: &[] };
+        let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches: &caches, prefs: prefs.clone(), env: &[] };
         let start = Instant::now();
         let rows = badges_with(&ctx, &diffs, list, true, &real_diff_counts);
         (start.elapsed(), rows)
@@ -290,7 +290,7 @@ fn bench_sidebar_badges_20_dirs() {
     // 稳态：前端每 30 秒问一次，改动缓存（15s）与折叠计数（30s）都已过期，PR（60s）与登录状态（5min）还新。
     crate::git::invalidate_caches();
     let (caches, diffs) = (Caches::default(), DiffCache::default());
-    let ctx = Ctx { gh: &gh, caches: &caches, prefs: prefs.clone(), env: &[] };
+    let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches: &caches, prefs: prefs.clone(), env: &[] };
     badges_with(&ctx, &diffs, &cwds, true, &real_diff_counts);
     let hot_all = median(
         (0..5)

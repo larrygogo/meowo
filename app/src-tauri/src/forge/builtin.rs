@@ -17,6 +17,27 @@
 
 use super::{repo_head, CmdOut};
 use crate::github::{Http, Request, Response, Token, API};
+
+/// 内置实现连哪台 GitHub：github.com，或企业版（REST `https://<主机>/api/v3`、GraphQL `https://<主机>/api/graphql`，
+/// GitHub 文档「REST API endpoints for GitHub Enterprise Server」）。
+#[derive(Debug, Clone)]
+pub(crate) struct Endpoints {
+    /// REST 基址（不带末尾斜杠）。
+    pub(crate) api: String,
+    /// GraphQL 地址。
+    pub(crate) graphql: String,
+    /// 网页主机（PR 链接的主机）。
+    pub(crate) web: String,
+}
+
+impl Endpoints {
+    pub(crate) fn github_com() -> Self {
+        Endpoints { api: API.into(), graphql: format!("{API}/graphql"), web: "github.com".into() }
+    }
+    pub(crate) fn enterprise(host: &str) -> Self {
+        Endpoints { api: format!("https://{host}/api/v3"), graphql: format!("https://{host}/api/graphql"), web: host.to_string() }
+    }
+}
 use serde_json::{json, Map, Value};
 use std::path::Path;
 
@@ -36,6 +57,8 @@ pub(crate) struct Builtin<'a> {
     pub(crate) on_auth: &'a (dyn Fn(bool) + Sync),
     /// forge.json（PR 所在远端的选择），没带 --repo 时按目录推仓库要用。
     pub(crate) prefs: &'a Path,
+    /// 连哪台 GitHub（github.com / 企业版）。
+    pub(crate) ends: Endpoints,
 }
 
 fn ok(stdout: impl Into<String>) -> CmdOut {
@@ -127,9 +150,9 @@ fn split_slug(slug: &str) -> Option<(&str, &str)> {
     (valid(owner) && valid(name)).then_some((owner, name))
 }
 
-/// `https://github.com/<owner>/<repo>/pull/<号>` → (slug, 号)。别的主机不认（Meowo 登录只连 github.com）。
-fn parse_pr_url(url: &str) -> Option<(String, u64)> {
-    let rest = url.strip_prefix("https://github.com/").or_else(|| url.strip_prefix("https://www.github.com/"))?;
+/// `https://<网页主机>/<owner>/<repo>/pull/<号>` → (slug, 号)。别的主机不认（令牌只给这一台 GitHub）。
+fn parse_pr_url(url: &str, web: &str) -> Option<(String, u64)> {
+    let rest = url.strip_prefix(&format!("https://{web}/")).or_else(|| (web == "github.com").then(|| url.strip_prefix("https://www.github.com/")).flatten())?;
     let parts: Vec<&str> = rest.trim_end_matches('/').split('/').collect();
     if parts.len() < 4 || parts[2] != "pull" {
         return None;
@@ -298,10 +321,11 @@ impl Builtin<'_> {
     fn send(&self, method: &str, url: &str, body: Option<Value>) -> Result<Response, CmdOut> {
         let token = self.token.ok_or_else(|| fail(NOT_SIGNED_IN))?;
         let req = Request { method, url, token: Some(token), body: body.map(crate::github::Body::Json) };
-        let resp = self.http.send(&req).map_err(|e| fail(format!("error connecting to api.github.com\n{e}")))?;
+        let host = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_else(|| "api.github.com".into());
+        let resp = self.http.send(&req).map_err(|e| fail(format!("error connecting to {host}\n{e}")))?;
         if resp.status == 401 {
             (self.on_auth)(false);
-            return Err(fail("HTTP 401: Bad credentials (https://api.github.com)\nSign in to GitHub again from Meowo Settings > GitHub."));
+            return Err(fail(format!("HTTP 401: Bad credentials (https://{host})\nSign in to GitHub again from Meowo Settings > GitHub.")));
         }
         if success(&resp) {
             (self.on_auth)(true);
@@ -310,12 +334,12 @@ impl Builtin<'_> {
     }
 
     fn rest(&self, method: &str, path: &str, body: Option<Value>) -> Result<Response, CmdOut> {
-        self.send(method, &format!("{API}/{}", path.trim_start_matches('/')), body)
+        self.send(method, &format!("{}/{}", self.ends.api, path.trim_start_matches('/')), body)
     }
 
     /// GraphQL：有 errors 就按 gh 的写法失败（`GraphQL: <原因>`），否则回 data。
     fn graphql(&self, query: &str, variables: Value) -> Result<Value, CmdOut> {
-        let resp = self.rest("POST", "graphql", Some(json!({ "query": query, "variables": variables })))?;
+        let resp = self.send("POST", &self.ends.graphql, Some(json!({ "query": query, "variables": variables })))?;
         if !success(&resp) {
             return Err(http_fail(&resp));
         }
@@ -330,8 +354,9 @@ impl Builtin<'_> {
     /// 没带 --repo 时按目录认仓库（与 forge 同一个判定：gh-resolved、用户选的远端、唯一的 GitHub 远端）。
     /// 回 (slug, 当前分支的 head 写法)。
     fn local_repo(&self, dir: &str) -> Option<(String, Option<String>)> {
-        let (info, _, _) = repo_head(dir, &[], self.prefs, false)?;
-        Some((info.gh.slug()?.to_string(), info.head_ref()))
+        let (info, _, _) = repo_head(dir, &[], self.prefs, &super::platform::NO_ACCOUNTS, false)?;
+        let base = info.gh.base.as_ref().filter(|b| b.host == self.ends.web)?;
+        Some((base.slug.clone(), info.head_ref()))
     }
 
     fn repo_of(&self, dir: &str, args: &Args) -> Result<String, CmdOut> {
@@ -349,7 +374,7 @@ impl Builtin<'_> {
             return Err(http_fail(&resp));
         }
         let login = parse_json(&resp.body).get("login").and_then(|l| l.as_str()).unwrap_or_default().to_string();
-        Ok(ok(format!("github.com\n  ✓ Logged in to github.com account {login} (Meowo)\n")))
+        Ok(ok(format!("{web}\n  ✓ Logged in to {web} account {login} (Meowo)\n", web = self.ends.web)))
     }
 
     fn pr_view(&self, dir: &str, rest: &[&str]) -> Result<CmdOut, CmdOut> {
@@ -361,7 +386,7 @@ impl Builtin<'_> {
         let selection = pr_selection(&fields).map_err(fail)?;
         let (slug, target) = match args.positional.first().copied() {
             Some(url) if url.starts_with("https://") => {
-                let (slug, number) = parse_pr_url(url).ok_or_else(|| fail(format!("invalid pull request URL: {url}")))?;
+                let (slug, number) = parse_pr_url(url, &self.ends.web).ok_or_else(|| fail(format!("invalid pull request URL: {url}")))?;
                 (slug, Target::Number(number))
             }
             Some(number) if !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()) => {
@@ -587,13 +612,14 @@ impl Builtin<'_> {
             fields.insert(k.to_string(), value);
         }
         let method = args.get(&["-X", "--method"]).map(str::to_uppercase).unwrap_or_else(|| if fields.is_empty() { "GET".into() } else { "POST".into() });
+        let api = &self.ends.api;
         let mut url = if endpoint.starts_with("https://") {
-            if !endpoint.starts_with(&format!("{API}/")) {
-                return Err(fail("meowo: only api.github.com is supported"));
+            if !endpoint.starts_with(&format!("{api}/")) {
+                return Err(fail(format!("meowo: only {api} is supported")));
             }
             endpoint.to_string()
         } else {
-            format!("{API}/{}", endpoint.trim_start_matches('/'))
+            format!("{api}/{}", endpoint.trim_start_matches('/'))
         };
         let body = if method == "GET" {
             if !fields.is_empty() {
@@ -625,7 +651,7 @@ impl Builtin<'_> {
                 break;
             }
             pages.push(parse_json(&resp.body));
-            next = next_link(resp.link.as_deref()).filter(|n| n.starts_with(&format!("{API}/")) && pages.len() < 100);
+            next = next_link(resp.link.as_deref()).filter(|n| n.starts_with(&format!("{api}/")) && pages.len() < 100);
         }
         if !paginate {
             return Ok(ok(first_body));
@@ -649,5 +675,5 @@ pub(crate) fn run_real(dir: &str, args: &[&str], token: Option<&Token>) -> CmdOu
             crate::github::auth_result(token, ok);
         }
     };
-    Builtin { http: &crate::github::RealHttp, token, on_auth: &on_auth, prefs: &prefs }.run(dir, args)
+    Builtin { http: &crate::github::RealHttp, token, on_auth: &on_auth, prefs: &prefs, ends: Endpoints::github_com() }.run(dir, args)
 }

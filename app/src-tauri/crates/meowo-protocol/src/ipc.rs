@@ -1016,6 +1016,11 @@ pub struct PullRequestDto {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     #[cfg_attr(test, ts(type = "boolean", optional))]
     pub queued: bool,
+    /// 代码托管平台：`gitlab` / `gitea` / `bitbucket`；GitHub（含企业版）不填。界面按它用平台的叫法
+    /// （GitLab 是合并请求 MR、编号写 `!12`，检查叫流水线）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub forge: Option<String>,
 }
 
 /// PR 的一项检查。
@@ -1133,6 +1138,15 @@ pub struct ForgeStatusDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub connection: Option<String>,
+    /// 仓库所在的代码托管平台：`github` / `gitlab` / `gitea` / `bitbucket`。远端认不出平台时为 None。
+    /// `gh` 为 `no_account` 时表示认出了平台、但设置里还没有这台主机的账号（不发请求，界面引导去添加）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub forge: Option<String>,
+    /// 平台所在主机（`github.com`、`gitlab.com`、自建主机名）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub forge_host: Option<String>,
 }
 
 /// GitHub 连接里登录的账号（`GET /user` 的展示字段）。不含令牌。
@@ -1216,6 +1230,60 @@ pub struct SidebarPrBadgeDto {
     pub checks: Option<String>,
     pub url: String,
     pub title: String,
+    /// 平台（同 PullRequestDto.forge；GitHub 不填）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub forge: Option<String>,
+}
+
+/// 代码托管账号（设置 › 代码托管账号）：平台 + 主机 + 账号名。不含令牌（令牌只在系统凭据库里）。
+/// github.com 的 Meowo 登录不在这里，见 GithubConnectionDto。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct ForgeAccountDto {
+    /// `github`（企业版）/ `gitlab` / `gitea` / `bitbucket`。
+    pub platform: String,
+    /// 主机（可带端口），如 `gitlab.com`、`git.example.com`。
+    pub host: String,
+    pub login: String,
+    pub name: Option<String>,
+    /// 令牌被拒（撤销、过期、权限被收回）：要重新添加。
+    pub needs_relogin: bool,
+    /// 用设备码（OAuth）登录的；否则是个人访问令牌。
+    pub oauth: bool,
+}
+
+/// 进行中的设备码登录（gitlab.com）：一次性代码与去哪里输入。轮询凭据留在后端。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct ForgeDeviceCodeDto {
+    pub platform: String,
+    pub host: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    /// 带好代码的网页（GitLab 给 `verification_uri_complete`），没有时同 verification_uri。
+    pub verification_uri_complete: Option<String>,
+    #[cfg_attr(test, ts(type = "number"))]
+    pub expires_at: i64,
+}
+
+/// 设置页「代码托管账号」的状态（`forge_accounts`）。不含令牌。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct ForgeAccountsDto {
+    pub accounts: Vec<ForgeAccountDto>,
+    /// 这个平台有系统凭据库可存令牌。
+    pub credential_supported: bool,
+    /// gitlab.com 的设备码登录可用（打包时配了 Meowo 的 GitLab 应用 Client ID）；不可用时只给令牌入口。
+    pub gitlab_device: bool,
+    /// 进行中的设备码登录（设置窗重开时接着显示）。
+    pub pending: Option<ForgeDeviceCodeDto>,
 }
 
 /// PR 可以开在的一个仓库：远端名 + GitHub 的 owner/repo。

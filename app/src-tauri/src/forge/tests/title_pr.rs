@@ -6,7 +6,7 @@ use super::*;
 
 fn title(fake: &FakeGh, caches: &Caches, diffs: &DiffCache, prefs: &Path, cwd: &Path) -> Option<PullRequestDto> {
     let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches, prefs: prefs.to_path_buf(), env: &[] };
+    let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches, prefs: prefs.to_path_buf(), env: &[] };
     title_pr_with(&ctx, diffs, &s(cwd))
 }
 
@@ -23,7 +23,7 @@ fn 标题栏_侧栏_面板_同仓库同分支六十秒内合计只查一次_pr()
 
     let pr = title(&fake, &caches, &diffs, &prefs, &sub).expect("标题栏有 PR");
     let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches: &caches, prefs: prefs.clone(), env: &[] };
+    let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches: &caches, prefs: prefs.clone(), env: &[] };
     badges_with(&ctx, &diffs, &[s(&sub)], true, &|_| Some((1, 0, 1)));
     status(&fake, &caches, &prefs, &repo, false);
     title(&fake, &caches, &diffs, &prefs, &sub);
@@ -44,7 +44,7 @@ fn 按链接查会话里建的_pr_不看目录分支_六十秒只调一次() {
     let fake = FakeGh::new().views(vec![ok(&fixture("pr_checkrun_fail.json"))]);
     let (caches, diffs) = (Caches::default(), DiffCache::default());
     let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches: &caches, prefs: sb.root.join("forge.json"), env: &[] };
+    let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches: &caches, prefs: sb.root.join("forge.json"), env: &[] };
     let url = "https://github.com/larrygogo/meowo/pull/161";
     let pr = url_pr_with(&ctx, &diffs, &s(&repo), url).expect("按链接查到 PR");
     url_pr_with(&ctx, &diffs, &s(&repo), url);

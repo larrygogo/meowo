@@ -161,8 +161,10 @@ fn git_repo(common: &Path, args: &[&str]) -> std::io::Result<std::process::Outpu
 
 /// 真实的 `gh pr view`。不走 git.rs 的 60s 缓存：删除前要的是此刻的状态。经 forge 的连接分派
 /// （设置里的 GitHub 连接：本机 gh / Meowo 登录 / 关闭），关闭或没装时按「查不了」走本地判定。
+/// GitLab / Gitea / Bitbucket 与加了账号的企业版走统一的平台接口（没账号按「查不了」）；github.com 与认不出
+/// 平台的远端照旧问 gh。
 pub(crate) fn gh_pr_lookup(dir: &Path) -> PrLookup {
-    gh_pr_lookup_with(&crate::forge::connected_gh, dir)
+    crate::forge::platform_pr_lookup(dir).unwrap_or_else(|| gh_pr_lookup_with(&crate::forge::connected_gh, dir))
 }
 
 pub(crate) fn gh_pr_lookup_with(gh: crate::forge::GhExec, dir: &Path) -> PrLookup {

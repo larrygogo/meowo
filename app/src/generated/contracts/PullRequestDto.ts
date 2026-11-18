@@ -40,4 +40,9 @@ checksSummary?: string,
 /**
  * 已加入合并队列（本机发起合并时 GitHub 回的是入队而不是合并）。这时不能提示「已合并」。
  */
-queued?: boolean, };
+queued?: boolean, 
+/**
+ * 代码托管平台：`gitlab` / `gitea` / `bitbucket`；GitHub（含企业版）不填。界面按它用平台的叫法
+ * （GitLab 是合并请求 MR、编号写 `!12`，检查叫流水线）。
+ */
+forge?: string, };

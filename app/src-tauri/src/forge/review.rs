@@ -1,4 +1,5 @@
-//! GitHub PR 阅读、评论与持久监控。所有 gh 调用继承 forge 的注入点与超时。
+//! PR / MR 阅读、评论与持久监控。经统一的平台接口（forge/api.rs）：GitHub 的 gh 调用继承 forge 的注入点与
+//! 超时，GitLab / Gitea / Bitbucket 走各自的接口。
 
 use super::*;
 use meowo_protocol::ipc::{PrCommentDto, PrFileDto, PrMonitorDto, PrMonitorEventDto, PrReviewDto, QueueDraftDto};
@@ -45,7 +46,7 @@ fn files(value: &serde_json::Value) -> Vec<PrFileDto> {
     }).collect()
 }
 
-fn parse_review(value: &serde_json::Value, file_value: &serde_json::Value, inline: &serde_json::Value) -> Option<PrReviewDto> {
+pub(crate) fn parse_review(value: &serde_json::Value, file_value: &serde_json::Value, inline: &serde_json::Value) -> Option<PrReviewDto> {
     let pr = parse_pr_full(&serde_json::to_string(value).ok()?)?;
     let mut all_comments = comments(value.get("comments")?, false);
     all_comments.extend(comments(inline, false));
@@ -56,26 +57,11 @@ fn parse_review(value: &serde_json::Value, file_value: &serde_json::Value, inlin
 
 fn read_with(ctx: &Ctx, cwd: &str) -> Result<Option<PrReviewDto>, String> {
     let dir = existing_dir(cwd)?;
-    require_gh(ctx)?;
-    let info = repo_info(dir, ctx.env, &ctx.prefs).ok_or("worktree/not_repo")?;
+    let info = repo_info(dir, ctx.env, &ctx.prefs, ctx.forges).ok_or("worktree/not_repo")?;
+    let forge = usable(ctx, &info)?;
     let branch = info.branch.as_deref().ok_or("git/detached")?;
     let slug = info.gh.slug().map(str::to_string).ok_or("gh/ambiguous_repo")?;
-    let fields = format!("{PR_FIELDS},comments,reviews");
-    let out = (ctx.gh)(dir, &["pr", "view", branch, "--repo", &slug, "--json", &fields]).ok_or("gh/not_installed")?;
-    if !out.ok() {
-        if out.both().to_lowercase().contains("no pull requests found") { return Ok(None); }
-        return Err(classify_gh_failure(&out, None));
-    }
-    let value: serde_json::Value = serde_json::from_str(&out.stdout).map_err(|_| "gh/failed: bad json")?;
-    let number = number(&value, "number").ok_or("gh/failed: missing number")?;
-    let base = format!("repos/{slug}/pulls/{number}");
-    let file_out = (ctx.gh)(dir, &["api", &format!("{base}/files"), "--paginate", "--slurp"]).ok_or("gh/not_installed")?;
-    if !file_out.ok() { return Err(classify_gh_failure(&file_out, None)); }
-    let file_value: serde_json::Value = serde_json::from_str(&file_out.stdout).map_err(|_| "gh/failed: bad files json")?;
-    let inline_out = (ctx.gh)(dir, &["api", &format!("{base}/comments"), "--paginate", "--slurp"]).ok_or("gh/not_installed")?;
-    if !inline_out.ok() { return Err(classify_gh_failure(&inline_out, None)); }
-    let inline: serde_json::Value = serde_json::from_str(&inline_out.stdout).map_err(|_| "gh/failed: bad comments json")?;
-    parse_review(&value, &file_value, &inline).map(Some).ok_or_else(|| "gh/failed: bad review json".into())
+    forge.review(dir, &slug, branch)
 }
 
 static REVIEW_CACHE: std::sync::LazyLock<Mutex<HashMap<String, (Instant, PrReviewDto)>>> = std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -125,18 +111,12 @@ pub(crate) async fn pr_comment(cwd: String, number: u32, body: String, review: b
 }
 fn comment_with(ctx: &Ctx, cwd: &str, number: u32, body: &str, review: bool) -> Result<(), String> {
     if body.trim().is_empty() { return Err("pr/empty_comment".into()); }
-    require_gh(ctx)?;
-    let info = repo_info(cwd, ctx.env, &ctx.prefs).ok_or("worktree/not_repo")?;
+    let info = repo_info(cwd, ctx.env, &ctx.prefs, ctx.forges).ok_or("worktree/not_repo")?;
+    let forge = usable(ctx, &info)?;
     let slug = info.gh.slug().ok_or("gh/ambiguous_repo")?;
-    let number_text = number.to_string();
-    let action = if review { "review" } else { "comment" };
-    let mut args = vec!["pr", action, &number_text, "--repo", slug, "--body", body];
-    if review { args.push("--comment"); }
-    let out = (ctx.gh)(cwd, &args).ok_or("gh/not_installed")?;
-    if out.ok() {
-        lock(&REVIEW_CACHE).remove(cwd);
-        Ok(())
-    } else { Err(classify_gh_failure(&out, None)) }
+    forge.comment(cwd, slug, number, body, review)?;
+    lock(&REVIEW_CACHE).remove(cwd);
+    Ok(())
 }
 
 #[tauri::command]
@@ -146,25 +126,18 @@ pub(crate) async fn pr_line_comment(cwd: String, number: u32, path: String, line
 fn line_comment_with(ctx: &Ctx, cwd: &str, number: u32, path: &str, line: i64, side: &str, body: &str) -> Result<(), String> {
     if body.trim().is_empty() { return Err("pr/empty_comment".into()); }
     if !matches!(side, "NEW" | "OLD") || line <= 0 { return Err("pr/invalid_line".into()); }
-    require_gh(ctx)?;
-    let info = repo_info(cwd, ctx.env, &ctx.prefs).ok_or("worktree/not_repo")?;
+    let info = repo_info(cwd, ctx.env, &ctx.prefs, ctx.forges).ok_or("worktree/not_repo")?;
+    let forge = usable(ctx, &info)?;
     let slug = info.gh.slug().ok_or("gh/ambiguous_repo")?;
-    let number_text = number.to_string();
-    let out = (ctx.gh)(cwd, &["pr", "view", &number_text, "--repo", slug, "--json", "headRefOid"]).ok_or("gh/not_installed")?;
-    if !out.ok() { return Err(classify_gh_failure(&out, None)); }
-    let value: serde_json::Value = serde_json::from_str(&out.stdout).map_err(|_| "gh/failed: bad json")?;
-    let head = string(&value, "headRefOid").ok_or("gh/head_changed")?;
-    let endpoint = format!("repos/{slug}/pulls/{number}/comments");
-    let line_text = line.to_string();
-    let out = (ctx.gh)(cwd, &["api", &endpoint, "-f", &format!("body={body}"), "-f", &format!("commit_id={head}"), "-f", &format!("path={path}"), "-F", &format!("line={line_text}"), "-f", &format!("side={side}")]).ok_or("gh/not_installed")?;
-    if out.ok() {
-        lock(&REVIEW_CACHE).remove(cwd);
-        Ok(())
-    } else { Err(classify_gh_failure(&out, None)) }
+    forge.line_comment(cwd, slug, number, path, line, side, body)?;
+    lock(&REVIEW_CACHE).remove(cwd);
+    Ok(())
 }
 
+/// 监控的键：github.com 是 `owner/repo#号`（与改版前一致，老监控照用）；别的主机 `主机/路径#号`。
+/// 认不出链接时只剩 `#号`，调用方据此拒绝。
 fn pr_key(pr: &PullRequestDto) -> String {
-    let slug = pr.url.split("github.com/").nth(1).and_then(|rest| rest.split("/pull/").next()).unwrap_or("");
+    let slug = super::platform::parse_pr_url(&pr.url).map(|(host, slug, _, _)| super::platform::repo_key(&host, &slug)).unwrap_or_default();
     format!("{slug}#{}", pr.number)
 }
 
@@ -201,7 +174,10 @@ fn poll_with(ctx: &Ctx, store: &Store, monitor: &PrMonitor, app: Option<&tauri::
         Ok(None) => return Err("pr/not_found".into()),
         Err(error) => return Err(error),
     };
-    let viewer = (ctx.gh)(&monitor.cwd, &["api", "user"]).and_then(|out| if out.ok() { serde_json::from_str(&out.stdout).ok() } else { None }).and_then(|value| string(&value, "login")).unwrap_or_default();
+    let viewer = repo_info(&monitor.cwd, ctx.env, &ctx.prefs, ctx.forges)
+        .and_then(|info| ctx.forge_for(info.gh.base.as_ref()).ok())
+        .and_then(|forge| forge.viewer(&monitor.cwd))
+        .unwrap_or_default();
     let mut known: BTreeSet<String> = serde_json::from_str(&monitor.known_comments).unwrap_or_default();
     let current: BTreeSet<String> = review.comments.iter().chain(&review.reviews).map(|comment| comment.id.clone()).collect();
     let now = crate::now_ms();
@@ -229,14 +205,20 @@ fn poll_with(ctx: &Ctx, store: &Store, monitor: &PrMonitor, app: Option<&tauri::
         let _ = app.emit("pr-monitor-changed", &monitor.key);
         for event in store.pr_events(&monitor.key).map_err(|e| e.to_string())?.into_iter().filter(|event| event.created_at == now) {
             let settings = crate::settings::load_settings();
-            crate::push::push_session(&settings, crate::push::PushMessage { title: format!("PR #{}", monitor.number), body: event.summary.clone(), session_id: monitor.session_id, urgent: false });
+            crate::push::push_session(&settings, crate::push::PushMessage { title: monitor_title(monitor), body: event.summary.clone(), session_id: monitor.session_id, urgent: false });
             if let Ok(header) = store.session_header(monitor.session_id) {
                 let lang = crate::settings::ui_lang(&settings);
-                crate::watch::show_session_notification(app, format!("PR #{}", monitor.number), event.summary, monitor.session_id, header.pid.unwrap_or(0), header.title.clone().unwrap_or_default(), header.cwd, None, false, crate::watch::NotifyKind::Waiting, lang.to_string(), settings.notification_sound);
+                crate::watch::show_session_notification(app, monitor_title(monitor), event.summary, monitor.session_id, header.pid.unwrap_or(0), header.title.clone().unwrap_or_default(), header.cwd, None, false, crate::watch::NotifyKind::Waiting, lang.to_string(), settings.notification_sound);
             }
         }
     }
     Ok(())
+}
+
+/// 通知标题：GitLab 的叫合并请求，编号写 `!号`（键里带主机，见 [`pr_key`]）。
+fn monitor_title(monitor: &PrMonitor) -> String {
+    let gitlab = monitor.key.split('#').next().and_then(|slug| slug.split('/').next()).is_some_and(|host| host == "gitlab.com" || crate::forge_accounts::ACCOUNTS.platform(host) == Some(super::platform::Platform::Gitlab));
+    if gitlab { format!("MR !{}", monitor.number) } else { format!("PR #{}", monitor.number) }
 }
 
 pub(crate) fn start_monitor_worker(app: &tauri::AppHandle) {
@@ -368,7 +350,7 @@ mod tests {
             None
         };
         let caches = Caches::default();
-        let ctx = Ctx { gh: &gh, caches: &caches, prefs: repo.join("forge.json"), env: &[] };
+        let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches: &caches, prefs: repo.join("forge.json"), env: &[] };
         let store = Store::open_in_memory().unwrap();
         store.upsert_pr_monitor(meowo_store::PrMonitorInput { key: "acme/repo#12", cwd: repo.to_str().unwrap(), session_id: 7, slug: "acme/repo", number: 12, enabled: true }, 1).unwrap();
         let monitor = store.pr_monitor("acme/repo#12").unwrap().unwrap();
@@ -401,7 +383,7 @@ mod tests {
             ok(String::new())
         };
         let caches = Caches::default();
-        let ctx = Ctx { gh: &gh, caches: &caches, prefs: repo.join("forge.json"), env: &[] };
+        let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches: &caches, prefs: repo.join("forge.json"), env: &[] };
         comment_with(&ctx, repo.to_str().unwrap(), 12, "note", true).unwrap();
         line_comment_with(&ctx, repo.to_str().unwrap(), 12, "src/a.ts", 3, "NEW", "line note").unwrap();
         let calls = calls.into_inner().unwrap();

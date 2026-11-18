@@ -23,9 +23,18 @@ use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+pub(crate) mod api;
 pub(crate) mod badge;
+pub(crate) mod bitbucket;
 mod builtin;
+pub(crate) mod ghe;
+pub(crate) mod gitea;
+pub(crate) mod gitlab;
+pub(crate) mod http;
+pub(crate) mod platform;
 pub(crate) mod review;
+use api::{ForgeApi, GhAuth, GhForge, NewPr, Target};
+use platform::{Forges, Platform};
 pub(crate) use badge::sidebar_git_badges_for;
 
 #[cfg(test)]
@@ -63,10 +72,10 @@ pub(crate) struct CmdOut {
 }
 
 impl CmdOut {
-    fn ok(&self) -> bool {
+    pub(crate) fn ok(&self) -> bool {
         !self.timed_out && self.code == Some(0)
     }
-    fn both(&self) -> String {
+    pub(crate) fn both(&self) -> String {
         format!("{}\n{}", self.stderr, self.stdout)
     }
 }
@@ -173,7 +182,7 @@ fn existing_dir(cwd: &str) -> Result<&str, String> {
 }
 
 /// 输出最后几行，错误提示里带上（钩子、服务器给的原因），不撑爆界面。
-fn tail(text: &str, lines: usize) -> String {
+pub(crate) fn tail(text: &str, lines: usize) -> String {
     let all: Vec<&str> = text.lines().map(str::trim_end).filter(|l| !l.trim().is_empty()).collect();
     all[all.len().saturating_sub(lines)..].join("\n")
 }
@@ -629,13 +638,13 @@ pub(crate) fn real_gh(dir: &str, args: &[&str]) -> Option<CmdOut> {
 
 /// gh 报的是「没登录 / token 失效」（实测 gh 2.96：`Try authenticating with:  gh auth login`、
 /// `HTTP 401: Bad credentials`、未登录时 `To get started with GitHub CLI, please run:  gh auth login`）。
-fn says_unauthed(out: &CmdOut) -> bool {
+pub(crate) fn says_unauthed(out: &CmdOut) -> bool {
     let low = out.both().to_lowercase();
     low.contains("gh auth login") || low.contains("http 401") || low.contains("bad credentials")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GhState {
+pub(crate) enum GhState {
     Missing,
     Unauthed,
     Ok,
@@ -660,7 +669,7 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 impl Caches {
-    fn gh_state(&self, gh: GhExec, refresh: bool) -> GhState {
+    pub(crate) fn gh_state(&self, gh: GhExec, refresh: bool) -> GhState {
         if !refresh {
             if let Some((at, state)) = *lock(&self.auth) {
                 if at.elapsed() < AUTH_TTL {
@@ -677,12 +686,12 @@ impl Caches {
         state
     }
 
-    fn mark_unauthed(&self) {
+    pub(crate) fn mark_unauthed(&self) {
         *lock(&self.auth) = Some((Instant::now(), GhState::Unauthed));
     }
 
     /// gh 太旧：`gh pr merge` 没有 `--match-head-commit`（看 help 文本，不靠版本号猜）。
-    fn gh_too_old(&self, gh: GhExec) -> bool {
+    pub(crate) fn gh_too_old(&self, gh: GhExec) -> bool {
         if let Some(known) = *lock(&self.too_old) {
             return known;
         }
@@ -692,23 +701,17 @@ impl Caches {
         old
     }
 
-    fn merge_methods(&self, gh: GhExec, dir: &str, slug: &str) -> Vec<String> {
-        if let Some((at, methods)) = lock(&self.methods).get(slug) {
+    /// 仓库允许的合并方式，按仓库键（[`platform::repo_key`]）缓存 1 小时；查不了回空、不记缓存。
+    fn merge_methods(&self, forge: &dyn ForgeApi, dir: &str, key: &str, slug: &str) -> Vec<String> {
+        if let Some((at, methods)) = lock(&self.methods).get(key) {
             if at.elapsed() < METHODS_TTL {
                 return methods.clone();
             }
         }
-        let Some(out) = gh(dir, &["repo", "view", slug, "--json", "mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed"]) else {
+        let Ok(methods) = forge.merge_methods(dir, slug) else {
             return Vec::new();
         };
-        if !out.ok() {
-            if says_unauthed(&out) {
-                self.mark_unauthed();
-            }
-            return Vec::new();
-        }
-        let methods = parse_merge_methods(&out.stdout);
-        lock(&self.methods).insert(slug.to_string(), (Instant::now(), methods.clone()));
+        lock(&self.methods).insert(key.to_string(), (Instant::now(), methods.clone()));
         methods
     }
 
@@ -730,7 +733,7 @@ pub(crate) fn parse_merge_methods(json: &str) -> Vec<String> {
 
 // ═══ PR 与检查 ═══
 
-const PR_FIELDS: &str = "number,state,isDraft,url,title,baseRefName,headRefName,headRefOid,mergeable,mergeStateStatus,statusCheckRollup";
+pub(crate) const PR_FIELDS: &str = "number,state,isDraft,url,title,baseRefName,headRefName,headRefOid,mergeable,mergeStateStatus,statusCheckRollup";
 
 /// 一项检查 → pass / fail / pending / skipped。CheckRun（GitHub Actions 等）看 status + conclusion；
 /// StatusContext（老式 commit status，如 prow 的 tide、CircleCI）看 state。实测样例见 forge/fixtures。
@@ -799,25 +802,19 @@ pub(crate) fn parse_pr_full(json: &str) -> Option<PullRequestDto> {
 /// 查一个分支（或 PR 号）的 PR。Ok(None) = 没有 PR；Err = 查不了（没登录、断网），调用方保留上一次的结果。
 /// 知道 owner/repo 就显式带 `--repo`：fork + upstream 两个远端又没设 gh default repo 时，gh 不带它会
 /// 报 set-default（做空审查实测）。带了 --repo 的 `gh pr view` 不再看当前分支，必须把分支名作参数。
+fn find_pr(forge: &dyn ForgeApi, dir: &str, slug: Option<&str>, target: &Target) -> Result<Option<PullRequestDto>, String> {
+    forge.find(dir, slug, target)
+}
+
+/// 改版前的入口形状（测试沿用）：直接对 gh 执行器按分支或号查。
+#[cfg(test)]
 fn view_pr(gh: GhExec, caches: &Caches, dir: &str, slug: Option<&str>, target: Option<&str>) -> Result<Option<PullRequestDto>, String> {
-    let mut args = vec!["pr", "view"];
-    args.extend(target);
-    if let (Some(slug), Some(_)) = (slug, target) {
-        args.extend(["--repo", slug]);
+    let forge = GhForge { gh: Box::new(move |d: &str, a: &[&str]| gh(d, a)), auth: GhAuth::Com(caches) };
+    let target = target.map(|t| Target::Branch { qualified: t, branch: t, head_slug: None });
+    match target {
+        Some(target) => forge.find(dir, slug, &target),
+        None => Err("gh/failed: no target".into()),
     }
-    args.extend(["--json", PR_FIELDS]);
-    let Some(out) = gh(dir, &args) else { return Err("gh/not_installed".into()) };
-    if out.ok() {
-        return parse_pr_full(&out.stdout).map(Some).ok_or_else(|| "gh/failed: bad json".into());
-    }
-    if out.both().to_lowercase().contains("no pull requests found") {
-        return Ok(None);
-    }
-    if says_unauthed(&out) {
-        caches.mark_unauthed();
-        return Err("gh/not_authed".into());
-    }
-    Err(format!("gh/failed: {}", tail(&out.both(), 4)))
 }
 
 // ═══ 仓库信息（本地 git）═══
@@ -834,11 +831,27 @@ struct RepoInfo {
     base: Option<String>,
 }
 
-/// 一个 GitHub 远端：远端名 + owner/repo。
+/// 一个认得出平台的远端：远端名 + 主机 + 仓库路径（owner/repo，GitLab 可带子组）+ 平台。
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct GhRemote {
-    remote: String,
-    slug: String,
+pub(crate) struct GhRemote {
+    pub(crate) remote: String,
+    pub(crate) slug: String,
+    pub(crate) host: String,
+    pub(crate) platform: Platform,
+}
+
+impl GhRemote {
+    /// 缓存、合并方式记录的键（github.com 只用 owner/repo，与改版前一致）。
+    pub(crate) fn key(&self) -> String {
+        platform::repo_key(&self.host, &self.slug)
+    }
+    pub(crate) fn is_github_com(&self) -> bool {
+        self.host == platform::GITHUB_COM
+    }
+    /// 仓库路径的第一段（fork 的 head 写法要 owner）。
+    fn owner(&self) -> &str {
+        self.slug.split_once('/').map(|(owner, _)| owner).unwrap_or(&self.slug)
+    }
 }
 
 /// PR 在哪个仓库开、head 在哪个仓库（单点判定，见 [`resolve_gh_repo`]）。
@@ -862,9 +875,7 @@ impl GhRepo {
     /// `gh pr view <owner>:<分支>` 都认这个写法）。
     fn head_ref(&self, branch: &str) -> String {
         match (&self.base, &self.head) {
-            (Some(base), Some(head)) if base.slug != head.slug => {
-                format!("{}:{branch}", head.slug.split_once('/').map(|(owner, _)| owner).unwrap_or(&head.slug))
-            }
+            (Some(base), Some(head)) if base.slug != head.slug => format!("{}:{branch}", head.owner()),
             _ => branch.to_string(),
         }
     }
@@ -873,19 +884,31 @@ impl GhRepo {
 /// PR 所在仓库：
 /// 1. 远端上有 `gh-resolved = base`（`gh repo set-default`、`gh repo fork --clone` 写的）就用它，与 gh 一致；
 /// 2. 用户在 Meowo 里选过（按仓库记在 forge.json）；
-/// 3. 只有一个 GitHub 远端就是它；
+/// 3. 只有一个认得出平台的远端就是它；
 /// 4. 多个又都没定：先按 origin（没有就第一个）查状态，标 needs_choice，界面给出可选列表。
 ///
+/// 认得出的远端分布在几台主机上（GitHub 上游 + 公司 GitLab 镜像）时，只在一台主机的远端里挑：gh-resolved、
+/// 用户选过的、origin、推送远端所在的主机依次优先，没有就第一个。镜像不算候选，不会因此要求用户选。
+///
 /// 做空第二轮实测：以前一律 `--repo` 推送远端（origin），fork 工作流 set-default 到 upstream 后，PR 开进了自己的 fork。
-fn resolve_gh_repo(cfg: &GitConfig, chosen: Option<&str>, target: Option<&PushTarget>) -> GhRepo {
-    let github: Vec<GhRemote> = cfg
+fn resolve_gh_repo(cfg: &GitConfig, forges: &dyn Forges, chosen: Option<&str>, target: Option<&PushTarget>) -> GhRepo {
+    let all: Vec<GhRemote> = cfg
         .remotes()
         .into_iter()
         .filter_map(|remote| {
-            let slug = github_slug(cfg.get("remote", Some(&remote), "url")?)?;
-            Some(GhRemote { remote, slug })
+            let (host, slug, platform) = platform::recognize(forges, cfg.get("remote", Some(&remote), "url")?)?;
+            Some(GhRemote { remote, slug, host, platform })
         })
         .collect();
+    let resolved_any = all.iter().find(|g| cfg.get("remote", Some(&g.remote), "gh-resolved") == Some("base"));
+    let named = |name: Option<&str>| name.and_then(|n| all.iter().find(|g| g.remote == n));
+    let host = resolved_any
+        .or_else(|| named(chosen))
+        .or_else(|| named(Some("origin")))
+        .or_else(|| named(target.map(|t| t.remote.as_str())))
+        .or(all.first())
+        .map(|g| g.host.clone());
+    let github: Vec<GhRemote> = all.iter().filter(|g| Some(&g.host) == host.as_ref()).cloned().collect();
     let by_name = |name: &str| github.iter().find(|g| g.remote == name).cloned();
     let resolved = github
         .iter()
@@ -913,8 +936,8 @@ fn common_key(common_dir: &Path) -> String {
     common_dir.to_string_lossy().replace('\\', "/").to_lowercase()
 }
 
-fn repo_info(dir: &str, env: GitEnv, prefs: &Path) -> Option<RepoInfo> {
-    let (mut info, _, _) = repo_head(dir, env, prefs, false)?;
+fn repo_info(dir: &str, env: GitEnv, prefs: &Path, forges: &dyn Forges) -> Option<RepoInfo> {
+    let (mut info, _, _) = repo_head(dir, env, prefs, forges, false)?;
     info.base = default_branch(dir, info.gh.base.as_ref().map(|b| b.remote.as_str()), env);
     Some(info)
 }
@@ -922,7 +945,7 @@ fn repo_info(dir: &str, env: GitEnv, prefs: &Path) -> Option<RepoInfo> {
 /// 不含默认分支（base 为 None）的 [`repo_info`]，另回 (公共 .git 目录, 本 worktree 的 .git 目录)。
 /// 侧栏只要 [`pr_key`]，键里没有 base；默认分支要再起 2～4 个 git 进程（远端 HEAD、main、master 逐个问）。
 /// head_file = 先直接读 .git/HEAD 拿分支名（侧栏用，省一个进程），读不懂再问 symbolic-ref。
-fn repo_head(dir: &str, env: GitEnv, prefs: &Path, head_file: bool) -> Option<(RepoInfo, PathBuf, PathBuf)> {
+fn repo_head(dir: &str, env: GitEnv, prefs: &Path, forges: &dyn Forges, head_file: bool) -> Option<(RepoInfo, PathBuf, PathBuf)> {
     let (common_dir, git_dir) = git_dirs(dir, env)?;
     let common = common_key(&common_dir);
     let branch = match head_file.then(|| branch_from_head_file(&git_dir)).flatten() {
@@ -931,7 +954,7 @@ fn repo_head(dir: &str, env: GitEnv, prefs: &Path, head_file: bool) -> Option<(R
     };
     let cfg = load_config(&common_dir, &git_dir, env);
     let target = branch.as_deref().and_then(|b| resolve(&cfg, &common_dir, b));
-    let gh = resolve_gh_repo(&cfg, chosen_remote(prefs, &common).as_deref(), target.as_ref());
+    let gh = resolve_gh_repo(&cfg, forges, chosen_remote(prefs, &common).as_deref(), target.as_ref());
     let info = RepoInfo { common, branch, target, gh, has_remote: !cfg.remotes().is_empty(), base: None };
     Some((info, common_dir, git_dir))
 }
@@ -975,8 +998,9 @@ fn default_branch(dir: &str, remote: Option<&str>, env: GitEnv) -> Option<String
     None
 }
 
-/// 远端地址 → GitHub 的 owner/repo。认 https / ssh / scp 三种写法；GitHub Enterprise 与 ssh 主机别名不认
-/// （按 not_github 降级：push 照常，只是不显示 PR 区块）。
+/// 远端地址 → github.com 的 owner/repo（别的主机不认）。forge 现在按 [`platform::recognize`] 认各平台，这里
+/// 留给只关心 github.com 的判定与测试。
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn github_slug(url: &str) -> Option<String> {
     let url = url.trim();
     let path = if let Some(rest) = url.strip_prefix("git@github.com:").or_else(|| url.strip_prefix("github.com:")) {
@@ -994,16 +1018,6 @@ pub(crate) fn github_slug(url: &str) -> Option<String> {
     let path = path.strip_suffix(".git").unwrap_or(path);
     let (owner, repo) = path.split_once('/')?;
     (!owner.is_empty() && !repo.is_empty() && !repo.contains('/')).then(|| format!("{owner}/{repo}"))
-}
-
-/// compare 网页的分支段：路径里能原样出现的字符之外都转义（分支名里的 `/` 保留，GitHub 认）。
-fn url_path_escape(text: &str) -> String {
-    text.bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => (b as char).to_string(),
-            _ => format!("%{b:02X}"),
-        })
-        .collect()
 }
 
 /// 开 PR 的默认值：base..HEAD 只有一个提交时取它的标题，否则用分支名；正文是提交列表。
@@ -1079,6 +1093,9 @@ fn chosen_remote(path: &Path, common: &str) -> Option<String> {
 
 /// 一次调用要用到的外部依赖。正式命令用 [`Ctx::real`]，测试换成录制的 gh 与临时目录。
 pub(crate) struct Ctx<'a> {
+    /// 主机 → 平台与账号（公共主机内置，自建主机看账号声明）。github.com 不经这里。
+    pub(crate) forges: &'a dyn Forges,
+    /// github.com 的 gh 执行器（本机 gh / 内置实现 / 关闭，按设置里的 GitHub 连接方式）。
     pub(crate) gh: GhExec<'a>,
     pub(crate) caches: &'a Caches,
     pub(crate) prefs: PathBuf,
@@ -1087,7 +1104,25 @@ pub(crate) struct Ctx<'a> {
 
 impl Ctx<'static> {
     fn real() -> Self {
-        Ctx { gh: &connected_gh, caches: &CACHES, prefs: prefs_path(), env: &[] }
+        Ctx { forges: &crate::forge_accounts::ACCOUNTS, gh: &connected_gh, caches: &CACHES, prefs: prefs_path(), env: &[] }
+    }
+}
+
+impl Ctx<'_> {
+    /// github.com 的平台接口：gh 执行器 + 进程内缓存。
+    fn github(&self) -> GhForge<'_> {
+        let gh = self.gh;
+        GhForge { gh: Box::new(move |dir: &str, args: &[&str]| gh(dir, args)), auth: GhAuth::Com(self.caches) }
+    }
+
+    /// 仓库所在平台的接口。base 为 None（远端认不出平台：企业版没加账号、ssh 别名）时交给 gh 按目录自己认，
+    /// 与改版前一致。Err(平台) = 认得出平台但没有账号（不发任何请求，界面引导去设置添加账号）。
+    fn forge_for(&self, base: Option<&GhRemote>) -> Result<Box<dyn ForgeApi + '_>, Platform> {
+        match base {
+            None => Ok(Box::new(self.github())),
+            Some(base) if base.is_github_com() => Ok(Box::new(self.github())),
+            Some(base) => self.forges.open(&base.host).ok_or(base.platform),
+        }
     }
 }
 
@@ -1127,7 +1162,39 @@ pub(crate) fn targets_github_com(dir: &str, args: &[&str]) -> bool {
     if args.iter().any(|a| *a == "--repo" || *a == "-R") {
         return true;
     }
-    repo_head(dir, &[], &prefs_path(), false).is_some_and(|(info, _, _)| info.gh.slug().is_some())
+    repo_head(dir, &[], &prefs_path(), &platform::NO_ACCOUNTS, false).is_some_and(|(info, _, _)| info.gh.base.as_ref().is_some_and(GhRemote::is_github_com))
+}
+
+/// worktree 清理查当前分支的 PR（不走缓存：删除前要的是此刻的状态）。仓库在 github.com 或远端认不出平台时
+/// 回 None，由 worktree.rs 照旧问 gh；别的平台经统一接口查，没账号、没登录、查不了都是 Unavailable（不删）。
+pub(crate) fn platform_pr_lookup_with(ctx: &Ctx, dir: &str) -> Option<crate::worktree::PrLookup> {
+    use crate::worktree::PrLookup;
+    let (info, _, _) = repo_head(dir, ctx.env, &ctx.prefs, ctx.forges, false)?;
+    let base = info.gh.base.as_ref().filter(|b| !b.is_github_com())?;
+    let Ok(forge) = ctx.forge_for(Some(base)) else { return Some(PrLookup::Unavailable) };
+    if forge.state(false) != GhState::Ok {
+        return Some(PrLookup::Unavailable);
+    }
+    let Some((qualified, branch)) = info.branch_target() else { return Some(PrLookup::Unavailable) };
+    let target = Target::Branch { qualified: &qualified, branch: &branch, head_slug: info.head_slug() };
+    Some(match forge.find(dir, Some(&base.slug), &target) {
+        Ok(None) => PrLookup::NoPr,
+        Ok(Some(pr)) => PrLookup::Found {
+            number: pr.number,
+            state: match pr.state.as_str() {
+                "merged" => "MERGED",
+                "closed" => "CLOSED",
+                _ => "OPEN",
+            }
+            .into(),
+            head_oid: pr.head_oid.unwrap_or_default(),
+        },
+        Err(_) => PrLookup::Unavailable,
+    })
+}
+
+pub(crate) fn platform_pr_lookup(dir: &Path) -> Option<crate::worktree::PrLookup> {
+    platform_pr_lookup_with(&Ctx::real(), &dir.to_string_lossy())
 }
 
 /// 本机找得到 gh（设置页显示用；与 real_gh 同一套查找）。
@@ -1149,7 +1216,7 @@ pub(crate) fn invalidate_connection() {
 
 /// PR 缓存键：公共 .git 目录 + PR 所在仓库 + head。换了仓库（界面上选了别的远端）就是另一份缓存。
 fn pr_key(info: &RepoInfo) -> Option<String> {
-    Some(format!("{}\u{0}{}\u{0}{}", info.common, info.gh.slug()?, info.head_ref()?))
+    Some(format!("{}\u{0}{}\u{0}{}", info.common, info.gh.base.as_ref()?.key(), info.head_ref()?))
 }
 
 impl RepoInfo {
@@ -1160,6 +1227,17 @@ impl RepoInfo {
     /// gh 认的 head（fork 时带 owner）。
     fn head_ref(&self) -> Option<String> {
         self.head_branch().map(|b| self.gh.head_ref(b))
+    }
+    /// fork 时 head 所在仓库的路径（同仓库为 None）。
+    fn head_slug(&self) -> Option<&str> {
+        match (&self.gh.base, &self.gh.head) {
+            (Some(base), Some(head)) if base.slug != head.slug => Some(head.slug.as_str()),
+            _ => None,
+        }
+    }
+    /// 按 head 分支找 PR 的目标。
+    fn branch_target(&self) -> Option<(String, String)> {
+        Some((self.head_ref()?, self.head_branch()?.to_string()))
     }
     /// (head, base)：同一仓库里 head 就是目标分支时没有 PR 可开（本地就在默认分支上），返回 None。
     fn pr_branches(&self) -> Option<(&str, &str)> {
@@ -1188,7 +1266,7 @@ fn gh_label(state: GhState) -> &'static str {
 /// 「更改」面板 GitHub 区块的数据。force：窗口重新聚焦 / 手动刷新，跳过 60s 缓存（但最短 10s）并重查登录状态。
 pub(crate) fn forge_status_with(ctx: &Ctx, cwd: &str, force: bool) -> Result<ForgeStatusDto, String> {
     let dir = existing_dir(cwd)?;
-    let info = repo_info(dir, ctx.env, &ctx.prefs).ok_or("worktree/not_repo")?;
+    let info = repo_info(dir, ctx.env, &ctx.prefs, ctx.forges).ok_or("worktree/not_repo")?;
     let mut dto = ForgeStatusDto {
         gh: "no_remote".into(),
         gh_too_old: false,
@@ -1202,46 +1280,54 @@ pub(crate) fn forge_status_with(ctx: &Ctx, cwd: &str, force: bool) -> Result<For
         repo_remote: None,
         repo_needs_choice: false,
         connection: None,
+        forge: None,
+        forge_host: None,
     };
     if !info.has_remote {
         return Ok(dto);
     }
-    let Some(slug) = info.gh.slug().map(str::to_string) else {
+    let Some(base) = info.gh.base.clone() else {
         dto.gh = "not_github".into();
         return Ok(dto);
     };
+    let slug = base.slug.clone();
+    dto.forge = Some(base.platform.as_str().into());
+    dto.forge_host = Some(base.host.clone());
     dto.repo_choices = info.gh.choices.iter().map(|c| ForgeRepoChoiceDto { remote: c.remote.clone(), slug: c.slug.clone() }).collect();
-    dto.repo_remote = info.gh.base.as_ref().map(|b| b.remote.clone());
+    dto.repo_remote = Some(base.remote.clone());
     dto.repo_needs_choice = info.gh.needs_choice;
-    let repo_url = format!("https://github.com/{slug}");
-    if let (Some((head, base)), Some(head_ref)) = (info.pr_branches(), info.head_ref()) {
+    if let (Some((head, base_branch)), Some(head_ref)) = (info.pr_branches(), info.head_ref()) {
         // fork 的 head 写 `<owner>:<分支>`：GitHub 的 compare 页就是这个写法，冒号原样保留。
-        let head = match head_ref.split_once(':') {
-            Some((owner, _)) => format!("{owner}:{}", url_path_escape(head)),
-            None => url_path_escape(head),
-        };
-        dto.compare_url = Some(format!("{repo_url}/compare/{}...{head}?expand=1", url_path_escape(base)));
+        let owner = head_ref.split_once(':').map(|(owner, _)| owner);
+        dto.compare_url = Some(platform::compare_url(base.platform, &base.host, &slug, base_branch, head, owner));
     }
-    dto.repo_url = Some(repo_url);
-    dto.last_merge_method = last_merge_method(&ctx.prefs, &slug);
-    let state = ctx.caches.gh_state(ctx.gh, force);
-    dto.gh = gh_label(state).into();
-    let base_remote = info.gh.base.as_ref().map(|b| b.remote.clone());
+    dto.repo_url = Some(format!("{}/{slug}", platform::web_base(&base.host)));
+    dto.last_merge_method = last_merge_method(&ctx.prefs, &base.key());
+    let base_remote = Some(base.remote.clone());
     let defaults = |info: &RepoInfo| {
         info.pr_branches().map(|(head, base)| pr_defaults(dir, head, base, base_remote.as_deref(), ctx.env))
     };
+    // 认得出平台、但设置里没有这台主机的账号：不发任何请求，界面引导去添加账号。
+    let Ok(forge) = ctx.forge_for(Some(&base)) else {
+        dto.gh = "no_account".into();
+        dto.pr_defaults = defaults(&info);
+        return Ok(dto);
+    };
+    let state = forge.state(force);
+    dto.gh = gh_label(state).into();
     if state != GhState::Ok {
         dto.pr_defaults = defaults(&info);
         return Ok(dto);
     }
-    dto.gh_too_old = ctx.caches.gh_too_old(ctx.gh);
-    dto.merge_methods = ctx.caches.merge_methods(ctx.gh, dir, &slug);
-    if let Some(key) = pr_key(&info) {
+    dto.gh_too_old = forge.too_old();
+    dto.merge_methods = ctx.caches.merge_methods(forge.as_ref(), dir, &base.key(), &slug);
+    if let (Some(key), Some((qualified, branch))) = (pr_key(&info), info.branch_target()) {
+        let target = Target::Branch { qualified: &qualified, branch: &branch, head_slug: info.head_slug() };
         let cached = lock(&ctx.caches.prs).get(&key).cloned();
         let ttl = if force { FORCE_MIN } else { PR_TTL };
         let pr = match cached {
             Some((at, pr)) if at.elapsed() < ttl => pr,
-            _ => match view_pr(ctx.gh, ctx.caches, dir, Some(&slug), info.head_ref().as_deref()) {
+            _ => match find_pr(forge.as_ref(), dir, Some(&slug), &target) {
                 Ok(pr) => {
                     lock(&ctx.caches.prs).insert(key, (Instant::now(), pr.clone()));
                     pr
@@ -1251,11 +1337,11 @@ pub(crate) fn forge_status_with(ctx: &Ctx, cwd: &str, force: bool) -> Result<For
             },
         };
         dto.pr = pr.map(|mut pr| {
-            let mark = (slug.clone(), pr.number, pr.head_oid.clone().unwrap_or_default());
+            let mark = (base.key(), pr.number, pr.head_oid.clone().unwrap_or_default());
             pr.queued = pr.state == "open" && lock(&ctx.caches.queued).contains(&mark);
             pr
         });
-        if ctx.caches.gh_state(ctx.gh, false) == GhState::Unauthed {
+        if forge.state(false) == GhState::Unauthed {
             dto.gh = "unauthenticated".into();
         }
     }
@@ -1285,12 +1371,19 @@ pub(crate) fn label_connection(dto: &mut ForgeStatusDto, connection: &str) {
     }
 }
 
-fn require_gh(ctx: &Ctx) -> Result<(), String> {
-    match ctx.caches.gh_state(ctx.gh, false) {
+fn require(forge: &dyn ForgeApi) -> Result<(), String> {
+    match forge.state(false) {
         GhState::Missing => Err("gh/not_installed".into()),
         GhState::Unauthed => Err("gh/not_authed".into()),
         GhState::Ok => Ok(()),
     }
+}
+
+/// 仓库所在平台的接口，且能用（装了 gh / 登录了 / 有账号）。没有账号：`forge/no_account: <平台>`。
+fn usable<'c>(ctx: &'c Ctx, info: &RepoInfo) -> Result<Box<dyn ForgeApi + 'c>, String> {
+    let forge = ctx.forge_for(info.gh.base.as_ref()).map_err(|platform| format!("forge/no_account: {}", platform.as_str()))?;
+    require(forge.as_ref())?;
+    Ok(forge)
 }
 
 /// gh 的失败输出 → `gh/代码`。
@@ -1334,8 +1427,8 @@ pub(crate) fn pr_create_with(
     push: &dyn Fn(&str) -> Result<PushResultDto, String>,
 ) -> Result<PullRequestDto, String> {
     let dir = existing_dir(cwd)?;
-    require_gh(ctx)?;
-    let info = repo_info(dir, ctx.env, &ctx.prefs).ok_or("worktree/not_repo")?;
+    let info = repo_info(dir, ctx.env, &ctx.prefs, ctx.forges).ok_or("worktree/not_repo")?;
+    let forge = usable(ctx, &info)?;
     info.branch.as_ref().ok_or("git/detached")?;
     // 多个 GitHub 远端、没定 PR 开在哪：不静默挑 origin，界面拿到这个码就弹出远端列表让用户选。
     if info.gh.needs_choice {
@@ -1356,36 +1449,22 @@ pub(crate) fn pr_create_with(
     let defaults = pr_defaults(dir, &head_branch, &base, base_remote.as_deref(), ctx.env);
     let title = title.map(str::trim).filter(|t| !t.is_empty()).map(str::to_string).unwrap_or(defaults.title);
     let body = body.map(str::to_string).unwrap_or(defaults.body);
-    let mut args = vec!["pr", "create", "--title", &title, "--body", &body, "--base", &base, "--head", &head];
-    if draft {
-        args.push("--draft");
-    }
-    if let Some(slug) = slug.as_deref() {
-        args.extend(["--repo", slug]);
-    }
-    let out = (ctx.gh)(dir, &args).ok_or("gh/not_installed")?;
+    let new = NewPr { title: &title, body: &body, base: &base, head: &head, branch: &head_branch, head_slug: info.head_slug(), draft };
+    let created = forge.create(dir, slug.as_deref(), &new);
     if let Some(key) = pr_key(&info) {
         ctx.caches.invalidate_pr(&key);
     }
-    if !out.ok() {
-        if out.both().contains("already exists") {
-            let url = out.both().lines().map(str::trim).find(|l| l.starts_with("https://")).unwrap_or_default().to_string();
-            return Err(format!("gh/pr_exists: {url}"));
-        }
-        if says_unauthed(&out) {
-            ctx.caches.mark_unauthed();
-        }
-        return Err(classify_gh_failure(&out, None));
-    }
-    let url = out.stdout.lines().map(str::trim).find(|l| l.starts_with("https://")).unwrap_or_default().to_string();
-    match view_pr(ctx.gh, ctx.caches, dir, slug.as_deref(), Some(&head)) {
+    let url = created?;
+    let target = Target::Branch { qualified: &head, branch: &head_branch, head_slug: info.head_slug() };
+    match find_pr(forge.as_ref(), dir, slug.as_deref(), &target) {
         Ok(Some(pr)) => Ok(pr),
-        // 刚建好就查不到（GitHub 偶有延迟）：用 gh 打出的链接拼一个最小的。
+        // 刚建好就查不到（平台偶有延迟）：用回来的链接拼一个最小的。
         _ => Ok(PullRequestDto {
             number: url.rsplit('/').next().and_then(|n| n.parse().ok()).unwrap_or(0),
             state: if draft { "draft".into() } else { "open".into() },
             url,
             title,
+            forge: (forge.platform() != Platform::Github).then(|| forge.platform().as_str().to_string()),
             ..Default::default()
         }),
     }
@@ -1411,23 +1490,27 @@ pub(crate) async fn gh_pr_create(
 /// 应用内合并。后端重查一次 PR（不走缓存）再判：头提交没变、检查 none/pass、没冲突、方式是仓库允许的。
 pub(crate) fn pr_merge_with(ctx: &Ctx, cwd: &str, number: u32, method: &str, expected_head_oid: &str) -> Result<MergeResultDto, String> {
     let dir = existing_dir(cwd)?;
-    require_gh(ctx)?;
-    if ctx.caches.gh_too_old(ctx.gh) {
+    let info = repo_info(dir, ctx.env, &ctx.prefs, ctx.forges).ok_or("worktree/not_repo")?;
+    let forge = usable(ctx, &info)?;
+    if forge.too_old() {
         return Err("gh/too_old".into());
     }
-    let info = repo_info(dir, ctx.env, &ctx.prefs).ok_or("worktree/not_repo")?;
     if info.gh.needs_choice {
         return Err("gh/ambiguous_repo".into());
     }
-    let slug = info.gh.slug().ok_or("gh/merge_blocked: not github")?.to_string();
-    let methods = ctx.caches.merge_methods(ctx.gh, dir, &slug);
+    let base = info.gh.base.clone().ok_or("gh/merge_blocked: not github")?;
+    let slug = base.slug.clone();
+    let methods = ctx.caches.merge_methods(forge.as_ref(), dir, &base.key(), &slug);
     if !methods.iter().any(|m| m == method) {
         return Err("gh/method_not_allowed".into());
     }
-    let number_text = number.to_string();
     // 查当前分支的 PR（head 与开 PR 同一个判定，再核对号对不对得上）；detached 时按号查。
-    let target = info.branch.as_ref().and_then(|_| info.head_ref()).unwrap_or_else(|| number_text.clone());
-    let pr = view_pr(ctx.gh, ctx.caches, dir, Some(&slug), Some(&target))?.ok_or("gh/head_changed")?;
+    let branch_target = info.branch.as_ref().and_then(|_| info.branch_target());
+    let target = match &branch_target {
+        Some((qualified, branch)) => Target::Branch { qualified, branch, head_slug: info.head_slug() },
+        None => Target::Number(number),
+    };
+    let pr = find_pr(forge.as_ref(), dir, Some(&slug), &target)?.ok_or("gh/head_changed")?;
     if pr.number != number {
         return Err("gh/head_changed".into());
     }
@@ -1453,30 +1536,21 @@ pub(crate) fn pr_merge_with(ctx: &Ctx, cwd: &str, number: u32, method: &str, exp
     if pr.mergeable.as_deref() == Some("UNKNOWN") {
         return Err("gh/checks_pending".into());
     }
-    let flag = format!("--{method}");
-    // 不加 --delete-branch：远端分支留着，worktree 与本地分支的清理走 worktree.rs 的判定，只提示。
-    let args = ["pr", "merge", number_text.as_str(), flag.as_str(), "--match-head-commit", head.as_str(), "--repo", slug.as_str()];
-    let out = (ctx.gh)(dir, &args).ok_or("gh/not_installed")?;
+    let merged = forge.merge(dir, &slug, &pr, method, &head);
     if let Some(key) = pr_key(&info) {
         ctx.caches.invalidate_pr(&key);
     }
-    if !out.ok() {
-        if says_unauthed(&out) {
-            ctx.caches.mark_unauthed();
-        }
-        return Err(classify_gh_failure(&out, Some(&pr.url)));
-    }
-    save_merge_method(&ctx.prefs, &slug, method);
+    let said_queue = merged?;
+    save_merge_method(&ctx.prefs, &base.key(), method);
     // 仓库开了合并队列时 gh 回的是「will be added to the merge queue」，PR 还是 OPEN：不能说已合并。
     // 只认 gh 的这句原话：合并成功后 GitHub 有延迟，立刻 view 常常还是 OPEN，以前据此标「已入队」并记进
     // queued 缓存，之后刷新一直挂着「在队列里」（做空审查）。gh 没说排队就按已合并处理；这次 view 不进
-    // PR 缓存（上面已作废），下一次刷新以服务器为准。
-    let said_queue = out.both().to_lowercase().contains("merge queue");
-    let after = view_pr(ctx.gh, ctx.caches, dir, Some(&slug), Some(&target)).ok().flatten();
+    // PR 缓存（上面已作废），下一次刷新以服务器为准。别的平台没有合并队列，merge 恒回 false。
+    let after = find_pr(forge.as_ref(), dir, Some(&slug), &target).ok().flatten();
     let queued = said_queue && !after.as_ref().is_some_and(|p| p.state == "merged");
     let merged = !queued;
     if queued {
-        lock(&ctx.caches.queued).insert((slug, number, head));
+        lock(&ctx.caches.queued).insert((base.key(), number, head));
     }
     Ok(MergeResultDto { merged, queued })
 }
@@ -1490,11 +1564,12 @@ pub(crate) async fn gh_pr_merge(cwd: String, number: u32, method: String, expect
 
 /// 多个 GitHub 远端、没用 gh repo set-default 定过时，用户在界面上选 PR 开在哪个远端的仓库（不推用户去终端跑
 /// gh repo set-default）。按公共 .git 目录记在 forge.json，同一仓库的各 worktree 共用这个选择。
-pub(crate) fn choose_repo_with(prefs: &Path, cwd: &str, remote: &str, env: GitEnv) -> Result<(), String> {
+pub(crate) fn choose_repo_with(prefs: &Path, cwd: &str, remote: &str, env: GitEnv, forges: &dyn Forges) -> Result<(), String> {
     let dir = existing_dir(cwd)?;
     let (common_dir, git_dir) = git_dirs(dir, env).ok_or("worktree/not_repo")?;
     let cfg = load_config(&common_dir, &git_dir, env);
-    let github = cfg.remotes().iter().any(|r| r == remote) && cfg.get("remote", Some(remote), "url").and_then(github_slug).is_some();
+    let github = cfg.remotes().iter().any(|r| r == remote)
+        && cfg.get("remote", Some(remote), "url").and_then(|url| platform::recognize(forges, url)).is_some();
     if !github {
         return Err("git/no_remote".into());
     }
@@ -1504,7 +1579,7 @@ pub(crate) fn choose_repo_with(prefs: &Path, cwd: &str, remote: &str, env: GitEn
 
 #[tauri::command]
 pub(crate) async fn forge_choose_repo(cwd: String, remote: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || choose_repo_with(&prefs_path(), &cwd, &remote, &[]))
+    tauri::async_runtime::spawn_blocking(move || choose_repo_with(&prefs_path(), &cwd, &remote, &[], &crate::forge_accounts::ACCOUNTS))
         .await
         .map_err(|e| e.to_string())?
 }

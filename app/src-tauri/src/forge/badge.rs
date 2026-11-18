@@ -16,7 +16,9 @@
 //! 同一基准（release）改后：冷态 438ms / 38 个进程，热态 1ms / 0 个，30 秒一轮的稳态 297ms / 24 个
 //!（改前 4100ms / 125 个）；大仓库单目录冷态 372→155ms。
 
-use super::{lock, pr_key, repo_head, view_pr, Ctx, GhState, PR_TTL};
+use super::api::Target;
+use super::platform::{self, Platform};
+use super::{find_pr, lock, pr_key, repo_head, Ctx, GhRemote, GhState, PR_TTL};
 use meowo_protocol::ipc::{PullRequestDto, SidebarGitBadgeDto, SidebarPrBadgeDto};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -49,8 +51,24 @@ pub(crate) struct DiffCache {
     url_prs: Mutex<HashMap<String, (Instant, Option<PullRequestDto>)>>,
 }
 
-/// 一个目录的 PR 去向：(缓存键, 仓库 owner/name, gh 认的 head)。没有 GitHub 远端、detached 时为 None。
-type PrTarget = Option<(String, String, String)>;
+/// 一个目录的 PR 去向：缓存键、PR 所在仓库、head（gh 的写法、分支名、fork 时 head 所在仓库）。
+#[derive(Clone)]
+struct PrWhere {
+    key: String,
+    base: GhRemote,
+    qualified: String,
+    branch: String,
+    head_slug: Option<String>,
+}
+
+impl PrWhere {
+    fn target(&self) -> Target<'_> {
+        Target::Branch { qualified: &self.qualified, branch: &self.branch, head_slug: self.head_slug.as_deref() }
+    }
+}
+
+/// 没有认得出平台的远端、detached 时为 None。
+type PrTarget = Option<PrWhere>;
 
 struct TargetEntry {
     at: Instant,
@@ -84,6 +102,7 @@ fn to_badge(pr: &PullRequestDto) -> SidebarPrBadgeDto {
         checks: pr.checks_summary.clone(),
         url: pr.url.clone(),
         title: pr.title.clone(),
+        forge: pr.forge.clone(),
     }
 }
 
@@ -100,8 +119,11 @@ fn pr_target(cache: &DiffCache, ctx: &Ctx, dir: &str) -> PrTarget {
             return entry.target.clone();
         }
     }
-    let (info, common_dir, git_dir) = repo_head(dir, ctx.env, &ctx.prefs, true)?;
-    let target = pr_key(&info).and_then(|key| Some((key, info.gh.slug()?.to_string(), info.head_ref()?)));
+    let (info, common_dir, git_dir) = repo_head(dir, ctx.env, &ctx.prefs, ctx.forges, true)?;
+    let target = pr_key(&info).and_then(|key| {
+        let (qualified, branch) = info.branch_target()?;
+        Some(PrWhere { key, base: info.gh.base.clone()?, qualified, branch, head_slug: info.head_slug().map(str::to_string) })
+    });
     let watch = vec![git_dir.join("HEAD"), common_dir.join("config"), git_dir.join("config.worktree"), ctx.prefs.clone()];
     let entry = TargetEntry { at: Instant::now(), stamps: stamps(&watch), watch, target: target.clone() };
     lock(&cache.targets).insert(dir.to_string(), entry);
@@ -114,8 +136,10 @@ fn pr_badge(ctx: &Ctx, target: PrTarget, dir: &str, online: bool) -> Option<Side
 }
 
 /// 一个目录当前分支的 PR，走 forge 的 PR 缓存（侧栏与标题栏共用）。online=false 时只看缓存（不论新旧），绝不调 gh。
+/// 认得出平台、但没有这台主机的账号：什么都不查（不报错、不发请求）。
 fn cached_pr(ctx: &Ctx, target: PrTarget, dir: &str, online: bool) -> Option<PullRequestDto> {
-    let (key, slug, head) = target?;
+    let place = target?;
+    let key = place.key.clone();
     let cached = lock(&ctx.caches.prs).get(&key).cloned();
     if let Some((at, pr)) = &cached {
         if !online || at.elapsed() < PR_TTL {
@@ -125,11 +149,12 @@ fn cached_pr(ctx: &Ctx, target: PrTarget, dir: &str, online: bool) -> Option<Pul
     if !online {
         return None;
     }
+    let forge = ctx.forge_for(Some(&place.base)).ok()?;
     // 登录状态自带 5 分钟缓存；没装、没登录就不查 PR（缓存里有旧的也不显示：登录失效时别挂着过期的 CI 结果）。
-    if ctx.caches.gh_state(ctx.gh, false) != GhState::Ok {
+    if forge.state(false) != GhState::Ok {
         return None;
     }
-    match view_pr(ctx.gh, ctx.caches, dir, Some(&slug), Some(&head)) {
+    match find_pr(forge.as_ref(), dir, Some(&place.base.slug), &place.target()) {
         Ok(pr) => {
             lock(&ctx.caches.prs).insert(key, (Instant::now(), pr.clone()));
             pr
@@ -161,7 +186,7 @@ pub(crate) fn title_pr_with(ctx: &Ctx, diffs: &DiffCache, cwd: &str) -> Option<P
         Some(target) => cached_pr(ctx, Some(target), dir, true)?,
         None => direct_pr(ctx, diffs, dir)?,
     };
-    Some(PullRequestDto { number: pr.number, state: pr.state, url: pr.url, title: pr.title, ..Default::default() })
+    Some(PullRequestDto { number: pr.number, state: pr.state, url: pr.url, title: pr.title, forge: pr.forge, ..Default::default() })
 }
 
 /// 以前标题栏的查法：在目录里跑 `gh pr view`（不带 --repo，由 gh 按当前分支和远端自己认），按目录缓存 60 秒。
@@ -182,8 +207,9 @@ fn direct_pr(ctx: &Ctx, diffs: &DiffCache, dir: &str) -> Option<PullRequestDto> 
     pr
 }
 
-/// 会话里 agent 用 gh 建过、动过的 PR：前端从时间线的命令输出里抠出链接，这里按链接问 gh 现状
-/// （开着、草稿、已合并、已关闭），按链接缓存 60 秒。
+/// 会话里 agent 用 gh 建过、动过的 PR：前端从时间线的命令输出里抠出链接，这里按链接问现状
+/// （开着、草稿、已合并、已关闭），按链接缓存 60 秒。GitHub（含认不出平台的企业版主机）问 gh；GitLab /
+/// Gitea / Bitbucket 与加了账号的企业版问各自的接口；认得出平台但没有账号的主机不查。
 ///
 /// 为什么不按分支：agent 常在临时 worktree 里另切分支建 PR，建完把 worktree 删掉，会话目录停在
 /// 原来的分支上，按分支查到的是那个分支的旧 PR（2026-11-16 实拍：刚建了 #536，标题栏仍是已合并的 #530）。
@@ -193,29 +219,31 @@ pub(crate) fn url_pr_with(ctx: &Ctx, diffs: &DiffCache, cwd: &str, url: &str) ->
     if !is_pr_url(url) {
         return None;
     }
+    let (host, _, _, shape) = platform::parse_pr_url(url)?;
     if let Some((at, pr)) = lock(&diffs.url_prs).get(url) {
         if at.elapsed() < PR_TTL {
             return pr.clone();
         }
     }
     let dir = if std::path::Path::new(cwd.trim()).is_dir() { cwd.trim().to_string() } else { std::env::temp_dir().to_string_lossy().into_owned() };
-    let pr = (ctx.gh)(&dir, &["pr", "view", url, "--json", "number,state,isDraft,url,title"])
-        .filter(|out| out.ok())
-        .and_then(|out| crate::git::parse_pull_request(&out.stdout));
+    let known = (host != platform::GITHUB_COM).then(|| ctx.forges.platform(&host)).flatten();
+    let pr = match known {
+        // github.com 与认不出平台的主机（企业版靠本机 gh 自己的配置认）：照旧问 gh。
+        None if shape == Platform::Github => (ctx.gh)(&dir, &["pr", "view", url, "--json", "number,state,isDraft,url,title"])
+            .filter(|out| out.ok())
+            .and_then(|out| crate::git::parse_pull_request(&out.stdout)),
+        None => None,
+        Some(known) if known != shape => None,
+        Some(_) => ctx.forges.open(&host).and_then(|forge| forge.find_url(&dir, url).ok().flatten()),
+    };
     lock(&diffs.url_prs).insert(url.to_string(), (Instant::now(), pr.clone()));
     pr
 }
 
-/// `https://<主机>/<owner>/<repo>/pull/<编号>`：只认这一种形状，别的字符串不交给 gh。
+/// PR / MR 网页链接，且编号就是最后一段（`/files`、`--web` 之类的尾巴不认）：GitHub `…/pull/<n>`、
+/// GitLab `…/-/merge_requests/<n>`、Gitea `…/pulls/<n>`、Bitbucket `…/pull-requests/<n>`。别的字符串不交给 gh。
 pub(crate) fn is_pr_url(url: &str) -> bool {
-    let Some(rest) = url.strip_prefix("https://") else {
-        return false;
-    };
-    let parts: Vec<&str> = rest.split('/').collect();
-    parts.len() == 5
-        && parts.iter().all(|part| !part.is_empty() && !part.chars().any(char::is_whitespace))
-        && parts[3] == "pull"
-        && parts[4].chars().all(|c| c.is_ascii_digit())
+    platform::parse_pr_url(url).is_some() && url.ends_with(|c: char| c.is_ascii_digit()) && !url.contains(['?', '#'])
 }
 
 /// 正式的按链接查询：真 gh、进程内共用的缓存。

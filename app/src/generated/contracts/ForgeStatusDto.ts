@@ -53,4 +53,13 @@ repoNeedsChoice: boolean,
  * 这次实际用的 GitHub 连接：`gh`（本机 gh）/ `meowo`（Meowo 登录的令牌）/ `off`（设置里关了，
  * 这时 `gh` 字段为 `off`，不发任何 GitHub 请求）。旧后端没有这个字段。
  */
-connection?: string, };
+connection?: string, 
+/**
+ * 仓库所在的代码托管平台：`github` / `gitlab` / `gitea` / `bitbucket`。远端认不出平台时为 None。
+ * `gh` 为 `no_account` 时表示认出了平台、但设置里还没有这台主机的账号（不发请求，界面引导去添加）。
+ */
+forge?: string, 
+/**
+ * 平台所在主机（`github.com`、`gitlab.com`、自建主机名）。
+ */
+forgeHost?: string, };

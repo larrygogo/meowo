@@ -74,6 +74,7 @@ fn drill_real_github_end_to_end() {
     let tmp = std::env::temp_dir().join(format!("meowo-drill-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).unwrap();
     let ctx = Ctx {
+        forges: &crate::forge::platform::NO_ACCOUNTS,
         gh: &real_gh,
         caches: &CACHES,
         prefs: tmp.join("forge.json"),
