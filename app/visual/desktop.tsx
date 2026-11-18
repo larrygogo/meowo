@@ -228,6 +228,7 @@ async function boot(): Promise<React.ReactNode> {
     // pop-idle 也归补看场景：它只是「没有待批准请求的对话窗」，菜单、弹层都从它点出来。
     const legacy = (scene.startsWith("pop-") && scene !== "pop-idle") || scene.startsWith("flow-states") || scene === "flow-question" || scene === "flow-empty";
     const qa = qaFlowMock(scene, lang, chat);
+    const flowPanel = panelMock();
     setExtraMock((cmd, args) => {
       if (!legacy) {
         const hit = qa(cmd, args);
@@ -254,7 +255,8 @@ async function boot(): Promise<React.ReactNode> {
           { type: "assistant_text", id: "sa-a1", timestamp: ts, text: lang === "zh" ? "边界情况都覆盖到了，只有加号别名没测。" : "Edge cases are covered except plus aliases." },
         ] }];
       }
-      return scmMock(cmd) ?? chat(cmd);
+      // 单文件 diff、文件树也给上假数据：对话里点文件跳到面板（panelReveal.ts）时面板里有东西可看。
+      return scmMock(cmd) ?? flowPanel(cmd, args) ?? chat(cmd);
     });
     installMocks("chat");
     qaFlowBoot(scene, lang);

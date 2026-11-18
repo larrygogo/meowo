@@ -11,7 +11,7 @@ afterEach(cleanup);
 
 const actions = () => ({
   activate: vi.fn(), move: vi.fn(), close: vi.fn(), openDiff: vi.fn(), openFiles: vi.fn(), openLead: vi.fn(), newTerminal: vi.fn(), restartTerminal: vi.fn(), newBrowser: vi.fn(),
-  show: vi.fn(), hide: vi.fn(), toggle: vi.fn(), toggleExpanded: vi.fn(), cycle: vi.fn(), toggleFiles: vi.fn(), toggleTerminal: vi.fn(), openUrl: vi.fn(),
+  show: vi.fn(), hide: vi.fn(), toggle: vi.fn(), toggleExpanded: vi.fn(), cycle: vi.fn(), toggleFiles: vi.fn(), toggleTerminal: vi.fn(), openUrl: vi.fn(), revealDiff: vi.fn(), revealFile: vi.fn(), consumeReveal: vi.fn(),
 }) satisfies PanelActions;
 const summary: GitDiffSummaryDto = {
   gitAvailable: true, isRepo: true, branch: "main", ahead: null, behind: null,

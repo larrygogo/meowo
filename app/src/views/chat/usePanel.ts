@@ -8,8 +8,8 @@ import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import { remoteUi } from "../../remoteMode";
 import {
-  activate, activeTab, addTab, closeTabs, cycle, EMPTY_PANEL, forgetPanel, keysToClose, loadPanel, movePanel, moveTab, newTabKey, openSingleton,
-  savePanel, setVisible, updateTab, type PanelState, type PanelTab,
+  activate, activeTab, addTab, closeTabs, consumeReveal, cycle, EMPTY_PANEL, forgetPanel, keysToClose, loadPanel, movePanel, moveTab, newTabKey, openSingleton,
+  revealIn, savePanel, setVisible, updateTab, type PanelState, type PanelTab,
 } from "./panelTabs";
 import { confirmCloseShells, moveShellOwner, trackShell, untrackShell, untrackShellOwner } from "./windowClose";
 
@@ -204,6 +204,11 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
     openFiles: () => update((prev) => openSingleton(prev, "files")),
     /** Lead 面板「在侧边面板打开」、停靠区「已在侧边面板」那行：开着就切过去，没开就新加；面板收起时一并展开。 */
     openLead: () => update((prev) => openSingleton(prev, "lead")),
+    /** 对话里点了改过的文件：打开「更改」并定位到它的 diff（path 为绝对路径，见 panelReveal.ts）。 */
+    revealDiff: (path: string) => update((prev) => revealIn(prev, "diff", path)),
+    /** 文件已经没有改动时的退路：在「文件」里打开它。 */
+    revealFile: (path: string) => update((prev) => revealIn(prev, "files", path)),
+    consumeReveal: (nonce: number) => update((prev) => consumeReveal(prev, nonce)),
     newTerminal: () => {
       if (!cwd) return;
       update((prev) => addTab(prev, { key: newTabKey("term"), type: "term", shellId: null, cwd }));

@@ -4315,6 +4315,16 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-turn-changes-row[aria-expanded="true"] { background: var(--fill-selected); }
 .chat-turn-changes-row .chat-turn-changes-caret { transform: none; }
 .chat-turn-changes-row[aria-expanded="true"] .chat-turn-changes-caret { transform: rotate(90deg); }
+/* 一行 = 展开按钮 + 行尾「在「更改」中查看」。底色挪到外层：悬停在行尾按钮上整行也亮，两块不各亮各的。 */
+.chat-turn-changes-line { display: flex; align-items: center; }
+.chat-turn-changes-line:hover { background: var(--fill-hover); }
+.chat-turn-changes-line:has(> .chat-turn-changes-row[aria-expanded="true"]) { background: var(--fill-selected); }
+.chat-turn-changes-line > .chat-turn-changes-row, .chat-turn-changes-line > .chat-turn-changes-row:hover, .chat-turn-changes-line > .chat-turn-changes-row[aria-expanded="true"] { flex: 1 1 auto; min-width: 0; background: transparent; }
+.chat-turn-changes-line > .chat-turn-changes-row:has(+ .chat-turn-changes-open) { padding-right: var(--sp-4); }
+/* 平时藏起来，悬停这一行或键盘聚焦时出现（同 VS Code 改动清单的行尾操作），不给每行常驻一个图标。 */
+.chat-turn-changes-open { flex: 0 0 auto; display: grid; place-items: center; width: var(--icon-button-sm); height: var(--icon-button-sm); margin-right: var(--sp-10); padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); cursor: pointer; opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
+.chat-turn-changes-line:hover .chat-turn-changes-open, .chat-turn-changes-open:focus-visible { opacity: 1; }
+.chat-turn-changes-open:hover, .chat-turn-changes-open:focus-visible { color: var(--cc-text); background: var(--fill-hover); }
 .chat-turn-changes-detail { padding: var(--sp-8) var(--sp-14); min-width: 0; overflow: hidden; }
 .chat-turn-changes-detail .chat-edit-card + .chat-edit-card { margin-top: var(--sp-8); }
 .chat-turn-changes-path { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -5601,6 +5611,9 @@ button.scm-check-name:hover { text-decoration: underline; }
 /* 编辑展开卡：文件头与 diff 同属一张卡，不再夹一行 Replaced 结果文案。 */
 .chat-edit-card-head { display: flex; align-items: center; gap: var(--sp-8); padding-bottom: var(--sp-8); margin-bottom: var(--sp-8); border-bottom: var(--hairline) solid var(--cc-border); }
 .chat-edit-card-path { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text); font: var(--text-sm) var(--cc-mono); }
+/* 可点的路径（跳到面板「更改」里这个文件的 diff）：平时与纯文字一样，悬停加对话链接同款下划线。 */
+.chat-edit-card-path.is-link { flex: 0 1 auto; margin-right: auto; padding: 0; border: 0; background: transparent; text-align: left; cursor: pointer; text-decoration: underline 1px transparent; text-underline-offset: 3px; transition: text-decoration-color var(--dur-fast) var(--ease-out); }
+.chat-edit-card-path.is-link:hover, .chat-edit-card-path.is-link:focus-visible { text-decoration-color: var(--cc-brand-line); }
 .chat-edit-card-copy { flex: 0 0 auto; width: var(--icon-button-sm); height: var(--icon-button-sm); display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); cursor: pointer; }
 .chat-edit-card-copy:hover, .chat-edit-card-copy:focus-visible { color: var(--cc-text); background: var(--fill-hover); }
 .chat-edit-card-code { min-width: 0; overflow: auto; }
@@ -5874,7 +5887,7 @@ button.scm-check-name:hover { text-decoration: underline; }
    一行高，不占输入框上方的地方。 */
 .lead-gate-moved { display: flex; align-items: center; gap: var(--sp-8); width: min(var(--chat-col), calc(100% - 48px)); margin: 0 auto var(--sp-8); padding: var(--sp-8) var(--sp-14); box-sizing: border-box; border: 0; border-radius: var(--radius-lg); background: var(--cc-panel-raised); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cc-warn-vivid) 70%, transparent); color: var(--cc-text); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; transition: background var(--dur-fast) var(--ease-out); }
 .lead-gate-moved:hover { background: linear-gradient(var(--fill-hover), var(--fill-hover)), var(--cc-panel-raised); }
-.lead-gate-moved-icon { flex: 0 0 auto; color: var(--cc-warn-vivid); }
+.lead-gate-moved-icon { flex: 0 0 auto; color: var(--cc-warn-text); }
 .lead-gate-moved-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lead-gate-moved-go { flex: 0 0 auto; color: var(--cc-text-dim); font-size: var(--text-xs); }
 .lead-checks { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--sp-2); }

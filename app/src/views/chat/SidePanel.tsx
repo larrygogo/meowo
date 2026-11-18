@@ -9,7 +9,8 @@ import { singleRepo } from "./diffShared";
 import { LazyFilesView as FilesView } from "./lazyDiff";
 import { PathMenu, PathMentionContext, type PathMenuItem } from "./pathMenu";
 import { PanelPromptContext } from "./panelPrompt";
-import { pickRepo, SourceControl } from "./SourceControl";
+import { pickRepo, SourceControl, type ScmReveal } from "./SourceControl";
+import { filesTarget, locateChange } from "./panelReveal";
 
 const sameDir = (a: string, b: string) => a.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase() === b.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 import type { PanelState, PanelTab } from "./panelTabs";
@@ -69,6 +70,44 @@ export const SidePanel = memo(function SidePanel(props: Props) {
   const isRepo = !!summary?.isRepo || (props.repos?.length ?? 0) > 0;
   // 评论框开着时 Esc 只关评论框（同 GitDiffView）。
   const escOverrideRef = useRef<(() => void) | null>(null);
+
+  // 「更改」用的仓库清单：多仓库清单没到时按单仓库摘要显示（与下面渲染 SourceControl 同一份）。
+  const changeRepos = props.repos && props.repos.length > 0 ? props.repos : summary?.isRepo ? singleRepo(cwd, summary) : null;
+  // 「文件」浏览哪个目录：跟着「更改」选中的仓库走。选的是工作目录所在仓库（或显式选了「工作目录」）就浏览
+  // 工作目录本身——它可能是仓库的子目录，也可能根本不是仓库（会话开在 workspace）。
+  const workdirPicked = !props.selectedRoot || sameDir(props.selectedRoot, cwd);
+  const pickedRepo = !workdirPicked && props.repos && props.repos.length > 0 ? pickRepo(props.repos, props.selectedRoot) : null;
+  const filesRoot = pickedRepo && !pickedRepo.isCwdRepo ? pickedRepo.root : cwd;
+
+  // 对话里点过来的定位请求（panelReveal.ts）。交给对应的页签处理；处理不了的在这里收尾，不留着以后乱跳。
+  const reveal = state.reveal ?? null;
+  const revealFiles = reveal?.tab === "files" && active?.type === "files" ? filesTarget(reveal.path, cwd, props.repos ?? []) : null;
+  const notRepo = !changeRepos && summary !== null && !summary.isRepo;
+  useEffect(() => {
+    if (!reveal) return;
+    // 用户已经切去别的页签（请求还没轮到处理）：作废，不然回到那个页签时会突然跳一下。
+    if (active?.type !== reveal.tab) { actions.consumeReveal(reveal.nonce); return; }
+    if (reveal.tab === "files") {
+      if (!revealFiles) actions.consumeReveal(reveal.nonce);
+      // 文件在另一个仓库（worktree）里：先把「文件」切到那个仓库，换好根目录后 FilesView 再打开它。
+      else if (!sameDir(revealFiles.root, filesRoot)) props.onSelectRoot(revealFiles.root);
+      return;
+    }
+    // 会话目录不是 git 仓库、也没有别的仓库可列：「更改」页本身就写着「不在 git 仓库中」，没有 diff 可看，
+    // 能在「文件」里打开就直接过去，不能就停在这句说明上。
+    if (notRepo) {
+      if (filesTarget(reveal.path, cwd, [])) actions.revealFile(reveal.path);
+      else actions.consumeReveal(reveal.nonce);
+    }
+    // 仓库清单还没到：先留着，到了由 SourceControl 处理。
+  });
+  const scmReveal: ScmReveal | null = reveal?.tab === "diff" && active?.type === "diff" && changeRepos
+    ? {
+      nonce: reveal.nonce,
+      target: locateChange(changeRepos, reveal.path),
+      openInFiles: filesTarget(reveal.path, cwd, props.repos ?? []) ? () => actions.revealFile(reveal.path) : null,
+    }
+    : null;
 
   // Esc 收起面板。挂捕获段：对话窗有「Esc = 拒绝审批」的全局监听，焦点又可能在输入框里。
   // 这些情况让给别人：终端（vim、less 要 Esc）、地址栏（撤销输入）、面板里的菜单、页内弹层。
@@ -234,12 +273,12 @@ export const SidePanel = memo(function SidePanel(props: Props) {
       })}
       <PathMentionContext.Provider value={props.onMention ?? null}>
       <PanelPromptContext.Provider value={props.onInsertPrompt ?? null}>
-      {active?.type === "diff" && ((props.repos && props.repos.length > 0) || (summary?.isRepo)
+      {active?.type === "diff" && (changeRepos
         ? (
           <SourceControl
             key={cwd}
             cwd={cwd}
-            repos={props.repos && props.repos.length > 0 ? props.repos : singleRepo(cwd, summary!)}
+            repos={changeRepos}
             selectedRoot={props.selectedRoot}
             onSelectRoot={props.onSelectRoot}
             onChanged={props.onChanged}
@@ -252,19 +291,17 @@ export const SidePanel = memo(function SidePanel(props: Props) {
             live={!collapsed}
             sessionId={props.sessionId ?? null}
             visible={!collapsed}
+            reveal={scmReveal}
+            onRevealed={actions.consumeReveal}
           />
         )
         : <p className="side-panel-empty">{t.chat.diffNoRepo}</p>)}
       {active?.type === "lead" && !collapsed && <LeadPanelTab cwd={cwd} lead={props.lead ?? NO_LEAD} />}
       {active?.type === "files" && (() => {
-        // 「文件」跟着「更改」选中的仓库走：worktree 不在工作目录下，不切过去就看不到它的文件。
-        // 选的是工作目录所在仓库（或显式选了「工作目录」）就浏览工作目录本身——它可能是仓库的子目录，
-        // 也可能根本不是仓库（会话开在 workspace）。顶上一排可切换，与「更改」共用同一个选中（做空：此前
-        // 「文件」里切不了，工作目录不是仓库时还再也回不去）。
+        // 「文件」跟着「更改」选中的仓库走（filesRoot）：worktree 不在工作目录下，不切过去就看不到它的文件。
+        // 顶上一排可切换，与「更改」共用同一个选中（做空：此前「文件」里切不了，工作目录不是仓库时还再也回不去）。
         const others = (props.repos ?? []).filter((repo) => !repo.isCwdRepo);
-        const workdirPicked = !props.selectedRoot || sameDir(props.selectedRoot, cwd);
-        const picked = !workdirPicked && props.repos && props.repos.length > 0 ? pickRepo(props.repos, props.selectedRoot) : null;
-        const root = picked && !picked.isCwdRepo ? picked.root : cwd;
+        const root = filesRoot;
         return (
           <>
             {others.length > 0 && (
@@ -275,7 +312,9 @@ export const SidePanel = memo(function SidePanel(props: Props) {
                 ))}
               </div>
             )}
-            <FilesView key={root} cwd={root} live={!collapsed} />
+            <FilesView key={root} cwd={root} live={!collapsed}
+              reveal={reveal && revealFiles && sameDir(revealFiles.root, root) ? { rel: revealFiles.rel, nonce: reveal.nonce } : null}
+              onRevealed={actions.consumeReveal} />
           </>
         );
       })()}
