@@ -41,6 +41,12 @@ pub enum Region {
     AfterLastRule,
     /// 提示框体：自底向上第 2 条分隔线与其后第一条之间（claude 的输入框）。
     PromptBoxBody,
+    /// 本回合的尾巴连同提示框体：从框顶之上最后一条 `❯ ` 回显（上一句用户输入）之后，
+    /// 一直到提示框体结束；框顶分隔线本身也在内。上一回合留在滚动区里的文字被回显行
+    /// 挡在外面。屏幕上没有提示框时为空。
+    PromptBoxWithTurnTail,
+    /// 从屏幕顶一直到提示框体结束（框下方的状态栏、子代理列表不在内）。屏幕上没有提示框时为空。
+    ThroughPromptBox,
     /// 最后一个提示符标记行（codex 的 `›`）之后。
     AfterLastPromptMarker,
     /// 终端标题（OSC 0/2），不是屏幕内容。spinner 帧与状态字常写在这儿。

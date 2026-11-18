@@ -23,8 +23,83 @@ const NAV_HINTS: &[&str] = &[
     "↑↓ to navigate",
 ];
 
+/// 主回合在跑时输入框上方的 spinner 行：帧字符 + 动词 + 省略号（2.1.327 实拍：
+/// `✢ Transmuting…`、`✻ Levitating… (7s · ↓ 90 tokens)`、`· Lollygagging… (13s …)`）。
+/// 回合结束行（`✻ Baked for 11s`、`✻ Waiting for 2 background agents to finish`）没有省略号。
+const SPINNER_LINE: &str = r"^[·✢✳✶✻✽]\s+\S.*(…|\.\.\.)";
+/// 请求卡住等自动重试时 spinner 行换成的两种文案（见 api_retry_working）。
+const API_STALLED_LINE: &str =
+    r"waiting for api response · will retry in [^·]{1,20} · check your network\s*$";
+const API_RETRY_LINE: &str =
+    r"· (?:retrying in|retrying, waiting up to) [^·]{1,60}· attempt \d+/\d+(?: · [^·]{0,40})?\s*$";
+
+/// 「主回合还在跑 / 在等审批」的否决项：本回合尾巴里有运行中的 spinner 行或重试行，
+/// 或者框里是审批表单。
+const MAIN_TURN_LIVE: &[Matcher] = &[
+    Matcher::LineRegex(SPINNER_LINE),
+    Matcher::LineRegex(API_STALLED_LINE),
+    Matcher::LineRegex(API_RETRY_LINE),
+    Matcher::Contains(&["enter to select"]),
+    Matcher::Contains(&["esc to cancel"]),
+    Matcher::AnyContains(NAV_HINTS),
+    Matcher::Contains(&["written up a plan"]),
+    Matcher::Contains(&["do you want to"]),
+];
+
 pub(super) static RULES: &[ScreenRule] = &[
-    // 标题带 spinner 帧 = 正在跑，优先级最高：它压过屏幕上残留的一切文本。
+    // 主回合结束、只剩后台子代理在跑（2.1.327 实拍 2026-11-19，2 个后台子代理）：回合结束行
+    // 是 `✻ Waiting for 2 background agents to finish`（单个时 `1 background agent`），
+    // 输入框照常空着等输入，而**标题 spinner 还在转**——下面的标题规则于是一直判 working，
+    // DB 早已是 waiting，对话页却把插话扣在「当前任务结束后发送」的队列里、运行条挂着
+    // 「等这一步完成后插入你的插话」。这是主回合空闲的可见证据，优先级要压过标题。
+    // 只认本回合的尾巴（最后一条 ❯ 回显之后），上一回合留在滚动区的同款行不算；尾巴里
+    // 有运行中的 spinner 行（`✢ Transmuting…` / `✻ Levitating… (7s …`）说明新一轮已经
+    // 开跑，否决之；框体里必须是 ❯ 提示符且没有审批文案。认不出时退回原有规则（照旧
+    // 判 working），失准方向是「多排一次队」，不会把正在跑的主回合谎报成空闲。
+    // 结束行和输入框之间可能夹着系统通知（实拍：`● Language server … couldn't start`），
+    // 所以不要求两者紧挨着。
+    ScreenRule::new(
+        "background_wait_idle",
+        ScreenState::Idle,
+        1200,
+        Region::PromptBoxWithTurnTail,
+        Matcher::All(&[
+            Matcher::LineRegex(
+                r"^[·✢✳✶✻✽]\s+(?:[^·]*·\s+)?waiting for \d+ background \S+ to finish\s*$",
+            ),
+            Matcher::LineStartsWith(&["\u{276F}"]),
+            Matcher::Not(MAIN_TURN_LIVE),
+        ]),
+    )
+    .visible(),
+    // 同一场景的弱证据版：主回合结束时并不总画「Waiting for … background …」那一行
+    // （实拍 2026-11-19 00:31：DB waiting、2 个后台子代理在跑，回合以正文收尾，输入框上方
+    // 没有任何结束行），标题 spinner 照转。主回合在跑时输入框上方必有 spinner 行（实拍各帧：
+    // `✢ Transmuting…` / `✢ Lollygagging…` / `· Lollygagging… (13s …)`）或重试行；本回合
+    // 尾巴里一条都没有、框里是空闲的 ❯ 提示符，就说明标题转的是后台的活（后台子代理、
+    // 后台 Bash），不是主回合。
+    // 刻意**不带** visible：标题与屏幕打架时只算弱证据，working → idle 要经防抖确认期，
+    // 重绘瞬间丢一帧 spinner 行不会让状态闪成空闲。只在标题转着时才进场（字符区间谓词
+    // 读的是标题原文，与区域无关）——标题是 ✳ 或拿不到时，live_prompt_box 本来就判可见 idle，
+    // 不能被这条弱证据顶掉。
+    // 否决扫的是输入框以上的**整屏**而不只是本回合尾巴：运行中排队的插话可能以 `❯ …` 画在
+    // spinner 行和输入框之间，按「最后一条 ❯ 之后」切会把 spinner 行切掉。spinner 行只有
+    // 正在转的那一条，不会留在滚动区里；正文里偶有同形的行只会多否决一次（照旧判 working）。
+    ScreenRule::new(
+        "spinner_title_idle_prompt",
+        ScreenState::Idle,
+        1150,
+        Region::ThroughPromptBox,
+        Matcher::All(&[
+            Matcher::Any(&[
+                Matcher::StartsWithCharInRange(BRAILLE_LO, BRAILLE_HI),
+                Matcher::StartsWithCharInRange('\u{25D0}', '\u{25D7}'),
+            ]),
+            Matcher::LineStartsWith(&["\u{276F}"]),
+            Matcher::Not(MAIN_TURN_LIVE),
+        ]),
+    ),
+    // 标题带 spinner 帧 = 正在跑：除上一条后台等待行外，它压过屏幕上残留的一切文本。
     ScreenRule::new(
         "osc_title_working",
         ScreenState::Working,
@@ -157,8 +232,8 @@ pub(super) static RULES: &[ScreenRule] = &[
         965,
         Region::BottomNonEmpty(8),
         Matcher::Any(&[
-            Matcher::LineRegex(r"waiting for api response · will retry in [^·]{1,20} · check your network\s*$"),
-            Matcher::LineRegex(r"· (?:retrying in|retrying, waiting up to) [^·]{1,60}· attempt \d+/\d+(?: · [^·]{0,40})?\s*$"),
+            Matcher::LineRegex(API_STALLED_LINE),
+            Matcher::LineRegex(API_RETRY_LINE),
         ]),
     )
     .visible(),

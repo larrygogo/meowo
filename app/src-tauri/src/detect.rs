@@ -251,6 +251,8 @@ fn region_of(region: Region, lines: &[String]) -> &[String] {
         Region::BottomNonEmpty(n) => bottom_non_empty_slice(lines, n),
         Region::AfterLastRule => after_last_horizontal_rule(lines),
         Region::PromptBoxBody => prompt_box_body(lines).unwrap_or(&[]),
+        Region::PromptBoxWithTurnTail => prompt_box_with_turn_tail(lines).unwrap_or(&[]),
+        Region::ThroughPromptBox => prompt_box_bounds(lines).map_or(&[], |(_, end)| &lines[..end]),
         Region::AfterLastPromptMarker => after_last_prompt_marker(lines),
     }
 }
@@ -296,6 +298,12 @@ fn after_last_prompt_marker(lines: &[String]) -> &[String] {
 /// 提示框体：自底向上第 2 条水平分隔线（框顶）之后、到下一条分隔线之前的行。
 /// 找不到两条分隔线 = 屏幕上没有提示框。
 fn prompt_box_body(lines: &[String]) -> Option<&[String]> {
+    let (top, end) = prompt_box_bounds(lines)?;
+    Some(&lines[top + 1..end])
+}
+
+/// 提示框的框顶分隔线下标与框体结束下标（不含）。
+fn prompt_box_bounds(lines: &[String]) -> Option<(usize, usize)> {
     let mut rules = lines
         .iter()
         .enumerate()
@@ -308,7 +316,18 @@ fn prompt_box_body(lines: &[String]) -> Option<&[String]> {
         .iter()
         .position(|line| is_horizontal_rule(line))
         .map_or(lines.len(), |relative| top + 1 + relative);
-    Some(&lines[top + 1..end])
+    Some((top, end))
+}
+
+/// 本回合的尾巴连同提示框体（见 [`Region::PromptBoxWithTurnTail`]）：起点是框顶之上
+/// 最后一条 `❯` 开头的回显行之后；没有回显（滚出屏幕）就从屏幕顶开始。
+fn prompt_box_with_turn_tail(lines: &[String]) -> Option<&[String]> {
+    let (top, end) = prompt_box_bounds(lines)?;
+    let start = lines[..top]
+        .iter()
+        .rposition(|line| line.trim_start().starts_with('\u{276F}'))
+        .map_or(0, |index| index + 1);
+    Some(&lines[start..end])
 }
 
 /// 底部 N 个非空行。返回**切片**而非拷贝：从最后一个非空行往回数 N 个非空行，
@@ -644,6 +663,248 @@ mod tests {
         let s = snap_titled(&["  some output", " \u{276F}"], "\u{25D0} Claude Code");
         assert_eq!(
             state_of(evaluate("claude", &s)),
+            Some((ScreenState::Working, "osc_title_moon_working"))
+        );
+    }
+
+    /// 实拍（2026-11-19，CC 2.1.327，主回合已结束、2 个后台子代理在跑）的末屏，去掉了正文。
+    /// 输入框上方紧挨着的是回合结束行「✻ Waiting for N background agents to finish」，
+    /// 不是运行中的 spinner 行。
+    const BACKGROUND_WAIT_FRAME: &[&str] = &[
+        "  修好的标准：",
+        "  - 主会话空闲时，插话立刻发出去。",
+        "",
+        "\u{273B} Waiting for 2 background agents to finish",
+        "",
+        "────────────────────────────────────────────────────",
+        "\u{276F}",
+        "────────────────────────────────────────────────────",
+        "  Opus 5.5 · 50% ctx",
+        "  \u{23F5}\u{23F5} bypass permissions on · 2 shells · \u{2193} to manage",
+        "",
+        "  \u{25CF} main",
+        "  \u{25EF} general-purpose  正… 10m 13s · \u{2193} 219.9k tokens",
+        "  \u{25EF} general-purpose  读…   1m 30s · \u{2193} 68.9k tokens",
+    ];
+
+    /// 主回合结束、只剩后台子代理时，标题 spinner 还在转（DB 已是 waiting，宿主却一直发布
+    /// working，对话页于是把插话扣在排队里——实拍 2026-11-19 会话 1823）。输入框上方紧挨着
+    /// 「Waiting for N background agents to finish」就是主回合空闲的可见证据，要压过标题。
+    #[test]
+    fn background_agents_wait_line_beats_spinner_title() {
+        for title in [
+            "\u{25D0} Claude Code",
+            "\u{25D1} 修插话排队",
+            "\u{280B} Claude Code",
+            "\u{2733} Claude Code",
+        ] {
+            let s = snap_titled(BACKGROUND_WAIT_FRAME, title);
+            assert_eq!(
+                state_of(evaluate("claude", &s)),
+                Some((ScreenState::Idle, "background_wait_idle")),
+                "title={title}"
+            );
+        }
+        // 没有标题也一样。
+        assert_eq!(
+            state_of(evaluate("claude", &snap(BACKGROUND_WAIT_FRAME))),
+            Some((ScreenState::Idle, "background_wait_idle"))
+        );
+        // 单个后台子代理（单数文案）、框里有草稿也算。
+        let mut one: Vec<&str> = BACKGROUND_WAIT_FRAME.to_vec();
+        one[3] = "\u{273B} Waiting for 1 background agent to finish";
+        one[6] = "\u{276F} 怎么样了";
+        let one = snap_titled(&one, "\u{25D0} Claude Code");
+        assert_eq!(
+            state_of(evaluate("claude", &one)),
+            Some((ScreenState::Idle, "background_wait_idle"))
+        );
+        // 结束行与输入框之间夹着系统通知（实拍 2026-11-19 00:18 起那几帧）。
+        let noticed = snap_titled(
+            &[
+                "\u{276F} 上一句用户输入",
+                "",
+                "\u{25CF} 收到，这条进了主会话。",
+                "",
+                "\u{273B} Waiting for 2 background agents to finish",
+                "",
+                "\u{25CF} Language server",
+                "  \"plugin:rust-analyzer-lsp:rust-analyzer\"",
+                "  couldn't start. The Errors tab in /plugin",
+                "  may have the reason.",
+                "",
+                "────────────────────────────────────────────────────",
+                "\u{276F} 怎么样了",
+                "────────────────────────────────────────────────────",
+                "  Opus 5.5 · 50% ctx",
+                "  \u{23F5}\u{23F5} bypass permissions on (shift+tab to cycle) ·",
+                "",
+                "  \u{25CF} main",
+                "  \u{25EF} general-purpose  Re… 18m 24s · \u{2193} 305.5k tokens",
+                "  \u{25EF} general-purpose  正…  9m 41s · \u{2193} 155.9k tokens",
+            ],
+            "\u{25D0} Claude Code",
+        );
+        assert_eq!(
+            state_of(evaluate("claude", &noticed)),
+            Some((ScreenState::Idle, "background_wait_idle"))
+        );
+    }
+
+    /// 不误伤真正在跑的主回合：上一回合留下的「Waiting for …」行在滚动区里，新回合的
+    /// spinner 行紧挨着输入框（实拍 2026-11-19 00:15:13 那一帧的形状）。
+    #[test]
+    fn stale_background_wait_line_does_not_mask_running_turn() {
+        let frame = [
+            "\u{273B} Waiting for 2 background agents to finish",
+            "",
+            "\u{276F} 请读取并结合以下本地附件完成任务",
+            "",
+            "\u{25CF} Reading 1 file\u{2026}",
+            "",
+            "\u{273B} Levitating\u{2026} (7s \u{00B7} \u{2193} 90 tokens)",
+            "────────────────────────────────────────────────────",
+            "\u{276F}",
+            "────────────────────────────────────────────────────",
+            "  \u{23F5}\u{23F5} bypass permissions on · 2 shells · esc to interrupt",
+            "  \u{25CF} main",
+            "  \u{25EF} general-purpose  正… 11m 32s · \u{2193} 234.9k tokens",
+            "  \u{25EF} general-purpose  正…  2m 49s · \u{2193} 102.8k tokens",
+        ];
+        let s = snap_titled(&frame, "\u{25D0} Claude Code");
+        assert_eq!(
+            state_of(evaluate("claude", &s)),
+            Some((ScreenState::Working, "osc_title_moon_working"))
+        );
+        // 主回合跑起来、还没输出时 spinner 行直接接在 Waiting 行下面，同样不算空闲。
+        let s = snap_titled(
+            &[
+                "\u{273B} Waiting for 2 background agents to finish",
+                "\u{2722} Transmuting\u{2026}",
+                "────────────────────────",
+                "\u{276F}",
+                "────────────────────────",
+            ],
+            "\u{25D0} Claude Code",
+        );
+        assert_eq!(
+            state_of(evaluate("claude", &s)),
+            Some((ScreenState::Working, "osc_title_moon_working"))
+        );
+        // 正文里引用这句（不是帧字符开头）不算强证据，只落到弱证据那条。
+        let s = snap_titled(
+            &[
+                "  日志里有一行 Waiting for 2 background agents to finish",
+                "────────────────────────",
+                "\u{276F}",
+                "────────────────────────",
+            ],
+            "\u{25D0} Claude Code",
+        );
+        assert_eq!(
+            state_of(evaluate("claude", &s)),
+            Some((ScreenState::Idle, "spinner_title_idle_prompt"))
+        );
+    }
+
+    /// 实拍（2026-11-19 00:31:12，DB waiting、2 个后台子代理在跑）：主回合以正文收尾，输入框上方
+    /// 没有「Waiting for …」那一行，标题照转。只能靠「本回合尾巴里没有 spinner 行」认出主回合
+    /// 停着——弱证据，不带 visible，working → idle 要经防抖确认期。
+    #[test]
+    fn spinner_title_without_spinner_line_is_weak_idle() {
+        let frame = [
+            "  已知限制：Lead 面板只拿到记录文件最后 6000",
+            "  字，所以要判断开头是不是被截掉了。",
+            "",
+            "  插话排队的问题，代理还在抓现场数据和修复。",
+            "",
+            "────────────────────────────────────────────────────",
+            "\u{276F} 怎么样了",
+            "────────────────────────────────────────────────────",
+            "  Opus 5.5 · 53% ctx",
+            "  \u{23F5}\u{23F5} bypass permissions on · 1 shell · \u{2193} to manage",
+            "",
+            "  \u{25CF} main",
+            "  \u{25EF} general-purpose  运… 18m 49s · \u{2193} 192.7k tokens",
+            "  \u{25EF} lead-redteam     正…  5m 53s · \u{2193} 111.4k tokens",
+        ];
+        let eval = evaluate("claude", &snap_titled(&frame, "\u{25D0} Claude Code"));
+        match &eval {
+            Some(Evaluation::Publish(det)) => assert!(!det.visible, "弱证据不能直通防抖"),
+            _ => panic!("应发布 idle"),
+        }
+        assert_eq!(
+            state_of(eval),
+            Some((ScreenState::Idle, "spinner_title_idle_prompt"))
+        );
+
+        // 防抖：从 working 降下来要连续确认，单帧不发布。
+        let t0 = Instant::now();
+        let mut debounce = ScreenDebounce::default();
+        let working =
+            evaluate("claude", &snap_titled(&frame[..5], "\u{25D0} Claude Code")).unwrap();
+        assert_eq!(debounce.observe(&working, t0), Some(ScreenState::Working));
+        let idle = evaluate("claude", &snap_titled(&frame, "\u{25D0} Claude Code")).unwrap();
+        assert_eq!(
+            debounce.observe(&idle, t0 + Duration::from_millis(10)),
+            None
+        );
+        assert_eq!(
+            debounce.observe(&idle, t0 + Duration::from_millis(800)),
+            Some(ScreenState::Idle)
+        );
+    }
+
+    /// 不误伤：主回合真在跑时（实拍 2026-11-19 00:31:27–37，后台子代理结束通知触发的新一轮），
+    /// 输入框上方是 spinner 行，标题照判 working；请求卡住等重试时也一样。
+    #[test]
+    fn spinner_line_or_retry_keeps_title_working() {
+        for spinner in [
+            "\u{2722} Lollygagging\u{2026}",
+            "\u{273B} Lollygagging\u{2026} (8s \u{00B7} thought for 1s)",
+            "\u{00B7} Lollygagging\u{2026} (13s \u{00B7} \u{2193} 536 tokens)",
+            "\u{273B} Waiting for API response \u{00B7} will retry in 1m 9s \u{00B7} check your network",
+            "\u{2717} API Error (529 Overloaded) \u{00B7} Retrying in 5s \u{00B7} attempt 2/10",
+        ] {
+            let frame = [
+                "  插话排队的问题，代理还在抓现场数据和修复。",
+                "",
+                "\u{25CF} Agent \"Review Lead panel polish\" finished \u{00B7} 6m 5s",
+                "",
+                spinner,
+                "",
+                "────────────────────────────────────────────────────",
+                "\u{276F}",
+                "────────────────────────────────────────────────────",
+                "  Opus 5.5 · 53% ctx",
+                "  \u{23F5}\u{23F5} bypass permissions on · 1 shell · /tasks to \u{2026}",
+                "",
+                "  \u{25CF} main",
+                "  \u{25EF} general-purpose  正…  19m 4s · \u{2193} 192.7k tokens",
+            ];
+            let s = snap_titled(&frame, "\u{25D0} Claude Code");
+            assert_eq!(
+                state_of(evaluate("claude", &s)),
+                Some((ScreenState::Working, "osc_title_moon_working")),
+                "spinner={spinner}"
+            );
+        }
+        // 运行中排队的插话若画在 spinner 行与输入框之间（`❯ …`），spinner 行照样作数。
+        let queued = snap_titled(
+            &[
+                "\u{273B} Waiting for 2 background agents to finish",
+                "",
+                "\u{2722} Lollygagging\u{2026} (21s \u{00B7} \u{2193} 1.2k tokens)",
+                "",
+                "\u{276F} 顺手改个名",
+                "────────────────────────",
+                "\u{276F}",
+                "────────────────────────",
+            ],
+            "\u{25D0} Claude Code",
+        );
+        assert_eq!(
+            state_of(evaluate("claude", &queued)),
             Some((ScreenState::Working, "osc_title_moon_working"))
         );
     }

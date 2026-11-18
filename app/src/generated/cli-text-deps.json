@@ -140,73 +140,17 @@
         },
         {
           "legacy": false,
-          "needle": "showing detailed transcript",
-          "note": "",
-          "rule": "literal:showing detailed transcript",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:57"
-        },
-        {
-          "legacy": false,
-          "needle": "ctrl+o",
-          "note": "",
-          "rule": "literal:ctrl+o",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:59"
-        },
-        {
-          "legacy": false,
-          "needle": "to toggle",
-          "note": "",
-          "rule": "literal:to toggle",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:59"
-        },
-        {
-          "legacy": false,
-          "needle": "ctrl+e",
-          "note": "",
-          "rule": "literal:ctrl+e",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:60"
-        },
-        {
-          "legacy": false,
-          "needle": "show all",
-          "note": "",
-          "rule": "literal:show all",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:60"
-        },
-        {
-          "legacy": false,
-          "needle": "collapse",
-          "note": "",
-          "rule": "literal:collapse",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:61"
-        },
-        {
-          "legacy": false,
-          "needle": "scroll · v to",
-          "note": "2.1.322 transcript 查看器 `${oe.arrowUp}${oe.arrowDown} scroll \\xB7 v to ${xt} \\xB7 ? for shortcuts`",
-          "rule": "literal:↑↓ scroll",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:62"
-        },
-        {
-          "legacy": false,
-          "needle": "? for shortcuts",
-          "note": "",
-          "rule": "literal:? for shortcuts",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:63"
-        },
-        {
-          "legacy": false,
           "needle": "enter to select",
           "note": "",
           "rule": "literal:enter to select",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:75"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:42"
         },
         {
           "legacy": false,
           "needle": "esc to cancel",
           "note": "",
           "rule": "literal:esc to cancel",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:75"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:43"
         },
         {
           "legacy": false,
@@ -245,80 +189,143 @@
         },
         {
           "legacy": false,
+          "needle": "written up a plan",
+          "note": "",
+          "rule": "literal:written up a plan",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:45"
+        },
+        {
+          "legacy": false,
+          "needle": "do you want to",
+          "note": "",
+          "rule": "literal:do you want to",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:46"
+        },
+        {
+          "legacy": false,
+          "needle": "showing detailed transcript",
+          "note": "",
+          "rule": "literal:showing detailed transcript",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:132"
+        },
+        {
+          "legacy": false,
+          "needle": "ctrl+o",
+          "note": "",
+          "rule": "literal:ctrl+o",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:134"
+        },
+        {
+          "legacy": false,
+          "needle": "to toggle",
+          "note": "",
+          "rule": "literal:to toggle",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:134"
+        },
+        {
+          "legacy": false,
+          "needle": "ctrl+e",
+          "note": "",
+          "rule": "literal:ctrl+e",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:135"
+        },
+        {
+          "legacy": false,
+          "needle": "show all",
+          "note": "",
+          "rule": "literal:show all",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:135"
+        },
+        {
+          "legacy": false,
+          "needle": "collapse",
+          "note": "",
+          "rule": "literal:collapse",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:136"
+        },
+        {
+          "legacy": false,
+          "needle": "scroll · v to",
+          "note": "2.1.322 transcript 查看器 `${oe.arrowUp}${oe.arrowDown} scroll \\xB7 v to ${xt} \\xB7 ? for shortcuts`",
+          "rule": "literal:↑↓ scroll",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:137"
+        },
+        {
+          "legacy": false,
+          "needle": "? for shortcuts",
+          "note": "",
+          "rule": "literal:? for shortcuts",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:138"
+        },
+        {
+          "legacy": false,
           "needle": "run a dynamic workflow?",
           "note": "",
           "rule": "literal:run a dynamic workflow?",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:85"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:160"
         },
         {
           "legacy": false,
           "needle": "teach auto mode about your environment?",
           "note": "",
           "rule": "literal:teach auto mode about your environment?",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:97"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:172"
         },
         {
           "legacy": false,
           "needle": "tab/arrow keys",
           "note": "",
           "rule": "literal:tab/arrow keys",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:176"
-        },
-        {
-          "legacy": false,
-          "needle": "written up a plan",
-          "note": "",
-          "rule": "literal:written up a plan",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:181"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:251"
         },
         {
           "legacy": false,
           "needle": "select model",
           "note": "",
           "rule": "literal:select model",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:193"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:268"
         },
         {
           "legacy": false,
           "needle": "set as default",
           "note": "2.1.322 模型选择器 `Y({chord:\"enter\",action:N?\"set as default\":\"confirm\"})` 运行时拼，未实拍",
           "rule": "literal:enter to set as default",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:193"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:268"
         },
         {
           "legacy": false,
           "needle": "do you want to proceed?",
           "note": "",
           "rule": "literal:do you want to proceed?",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:195"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:270"
         },
         {
           "legacy": false,
           "needle": "bash command",
           "note": "",
           "rule": "literal:bash command",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:210"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:285"
         },
         {
           "legacy": false,
           "needle": "powershell command",
           "note": "",
           "rule": "literal:powershell command",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:212"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:287"
         },
         {
           "legacy": false,
           "needle": "bash(",
           "note": "",
           "rule": "literal:bash(",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:213"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:288"
         },
         {
           "legacy": false,
           "needle": "contains expansion",
           "note": "",
           "rule": "literal:contains expansion",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:214"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:289"
         },
         {
           "legacy": false,
@@ -330,63 +337,56 @@
             "\"amend\""
           ],
           "rule": "literal:tab to amend",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:215"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:290"
         },
         {
           "legacy": true,
           "needle": "ctrl+e to explain",
           "note": "2.1.322 包内没有 explain 的按键提示（无 chord:\"ctrl+e\"），疑似已移除；bash 审批另有 do you want to proceed? 兜底",
           "rule": "literal:ctrl+e to explain",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:216"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:291"
         },
         {
           "legacy": false,
           "needle": "would you like to proceed?",
           "note": "",
           "rule": "literal:would you like to proceed?",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:255"
-        },
-        {
-          "legacy": false,
-          "needle": "do you want to",
-          "note": "",
-          "rule": "literal:do you want to",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:273"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:330"
         },
         {
           "legacy": false,
           "needle": "would you like to",
           "note": "",
           "rule": "literal:would you like to",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:277"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:352"
         },
         {
           "legacy": false,
           "needle": "waiting for permission",
           "note": "",
           "rule": "literal:waiting for permission",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:280"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:355"
         },
         {
           "legacy": false,
           "needle": "do you want to allow this connection?",
           "note": "",
           "rule": "literal:do you want to allow this connection?",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:281"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:356"
         },
         {
           "legacy": false,
           "needle": "review your answers",
           "note": "",
           "rule": "literal:review your answers",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:285"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:360"
         },
         {
           "legacy": true,
           "needle": "skip interview and plan immediately",
           "note": "2.1.322 全包 0 处，疑似已改名；所在规则 legacy_no_prompt_blocker 只是弱兜底",
           "rule": "literal:skip interview and plan immediately",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:286"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:361"
         },
         {
           "legacy": false,
@@ -771,7 +771,14 @@
           "needle": "Waiting for API response",
           "note": "同上；带次数的那一种（Retrying in … attempt n/m）见 retry_line 的样例",
           "rule": "screen:api_retry_working",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:155"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:230"
+        },
+        {
+          "legacy": false,
+          "needle": "",
+          "note": "2.1.327 真机屏幕 2026-11-19（会话 1823，主回合结束、2 个后台子代理在跑，输入框上方）；子代理个数与单复数运行时拼，程序文件里没有可搜的原样片段",
+          "rule": "screen:background_wait_idle",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:62"
         },
         {
           "legacy": false,
@@ -883,7 +890,7 @@
           "needle": "",
           "note": "行首是用户自己打的 /btw 回显；CLI 文案部分 esc to close 由侧问 footer_marker 自动检查",
           "rule": "screen:btw_overlay_working",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:108"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:183"
         },
         {
           "legacy": false,
@@ -896,21 +903,21 @@
             "\"close\""
           ],
           "rule": "screen:btw_overlay_answered",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:122"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:197"
         },
         {
           "legacy": false,
           "needle": "",
           "note": "2.1.233 实拍（screen.rs 注释）；动词与计时运行时拼，不搜",
           "rule": "screen:status_line_working",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:142"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:217"
         },
         {
           "legacy": false,
           "needle": "",
           "note": "OSC 9;4 进度序列，不是文案，不搜",
           "rule": "screen:osc_progress_idle",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:303"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:378"
         }
       ],
       "id": "claude",

@@ -5,16 +5,19 @@ import { ChatWindow } from "./ChatWindow";
 import type { QueuedPromptDto } from "../api";
 import { markRemoteUi } from "../remoteMode";
 import { anchorFrom, outgoingStore } from "./chat/outgoingPrompts";
+import { zh } from "../i18n/zh";
 
 vi.mock("./ManagedTerminal", () => ({ ManagedTerminal: () => <div>PTY</div> }));
 
-function queueHarness() {
+function queueHarness(initial: { status?: string; screenState?: string | null; busySubagents?: number } = {}) {
   markRemoteUi();
-  let status = "running";
+  let status = initial.status ?? "running";
   let queued: QueuedPromptDto[] = [];
   const base = adapter.setup(771, "claude", status);
   invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
-    if (command === "get_chat_history") return Promise.resolve(adapter.history(771, "claude", status));
+    if (command === "get_chat_history") {
+      return Promise.resolve({ ...adapter.history(771, "claude", status, initial.screenState ?? null), busySubagents: initial.busySubagents ?? 0 });
+    }
     if (command === "prompt_queue_list") return Promise.resolve(queued.filter((entry) => ["held", "delivering", "failed"].includes(entry.state)));
     if (command === "prompt_queue_enqueue") {
       const draft = args?.draft as QueuedPromptDto["draft"];
@@ -67,6 +70,20 @@ describe("ChatWindow 持久队列", () => {
     const delivered = harness.writes().filter((text) => String(text).includes("回合结束后继续")).length;
     await new Promise((resolve) => setTimeout(resolve, 800));
     expect(harness.writes().filter((text) => String(text).includes("回合结束后继续"))).toHaveLength(delivered);
+  });
+
+  // 实拍 2026-11-19（会话 1823）：主回合已结束（DB waiting），2 个后台子代理还在跑，排队区挂着
+  // 一条插话。宿主修好后屏幕发布 idle（输入框上方是「Waiting for 2 background agents to finish」），
+  // 排队区这条要自动送出，用 Enter 直接提交，不是排队键；运行条只交代后台还在跑。
+  it("主回合空闲、多个后台子代理在跑时，排队区已有的消息自动送出", async () => {
+    const harness = queueHarness({ status: "waiting", screenState: "idle", busySubagents: 2 });
+    harness.seed("held");
+    render(<ChatWindow />);
+    await waitFor(() => expect(harness.writes().some((text) => String(text).includes("卡住的消息"))).toBe(true), { timeout: 4_000 });
+    await waitFor(() => expect(harness.state()).toBe("delivered"));
+    expect(harness.writes()).toContain("\r");
+    expect(document.body.textContent).not.toContain(zh.chat.steerWaiting);
+    await waitFor(() => expect(document.querySelector(".chat-running.is-background")?.textContent).toContain(zh.chat.backgroundOnlyRunning));
   });
 
   it("卡在正在交给 Agent 的消息可放回输入框，不向 CLI 重发", async () => {
