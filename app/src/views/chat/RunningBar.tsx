@@ -4,8 +4,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { COMPACTING_ACTIVITY } from "../../activity";
+import type { ChatItem } from "../../api";
 import { useT } from "../../i18n";
 import { fmtElapsed, type CliRetry, type CliStatus } from "./cliStatus";
+import { liveTurnStart } from "./toolState";
 
 // 运行条活动文本的展示清洗：剥掉「cd <目录> && 」前缀（保留可能的 ›/> 提示符）。
 // 状态条截断成单行后，冗长的项目路径会把真正在跑的命令挤出可视区；完整原文在 title 里。
@@ -23,6 +25,38 @@ export function runningActivityView(
   if (activity === COMPACTING_ACTIVITY) return { text: compactingLabel, tip: undefined };
   if (!activity) return { text: runningLabel, tip: undefined };
   return { text: trimActivityCdPrefix(activity), tip: activity };
+}
+
+/// 此刻正在跑的那一步：当前回合里最后一条还没有回执的工具调用。
+///
+/// hook 写的 current_activity 只在工具**跑完**（PostToolUse）时更新——一条命令跑着的整段时间，
+/// 它停在上一条早已完成的命令上（实拍 2026-11-18：终端里在跑「Install Rust binary…」，运行条
+/// 还是前一条 Select-String）。transcript 在调用发出时就落了 tool_use，回执在跑完后才落，
+/// 「没回执」正是「在跑」。gemini/opencode 的记录只含已收场的调用，这里给不出，调用方退回 hook 值。
+/// 有说明（Bash/PowerShell 的 description）先给说明——终端里那一行显示的也是它，多行脚本的
+/// 首行往往只是个变量赋值；完整命令进 tooltip。
+export function liveToolActivity(items: ChatItem[]): { text: string; tip: string | undefined } | null {
+  const turnStart = liveTurnStart(items);
+  const settled = new Set<string>();
+  for (let index = items.length - 1; index > turnStart; index -= 1) {
+    const item = items[index];
+    if (item.type === "tool_result" && item.tool_use_id) settled.add(item.tool_use_id);
+  }
+  for (let index = items.length - 1; index > turnStart; index -= 1) {
+    const item = items[index];
+    if (item.type !== "tool_use" || settled.has(item.id)) continue;
+    if (item.detail?.kind === "command") {
+      const description = item.detail.description?.trim();
+      const command = item.detail.command.trim();
+      if (description) return { text: description, tip: command };
+      return runningActivityView(`› ${command}`, "", "");
+    }
+    const summary = item.summary.trim();
+    // 认不得的工具摘要可能是整段参数 JSON，不上运行条。
+    const activity = summary && !summary.startsWith("{") ? `${item.name}: ${summary}` : item.name;
+    return { text: activity, tip: activity };
+  }
+  return null;
 }
 
 // 运行指示的「贪吃蛇」（用户指定形态，kimi TUI 同款）：2×4 盲文格内 3 个亮点沿
@@ -102,7 +136,10 @@ export function RunningBar({ store, turnStartedAt, override, fallbackVerb, activ
   const retrySnap = store.getRetry();
   const retry = retrySnap && now - retrySnap.at < CLI_STATUS_FRESH_MS ? retrySnap : null;
   // 自动重试压过一切说法（对照 Kimi 的 turnRetry 优先）：这是此刻「为什么没动静」的真正答案。
-  const verb = retry ? t.chat.workingRetry(retry.attempt, retry.max) : override ?? fresh?.verb ?? fallbackVerb;
+  // 「API 无响应、等待重试」此前不认（没有次数），运行条只说「工作中…」，看不出卡在网络上。
+  const verb = retry?.kind === "stalled" ? t.chat.workingStalled(retry.retryIn)
+    : retry ? t.chat.workingRetry(retry.attempt, retry.max)
+    : override ?? fresh?.verb ?? fallbackVerb;
   const detail = fresh ? fresh.detail : turnStartedAt !== null ? fmtElapsed(now - turnStartedAt) : null;
   // 不是 live region：动词每几秒换一个（Pondering / Cogitating…）、活动行每次工具调用都换，
   // 放在 polite 区里读屏会被连续打断（调研 i10，与 G-16 状态点播报风暴同类）。
@@ -111,7 +148,7 @@ export function RunningBar({ store, turnStartedAt, override, fallbackVerb, activ
     <div className="chat-running">
       <div className="chat-running-line">
         <SnakeSpinner />
-        <span className="chat-running-verb">{verb}</span>
+        <span className={"chat-running-verb" + (retry ? " is-retry" : "")}>{verb}</span>
         {/* 统计每秒都在变：不进读屏播报，否则活区每秒念一遍。 */}
         {detail && <span className="chat-running-detail" aria-hidden="true">({detail})</span>}
       </div>

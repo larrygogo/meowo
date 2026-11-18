@@ -1811,10 +1811,12 @@ mod tests {
         let unknown = crate::pty::ScreenSight {
             state: "idle",
             fallback: true,
+            retry: None,
         };
         let blocked = crate::pty::ScreenSight {
             state: "blocked",
             fallback: false,
+            retry: None,
         };
         assert!(
             super::screen_blocked_fingerprint(false, false, unknown.confirmed_state()).is_none()

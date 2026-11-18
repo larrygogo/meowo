@@ -4101,6 +4101,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-sidebar-dot.is-waiting { background: var(--cc-warn-vivid); }
 .chat-sidebar-dot.is-pending { background: var(--cc-warn-vivid); animation: chat-running-pulse var(--dur-pulse-slow) ease-in-out infinite; }
 .chat-sidebar-dot.is-error { background: var(--cc-err-vivid); }
+.chat-sidebar-dot.is-running.is-retrying { background: var(--cc-warn-vivid); }
 .chat-sidebar-dot.is-unread { background: var(--cc-brand-line); }
 /* 待授权：比 pending 更急的脉冲——授权在阻塞 agent，召唤强度最高。 */
 .chat-sidebar-dot.is-approval { background: var(--cc-warn-vivid); animation: chat-running-pulse var(--dur-pulse-fast) ease-in-out infinite; }
@@ -6462,6 +6463,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-running-verb { flex: 0 0 auto; color: var(--cc-text-dim); animation: chat-running-breathe var(--dur-pulse-slow) ease-in-out infinite; }
 @keyframes chat-running-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
 @media (prefers-reduced-motion: reduce) { .chat-running-verb { animation: none; } }
+/* 自动重试中（请求出错 / API 无响应）：不是正常在干活，用警示文字色把它和普通动词分开。 */
+.chat-running-verb.is-retry { color: var(--cc-warn-text); animation: none; }
 .chat-running-detail { min-width: 0; color: var(--cc-text-faint); font-family: var(--cc-mono); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-running-sub { padding-left: var(--sp-6); color: var(--cc-text-faint); }
 .chat-running-elbow { flex: 0 0 auto; font-family: var(--cc-mono); }

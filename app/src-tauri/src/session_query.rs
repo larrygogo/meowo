@@ -312,6 +312,10 @@ pub(crate) struct LiveItem {
     /// 是「什么都没认出来」而非「确认空闲」，前端据此把角标从自信的「等你」降级为
     /// 中性点（T-15）。活动态与 tab 归属必须忽略这种未知屏幕，回落可靠的运行记录。
     screen_assumed: bool,
+    /// 屏幕上正挂着的自动重试（detect::retry_note）：侧栏把「卡在网络/接口上」与正常干活
+    /// 分开说（用户实拍 2026-11-18：TUI 红字「Waiting for API response · will retry in …」，
+    /// 侧栏、对话页却只是普通的运行中）。与 screen_state 同一份快照填充；外库卡恒 None。
+    screen_retry: Option<crate::detect::ScreenRetry>,
     /// 还在跑的后台子任务数（transcript 分析，见 TranscriptInfo::busy_subagents）。
     /// 前端卡片状态环与 tab 分组按它把「主回合停了但后台在干活」的会话画成运行中——
     /// 必须与后端 tab_class 的 background_busy 同口径，否则环色与所在 tab 打架。
@@ -874,6 +878,7 @@ fn pending_placeholder_item(temp_id: i64, info: &super::pty::PendingLaunch) -> L
         profile_name: None,
         screen_state: None,
         screen_assumed: false,
+        screen_retry: None,
         busy_subagents: 0,
         unread: false,
         foreign: false,
@@ -1223,6 +1228,7 @@ pub(crate) fn live_sessions_blocking(
                     item.endable = session_endable(pid, live.alive, pty_managed, item.background);
                     item.screen_state = screen_state;
                     item.screen_assumed = screen_sight.is_some_and(|sight| sight.fallback);
+                    item.screen_retry = screen_sight.and_then(|sight| sight.retry);
                     items.push(item);
                 }
             }
@@ -1361,6 +1367,7 @@ fn enrich(
         // 屏幕状态由 live_sessions_blocking 在 tab 归属裁定处填充（enrich 不经手）。
         screen_state: None,
         screen_assumed: false,
+        screen_retry: None,
         busy_subagents,
         unread,
         // 外库标记由 foreign_live_items 在聚合时置真，本库路径恒为 false。
@@ -1500,10 +1507,12 @@ mod tests {
         let unknown = super::super::pty::ScreenSight {
             state: "idle",
             fallback: true,
+            retry: None,
         };
         let idle = super::super::pty::ScreenSight {
             state: "idle",
             fallback: false,
+            retry: None,
         };
         assert_eq!(
             super::tab_class(true, "running", None, unknown.confirmed_state(), || false),

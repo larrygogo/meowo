@@ -27,6 +27,21 @@ export type ForgeWord = {
   checksLead: string;
 };
 
+/** CLI 倒计时「1m 9s」「45s」「1h 3m」→「1 分 09 秒」「45 秒」「1 小时 3 分」；认不出照原样。 */
+function zhCountdown(text: string): string {
+  const parts = text.trim().split(/\s+/);
+  const got: Record<string, number> = {};
+  for (const part of parts) {
+    const match = /^(\d+)([hms])$/.exec(part);
+    if (!match) return `${text} `;
+    got[match[2]] = Number(match[1]);
+  }
+  const { h, m, s } = got;
+  if (h !== undefined) return `${h} 小时${m !== undefined ? ` ${m} 分` : ""}`;
+  if (m !== undefined) return `${m} 分${s !== undefined ? ` ${String(s).padStart(2, "0")} 秒` : ""}`;
+  return s !== undefined ? `${s} 秒` : `${text} `;
+}
+
 export const zh = {
   // BCP-47 locale：日期/时刻格式化走 Intl（12/24 小时制、月日顺序随语言），不再手拼。
   locale: "zh-CN",
@@ -776,6 +791,8 @@ export const zh = {
     liveWorking: "工作中",
     liveReplyDone: "回复完成",
     steerWaiting: "等这一步完成后插入你的插话",
+    // 主回合停了、只剩后台子代理在跑（对话窗运行条位置）：说清后台在干活，也说清发消息不受影响。
+    backgroundOnlyRunning: "后台子任务还在运行，发消息不受影响",
     steerInjected: "已插入，正在继续处理",
     // 手机上的底部面板（斜杠命令）
     slashSheetTitle: "命令",
@@ -783,6 +800,10 @@ export const zh = {
     slashSheetEmpty: "没有匹配的命令",
     // 自动重试优先于一切说法：此刻「没动静」的真正原因（重试不落对话记录，只在终端画面上）
     workingRetry: (attempt: number, max: number) => `请求失败，正在重试（第 ${attempt}/${max} 次）`,
+    // 请求发出后迟迟没回应、等倒计时重发（CLI 原文「Waiting for API response · will retry in 1m 9s ·
+    // check your network」）。倒计时照 CLI 的「1m 9s」换成「1 分 09 秒」，认不出就原样放。
+    sidebarRetryStalled: "API 无响应，等待重试，检查网络",
+    workingStalled: (retryIn: string) => `API 无响应，${zhCountdown(String(retryIn))}后重试，检查网络`,
     inputLabel: "发送消息给 Agent",
     // 回合在跑时发消息会怎样，按后端声明的能力分三种去向（chat/sendCopy.ts）。同一种去向的占位
     //（发之前的许诺）与回执（发之后的说法）写在一起、共用一个动词：此前 Kimi 没声明送达时机，
@@ -1320,6 +1341,8 @@ export const zh = {
     // 子代理交了结论、它派出的后台活儿还在跑（徽标次行小字）。
     subagentBackgroundRunning: "后台仍在运行",
     subagentDurationSec: (s: number) => `${s} 秒`,
+    // 子任务行的用量，照终端子代理行的写法（↓ 387.8k tokens）。
+    taskTokens: (count: string) => `↓ ${count} tokens`,
     subagentDurationMin: (m: number, s: number) => `${m} 分 ${s} 秒`,
     subagentDurationHour: (h: number, m: number) => `${h} 小时 ${m} 分`,
     subagentLoading: "正在读取子任务记录…",

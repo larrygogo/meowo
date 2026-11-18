@@ -602,6 +602,17 @@ pub trait SubagentSpec: Sync {
     fn detect_result(&self, _output: &str) -> Option<SubagentOutcome> {
         None
     }
+
+    /// 侧车流到此刻用掉的 token（口径见 `SubagentProbeDto::tokens`）。默认 None：该
+    /// provider 的侧车不带用量，面板就不显示数字。
+    fn stream_tokens(&self, _stream: &Path) -> Option<u64> {
+        None
+    }
+
+    /// 侧车元数据里这次委派的说明（见 `SubagentProbeDto::description`）。默认 None。
+    fn stream_description(&self, _stream: &Path) -> Option<String> {
+        None
+    }
 }
 
 /// 某 agent 的 transcript 规格：定位文件 + 解析标题 + 产出增量解析器。
@@ -847,9 +858,16 @@ pub fn probe_subagent_state(
     let mut running = false;
     let mut failed = false;
     let mut known = false;
+    let mut tokens: Option<u64> = None;
+    let description = streams
+        .first()
+        .and_then(|stream| subagents.stream_description(&stream.path));
     let mut finished_at: Option<String> = None;
     let mut branches: Vec<SubagentBranchProbeDto> = Vec::with_capacity(streams.len());
     for stream in &streams {
+        if let Some(used) = subagents.stream_tokens(&stream.path) {
+            tokens = Some(tokens.unwrap_or(0) + used);
+        }
         match stream.status.as_deref() {
             Some("running") => {
                 known = true;
@@ -887,10 +905,13 @@ pub fn probe_subagent_state(
                 .filter(|_| !branch_running),
         });
     }
-    if !known {
+    // 状态读不出但有用量（claude）：照样回，状态标 unknown，由主链回执定状态。
+    if !known && tokens.is_none() {
         return None;
     }
-    let status = if running {
+    let status = if !known {
+        "unknown"
+    } else if running {
         "running"
     } else if failed {
         "failed"
@@ -900,8 +921,10 @@ pub fn probe_subagent_state(
     Some(SubagentProbeDto {
         status: status.to_string(),
         // 还在跑就没有「结束时刻」可言：侧车尾部的时间只是最近一次落盘。
-        finished_at: finished_at.filter(|_| !running),
+        finished_at: finished_at.filter(|_| known && !running),
         branches,
+        tokens,
+        description,
     })
 }
 

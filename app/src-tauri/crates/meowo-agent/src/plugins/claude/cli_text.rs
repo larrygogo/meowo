@@ -333,6 +333,18 @@ pub(super) static DEPS: &[D] = &[
         "2.1.312 包内渲染源码；2.1.322 包内 ` \\xB7 next try in` 仍在",
     ),
     D::new(
+        "retry_line",
+        "Waiting for API response",
+        "\u{273b} Waiting for API response \u{b7} will retry in 1m 9s \u{b7} check your network",
+        "2.1.327 包内 kind===\"stalled\" 分支（` \\xB7 will retry in ` 与 ` \\xB7 check your network`）与用户实拍（2026-11-18）；倒计时运行时拼",
+    ),
+    D::new(
+        "screen:api_retry_working",
+        "Waiting for API response",
+        "\u{273b} Waiting for API response \u{b7} will retry in 1m 9s \u{b7} check your network",
+        "同上；带次数的那一种（Retrying in … attempt n/m）见 retry_line 的样例",
+    ),
+    D::new(
         "clipboard_image",
         "[Image #",
         "[Image #1]",

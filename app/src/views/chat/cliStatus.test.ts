@@ -46,13 +46,22 @@ describe("parseCliRetry", () => {
   const screen = (line: string) => ["● 我来看一下", "", line, "────────────", "❯ "].join("\n");
 
   it("认出三种带上限的重试行", () => {
-    expect(parseCliRetry(screen("✗ API Error (529 Overloaded) · Retrying in 5s · attempt 2/10"), CLAUDE_RETRY_LINE_PATTERN)).toEqual({ attempt: 2, max: 10 });
-    expect(parseCliRetry(screen("✗ No response from the API after 30s · retrying, waiting up to 1m · attempt 3/10"), CLAUDE_RETRY_LINE_PATTERN)).toEqual({ attempt: 3, max: 10 });
-    expect(parseCliRetry(screen("✗ Auto mode check unavailable · next try in 5s · attempt 1/3 · esc to interrupt"), CLAUDE_RETRY_LINE_PATTERN)).toEqual({ attempt: 1, max: 3 });
+    expect(parseCliRetry(screen("✗ API Error (529 Overloaded) · Retrying in 5s · attempt 2/10"), CLAUDE_RETRY_LINE_PATTERN)).toEqual({ kind: "attempt", attempt: 2, max: 10 });
+    expect(parseCliRetry(screen("✗ No response from the API after 30s · retrying, waiting up to 1m · attempt 3/10"), CLAUDE_RETRY_LINE_PATTERN)).toEqual({ kind: "attempt", attempt: 3, max: 10 });
+    expect(parseCliRetry(screen("✗ Auto mode check unavailable · next try in 5s · attempt 1/3 · esc to interrupt"), CLAUDE_RETRY_LINE_PATTERN)).toEqual({ kind: "attempt", attempt: 1, max: 3 });
+  });
+
+  // 用户实拍（2026-11-18）：请求卡住时 spinner 行换成红字的等待重试行，没有次数，只有倒计时。
+  // 此前不认这一行，运行条只显示「工作中…」。
+  it("认出「API 无响应、等待重试」行，带上倒计时", () => {
+    expect(parseCliRetry(screen("✻ Waiting for API response · will retry in 1m 9s · check your network"), CLAUDE_RETRY_LINE_PATTERN)).toEqual({ kind: "stalled", retryIn: "1m 9s" });
+    expect(parseCliRetry(screen("✻ Waiting for API response · will retry in 45s · check your network"), CLAUDE_RETRY_LINE_PATTERN)).toEqual({ kind: "stalled", retryIn: "45s" });
+    // 正文引用（不在行尾）不算。
+    expect(parseCliRetry(screen("日志里有 Waiting for API response · will retry in 5s · check your network，后来好了"), CLAUDE_RETRY_LINE_PATTERN)).toBeNull();
   });
 
   it("带限额重置时刻的说法也认", () => {
-    expect(parseCliRetry(screen("✗ Rate limited · Retrying in 2m (3:15pm) · attempt 4/10"), CLAUDE_RETRY_LINE_PATTERN)).toEqual({ attempt: 4, max: 10 });
+    expect(parseCliRetry(screen("✗ Rate limited · Retrying in 2m (3:15pm) · attempt 4/10"), CLAUDE_RETRY_LINE_PATTERN)).toEqual({ kind: "attempt", attempt: 4, max: 10 });
   });
 
   /// 容量排队（无上限）是在等空位，不是失败；正文里引用的同款半句也不能当成正在重试。

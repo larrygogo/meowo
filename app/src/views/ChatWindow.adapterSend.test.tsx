@@ -80,24 +80,27 @@ describe("ChatWindow 适配回归", () => {
     expect(screen.getAllByText("顺手改个名")).toHaveLength(1);
   });
 
-  // 主回合停了、后台子任务还在跑：标题栏说运行中，发送也按运行中处理（进排队区），两处用的是同一批
-  // 事实。此前发送路径算状态时没带后台子任务数：点发送先进了排队区，写终端前又被改判成空闲，
-  // 气泡从排队区跳到对话里（做空 ⑩）。
-  it("后台子任务还在跑时发送：按运行中排队，与标题栏的状态一致", async () => {
-    const base = setup(513, "claude", "waiting");
+  // 主回合停了、只剩后台子代理在跑（实拍 2026-11-18：终端底部「✻ Waiting for 1 background agent
+  // to finish」加空闲提示符，Enter 正常提交）：对话页直接发送，不进「当前任务结束后发送」的队列，
+  // 也不挂「等这一步完成后插入你的插话」；运行条位置只交代后台还在跑。此前发送按「后台在跑也算
+  // 运行中」处理，消息被扣在队列里一直不发。侧栏、窗口标题记号仍算运行中（historyTone）。
+  it("只剩后台子代理在跑时发送：直接提交给终端，不进排队区", async () => {
+    const base = setup(513, "claude", "waiting", "idle");
     invoke.mockImplementation((command, args) => command === "get_chat_history"
-      ? Promise.resolve({ ...history(513, "claude", "waiting"), busySubagents: 2 })
+      ? Promise.resolve({ ...history(513, "claude", "waiting", "idle"), busySubagents: 1 })
       : base(command, args));
     render(<ChatWindow />);
     await screen.findByText("适配-513");
     await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
-    fireEvent.change(box(), { target: { value: "等它们跑完再汇总" } });
+    fireEvent.change(box(), { target: { value: "顺便看下 CI" } });
     fireEvent.keyDown(box(), { key: "Enter" });
-    await deliverQueuedNow();
-    await waitFor(() => expect(writes(513).some((text) => String(text).includes("等它们跑完再汇总"))).toBe(true));
-    // 写进终端之后仍在排队区，没有变成对话里的回显气泡。
-    await waitFor(() => expect(document.querySelector(".chat-queue-body")?.textContent).toBe("等它们跑完再汇总"));
-    expect(document.querySelector(".chat-message.is-user")).toBeNull();
+    await waitFor(() => expect(writes(513).some((text) => String(text).includes("顺便看下 CI"))).toBe(true));
+    await waitFor(() => expect(writes(513)).toContain("\r"));
+    expect(document.querySelector(".chat-queue-body")).toBeNull();
+    expect(document.querySelector(".chat-queued-head")).toBeNull();
+    expect(document.body.textContent).not.toContain(zh.chat.steerWaiting);
+    // 运行条位置只交代后台还在跑（不计时、不挂插话去向）。
+    expect(document.querySelector(".chat-running.is-background")?.textContent).toContain(zh.chat.backgroundOnlyRunning);
   });
 
   // 回执 reducer 与 Provider 无关；用已支持原生草稿暂存的 Claude 验证入队回执标「已收到」，

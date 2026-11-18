@@ -1433,3 +1433,46 @@ fn prompt_without_cwd_uses_session_root_for_checkpoint_and_stop_seals_it() {
     let files = meowo_reporter::checkpoint::changed_files(&rows[0]).unwrap();
     assert_eq!(files[0].path, "a.txt");
 }
+
+/// 子代理里的工具调用同样触发 PostToolUse，载荷带主会话的 session_id 与 transcript_path，只多一个
+/// `agent_id`（Claude Code 2.1.327 包内 hook 公共字段：「Present only when the hook fires from within a
+/// subagent … Absent for the main thread」）。实拍 2026-11-18：主回合已结束、只剩后台子代理在跑，对话页
+/// 却「工作中…(6m 25s)」，运行条第二行是子代理跑的命令——子代理的 PostToolUse 把会话翻回 running、把它的
+/// 命令写进了 current_activity。子代理的事件不得改主会话的运行状态、活动名和待办。
+#[test]
+fn subagent_posttooluse_does_not_touch_main_session_state() {
+    let store = Store::open_in_memory().unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"sa1","cwd":"/p"}"#), 100).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"sa1","cwd":"/p","tool_name":"Bash","tool_input":{"command":"cargo build"}}"#), 200).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"Stop","session_id":"sa1"}"#), 300).unwrap();
+    let sid = store.find_session_id_pub("sa1").unwrap().unwrap();
+    let tid = store.task_id_of_session_pub(sid).unwrap();
+    assert_eq!(store.get_session(sid).unwrap().status, "waiting");
+    // 主回合结束一分钟后，后台子代理还在跑命令、写待办（载荷形状照 2.1.327 的 hook 公共字段）。
+    let sub = r#"{"hook_event_name":"PostToolUse","session_id":"sa1","transcript_path":"C:/Users/me/.claude/projects/p/sa1.jsonl","cwd":"/p","permission_mode":"bypassPermissions","agent_id":"a9441de1a6894aaa8","agent_type":"general-purpose","tool_name":"Bash","tool_input":{"command":"D=\"C:/tmp/forge-research\"; cd \"$D\" && rg caches","description":"查找测试中 caches 的访问点"},"tool_response":{"stdout":"","stderr":"","interrupted":false}}"#;
+    disp(&store, &ev(sub), 60_300).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"sa1","cwd":"/p","agent_id":"a9441de1a6894aaa8","agent_type":"general-purpose","tool_name":"TodoWrite","tool_input":{"todos":[{"content":"子代理自己的待办","status":"in_progress"}]}}"#), 60_400).unwrap();
+    let s = store.get_session(sid).unwrap();
+    assert_eq!(s.status, "waiting", "子代理的工具调用不得把空闲的主会话翻回 running");
+    assert_eq!(s.last_event_at, 300, "子代理的事件不推进主会话的事件时刻");
+    assert_eq!(store.get_task(tid).unwrap().current_activity, None, "运行条不显示子代理的命令");
+    assert!(store.list_todos(tid).unwrap().is_empty(), "子代理的待办不进主会话的待办表");
+
+    // 主线程（无 agent_id）的 PostToolUse 照旧写活动名。
+    disp(&store, &ev(r#"{"hook_event_name":"UserPromptSubmit","session_id":"sa1","prompt":"继续"}"#), 70_000).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"sa1","tool_name":"Bash","tool_input":{"command":"cargo test"}}"#), 70_100).unwrap();
+    assert_eq!(store.get_task(tid).unwrap().current_activity.as_deref(), Some("› cargo test"));
+    assert_eq!(store.get_session(sid).unwrap().status, "running");
+}
+
+/// 子代理撞上审批：要人处理的事照样上报（它确实卡着），只是不改运行状态与活动名。
+#[test]
+fn subagent_permission_request_still_marks_pending_review() {
+    let store = Store::open_in_memory().unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"sa2","cwd":"/p"}"#), 100).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"PermissionRequest","session_id":"sa2","agent_id":"a1","agent_type":"general-purpose","tool_name":"Bash","tool_input":{"command":"rm -rf build"}}"#), 200).unwrap();
+    let sid = store.find_session_id_pub("sa2").unwrap().unwrap();
+    assert_eq!(store.session_pending_review(sid).unwrap().as_deref(), Some("approval"));
+    disp(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"sa2","agent_id":"a1","tool_name":"Bash","tool_input":{"command":"rm -rf build"}}"#), 300).unwrap();
+    assert_eq!(store.session_pending_review(sid).unwrap(), None, "子代理的审批跑完照样清掉");
+}
