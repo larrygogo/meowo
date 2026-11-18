@@ -13,6 +13,7 @@
 //! - stop（Stop）：任务归属会话在实施阶段、**本轮推进过任务**、验收没过完时拦住它。
 
 pub mod command;
+pub(crate) mod ownership;
 pub mod publication;
 
 use serde_json::{json, Value};
@@ -410,9 +411,22 @@ fn is_write(name: &str, input: &Value) -> bool {
         "Bash" | "PowerShell" => input
             .get("command")
             .and_then(Value::as_str)
-            .is_some_and(shell_writes),
+            .is_some_and(|cmd| shell_writes(cmd) || lead_command_writes(cmd)),
         _ => false,
     }
+}
+
+/// 会改任务目录的 reporter 子命令（`lead initialize|publish|withdraw|consume --task <任务目录>`）：没有重定向，
+/// shell_writes 认不出，但它们确实在写任务（冻结基线、发布关卡），发命令的会话就是任务的主人。`status` 只读，不算。
+fn lead_command_writes(cmd: &str) -> bool {
+    let words: Vec<&str> = cmd
+        .split(|c: char| c.is_whitespace() || c == ';' || c == '|' || c == '&')
+        .filter(|w| !w.is_empty())
+        .collect();
+    words.contains(&"--task")
+        && words.windows(2).any(|w| {
+            w[0] == "lead" && ["initialize", "publish", "withdraw", "consume"].contains(&w[1])
+        })
 }
 
 /// 在规范化文本里找所有 `[<路径>/].lead/<slug>` 任务目录引用，按出现顺序返回整段路径。
@@ -566,43 +580,19 @@ fn session_context(task: &Path, sid: &str) -> Option<String> {
 
 // ---------------- claim ----------------
 
-/// 只有写入任务的 progress.md 才算认领；从被写的路径反推任务目录，不看工作目录
-/// （会话在主目录启动、在 worktree 里工作时都能认领）。
+/// 写入任务目录里任意文件的会话认领该任务；从被写的路径反推任务目录，不看工作目录
+/// （会话在主目录启动、在 worktree 里工作时都能认领）。怎么认出「写的是哪个任务」见 ownership 模块。
+/// 子代理的调用（载荷带 agent_id）同样认领：session_id 是主会话的，任务归主会话。
 fn claim(data: &Value, registry: &Path) {
-    let (Some(sid), Some(name)) = (
-        data.get("session_id").and_then(Value::as_str),
-        data.get("tool_name").and_then(Value::as_str),
-    ) else {
+    let Some(sid) = data.get("session_id").and_then(Value::as_str) else {
         return;
     };
-    let input = data.get("tool_input").cloned().unwrap_or(Value::Null);
-    if !is_write(name, &input) {
-        return;
-    }
-    // 编辑类工具看 file_path（任务目录下的任意文件都算），命令类在命令文本里找任务目录引用。
-    let text = match name {
-        "Write" | "Edit" | "MultiEdit" => input.get("file_path").and_then(Value::as_str),
-        _ => input.get("command").and_then(Value::as_str),
-    };
-    let Some(text) = text else { return };
-    let cwd = data.get("cwd").and_then(Value::as_str);
-    // 第一个解析得到、确实是 `.lead/<slug>` 目录的引用就是被写的任务。
-    let task = find_task_refs(&text.replace('\\', "/"))
-        .into_iter()
-        .find_map(|r| {
-            let mut p = PathBuf::from(windows_path(&r));
-            if !p.is_absolute() {
-                p = Path::new(cwd?).join(p);
-            }
-            let task = p.canonicalize().ok().map(strip_verbatim)?;
-            (task.is_dir()
-                && task
-                    .parent()
-                    .and_then(Path::file_name)
-                    .is_some_and(|n| n == ".lead"))
-            .then_some(task)
-        });
-    let Some(task) = task else { return };
+    let Some(task) = ownership::claim_target(data) else { return };
+    record_owner(&task, sid, registry);
+}
+
+/// 把任务记到会话名下：写 `.owner` 并更新登记表（一个任务只归一个会话）。
+fn record_owner(task: &Path, sid: &str, registry: &Path) {
     // 协议worker都在同一宿主PID，原先tmp<PID>在并发read-modify-rename时会丢其他会话映射。
     // std::fs::File::try_lock（Rust 1.89）也约束其他reporter进程，退出后内核自动释放锁。
     let Ok(lock) = std::fs::OpenOptions::new()
@@ -878,7 +868,7 @@ fn this_turn(text: &str) -> (String, Vec<Value>) {
     (String::new(), calls)
 }
 
-fn wrote_task(calls: &[Value], task: &Path) -> bool {
+fn wrote_task(calls: &[Value], task: &Path, cwd: Option<&str>) -> bool {
     // 不带前导 `/`：Bash 里常用相对路径 `.lead/<slug>/…`（真机实测漏拦过一次）。slug 带日期前缀，
     // 误撞别的目录的概率可以忽略。
     let key = format!(
@@ -889,11 +879,53 @@ fn wrote_task(calls: &[Value], task: &Path) -> bool {
     );
     calls.iter().any(|c| {
         let input = c.get("input").cloned().unwrap_or(Value::Null);
-        norm(&input).contains(&key)
-            && c.get("name")
-                .and_then(Value::as_str)
-                .is_some_and(|n| is_write(n, &input))
+        let Some(name) = c.get("name").and_then(Value::as_str) else {
+            return false;
+        };
+        is_write(name, &input)
+            // 任务名只在变量里的写法（`cd .lead && D=<slug> && cat > $D/…`）同认领一样认得出
+            && (norm(&input).contains(&key)
+                || ownership::touches(name, &input, cwd).iter().any(|t| t == task))
     })
+}
+
+/// 无主却已进入实施的任务（「孤儿」）：PostToolUse 时没认领上（老版本 reporter、hook 当时没装、
+/// 认不出的命令形状）。面板对它们谁都不显示（见 visible_to），所以 Stop 时再按本轮 transcript 补一次认领：
+/// 本轮的写入能证明是本会话写的，且恰好一个，才认领。
+fn adopt_orphan(data: &Value, sid: &str, registry: &Path, evidence: Option<&TurnEvidence>) {
+    let cwd = data.get("cwd").and_then(Value::as_str);
+    let Some(dir) = cwd else { return };
+    let orphans: Vec<PathBuf> = lead_dirs(Path::new(dir))
+        .iter()
+        .flat_map(|lead| ownership::tasks_in(lead))
+        // 做完的不补：认领它没有用处，历史上没认领上的旧任务又多，每次 Stop 都去读 transcript 不划算
+        .filter(|t| {
+            let phase = phase_of(t);
+            owner_of(t).is_empty() && phase != "done" && !early_phase(&phase)
+        })
+        .collect();
+    if orphans.is_empty() {
+        return; // 绝大多数 Stop 走这里：不读 transcript
+    }
+    let calls = match evidence {
+        Some(evidence) => evidence.calls.clone(),
+        None => this_turn(&transcript_tail(data.get("transcript_path").and_then(Value::as_str))).1,
+    };
+    let mut hit: Vec<PathBuf> = Vec::new();
+    for c in &calls {
+        let input = c.get("input").cloned().unwrap_or(Value::Null);
+        let Some(name) = c.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        for t in ownership::touches(name, &input, cwd) {
+            if orphans.contains(&t) && !hit.contains(&t) {
+                hit.push(t);
+            }
+        }
+    }
+    if let [task] = hit.as_slice() {
+        record_owner(task, sid, registry);
+    }
 }
 
 fn stop(data: &Value, registry: &Path) -> Option<String> {
@@ -916,6 +948,9 @@ pub(crate) fn stop_with_evidence(data: &Value, registry: &Path, evidence: &TurnE
 
 fn stop_inner(data: &Value, registry: &Path, evidence: Option<&TurnEvidence>) -> Option<String> {
     let sid = data.get("session_id").and_then(Value::as_str)?;
+    if !sid.is_empty() {
+        adopt_orphan(data, sid, registry, evidence);
+    }
     let task = task_of_session(sid, registry)?; // 按会话找任务：不依赖工作目录
                                                 // verify 也拦：做空之后修问题就在这个阶段，此前只拦 implement，修到一半停下没人管（审查 2026-11-09）。
     let phase = phase_of(&task);
@@ -948,7 +983,7 @@ fn stop_inner(data: &Value, registry: &Path, evidence: Option<&TurnEvidence>) ->
     if contains_stop_word(&user_text) {
         return None; // 用户明确叫停
     }
-    if !wrote_task(&calls, &task) {
+    if !wrote_task(&calls, &task, data.get("cwd").and_then(Value::as_str)) {
         return None; // 这一轮没在推进任务（用户插话、提问），不拦
     }
     if background_pending(&tail, now_secs()) {
@@ -1335,14 +1370,25 @@ fn owner_of(task: &Path) -> String {
     read(&task.join(".owner")).trim().to_owned()
 }
 
-/// 这个任务给 session 看吗：没认领的谁都看得到；认领了只给认领它的会话。
+/// 还在访谈、写规格、出设计（或还没写 phase）：任务刚起头，主人可能还没写到能被认领的文件。
+pub(crate) fn early_phase(phase: &str) -> bool {
+    matches!(phase, "" | "interview" | "spec" | "design")
+}
+
+/// 这个任务给 session 看吗：认领了只给认领它的会话；没认领的，只在起头阶段（early_phase）给项目里所有会话看。
 /// 面板缺少历史会话 id 时也只能看未认领任务，不能把 None 当成全量授权。
+///
+/// 无主任务进入实施及之后（implement / verify / blocked / done）就谁都不给看（用户实拍 2026-11-18：worktree
+/// 会话的面板显示了另一个会话已在实施的任务）。到这一步还没主，说明认领漏了——这时给所有人看，必然串到
+/// 无关会话；而真正的主人一写任务文件就会认领（PostToolUse），最迟本轮结束时由 Stop 按 transcript 补认领
+/// （adopt_orphan），所以它看不到的窗口最多一轮。没选「只给同一工作目录 / 非 worktree 的会话看」：skill 规定
+/// 任务目录放主检出，worktree 会话恰恰是常见的主人，而同目录的两个会话照样会串（2026-11-09 第一次反馈就是）。
 fn visible_to(task: &Path, session: Option<&str>) -> bool {
     let owner = owner_of(task);
-    match session {
-        Some(sid) => owner.is_empty() || owner == sid,
-        None => owner.is_empty(),
+    if owner.is_empty() {
+        return early_phase(&phase_of(task));
     }
+    session == Some(owner.as_str())
 }
 
 /// 同 snapshot，但只给任务归属的会话看（用户反馈 2026-11-09：同一项目的另一个会话里也冒出了别的会话的
@@ -1548,3 +1594,5 @@ pub fn wait(
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod claim_tests;

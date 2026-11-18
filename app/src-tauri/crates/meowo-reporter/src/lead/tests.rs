@@ -510,7 +510,11 @@ fn snapshot_prefers_the_sessions_own_latest_task() {
         snapshot_for(cwd, Some("me")).unwrap().slug,
         "20261109-mine-b"
     );
-    // 别的会话没认领任何任务：照旧看 active。
+    // 别的会话没认领任何任务：active 指的是无主、已在实施之后的任务，不给看（2026-11-18 串任务）
+    assert!(snapshot_for(cwd, Some("other")).is_none());
+    // active 指的任务还在起头阶段：照旧看 active。
+    fs::write(lead.join("20261109-old/progress.md"), "phase: spec
+").unwrap();
     assert_eq!(
         snapshot_for(cwd, Some("other")).unwrap().slug,
         "20261109-old"
@@ -542,9 +546,16 @@ fn snapshot_is_only_for_the_owning_session() {
     fs::create_dir_all(root.join(".git")).unwrap();
     let t = make(&root);
     let cwd = root.to_str().unwrap();
-    // 还没认领：包括缺少原生会话 id 的历史会话，谁都看得到。
+    // 还没认领、已在实施：谁都看不到（认领漏了，给所有人看必然串到无关会话；2026-11-18）
+    assert!(snapshot_for(cwd, Some("other")).is_none());
+    assert!(snapshot_for(cwd, None).is_none());
+    // 还没认领、还在写规格：包括缺少原生会话 id 的历史会话，谁都看得到。
+    fs::write(t.join("progress.md"), "phase: spec
+").unwrap();
     assert!(snapshot_for(cwd, Some("other")).is_some());
     assert!(snapshot_for(cwd, None).is_some());
+    fs::write(t.join("progress.md"), "phase: implement
+").unwrap();
     fs::write(t.join(".owner"), "mine\n").unwrap();
     assert!(snapshot_for(cwd, Some("mine")).is_some());
     assert!(snapshot_for(cwd, Some("other")).is_none());
@@ -1470,7 +1481,8 @@ fn evidence_is_bound_to_checks_and_resumed_with_decisions() {
     assert!(context.contains("evidence/test.log"));
     assert!(context.contains("keep official TUI"));
     fs::write(task.join("acceptance.json"), "broken").unwrap();
-    let snapshot = snapshot_for(&root.to_string_lossy(), None).unwrap();
+    fs::write(task.join(".owner"), "owner").unwrap();
+    let snapshot = snapshot_for(&root.to_string_lossy(), Some("owner")).unwrap();
     assert!(snapshot.issues.unwrap().contains(&"lead/acceptance_invalid".to_owned()));
 }
 
@@ -1516,7 +1528,8 @@ fn published_state_routes_host_answers_without_overwriting_drafts() {
     assert!(snapshot.issues.is_none());
     assert_eq!(acceptance(&task).unwrap()[0]["passes"], true);
     publication::consume(&task, &gate.id, gate.version.as_deref().unwrap()).unwrap();
-    assert!(snapshot_for(e.d.to_str().unwrap(), None).unwrap().gate.is_none());
+    fs::write(task.join(".owner"), "owner").unwrap();
+    assert!(snapshot_for(e.d.to_str().unwrap(), Some("owner")).unwrap().gate.is_none());
 }
 
 #[test]
