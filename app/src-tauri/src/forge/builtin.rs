@@ -287,6 +287,7 @@ impl Builtin<'_> {
             ["pr", "merge", rest @ ..] => self.pr_merge(dir, rest),
             ["pr", "comment", rest @ ..] => self.pr_comment(dir, rest, false),
             ["pr", "review", rest @ ..] => self.pr_comment(dir, rest, true),
+            ["pr", "ready", rest @ ..] => self.pr_ready(dir, rest),
             ["repo", "view", rest @ ..] => self.repo_view(dir, rest),
             ["api", rest @ ..] => self.api(rest),
             _ => Err(fail(format!("meowo: unsupported gh command: {}", args.iter().take(2).copied().collect::<Vec<_>>().join(" ")))),
@@ -502,6 +503,27 @@ impl Builtin<'_> {
         Ok(ok(format!("! Pull request #{number} will be added to the merge queue for {base} when ready\n")))
     }
 
+    /// `pr ready <号> [--repo]`：草稿转为可评审（GraphQL markPullRequestReadyForReview）。forge 不用，留给 agent 与
+    /// 真机写路径验证（G7）。
+    fn pr_ready(&self, dir: &str, rest: &[&str]) -> Result<CmdOut, CmdOut> {
+        let args = Args::parse(rest);
+        let number: u64 = args.positional.first().and_then(|n| n.parse().ok()).ok_or_else(|| fail("pull request number required"))?;
+        let slug = self.repo_of(dir, &args)?;
+        let (owner, name) = split_slug(&slug).ok_or_else(|| fail(format!("invalid repository: {slug}")))?;
+        let data = self.graphql(
+            "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){id isDraft}}}",
+            json!({ "owner": owner, "name": name, "number": number }),
+        )?;
+        if data.pointer("/repository/pullRequest/isDraft").and_then(|d| d.as_bool()) == Some(false) {
+            return Ok(ok(format!("! Pull request #{number} is already \"ready for review\"\n")));
+        }
+        let id = str_or(&data, "/repository/pullRequest/id", "").to_string();
+        self.graphql(
+            "mutation($input:MarkPullRequestReadyForReviewInput!){markPullRequestReadyForReview(input:$input){pullRequest{isDraft}}}",
+            json!({ "input": { "pullRequestId": id } }),
+        )?;
+        Ok(ok(format!("✓ Pull request #{number} is marked as \"ready for review\"\n")))
+    }
     fn pr_comment(&self, dir: &str, rest: &[&str], review: bool) -> Result<CmdOut, CmdOut> {
         let args = Args::parse(rest);
         let number: u64 = args.positional.first().and_then(|n| n.parse().ok()).ok_or_else(|| fail("pull request number required"))?;

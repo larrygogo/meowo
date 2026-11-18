@@ -670,3 +670,106 @@ fn live_对照_gh() {
     // 令牌不能出现在报告里。
     assert!(!report.join("").contains(token.expose()));
 }
+
+#[test]
+fn pr_ready_草稿转可评审_已就绪不再发变更() {
+    let prefs = std::env::temp_dir().join("meowo-builtin-none.json");
+    let mutations = AtomicUsize::new(0);
+    let api = Api::new(move |_, _, body| {
+        let q = query_of(body);
+        if q.contains("markPullRequestReadyForReview") {
+            mutations.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(body["variables"]["input"], json!({ "pullRequestId": "PR_5" }));
+            return data(json!({ "markPullRequestReadyForReview": { "pullRequest": { "isDraft": false } } }));
+        }
+        let draft = body["variables"]["number"] == 5;
+        data(json!({ "repository": { "pullRequest": { "id": "PR_5", "isDraft": draft } } }))
+    });
+    let out = run(&api, &prefs, ".", &["pr", "ready", "5", "--repo", "acme/repo"]);
+    assert_eq!(out.code, Some(0));
+    assert!(out.stdout.contains("ready for review"));
+    let out = run(&api, &prefs, ".", &["pr", "ready", "6", "--repo", "acme/repo"]);
+    assert!(out.code == Some(0) && out.stdout.contains("already"));
+    assert_eq!(api.calls().iter().filter(|c| query_of(&c.2).contains("markPullRequestReadyForReview")).count(), 1);
+}
+
+// ═══ 真机写路径（G7，leader 授权）═══
+//
+// 默认 #[ignore]。只对临时分支操作：G7_BASE / G7_HEAD 是事先从 main 推上去的临时分支，G7_HEAD_SHA 是 head
+// 的提交号。依次：建草稿 PR → 读回（与 gh 对照）→ 再建一次（已存在）→ 评论 → 转可评审 → 头提交不符的合并被拒
+// → 正确合并（squash 进临时 base）→ 读回已合并（与 gh 对照）。令牌只从 GH_TOKEN 读，不打印。
+#[test]
+#[ignore]
+fn live_写路径_g7() {
+    let token = Token::new(&std::env::var("GH_TOKEN").expect("设 GH_TOKEN")).expect("令牌格式");
+    let base = std::env::var("G7_BASE").expect("G7_BASE");
+    let head = std::env::var("G7_HEAD").expect("G7_HEAD");
+    let sha = std::env::var("G7_HEAD_SHA").expect("G7_HEAD_SHA");
+    assert!(base.starts_with("meowo-g7-base-") && head.starts_with("meowo-g7-head-"), "只许对临时分支操作");
+    let slug = "larrygogo/meowo";
+    let prefs = std::env::temp_dir().join("meowo-live-none.json");
+    let builtin = Builtin { http: &crate::github::RealHttp, token: Some(&token), on_auth: &|_| {}, prefs: &prefs };
+    let dir = std::env::temp_dir();
+    let dir = dir.to_string_lossy();
+    let ours = |args: &[&str]| with_retry(|| Some(builtin.run(&dir, args)));
+    let gh = |args: &[&str]| with_retry(|| real_gh(&dir, args));
+    let show = |step: &str, out: &CmdOut| println!("[{step}] 退出码 {:?}\n  stdout: {}\n  stderr: {}", out.code, tail(&out.stdout, 3), tail(&out.stderr, 3));
+    let compare = |step: &str, number: &str| {
+        let a = gh(&["pr", "view", number, "--repo", slug, "--json", PR_FIELDS]);
+        let b = ours(&["pr", "view", number, "--repo", slug, "--json", PR_FIELDS]);
+        let mut diffs = Vec::new();
+        json_diff("", &serde_json::from_str(&a.stdout).unwrap_or(Value::Null), &serde_json::from_str(&b.stdout).unwrap_or(Value::Null), &mut diffs);
+        println!("[{step}] pr view 与 gh 逐字段差异 {} 处{}", diffs.len(), diffs.iter().take(10).map(|d| format!("\n    {d}")).collect::<String>());
+        parse_pr_full(&b.stdout).expect("forge 能解析")
+    };
+
+    let title = format!("Meowo G7 自测，可忽略（{head}）");
+    let create = ["pr", "create", "--title", &title, "--body", "Meowo 内置 gh 写路径验证（G7），由临时分支发起，验证后合进临时分支并删除。", "--base", &base, "--head", &head, "--draft", "--repo", slug];
+    let out = ours(&create);
+    show("pr create --draft", &out);
+    assert_eq!(out.code, Some(0));
+    let url = out.stdout.lines().map(str::trim).find(|l| l.starts_with("https://")).expect("链接").to_string();
+    let number = url.rsplit('/').next().unwrap().to_string();
+    println!("PR {url}");
+
+    let pr = compare("读回草稿", &number);
+    assert_eq!((pr.state.as_str(), pr.head_oid.as_deref()), ("draft", Some(sha.as_str())));
+
+    let again = ours(&create);
+    show("再建一次（已存在）", &again);
+    assert_eq!(again.code, Some(1));
+    assert!(again.both().contains("already exists") && again.both().contains(&url), "forge 要从这里抠出链接");
+
+    let out = ours(&["pr", "comment", &number, "--repo", slug, "--body", "Meowo G7 自测评论（内置执行器）"]);
+    show("pr comment", &out);
+    assert_eq!(out.code, Some(0));
+    let comments = ours(&["pr", "view", &number, "--repo", slug, "--json", "comments"]);
+    assert!(comments.stdout.contains("Meowo G7 自测评论"));
+
+    let out = ours(&["pr", "ready", &number, "--repo", slug]);
+    show("pr ready", &out);
+    assert_eq!(out.code, Some(0));
+
+    let wrong = "0000000000000000000000000000000000000000";
+    let out = ours(&["pr", "merge", &number, "--squash", "--match-head-commit", wrong, "--repo", slug]);
+    show("头提交不符的合并", &out);
+    assert_eq!(out.code, Some(1));
+    println!("  forge 归类：{}", classify_gh_failure(&out, None));
+
+    // GitHub 刚转可评审时可能还在算能不能合：405「不可合并」时等一会儿再试。
+    let mut merged = None;
+    for _ in 0..10 {
+        let out = ours(&["pr", "merge", &number, "--squash", "--match-head-commit", &sha, "--repo", slug]);
+        show("pr merge --squash", &out);
+        if out.code == Some(0) {
+            merged = Some(out);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(3));
+    }
+    assert!(merged.is_some(), "合并没成功");
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    let pr = compare("读回已合并", &number);
+    assert_eq!(pr.state, "merged");
+    println!("G7_PR_NUMBER={number}");
+}
