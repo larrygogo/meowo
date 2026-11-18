@@ -10,3 +10,8 @@
 
 - 构建 5e8a2eca（安装包 SHA-256 7c838b1f…6332）。leader 口头评价「还可以」，未提出具体问题。
 - 正式签署 U9 走 C 关卡（CI 通过后发布），不以口头评价代签。
+
+## D3 验收通过（2026-11-19，leader 在 Meowo 关卡 C-20261118-ui-polish-1 / publication-1 选择 accept，无附言）
+
+- 签署范围：冻结的 9 项（U1–U9），交付版本 feat/ui-polish 5e8a2eca，安装包 SHA-256 7c838b1f…6332。
+- 不含合并授权：#200 合并需 leader 单独同意。

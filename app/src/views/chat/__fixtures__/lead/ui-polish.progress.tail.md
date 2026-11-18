@@ -1,6 +1,4 @@
-| 运行 | 中文墨迹 | -0.50 | +0.00 |
-| 桌面 | u5-tools .chat-tool-icon | 写入 | 中文墨迹 | -1.25 | -0.75 |
-| 桌面 | u5-settings .nav-item | 通用 | 中文墨迹 | -1.25 | -0.25 |
+-1.25 | -0.25 |
 | 桌面 | u5-settings .nav-item | 会话 | 中文墨迹 | -1.00 | +0.00 |
 | 桌面 | u5-settings .nav-item | 外观 | 中文墨迹 | -1.00 | +0.00 |
 | 桌面 | u5-settings .nav-item | 代码托管 | 中文墨迹 | -1.25 | -0.25 |
@@ -72,3 +70,7 @@
 - 单跑 liveState/newSession/p2keys/question：` Test Files  4 passed (4)` / `      Tests  78 passed (78)`；单跑 render/LeadPanel/PlanPanel/Message.userNotes/RemoteUsage：` Test Files  5 passed (5)` / `      Tests  114 passed (114)`。
 
 - 主会话复核（5e8a2eca，已合最新 main）：tsc、lint 通过；vitest 全量亲自跑两次均为 283 files / 4465 tests passed；U1–U7 回写证据。U8 等 PR #200 CI。
+
+- U8 通过（#200 CI 全绿）。发布 C 关卡 C-20261118-ui-polish-1，冻结 9 项，待 leader 签 U9。
+
+- leader 接受 C-20261118-ui-polish-1，任务完成。待 leader 决定合并 #200。
