@@ -39,6 +39,11 @@ pub struct HookEvent {
     /// gemini 的 `AfterAgent` 叫 `prompt_response`。
     #[serde(default, alias = "assistant_message", alias = "prompt_response")]
     pub last_assistant_message: Option<String>,
+    /// 事件来自子代理时的子代理 id（Claude Code 2.1.327 包内 hook 公共字段：「Present only when the
+    /// hook fires from within a subagent … Absent for the main thread」）。子代理的工具调用同样触发
+    /// PostToolUse，载荷里的 session_id 与 transcript_path 都是主会话的，只能靠它分辨来源。
+    #[serde(default)]
+    pub agent_id: Option<String>,
 }
 
 /// 各家的字段名不同：claude 的 `TodoWrite` 用 `content`，kimi 的 `TodoList` 用 `title`。
@@ -56,6 +61,11 @@ struct RawTodo {
 impl HookEvent {
     pub fn parse(s: &str) -> Result<HookEvent, serde_json::Error> {
         serde_json::from_str(s)
+    }
+
+    /// 这条事件是子代理里发生的（见 `agent_id`）。kimi 的载荷没有身份字段，恒为 false。
+    pub fn from_subagent(&self) -> bool {
+        self.agent_id.as_deref().is_some_and(|id| !id.trim().is_empty())
     }
 
     /// 投影成 agent 能力所需的那几个字段。能力层刻意不认识 `HookEvent` 本身——它依赖
