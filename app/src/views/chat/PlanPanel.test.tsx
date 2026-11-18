@@ -6,6 +6,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(() => Promise.resolve(() => {})) }));
 
 import { latestPlan, PlanPanel } from "./PlanPanel";
+import { visibleText } from "../../test/visibleText";
 
 const items: ChatItem[] = [
   { type: "tool_use", id: "todo-1", timestamp: null, name: "TodoWrite", kind: "todo", summary: "拆分待办" },
@@ -20,7 +21,7 @@ describe("PlanPanel 计划文档", () => {
     expect(screen.getByText("已通过")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "改造目标", level: 1 })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "实施步骤", level: 2 })).toBeTruthy();
-    expect(screen.getByText("保留完整计划文档。")).toBeTruthy();
+    expect(screen.getByText(visibleText("保留完整计划文档。"))).toBeTruthy();
     expect(screen.queryByText("拆分待办")).toBeNull();
   });
 

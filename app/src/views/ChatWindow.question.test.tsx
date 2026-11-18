@@ -7,6 +7,7 @@ import { ChatWindow } from "./ChatWindow";
 import { chatUi } from "../test/agents";
 import { terminalAttention } from "../terminalAttention";
 import { zh } from "../i18n/zh";
+import { visibleText } from "../test/visibleText";
 
 describe("ChatWindow", () => {
   /**
@@ -1339,7 +1340,7 @@ describe("ChatWindow", () => {
         return Promise.resolve();
       });
       render(<ChatWindow />);
-      const message = (await screen.findByText("最后一条回答")).closest(".chat-scroll > *") as Element;
+      const message = (await screen.findByText(visibleText("最后一条回答"))).closest(".chat-scroll > *") as Element;
       await waitFor(() => expect(observedEls).toContain(message));
       const scroller = document.querySelector(".chat-scroll") as HTMLElement;
       Object.defineProperty(scroller, "scrollHeight", { value: 3000, configurable: true });

@@ -6,6 +6,7 @@ import { Transcript } from "./Transcript";
 import { resetFoldMemory } from "./foldMemory";
 import { EchoActionsContext, EchoPhaseContext, type EchoActions, type OutgoingPhase } from "./outgoingPrompts";
 import type { ChatItem } from "../../api";
+import { visibleText } from "../../test/visibleText";
 
 afterEach(() => { cleanup(); resetFoldMemory(); });
 
@@ -116,9 +117,9 @@ describe("压缩分隔条", () => {
     ]} />);
     expect(screen.getByText("已自动压缩上下文")).toBeTruthy();
     expect(screen.getByText("压缩前 592K tokens")).toBeTruthy();
-    expect(screen.queryByText("保留的要点：重构对话窗")).toBeNull();
+    expect(screen.queryByText(visibleText("保留的要点：重构对话窗"))).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "查看摘要" }));
-    expect(screen.getByText("保留的要点：重构对话窗")).toBeTruthy();
+    expect(screen.getByText(visibleText("保留的要点：重构对话窗"))).toBeTruthy();
     expect(screen.getByRole("button", { name: "收起摘要" })).toBeTruthy();
   });
 
