@@ -191,6 +191,10 @@ export const QA_SHOTS = [
   // ── 设置窗：更新状态、下拉展开、输入框聚焦、保存失败 ──
   ...["checking", "error", "available", "downloading", "ready"].map((u) => ({ name: "qa-set-update-" + u, scene: "settingswin-about", params: "upd=" + u, size: SETTINGS, sel: ".settings", steps: [["tick", 11000]] })),
   { name: "qa-set-dropdown", scene: "settingswin-general", size: SETTINGS, sel: ".dd-menu", steps: [["click", ".dd > .dd-btn"]] },
+  // GitHub 分区：显示设备码、已登录、令牌被拒（没登录是 settingswin-github 本身）。
+  { name: "qa-set-github-code", scene: "settingswin-github", params: "gh=code", size: SETTINGS, sel: ".github-code", langs: ["zh", "en"] },
+  { name: "qa-set-github-signedin", scene: "settingswin-github", params: "gh=signedin", size: SETTINGS, sel: ".github-avatar", langs: ["zh", "en"] },
+  { name: "qa-set-github-relogin", scene: "settingswin-github", params: "gh=relogin", size: SETTINGS, sel: ".github-warn" },
   // 查看非 active 账号只换用量视图：账号名、按下态和非 active 用量都要入镜。
   { name: "qa-set-profile-usage", scene: "settingswin-account", size: SETTINGS, sel: ".usage-card-title", steps: [["click", '[data-testid="profile-usage-claude-work"]']], langs: ["zh", "en"] },
   { name: "qa-set-dropdown-sessions", scene: "settingswin-sessions", size: SETTINGS, sel: ".dd-menu", steps: [["click", ".dd > .dd-btn >> nth=1"]] },

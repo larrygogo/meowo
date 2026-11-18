@@ -425,6 +425,20 @@ async function boot(): Promise<React.ReactNode> {
           { id: "spare", name: "备用", active: false, account: null },
         ];
       }
+      // GitHub 分区：?gh=code（显示设备码）/ signedin（已登录）/ relogin（令牌被拒）；缺省是没登录、自动方式。
+      if (cmd === "github_status") {
+        const gh = q.get("gh");
+        const account = { login: "octocat", name: "The Octocat", avatarUrl: null };
+        return {
+          mode: gh === "signedin" || gh === "relogin" ? "meowo" : "auto",
+          active: gh === "signedin" || gh === "relogin" ? "meowo" : "gh",
+          account: gh === "signedin" || gh === "relogin" ? account : null,
+          needsRelogin: gh === "relogin",
+          ghInstalled: true,
+          credentialSupported: true,
+          pending: gh === "code" ? { userCode: "WDJB-MJHT", verificationUri: "https://github.com/login/device", expiresAt: Date.now() + 15 * 60_000 } : null,
+        };
+      }
       if (cmd === "remote_access_info") {
         return {
           enabled: true, port: 18620, token: "visual-regression-token", lastError: fail ? "remote/bind_failed: address not available" : null, boundPort: 18620,

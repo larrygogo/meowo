@@ -1969,6 +1969,8 @@ button.stab {
   user-select: all;
 }
 .github-actions { display: flex; flex-wrap: wrap; gap: var(--sp-8); margin-top: var(--sp-10); }
+/* 账号行右侧的「重新登录」「退出登录」一起折行，不拆成上下两处。 */
+.github-row-actions { flex: none; display: flex; gap: var(--sp-8); }
 .github-waiting { display: flex; align-items: center; gap: var(--sp-6); margin-top: var(--sp-10); }
 .github-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--cc-text-dim); animation: github-pulse var(--dur-pulse) var(--ease-in-out) infinite; }
 @keyframes github-pulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }

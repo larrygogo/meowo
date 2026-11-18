@@ -166,12 +166,14 @@ export function GithubSection() {
               {status.needsRelogin ? t.github.reloginDesc : t.github.signedInDesc(vault)}
             </div>
           </div>
-          {status.needsRelogin && (
-            <button type="button" className="sbtn btn-primary" {...busyProps(busy === "login", signIn)}>
-              {busy === "login" ? t.github.signingIn : t.github.relogin}
-            </button>
-          )}
-          <button type="button" className="sbtn" {...busyProps(busy === "logout", signOut)}>{t.github.signOut}</button>
+          <div className="github-row-actions">
+            {status.needsRelogin && (
+              <button type="button" className="sbtn btn-primary" {...busyProps(busy === "login", signIn)}>
+                {busy === "login" ? t.github.signingIn : t.github.relogin}
+              </button>
+            )}
+            <button type="button" className="sbtn" {...busyProps(busy === "logout", signOut)}>{t.github.signOut}</button>
+          </div>
         </div>
       );
     }
