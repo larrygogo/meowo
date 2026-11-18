@@ -26,6 +26,7 @@ export const ToolDisclosure = memo(function ToolDisclosure({ item, result, summa
     <details
       className={"chat-tool" + (state === "error" ? " is-error" : "")}
       data-state={state}
+      data-enter-id={item.id}
       {...details}
     >
       <summary>
