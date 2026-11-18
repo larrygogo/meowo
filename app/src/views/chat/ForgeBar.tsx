@@ -253,8 +253,9 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
 
   const fail = (e: unknown, retry?: () => void) => {
     const raw = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
-    // 冲突带着网页链接：给一个「在 GitHub 打开」去处理。
-    const link = raw.startsWith("gh/merge_conflict: ") ? raw.slice("gh/merge_conflict: ".length).trim() : "";
+    // 冲突、平台判定暂时不能合并都带着网页链接：给一个「在 <平台> 打开」去处理。
+    const linked = ["gh/merge_conflict: ", "forge/not_mergeable: "].find((prefix) => raw.startsWith(prefix));
+    const link = linked ? raw.slice(linked.length).trim() : "";
     setError({ text: formatBackendError(e, t.locale), code: errorCode(e), link: link.startsWith("https://") ? link : null, retry });
   };
   const begin = (what: Busy) => {

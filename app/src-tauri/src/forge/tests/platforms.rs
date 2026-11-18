@@ -615,7 +615,9 @@ fn gitea_合并_钉住头提交_拒绝原话归类() {
             "gh/method_not_allowed".to_string(),
         ),
         (405, "Work in progress PRs cannot be merged", "gh/merge_blocked: draft".to_string()),
-        (405, "Please try again later", "gh/checks_pending".to_string()),
+        // Gitea main services/pull/check.go：冲突、检查中、出错都回 ErrNotMergeableState，API 统一回 405「Please try again
+        // later」——分不清，不能说成「检查在跑」（复核指出），给专门的码并带上 PR 链接。
+        (405, "Please try again later", format!("forge/not_mergeable: {}", pr.url)),
         (
             405,
             "User not allowed to merge PR",

@@ -288,7 +288,9 @@ impl ForgeApi for Gitea<'_> {
             405 if low.contains("already merged") => return Ok(false),
             405 if low.contains("merge style") => "gh/method_not_allowed".into(),
             405 if low.contains("work in progress") => "gh/merge_blocked: draft".into(),
-            405 if low.contains("try again later") => "gh/checks_pending".into(),
+            // 冲突、还在检查、检查出错 Gitea 都回这一句（services/pull/check.go 的 ErrNotMergeableState），分不清：
+            // 不说成「检查在跑」，给专门的码与 PR 链接，让用户去网页看。
+            405 if low.contains("try again later") => format!("forge/not_mergeable: {}", pr.url),
             405 if low.contains("not allowed to merge") => format!("forge/forbidden: {message}"),
             405 => format!("gh/merge_blocked: {message}"),
             409 if low.contains("out of date") && !low.contains("push") => "gh/head_changed".into(),

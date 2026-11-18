@@ -154,6 +154,8 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "gh/too_old", exact: true, zh: "gh 版本太旧，升级后再合并", en: "gh is too old. Update it to merge." },
   { m: "gh/checks_failed", exact: true, zh: "CI 有失败，不能合并", en: "CI failed. Can't merge." },
   { m: "gh/checks_pending", exact: true, zh: "检查还没完成，稍后再试", en: "Checks aren't done yet. Try again shortly." },
+  // Gitea 冲突、仍在检查、检查出错都回同一句 405，分不清（forge/gitea.rs）。后面跟 PR 链接，面板给网页入口。
+  { m: "forge/not_mergeable", zh: "平台判定暂时不能合并（可能有冲突或仍在检查），请到网页查看", en: "The service can't merge this right now (there may be conflicts, or checks are still running). Check it on the website." },
   { m: "gh/merge_conflict", zh: "有冲突，去网页处理", en: "There are conflicts. Resolve them on the website." },
   { m: "gh/head_changed", exact: true, zh: "PR 有新提交，看过再合并", en: "The PR has new commits. Review them first." },
   { m: "gh/method_not_allowed", exact: true, zh: "仓库不允许这种合并方式", en: "This repository doesn't allow that merge method" },

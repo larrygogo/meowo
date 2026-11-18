@@ -98,6 +98,24 @@ describe("「更改」面板按平台的叫法", () => {
     expect(within(card).getByTestId("scm-merge").hasAttribute("disabled")).toBe(false);
   });
 
+  it("Gitea 回「Please try again later」：不说成检查在跑，说清楚并给网页入口", async () => {
+    const url = "https://codeberg.org/o/r/pulls/57";
+    status = gitlab({ forge: "gitea", forgeHost: "codeberg.org", repoUrl: "https://codeberg.org/o/r", mergeMethods: ["merge"],
+      pr: mr({ number: 57, url, forge: "gitea", checks: [], checksSummary: "none" }) });
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === "git_forge_status") return status;
+      if (command === "gh_pr_merge") throw `forge/not_mergeable: ${url}`;
+      return null;
+    });
+    renderBar();
+    fireEvent.click(await screen.findByTestId("scm-merge"));
+    fireEvent.click(await screen.findByTestId("merge-confirm"));
+    const error = await screen.findByTestId("forge-error");
+    expect(error.textContent).toContain("平台判定暂时不能合并");
+    expect(error.textContent).not.toContain(zh.forge.mergeBlockedPending);
+    expect(within(error).getByRole("button", { name: "在 Codeberg 打开" })).toBeTruthy();
+  });
+
   it("令牌失效：说清楚并引导重新添加；Codeberg 用站点名", async () => {
     status = gitlab({ gh: "unauthenticated", forge: "gitea", forgeHost: "codeberg.org", repoUrl: "https://codeberg.org/o/r", compareUrl: "https://codeberg.org/o/r/compare/main...feat/x" });
     renderBar();
