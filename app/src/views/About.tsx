@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { useFlash } from "../hooks/useFlash";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -1040,15 +1041,14 @@ export function AboutSection({
       : { label: t.about.checkUpdate, primary: false };
 
   // 诊断日志导出：保存框选位置，成功后按钮短暂显示「已导出」；失败走错误框（取消保存框不算失败）。
-  const [diagExported, setDiagExported] = useState(false);
+  const { shown: diagExported, flash: flashDiagExported } = useFlash();
   const exportDiag = async () => {
     const stamp = new Date().toISOString().slice(0, 10);
     const path = await saveDialog({ defaultPath: `meowo-diag-${stamp}.txt`, filters: [{ name: "Text", extensions: ["txt", "log"] }] }).catch(() => null);
     if (!path) return;
     try {
       await exportDiagLog(path);
-      setDiagExported(true);
-      window.setTimeout(() => setDiagExported(false), 2_000);
+      flashDiagExported();
     } catch (e) {
       void appAlert(formatBackendError(e, t.locale), { title: t.about.diagLog });
     }
@@ -1116,7 +1116,7 @@ export function AboutSection({
             <div className="row-label">{t.about.diagLog}</div>
             <div className="row-desc">{t.about.diagLogDesc}</div>
           </div>
-          <button className="sbtn" onClick={() => void exportDiag()}>
+          <button className={"sbtn fb-press" + (diagExported ? " fb-flash" : "")} onClick={() => void exportDiag()}>
             {diagExported ? t.about.diagLogExported : t.about.diagLogExport}
           </button>
         </div>

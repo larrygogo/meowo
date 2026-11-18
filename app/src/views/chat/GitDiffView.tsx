@@ -16,6 +16,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
+import { useFlash } from "../../hooks/useFlash";
 import {
   getGitFileDiff,
   listDirEntries,
@@ -1090,12 +1091,7 @@ export function FilesView({ cwd, live = false, reveal = null, onRevealed }: {
     savePref(TREE_WIDTH_KEY, String(next));
   };
   const [wrap, toggleWrap] = useWrapPref();
-  const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (!copied) return;
-    const timer = window.setTimeout(() => setCopied(false), 1500);
-    return () => window.clearTimeout(timer);
-  }, [copied]);
+  const { shown: copied, flash: flashCopied } = useFlash();
   // 目录清单与文件文本都按 rel 路径缓存：折叠/回退再展开不重复拉取。
   const [dirs, setDirs] = useState<Map<string, FetchEntry<DirEntryDto[]>>>(new Map());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -1539,12 +1535,12 @@ export function FilesView({ cwd, live = false, reveal = null, onRevealed }: {
             {codeView && (
               <button
                 type="button"
-                className="chat-diff-iconbtn"
+                className={"chat-diff-iconbtn fb-press" + (copied ? " fb-flash" : "")}
                 aria-label={copied ? t.chat.codeCopied : t.chat.filesCopyAll}
                 data-tip={copied ? t.chat.codeCopied : t.chat.filesCopyAll}
                 onClick={() => {
                   if (!selectedFile) return;
-                  navigator.clipboard?.writeText(selectedFile.text).then(() => setCopied(true), () => {});
+                  navigator.clipboard?.writeText(selectedFile.text).then(flashCopied, () => {});
                 }}
               >
                 {copied ? <CheckIcon /> : <CopyIcon />}

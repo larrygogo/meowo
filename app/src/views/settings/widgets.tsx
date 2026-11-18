@@ -2,6 +2,7 @@
 // 纯展示、无业务耦合，供各 section 复用。
 // 弹层菜单（Dropdown / ActionMenu / useMenuPopup）已收敛到 ../menu——全项目只有那一份实现。
 import { useEffect, useRef, useState } from "react";
+import { useFlash } from "../../hooks/useFlash";
 import { STICKER_COLORS, STICKER_COLOR_KEYS } from "../../appearance";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
@@ -42,24 +43,13 @@ export function SettingsError({ error, onDismiss, preformatted, action }: {
 }
 
 /** 文本类设置提交成功后的「已保存」轻提示（T-5，2026-11-12 走查）：开关拨了会自己翻，
- *  文本框按回车之后什么都不变，用户分不清提交了没有。flash() 显示 2 秒；读屏经常驻的
- *  role=status 播报（动态插入的 live region 读屏常不念，所以容器常驻、只换内容）。 */
-export function useSavedFlash() {
-  const [shown, setShown] = useState(false);
-  const timer = useRef<number | undefined>(undefined);
-  useEffect(() => () => window.clearTimeout(timer.current), []);
-  const flash = () => {
-    setShown(true);
-    window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => setShown(false), 2000);
-  };
-  const hide = () => { window.clearTimeout(timer.current); setShown(false); };
-  return { shown, flash, hide };
-}
+ *  文本框按回车之后什么都不变，用户分不清提交了没有。flash() 显示 FEEDBACK_MS（2.5 秒，全应用同一个数）；
+ *  读屏经常驻的 role=status 播报（动态插入的 live region 读屏常不念，所以容器常驻、只换内容）。 */
+export const useSavedFlash = useFlash;
 
 export function SavedNote({ shown }: { shown: boolean }) {
   const t = useT();
-  return <span className="settings-saved" role="status">{shown ? t.settings.saved : ""}</span>;
+  return <span className={"settings-saved" + (shown ? " fb-flash" : "")} role="status">{shown ? t.settings.saved : ""}</span>;
 }
 
 export function Switch({ checked, onChange, disabled, label }: { checked: boolean; onChange: () => void; disabled?: boolean; label: string }) {

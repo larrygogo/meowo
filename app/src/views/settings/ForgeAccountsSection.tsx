@@ -11,6 +11,7 @@
 //   企业版账号；这里不让用户手选「用哪个账号」，按仓库远端的主机自动选。
 // - 令牌只在后端；这里拿到的只有平台、主机、账号名与要不要重新添加。
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useFlash } from "../../hooks/useFlash";
 import { listen } from "@tauri-apps/api/event";
 import {
   FORGE_LOGIN_EVENT,
@@ -103,7 +104,7 @@ export function ForgeAccountList() {
   const [notice, setNotice] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState<"add" | "device" | "remove" | null>(null);
-  const [copied, setCopied] = useState(false);
+  const { shown: copied, flash: flashCopied } = useFlash();
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -181,10 +182,7 @@ export function ForgeAccountList() {
   };
 
   const copy = (code: ForgeDeviceCodeDto) =>
-    navigator.clipboard?.writeText(code.userCode).then(() => {
-      setCopied(true);
-      window.setTimeout(() => { if (alive.current) setCopied(false); }, 1500);
-    }).catch(() => {}) ?? Promise.resolve();
+    navigator.clipboard?.writeText(code.userCode).then(() => { if (alive.current) flashCopied(); }).catch(() => {}) ?? Promise.resolve();
 
   const signOut = (account: ForgeAccountDto) => {
     if (busy) return;
@@ -225,7 +223,7 @@ export function ForgeAccountList() {
         <div className="row-desc is-full">{f.codeHint(minutesLeft(code.expiresAt, Date.now()))}</div>
         <div className="github-actions">
           <button type="button" className="sbtn btn-primary" onClick={() => { void copy(code); void openLink(code.verificationUriComplete ?? code.verificationUri).catch(() => {}); }}>{f.copyAndOpen}</button>
-          <button type="button" className="sbtn" onClick={() => void copy(code)}>{copied ? f.copied : f.copyCode}</button>
+          <button type="button" className={"sbtn fb-press" + (copied ? " fb-flash" : "")} onClick={() => void copy(code)}>{copied ? f.copied : f.copyCode}</button>
           <button type="button" className="sbtn" onClick={cancelDevice}>{f.cancel}</button>
         </div>
         <div className="row-desc github-waiting" role="status"><span className="github-dot" aria-hidden />{f.waiting}</div>

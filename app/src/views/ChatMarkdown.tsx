@@ -1,4 +1,5 @@
 import { memo, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useFlash } from "../hooks/useFlash";
 import { ChatCwdContext } from "./chat/chatCwd";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -165,7 +166,7 @@ function useCodeWrap(): boolean {
 function CopyablePre({ children }: { children?: ReactNode }) {
   const t = useT();
   const preRef = useRef<HTMLPreElement>(null);
-  const [copied, setCopied] = useState(false);
+  const { shown: copied, flash: done } = useFlash();
   const wrap = useCodeWrap();
   // 换行钮只在真的有横向溢出（或已开换行、要能关回去）时出现：短代码块挂一个点了没变化的
   // 按钮只是噪声。框图不给——它的对齐靠一行不断，换行就散架。
@@ -187,10 +188,6 @@ function CopyablePre({ children }: { children?: ReactNode }) {
   const copy = () => {
     const text = preRef.current?.innerText ?? "";
     if (!text) return;
-    const done = () => {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
-    };
     if (navigator.clipboard?.writeText) {
       void navigator.clipboard.writeText(text).then(done).catch(() => {});
       return;
@@ -233,7 +230,7 @@ function CopyablePre({ children }: { children?: ReactNode }) {
             {wrap ? t.chat.codeUnwrap : t.chat.codeWrap}
           </button>
         )}
-        <button type="button" className="chat-md-pre-copy" onClick={copy}>{copied ? t.chat.codeCopied : t.chat.codeCopy}</button>
+        <button type="button" className={"chat-md-pre-copy fb-press" + (copied ? " fb-flash" : "")} onClick={copy}>{copied ? t.chat.codeCopied : t.chat.codeCopy}</button>
       </div>
       {/* 横向溢出时代码块是可滚动区域，键盘用户要能 Tab 进来用方向键滚（axe scrollable-region-focusable，
           验收 #23）。不溢出时不进 Tab 序，免得每个短代码块都多停一下。 */}
@@ -260,7 +257,7 @@ export function tableToMarkdown(table: HTMLTableElement): string {
 function CopyableTable({ children }: { children?: ReactNode }) {
   const t = useT();
   const tableRef = useRef<HTMLTableElement>(null);
-  const [copied, setCopied] = useState(false);
+  const { shown: copied, flash: flashCopied } = useFlash();
   const copy = async () => {
     const table = tableRef.current;
     if (!table) return;
@@ -277,14 +274,12 @@ function CopyableTable({ children }: { children?: ReactNode }) {
       } catch { /* 权限拒绝：走纯文本 */ }
     }
     if (!ok) ok = await copyPlainText(text);
-    if (!ok) return;
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
+    if (ok) flashCopied();
   };
   return (
     <div className="chat-md-table">
       <table ref={tableRef}>{children}</table>
-      <button type="button" className="chat-md-table-copy" onClick={() => void copy()}>
+      <button type="button" className={"chat-md-table-copy fb-press" + (copied ? " fb-flash" : "")} onClick={() => void copy()}>
         {copied ? t.chat.codeCopied : t.chat.tableCopy}
       </button>
     </div>

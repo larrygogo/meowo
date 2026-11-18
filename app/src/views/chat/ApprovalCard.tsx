@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FocusEvent, type ReactNode, type RefObject } from "react";
+import { useFlash } from "../../hooks/useFlash";
 import { remoteUi } from "../../remoteMode";
 import { announceCard } from "./cardAnnouncer";
 import { Icon } from "../../icons/Icon";
@@ -196,7 +197,7 @@ export function ApprovalCommandDetail({ label, command, expandLabel, collapseLab
   copiedLabel: string;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const { shown: copied, flash: flashCopied } = useFlash();
   // 只有命令真的超出 pre 的限高才给「展开全部」：一行的 git push 也挂着它、点了毫无变化，
   // 还白占约 45px，而矮窗口里审批卡最缺的就是高度（UI 调研 chat #9）。判法照搬
   // CrossMessageBlock：实测 scrollHeight，+4 容差防亚像素虚报，窗口宽度变化时复测。
@@ -214,10 +215,7 @@ export function ApprovalCommandDetail({ label, command, expandLabel, collapseLab
   }, [command]);
   const copy = () => {
     if (!navigator.clipboard?.writeText) return;
-    void navigator.clipboard.writeText(command).then(() => {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
-    }).catch(() => {});
+    void navigator.clipboard.writeText(command).then(flashCopied).catch(() => {});
   };
   return (
     <div className={"chat-approval-detail" + (expanded ? " is-expanded" : "")}>
@@ -229,7 +227,7 @@ export function ApprovalCommandDetail({ label, command, expandLabel, collapseLab
           <button type="button" onClick={() => setExpanded((value) => !value)}>{expanded ? collapseLabel : expandLabel}</button>
         )}
         {/* 图标钮：文字版独占一行（约 30px），矮窗里正是它把命令挤到折叠线下；名字留给读屏与悬停提示。 */}
-        <button type="button" className="chat-approval-copy-btn" aria-label={copied ? copiedLabel : copyLabel} data-tip={copied ? copiedLabel : copyLabel} onClick={copy}>
+        <button type="button" className={"chat-approval-copy-btn fb-press" + (copied ? " fb-flash" : "")} aria-label={copied ? copiedLabel : copyLabel} data-tip={copied ? copiedLabel : copyLabel} onClick={copy}>
           <Icon glyph={copied ? icCheck : icCopy} size={14} />
         </button>
       </div>
