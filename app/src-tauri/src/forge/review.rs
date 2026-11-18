@@ -386,10 +386,14 @@ mod tests {
         let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches: &caches, prefs: repo.join("forge.json"), env: &[] };
         comment_with(&ctx, repo.to_str().unwrap(), 12, "note", true).unwrap();
         line_comment_with(&ctx, repo.to_str().unwrap(), 12, "src/a.ts", 3, "NEW", "line note").unwrap();
+        let line = calls.lock().unwrap().last().unwrap().join(" ");
+        // GitHub REST 的 side 只收 RIGHT / LEFT（面板传的是 NEW / OLD）。
+        assert!(line.contains("commit_id=current-head") && line.contains("path=src/a.ts") && line.contains("line=3") && line.contains("side=RIGHT"), "{line}");
+        line_comment_with(&ctx, repo.to_str().unwrap(), 12, "src/a.ts", 2, "OLD", "old note").unwrap();
         let calls = calls.into_inner().unwrap();
         assert!(calls.iter().any(|args| args.contains(&"--comment".into()) && args.contains(&"note".into())));
         let line = calls.last().unwrap().join(" ");
-        assert!(line.contains("commit_id=current-head") && line.contains("path=src/a.ts") && line.contains("line=3") && line.contains("side=NEW"));
+        assert!(line.contains("line=2") && line.contains("side=LEFT") && !line.contains("side=OLD"), "{line}");
     }
 
     #[test]

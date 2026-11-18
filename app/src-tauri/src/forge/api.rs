@@ -295,6 +295,8 @@ impl ForgeApi for GhForge<'_> {
         let head = value.get("headRefOid").and_then(|h| h.as_str()).ok_or("gh/head_changed")?.to_string();
         let endpoint = format!("repos/{slug}/pulls/{number}/comments");
         let line_text = line.to_string();
+        // GitHub REST 的 side 只收 RIGHT（新文件这一侧）/ LEFT（旧文件）；面板传的是 NEW / OLD。
+        let side = if side == "OLD" { "LEFT" } else { "RIGHT" };
         let args = [
             "api",
             endpoint.as_str(),

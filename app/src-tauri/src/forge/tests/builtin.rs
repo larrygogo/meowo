@@ -294,7 +294,7 @@ fn api_分页_slurp_与字段() {
         }
         if method == "POST" {
             assert!(url.ends_with("/repos/acme/repo/pulls/3/comments"));
-            assert_eq!(body, &json!({ "body": "hi there", "commit_id": "abc", "path": "src/a.ts", "line": 3, "side": "NEW" }));
+            assert_eq!(body, &json!({ "body": "hi there", "commit_id": "abc", "path": "src/a.ts", "line": 3, "side": "RIGHT" }));
             return resp(201, json!({ "id": 1 }));
         }
         if url.contains("page=2") {
@@ -313,7 +313,7 @@ fn api_分页_slurp_与字段() {
     assert!(api.calls()[0].1.ends_with("/repos/acme/repo/pulls/3/files?per_page=100"), "{}", api.calls()[0].1);
     let out = run(&api, &prefs, ".", &["api", "repos/acme/repo/pulls/3/files", "--paginate"]);
     assert_eq!(json_out(&out), json!([{ "filename": "a.ts" }, { "filename": "b.ts" }]));
-    let out = run(&api, &prefs, ".", &["api", "repos/acme/repo/pulls/3/comments", "-f", "body=hi there", "-f", "commit_id=abc", "-f", "path=src/a.ts", "-F", "line=3", "-f", "side=NEW"]);
+    let out = run(&api, &prefs, ".", &["api", "repos/acme/repo/pulls/3/comments", "-f", "body=hi there", "-f", "commit_id=abc", "-f", "path=src/a.ts", "-F", "line=3", "-f", "side=RIGHT"]);
     assert_eq!(out.code, Some(0), "{}", out.stderr);
     assert_eq!(json_out(&run(&api, &prefs, ".", &["api", "user"]))["login"], "me");
     // 别的主机、读宿主文件：拒。
