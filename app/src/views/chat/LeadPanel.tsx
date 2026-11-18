@@ -13,6 +13,7 @@ import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import { useVisibleInterval } from "../../hooks/useVisibleInterval";
 import { ChatMarkdown } from "../ChatMarkdown";
+import { LeadDecisions, LeadProgress } from "./LeadNotes";
 import { ApprovalCard } from "./ApprovalCard";
 import { useTablist } from "../useTablist";
 import { Icon } from "../../icons/Icon";
@@ -203,43 +204,6 @@ function LeadStages({ phase }: { phase: string }) {
   );
 }
 
-function LeadNotes({ kind, text }: { kind: "decisions" | "progress"; text: string }) {
-  const entries: { title: string | null; body: string }[] = [];
-  let phase = "";
-  for (const line of text.split(/\r?\n/)) {
-    if (/^phase\s*:/.test(line.trim()) && entries.length === 0) {
-      phase = line.trim();
-      continue;
-    }
-    const match = line.match(/^\s*(?:[-*]|\d+\.)\s+(.*)$/);
-    if (match) {
-      const decision = kind === "decisions" ? match[1].match(/^([^：]{1,180})：([\s\S]*)$/) : null;
-      entries.push({ title: decision?.[1] ?? null, body: decision ? decision[2].trim() : match[1] });
-    } else if (entries.length > 0) {
-      entries[entries.length - 1].body += `\n${line}`;
-    } else if (line.trim()) {
-      entries.push({ title: null, body: line });
-    }
-  }
-  if (entries.length === 0) return <ChatMarkdown text={text} />;
-  return (
-    <div className={`lead-notes is-${kind}`}>
-      {phase && <div className="lead-notes-phase">{phase}</div>}
-      <ol className={kind === "progress" ? "lead-timeline" : undefined}>
-        {entries.map((entry, index) => (
-          <li className="lead-note" key={index}>
-            {kind === "progress" && <span className="lead-timeline-marker" aria-hidden="true" />}
-            <div className={kind === "progress" ? "lead-timeline-content" : undefined}>
-              {entry.title && <h4 className="lead-note-title">{entry.title}</h4>}
-              <div className="lead-note-body"><ChatMarkdown text={entry.body} /></div>
-            </div>
-          </li>
-        ))}
-      </ol>
-    </div>
-  );
-}
-
 /// onClose：停靠浮层的「×」；侧边面板的页签自己有关闭叉，不给。
 /// onOpenInPanel：「在侧边面板打开」。只有桌面端对话窗给（手机远程页没有右侧面板，给了就是点了没反应的按钮）。
 /// inPanel：渲染在侧边面板页签里，高度跟面板走（见 styles.css 的 .panel-lead.is-in-panel）。
@@ -334,27 +298,38 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose, onOpenInPanel,
                   const state = c.passes ? "pass" : c.waived ? "waived" : c.blocked && !c.leader ? "blocked" : "pending";
                   const label = state === "pass" ? t.chat.leadCheckPass : state === "waived" ? t.chat.leadCheckWaived
                     : state === "blocked" ? t.chat.leadCheckBlocked : t.chat.leadCheckPending;
+                  // 有可展开的内容才是按钮：证据、待实测原因、豁免原因（收起时说明只露一行、正文两行，展开看全）。
+                  // 原先每行都是 <button aria-expanded>，没有证据的点开是空的（leader 2026-11-19：「无论条目展开有没有内容都可以展开」）。
+                  // 没有内容的行是普通的一行字：不可聚焦、没有展开态与箭头、悬停不变色，正文不截断。
+                  const expandable = !!c.evidence?.length || state === "waived" || state === "blocked";
+                  const isOpen = expandable && open.has(c.id);
+                  const inner = (
+                    <>
+                      <span className="lead-check-mark" role="img" aria-label={label}>{CHECK_ICONS[state]}</span>
+                      <span className="lead-check-id">{c.id || index + 1}</span>
+                      <span className="lead-check-body">
+                        <span className="lead-check-text">{c.check}</span>
+                        {state === "waived" && <span className="lead-check-note">{t.chat.leadCheckWaivedReason(c.waived ?? "")}</span>}
+                        {state === "blocked" && <span className="lead-check-note is-blocked">{t.chat.leadCheckBlockedReason(c.blocked ?? "")}</span>}
+                        {!!c.evidence?.length && <span className="lead-check-note">{t.chat.leadEvidenceCount(c.evidence.length)}</span>}
+                      </span>
+                      {expandable && <span className="lead-check-caret" aria-hidden="true">›</span>}
+                    </>
+                  );
                   return (
-                    // 展开靠 <button aria-expanded>：原先是 <li onClick>，键盘到不了、读屏不知道能展开，
-                    // 截断的全文键盘用户看不到（调研 i11）。图标 role="img" 才让 aria-label 生效。
+                    // 可展开的行靠 <button aria-expanded>：原先是 <li onClick>，键盘到不了、读屏不知道能展开（调研 i11）。
+                    // 图标 role="img" 才让 aria-label 生效。
                     <li key={c.id}>
                       {(index === 0 || group(visibleChecks[index - 1]) !== group(c)) && <div className="lead-check-group">{groupLabels[group(c)]}</div>}
-                      <button type="button" className={"lead-check is-" + state + (open.has(c.id) ? " is-open" : "")}
-                        aria-expanded={open.has(c.id)}
-                        title={state === "waived" ? `${c.check}
-${t.chat.leadCheckWaivedReason(c.waived ?? "")}` : c.check}
-                        onClick={() => setOpen((prev) => { const next = new Set(prev); if (next.has(c.id)) next.delete(c.id); else next.add(c.id); return next; })}>
-                        <span className="lead-check-mark" role="img" aria-label={label}>{CHECK_ICONS[state]}</span>
-                        <span className="lead-check-id">{c.id || index + 1}</span>
-                        <span className="lead-check-body">
-                          <span className="lead-check-text">{c.check}</span>
-                          {state === "waived" && <span className="lead-check-note">{t.chat.leadCheckWaivedReason(c.waived ?? "")}</span>}
-                          {state === "blocked" && <span className="lead-check-note is-blocked">{t.chat.leadCheckBlockedReason(c.blocked ?? "")}</span>}
-                          {!!c.evidence?.length && <span className="lead-check-note">{t.chat.leadEvidenceCount(c.evidence.length)}</span>}
-                        </span>
-                        <span className="lead-check-caret" aria-hidden="true">›</span>
-                      </button>
-                      {open.has(c.id) && c.evidence?.map((evidence, index) => (
+                      {expandable ? (
+                        <button type="button" className={"lead-check is-" + state + (isOpen ? " is-open" : "")}
+                          aria-expanded={isOpen}
+                          title={state === "waived" ? `${c.check}\n${t.chat.leadCheckWaivedReason(c.waived ?? "")}` : c.check}
+                          onClick={() => setOpen((prev) => { const next = new Set(prev); if (next.has(c.id)) next.delete(c.id); else next.add(c.id); return next; })}>
+                          {inner}
+                        </button>
+                      ) : <div className={"lead-check is-static is-" + state}>{inner}</div>}
+                      {isOpen && c.evidence?.map((evidence, index) => (
                         <div key={index} className="lead-check-evidence">
                           <p className="lead-check-note">{t.chat.leadReviewRevision(evidence.revision)}</p>
                           <dl>
@@ -380,7 +355,7 @@ ${t.chat.leadCheckWaivedReason(c.waived ?? "")}` : c.check}
           <div className="chat-plan-doc">
             {section === "spec"
               ? <div className="chat-md"><ChatMarkdown text={task.spec || t.chat.leadSectionEmpty} /></div>
-              : <LeadNotes kind={section} text={(section === "decisions" ? task.decisions : task.progress) || t.chat.leadSectionEmpty} />}
+              : section === "decisions" ? <LeadDecisions text={task.decisions} /> : <LeadProgress text={task.progress} />}
           </div>
         )}
       </div>
