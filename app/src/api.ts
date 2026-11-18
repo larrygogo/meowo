@@ -501,6 +501,18 @@ export function historyTone(history: Pick<ChatHistory, "connected" | "status" | 
   return sessionTone(history?.connected ?? false, history?.status, history?.pendingReview, history?.errored, history?.busySubagents, history?.screenState, history?.screenAssumed);
 }
 
+/// 主回合此刻的状态：与 historyTone 同一批事实，只是后台子任务不算「在跑」。
+///
+/// 对话窗的**交互**（发送走排队还是直接提交、能不能撤销/改模型、要不要显示插话去向）只看主回合：
+/// 主回合停了、后台子代理还在跑时，Claude Code 的输入框照常可用，Enter 直接提交（终端底部是
+/// 「✻ Waiting for 1 background agent to finish」加空闲提示符）。此前发送也按 historyTone 判，
+/// 后台在跑就算运行中，消息被扣在「当前任务结束后发送」的队列里，运行条挂着「等这一步完成后
+/// 插入你的插话」（实拍 2026-11-18）。**展示**（侧栏状态点、灵动岛、窗口标题记号、标记完成要不要
+/// 确认）仍按 historyTone 算「运行中」：后台还在干活，不该催人，也不该被一下勾掉。
+export function historyTurnTone(history: Pick<ChatHistory, "connected" | "status" | "pendingReview" | "errored" | "busySubagents" | "screenState" | "screenAssumed"> | null | undefined): SessionTone {
+  return sessionTone(history?.connected ?? false, history?.status, history?.pendingReview, history?.errored, 0, history?.screenState, history?.screenAssumed);
+}
+
 export function liveSessionTone(row: Pick<LiveSession, "connected" | "session" | "pending_review" | "errored" | "busy_subagents" | "screen_state" | "screen_assumed">): SessionTone {
   return sessionTone(row.connected, row.session.status, row.pending_review, row.errored, row.busy_subagents, row.screen_state, row.screen_assumed);
 }

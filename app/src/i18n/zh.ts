@@ -752,6 +752,8 @@ export const zh = {
     liveWorking: "工作中",
     liveReplyDone: "回复完成",
     steerWaiting: "等这一步完成后插入你的插话",
+    // 主回合停了、只剩后台子代理在跑（对话窗运行条位置）：说清后台在干活，也说清发消息不受影响。
+    backgroundOnlyRunning: "后台子任务还在运行，发消息不受影响",
     steerInjected: "已插入，正在继续处理",
     // 手机上的底部面板（斜杠命令）
     slashSheetTitle: "命令",

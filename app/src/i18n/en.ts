@@ -665,6 +665,7 @@ export const en: Dict = {
     liveWorking: "Working",
     liveReplyDone: "Reply finished",
     steerWaiting: "Your message goes in after this step",
+    backgroundOnlyRunning: "Background tasks are still running. You can keep sending messages.",
     steerInjected: "Inserted. Continuing…",
     slashSheetTitle: "Commands",
     slashSheetSearch: "Search commands",
