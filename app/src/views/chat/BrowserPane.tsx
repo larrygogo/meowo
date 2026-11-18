@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { answerBrowserPanePermission, browserPaneAction, emulateBrowserPane, navigateBrowserPane, openLink, revealBrowserPaneDownload, setBrowserPaneAgentPaused, setBrowserPaneBounds, type BrowserDownload, type BrowserPaneInfo } from "../../api";
+import { answerBrowserPanePermission, browserPaneAction, emulateBrowserPane, type EmulateSpec, navigateBrowserPane, openLink, revealBrowserPaneDownload, setBrowserPaneAgentPaused, setBrowserPaneBounds, type BrowserDownload, type BrowserPaneInfo } from "../../api";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import { PathMenu, type PathMenuItem } from "./pathMenu";
@@ -9,6 +9,7 @@ import { icArrowLeft, icArrowRight, icBan, icExternal } from "../../icons/glyphs
 import { icShield } from "../../icons/glyphs.chat";
 import { isWindows } from "../../platform";
 import { busyProps } from "../../busyButton";
+import { AppModal } from "../AppModal";
 // 老调用方（测试）从这里拿；ChatWindow 直接引 localUrls，免得把面板浏览器拖进主 chunk。
 export { localUrlsIn } from "./localUrls";
 
@@ -29,6 +30,72 @@ export function occluded(area: DOMRect, root: ParentNode = document): boolean {
     if (rect.width > 0 && rect.height > 0 && intersects(area, rect)) return true;
   }
   return false;
+}
+
+export type CustomEmu = { width: number; height: number; touch?: boolean; userAgent?: string };
+const RECENT_EMU_KEY = "meowo-browser-emu-recent";
+const RECENT_EMU_MAX = 3;
+const EMU_MIN = 200;
+const EMU_MAX = 4096;
+
+/** 最近用过的自定义尺寸（新的在前）。只是本机的使用习惯，存 localStorage；读写失败当没有。 */
+export function loadRecentEmu(): CustomEmu[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(RECENT_EMU_KEY) ?? "[]");
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((entry): entry is CustomEmu => !!entry && Number.isInteger(entry.width) && Number.isInteger(entry.height)).slice(0, RECENT_EMU_MAX);
+  } catch {
+    return [];
+  }
+}
+
+export function rememberRecentEmu(size: CustomEmu): CustomEmu[] {
+  const same = (a: CustomEmu) => a.width === size.width && a.height === size.height && !!a.touch === !!size.touch && (a.userAgent ?? "") === (size.userAgent ?? "");
+  const next = [size, ...loadRecentEmu().filter((entry) => !same(entry))].slice(0, RECENT_EMU_MAX);
+  try { localStorage.setItem(RECENT_EMU_KEY, JSON.stringify(next)); } catch { /* 存不下就只在这次用 */ }
+  return next;
+}
+
+/// 「自定义尺寸…」：宽、高（CSS 像素）、是否按触屏手机模拟、可选 UA。范围与后端校验一致，越界当场说明。
+function CustomEmuDialog({ initial, onClose, onApply }: { initial?: CustomEmu; onClose: () => void; onApply: (size: CustomEmu) => void }) {
+  const t = useT();
+  const [width, setWidth] = useState(String(initial?.width ?? 1440));
+  const [height, setHeight] = useState(String(initial?.height ?? 900));
+  const [touch, setTouch] = useState(!!initial?.touch);
+  const [userAgent, setUserAgent] = useState(initial?.userAgent ?? "");
+  const w = Number(width);
+  const h = Number(height);
+  const valid = [w, h].every((n) => Number.isInteger(n) && n >= EMU_MIN && n <= EMU_MAX);
+  const submit = () => { if (valid) onApply({ width: w, height: h, touch: touch || undefined, userAgent: userAgent.trim() || undefined }); };
+  return (
+    <AppModal label={t.chat.browserEmuCustomTitle} onClose={onClose} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); submit(); } }}>
+      <div className="chat-modal-title">{t.chat.browserEmuCustomTitle}</div>
+      <div className="browser-emu-size">
+        <label className="ns-field">
+          <span className="ns-label">{t.chat.browserEmuWidth}</span>
+          <input className="ns-input" inputMode="numeric" value={width} autoFocus onChange={(e) => setWidth(e.target.value.replace(/\D/g, ""))} />
+        </label>
+        <span className="browser-emu-times" aria-hidden="true">×</span>
+        <label className="ns-field">
+          <span className="ns-label">{t.chat.browserEmuHeight}</span>
+          <input className="ns-input" inputMode="numeric" value={height} onChange={(e) => setHeight(e.target.value.replace(/\D/g, ""))} />
+        </label>
+      </div>
+      {!valid && <div className="scm-discard-repo" role="alert">{t.chat.browserEmuRange(EMU_MIN, EMU_MAX)}</div>}
+      <label className="scm-pr-draft">
+        <input type="checkbox" checked={touch} onChange={(e) => setTouch(e.target.checked)} />
+        {t.chat.browserEmuTouch}
+      </label>
+      <label className="ns-field">
+        <span className="ns-label">{t.chat.browserEmuUaLabel}</span>
+        <input className="ns-input" value={userAgent} placeholder={t.chat.browserEmuUaPlaceholder} spellCheck={false} onChange={(e) => setUserAgent(e.target.value)} />
+      </label>
+      <div className="chat-modal-actions">
+        <button type="button" className="ns-btn" onClick={onClose}>{t.newSession.cancel}</button>
+        <button type="button" className="ns-btn btn-primary" aria-disabled={!valid || undefined} onClick={submit}>{t.chat.browserEmuApply}</button>
+      </div>
+    </AppModal>
+  );
 }
 
 /// 接管了多久（m:ss），每秒走一次；没在接管时不起定时器。
@@ -136,10 +203,19 @@ export function BrowserPane({ info, visible, suggestions }: {
   // 的 WebView2 有 Chrome 调试协议，其他平台不给入口（后端也会明确拒绝）。
   const emulation = info.emulation ?? null;
   const canEmulate = isWindows();
-  const emulate = (device: Parameters<typeof emulateBrowserPane>[1]) => {
+  const emulate = (spec: EmulateSpec) => {
     if (inputLocked) return;
-    void emulateBrowserPane(info.id, device).catch((e) => setError(formatBackendError(e, t.locale)));
+    void emulateBrowserPane(info.id, spec).catch((e) => setError(formatBackendError(e, t.locale)));
   };
+  // 自定义尺寸：三个预设不够用（用户：「这个最好也能自定义，不要写死」）。填过的尺寸记住最近 RECENT_EMU_MAX 个，
+  // 直接出现在菜单里，下次点一下就用。
+  const [customOpen, setCustomOpen] = useState(false);
+  const [recent, setRecent] = useState<CustomEmu[]>(loadRecentEmu);
+  const applyCustom = (size: CustomEmu) => {
+    setRecent(rememberRecentEmu(size));
+    emulate({ device: size.touch ? "mobile" : undefined, width: size.width, height: size.height, userAgent: size.userAgent || undefined });
+  };
+  const isCurrent = (size: CustomEmu) => !!emulation?.metrics && emulation.metrics.width === size.width && emulation.metrics.height === size.height;
   const emuDetail = emulation ? [
     emulation.metrics ? `${t.chat.browserEmuDevice(emulation.metrics.device)} ${emulation.metrics.width}×${emulation.metrics.height}` : null,
     emulation.userAgent ? t.chat.browserEmuUa : null,
@@ -211,7 +287,7 @@ export function BrowserPane({ info, visible, suggestions }: {
             data-tip-placement="top"
             data-tip={t.chat.browserEmuTip(emuDetail)}
             disabled={inputLocked}
-            onClick={() => emulate("reset")}
+            onClick={() => emulate({ device: "reset" })}
           >
             {emulation.metrics ? `${t.chat.browserEmuDevice(emulation.metrics.device)} ${emulation.metrics.width}×${emulation.metrics.height}` : t.chat.browserEmuUa}
           </button>
@@ -256,11 +332,26 @@ export function BrowserPane({ info, visible, suggestions }: {
                 label: { desktop: t.chat.browserEmuDesktop, tablet: t.chat.browserEmuTablet, mobile: t.chat.browserEmuMobile }[device],
                 icon: null,
                 hint: emulation?.metrics?.device === device ? t.chat.browserEmuCurrent : undefined,
-                onSelect: () => emulate(device),
+                onSelect: () => emulate({ device }),
               })),
-              ...(emulation ? [{ key: "emu_reset", label: t.chat.browserEmuReset, icon: null, onSelect: () => emulate("reset") }] : []),
+              ...recent.map((size) => ({
+                key: `emu_recent_${size.width}x${size.height}${size.touch ? "t" : ""}`,
+                label: t.chat.browserEmuRecent(size.width, size.height, size.touch),
+                icon: null,
+                hint: isCurrent(size) ? t.chat.browserEmuCurrent : undefined,
+                onSelect: () => applyCustom(size),
+              })),
+              { key: "emu_custom", label: t.chat.browserEmuCustom, icon: null, onSelect: () => setCustomOpen(true) },
+              ...(emulation ? [{ key: "emu_reset", label: t.chat.browserEmuReset, icon: null, onSelect: () => emulate({ device: "reset" }) }] : []),
             ] : []),
           ] satisfies (PathMenuItem | "sep")[]}
+        />
+      )}
+      {customOpen && (
+        <CustomEmuDialog
+          initial={emulation?.metrics ? { width: emulation.metrics.width, height: emulation.metrics.height, touch: emulation.metrics.device === "mobile" || emulation.metrics.device === "tablet" } : recent[0]}
+          onClose={() => setCustomOpen(false)}
+          onApply={(size) => { setCustomOpen(false); applyCustom(size); }}
         />
       )}
       {info.permission && (

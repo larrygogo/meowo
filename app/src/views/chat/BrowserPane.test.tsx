@@ -106,12 +106,32 @@ describe("面板浏览器", () => {
     fireEvent.click(screen.getByRole("button", { name: "更多" }));
     expect(screen.queryByRole("menuitem", { name: /还原为面板尺寸/ })).toBeNull();
     fireEvent.click(screen.getByRole("menuitem", { name: /模拟桌面/ }));
-    expect(invoke).toHaveBeenCalledWith("browser_pane_emulate", { id: 5, device: "desktop" });
+    expect(invoke).toHaveBeenCalledWith("browser_pane_emulate", expect.objectContaining({ id: 5, device: "desktop" }));
     rerender(<BrowserPane info={pane({ emulation: { metrics: { device: "mobile", width: 390, height: 844 }, userAgent: "iPhone", headerNames: [] } })} visible suggestions={[]} />);
     fireEvent.click(screen.getByRole("button", { name: "更多" }));
     expect(screen.getByRole("menuitem", { name: /模拟手机/ }).textContent).toContain("当前");
     fireEvent.click(screen.getByRole("menuitem", { name: /还原为面板尺寸/ }));
-    expect(invoke).toHaveBeenCalledWith("browser_pane_emulate", { id: 5, device: "reset" });
+    expect(invoke).toHaveBeenCalledWith("browser_pane_emulate", expect.objectContaining({ id: 5, device: "reset" }));
+  });
+
+  it("设备模拟：可自定义尺寸，记住最近用过的并出现在菜单里", () => {
+    localStorage.removeItem("meowo-browser-emu-recent");
+    render(<BrowserPane info={pane()} visible suggestions={[]} />);
+    fireEvent.click(screen.getByRole("button", { name: "更多" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /自定义尺寸/ }));
+    const dialog = screen.getByRole("dialog", { name: "自定义模拟尺寸" });
+    fireEvent.change(screen.getByRole("textbox", { name: /宽/ }), { target: { value: "50" } });
+    expect(dialog.textContent).toContain("200～4096");
+    fireEvent.click(screen.getByRole("button", { name: "应用" }));
+    expect(invoke).not.toHaveBeenCalledWith("browser_pane_emulate", expect.anything());
+    fireEvent.change(screen.getByRole("textbox", { name: /宽/ }), { target: { value: "412" } });
+    fireEvent.change(screen.getByRole("textbox", { name: /高/ }), { target: { value: "915" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: /触屏手机/ }));
+    fireEvent.click(screen.getByRole("button", { name: "应用" }));
+    expect(invoke).toHaveBeenCalledWith("browser_pane_emulate", { id: 5, device: "mobile", width: 412, height: 915, userAgent: null });
+    fireEvent.click(screen.getByRole("button", { name: "更多" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /模拟 412×915（触屏）/ }));
+    expect(invoke).toHaveBeenLastCalledWith("browser_pane_emulate", { id: 5, device: "mobile", width: 412, height: 915, userAgent: null });
   });
 
   it("设备模拟：地址栏旁标出设备和尺寸，悬停说明改了 UA 和哪些请求头，点一下还原；Agent 控制时不能点", () => {
@@ -122,7 +142,7 @@ describe("面板浏览器", () => {
     expect(chip.getAttribute("data-tip")).toContain("UA 已改");
     expect(chip.getAttribute("data-tip")).toContain("X-Test, Accept-Language");
     fireEvent.click(chip);
-    expect(invoke).toHaveBeenCalledWith("browser_pane_emulate", { id: 5, device: "reset" });
+    expect(invoke).toHaveBeenCalledWith("browser_pane_emulate", expect.objectContaining({ id: 5, device: "reset" }));
     rerender(<BrowserPane info={pane({ emulation, agentActive: true })} visible suggestions={[]} />);
     expect(screen.getByRole("button", { name: /正在模拟/ }).hasAttribute("disabled")).toBe(true);
     rerender(<BrowserPane info={pane()} visible suggestions={[]} />);

@@ -4513,6 +4513,10 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .browser-pane-emu { flex: none; max-width: 40%; height: 24px; padding: 0 var(--sp-8); overflow: hidden; border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); color: var(--cc-text-dim); background: var(--fill-hover); font: inherit; font-size: var(--text-xs); font-variant-numeric: tabular-nums; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; }
 .browser-pane-emu:hover:not(:disabled) { color: var(--cc-text); background: var(--fill-selected); }
 .browser-pane-emu:disabled { opacity: .55; cursor: default; }
+/* 自定义模拟尺寸：宽 × 高 一行两格。 */
+.browser-emu-size { display: flex; align-items: flex-end; gap: var(--sp-8); }
+.browser-emu-size .ns-field { flex: 1 1 0; min-width: 0; }
+.browser-emu-times { padding-bottom: var(--sp-8); color: var(--cc-text-faint); }
 .browser-pane-error { flex: none; padding: var(--sp-6) var(--sp-10); color: var(--cc-fail-text); font-size: var(--text-xs); }
 /* agent 操作提示条：在工具栏下方，网页之上（不压在原生视图上，原生视图在它下面开始）。 */
 /* 控制中：浅绿底，和下方网页四周的绿框连成一块（框见 .browser-pane-view.is-agent），绿色也是网页里
