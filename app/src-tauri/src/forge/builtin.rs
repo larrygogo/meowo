@@ -32,7 +32,8 @@ const MAX_PAGES: usize = 20;
 pub(crate) struct Builtin<'a> {
     pub(crate) http: &'a dyn Http,
     pub(crate) token: Option<&'a Token>,
-    pub(crate) on_unauthorized: &'a (dyn Fn() + Sync),
+    /// 每个回包报一次令牌好不好用：false = 401（被拒），true = 2xx。github 模块据此标 / 清「要重新登录」。
+    pub(crate) on_auth: &'a (dyn Fn(bool) + Sync),
     /// forge.json（PR 所在远端的选择），没带 --repo 时按目录推仓库要用。
     pub(crate) prefs: &'a Path,
 }
@@ -298,8 +299,11 @@ impl Builtin<'_> {
         let req = Request { method, url, token: Some(token), body: body.map(crate::github::Body::Json) };
         let resp = self.http.send(&req).map_err(|e| fail(format!("error connecting to api.github.com\n{e}")))?;
         if resp.status == 401 {
-            (self.on_unauthorized)();
+            (self.on_auth)(false);
             return Err(fail("HTTP 401: Bad credentials (https://api.github.com)\nSign in to GitHub again from Meowo Settings > GitHub."));
+        }
+        if success(&resp) {
+            (self.on_auth)(true);
         }
         Ok(resp)
     }
@@ -614,5 +618,10 @@ impl Builtin<'_> {
 /// 生产入口：真 HTTP、真 forge.json，401 时通知 github 模块。
 pub(crate) fn run_real(dir: &str, args: &[&str], token: Option<&Token>) -> CmdOut {
     let prefs = super::prefs_path();
-    Builtin { http: &crate::github::RealHttp, token, on_unauthorized: &crate::github::on_unauthorized, prefs: &prefs }.run(dir, args)
+    let on_auth = |ok: bool| {
+        if let Some(token) = token {
+            crate::github::auth_result(token, ok);
+        }
+    };
+    Builtin { http: &crate::github::RealHttp, token, on_auth: &on_auth, prefs: &prefs }.run(dir, args)
 }

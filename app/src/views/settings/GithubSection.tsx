@@ -90,7 +90,8 @@ export function GithubSection() {
     setNotice(null);
     githubLoginStart()
       .then((code) => setStatus((s) => (s ? { ...s, pending: code } : s)))
-      .catch((e) => setError(t.github.loginFailed(formatBackendError(e, t.locale))))
+      // 要代码期间点了取消（或又开了一轮）：后端作废这一轮，不算失败。
+      .catch((e) => { if (String(e) !== "github/cancelled") setError(t.github.loginFailed(formatBackendError(e, t.locale))); })
       .finally(() => setBusy(null));
   };
 

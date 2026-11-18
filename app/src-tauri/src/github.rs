@@ -300,13 +300,11 @@ pub(crate) fn fetch_account(http: &dyn Http, token: &Token) -> Result<GithubAcco
     }
 }
 
-/// 拿到令牌之后：先问 GitHub 这是谁（顺带验令牌），再存进凭据库，最后写不含令牌的账号记录。
-/// 存凭据失败就不写记录：界面不会显示「已登录」而令牌其实没存下。
-pub(crate) fn complete_login(http: &dyn Http, vault: &dyn Vault, path: &Path, token: &Token) -> Result<GithubAccountDto, String> {
-    let account = fetch_account(http, token)?;
+
+/// 落库：令牌存进凭据库，再写不含令牌的账号记录。存凭据失败就不写记录：界面不会显示「已登录」而令牌其实没存下。
+pub(crate) fn store_login(vault: &dyn Vault, path: &Path, token: &Token, account: &GithubAccountDto) -> Result<(), String> {
     vault.write(token)?;
-    save_record(path, &AccountRecord { account: Some(account.clone()), needs_relogin: false })?;
-    Ok(account)
+    save_record(path, &AccountRecord { account: Some(account.clone()), needs_relogin: false })
 }
 
 // ═══ 进程内状态 ═══
@@ -318,14 +316,26 @@ struct Session {
 
 static SESSION: Mutex<Session> = Mutex::new(Session { loaded: false, token: None });
 static MODE: Mutex<Option<Mode>> = Mutex::new(None);
+/// 切方式串行：两次 github_set_mode 交错时，设置文件与内存里的方式不会一边一个。
+static MODE_WRITE: Mutex<()> = Mutex::new(());
+/// 记录里「要重新登录」的内存副本（None = 还没读过）：每次成功请求都要报一下，不能每次都读文件。
+static RELOGIN: Mutex<Option<bool>> = Mutex::new(None);
 static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
 
-struct LoginSlot {
-    generation: u64,
-    pending: Option<GithubDeviceCodeDto>,
+/// 设备码登录的代次与进行中的代码。每次开始、取消、退出都把代次加一：旧一轮的轮询线程与收尾一看代次
+/// 对不上就作废，晚到的令牌不落库。
+pub(crate) struct LoginSlot {
+    pub(crate) generation: u64,
+    pub(crate) pending: Option<GithubDeviceCodeDto>,
 }
 
-static LOGIN: Mutex<LoginSlot> = Mutex::new(LoginSlot { generation: 0, pending: None });
+impl LoginSlot {
+    pub(crate) const fn new() -> Self {
+        LoginSlot { generation: 0, pending: None }
+    }
+}
+
+static LOGIN: Mutex<LoginSlot> = Mutex::new(LoginSlot::new());
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -367,6 +377,7 @@ fn set_token(token: Option<Token>) {
     let mut session = lock(&SESSION);
     session.loaded = true;
     session.token = token;
+    *lock(&RELOGIN) = None;
 }
 
 /// 这一次 gh 调用交给谁。
@@ -378,6 +389,8 @@ pub(crate) enum Executor {
     Gh,
     /// 内置实现；None = Meowo 模式但还没登录（每条命令都回「没登录」）。
     Meowo(Option<Token>),
+    /// 自动且已登录 Meowo：github.com 的仓库走内置实现，别的主机（企业版）继续走本机 gh。
+    Auto(Token),
 }
 
 impl Executor {
@@ -385,18 +398,19 @@ impl Executor {
         match self {
             Executor::Off => "off",
             Executor::Gh => "gh",
-            Executor::Meowo(_) => "meowo",
+            Executor::Meowo(_) | Executor::Auto(_) => "meowo",
         }
     }
 }
 
-/// 方式 + 有没有令牌 → 执行器。自动：有令牌用 Meowo（令牌被拒也不偷偷退回 gh，给同一个「重新登录」提示）。
+/// 方式 + 有没有令牌 → 执行器。自动：有令牌时 github.com 用 Meowo（令牌被拒也不偷偷退回 gh，给同一个
+/// 「重新登录」提示），企业版仍用 gh。
 pub(crate) fn resolve(mode: Mode, token: Option<Token>) -> Executor {
     match (mode, token) {
         (Mode::Off, _) => Executor::Off,
         (Mode::Gh, _) => Executor::Gh,
         (Mode::Meowo, token) => Executor::Meowo(token),
-        (Mode::Auto, Some(token)) => Executor::Meowo(Some(token)),
+        (Mode::Auto, Some(token)) => Executor::Auto(token),
         (Mode::Auto, None) => Executor::Gh,
     }
 }
@@ -410,16 +424,32 @@ pub(crate) fn executor() -> Executor {
     }
 }
 
-/// 内置实现收到 401：令牌被撤销或失效。标「需要重新登录」并通知前端（只在状态变了时）。
-pub(crate) fn on_unauthorized() {
-    let path = record_path();
-    let mut record = load_record(&path);
-    if record.needs_relogin {
-        return;
+/// 内置实现每拿到一个回包报一次：ok=false 是 401（这个令牌被拒），ok=true 是 2xx（这个令牌好用）。
+/// 只在用的正是当前令牌时改「要重新登录」：旧令牌晚到的 401 不能把新登录标成要重登；之后成功的请求把标记清掉。
+/// 返回 true = 记录变了（要通知前端）。
+pub(crate) fn auth_result_with(path: &Path, current: Option<&Token>, used: &Token, ok: bool, known: &Mutex<Option<bool>>) -> bool {
+    if current != Some(used) {
+        return false;
     }
-    record.needs_relogin = true;
-    let _ = save_record(&path, &record);
-    emit_changed();
+    let want = !ok;
+    let mut known = lock(known);
+    if *known == Some(want) {
+        return false;
+    }
+    let mut record = load_record(path);
+    let changed = record.needs_relogin != want;
+    if changed {
+        record.needs_relogin = want;
+        let _ = save_record(path, &record);
+    }
+    *known = Some(want);
+    changed
+}
+
+pub(crate) fn auth_result(used: &Token, ok: bool) {
+    if auth_result_with(&record_path(), token().as_ref(), used, ok, &RELOGIN) {
+        emit_changed();
+    }
 }
 
 /// 切方式、登录、退出之后：forge 的登录状态、PR、合并方式缓存全部作废，通知前端刷新。
@@ -446,6 +476,110 @@ fn status_now() -> GithubConnectionDto {
     status_with(mode(), token(), &load_record(&record_path()), crate::forge::gh_installed(), SystemVault.supported(), pending)
 }
 
+// ═══ 登录流程（可注入，单测覆盖取消与并发）═══
+
+/// 开始一轮登录：先占代次（作废之前的一轮），再向 GitHub 要代码（不持锁）；拿回代码时代次已经变了
+///（期间点了取消或又开了一轮）就作废这一轮，回 `github/cancelled`。
+pub(crate) fn begin_login_with(slot: &Mutex<LoginSlot>, http: &dyn Http, client_id: &str, now_ms: i64) -> Result<(u64, device::DeviceCode, GithubDeviceCodeDto), String> {
+    let generation = {
+        let mut s = lock(slot);
+        s.generation += 1;
+        s.pending = None;
+        s.generation
+    };
+    let code = device::request_code(http, client_id)?;
+    let dto = GithubDeviceCodeDto {
+        user_code: code.user_code.clone(),
+        verification_uri: code.verification_uri.clone(),
+        expires_at: now_ms + code.expires_in as i64 * 1000,
+    };
+    let mut s = lock(slot);
+    if s.generation != generation {
+        return Err("github/cancelled".into());
+    }
+    s.pending = Some(dto.clone());
+    Ok((generation, code, dto))
+}
+
+/// 一轮登录收尾的结果。
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Finish {
+    SignedIn(GithubAccountDto),
+    /// 被取消、退出或被新一轮顶替：什么都不做，令牌不落库。
+    Stale,
+    Expired,
+    Denied,
+    Failed(String),
+}
+
+/// 收尾：问 GitHub「这是谁」的网络阶段不持锁（不卡取消、不卡状态查询）；落库前拿锁再核对代次，
+/// 已取消 / 已被顶替就把令牌丢掉。落库与 on_stored（更新进程内令牌）都在锁内：退出登录要等它做完，
+/// 不会出现「刚退出又被晚到的登录写回」。
+pub(crate) fn finish_login_with(
+    slot: &Mutex<LoginSlot>,
+    generation: u64,
+    outcome: device::Outcome,
+    http: &dyn Http,
+    vault: &dyn Vault,
+    path: &Path,
+    on_stored: &dyn Fn(&Token),
+) -> Finish {
+    let close = |result: Finish| {
+        let mut s = lock(slot);
+        if s.generation != generation {
+            return Finish::Stale;
+        }
+        s.pending = None;
+        result
+    };
+    let token = match outcome {
+        device::Outcome::Token(token) => token,
+        device::Outcome::Cancelled => return Finish::Stale,
+        device::Outcome::Expired => return close(Finish::Expired),
+        device::Outcome::Denied => return close(Finish::Denied),
+        device::Outcome::Failed(e) => return close(Finish::Failed(e)),
+    };
+    if lock(slot).generation != generation {
+        return Finish::Stale;
+    }
+    let account = match fetch_account(http, &token) {
+        Ok(account) => account,
+        Err(e) => return close(Finish::Failed(e)),
+    };
+    let mut s = lock(slot);
+    if s.generation != generation {
+        return Finish::Stale;
+    }
+    s.pending = None;
+    match store_login(vault, path, &token, &account) {
+        Ok(()) => {
+            on_stored(&token);
+            Finish::SignedIn(account)
+        }
+        Err(e) => Finish::Failed(e),
+    }
+}
+
+/// 退出：作废进行中的登录、删凭据库里的令牌、删账号记录，再 on_signed_out（清进程内令牌、作废缓存）。
+pub(crate) fn logout_with(slot: &Mutex<LoginSlot>, vault: &dyn Vault, path: &Path, on_signed_out: &dyn Fn()) -> Result<(), String> {
+    let mut s = lock(slot);
+    s.generation += 1;
+    s.pending = None;
+    vault.delete()?;
+    save_record(path, &AccountRecord::default())?;
+    on_signed_out();
+    Ok(())
+}
+
+/// 切方式：串行写设置与内存，再 on_changed（作废缓存、通知前端）。
+pub(crate) fn set_mode_with(mode: Mode, write: &dyn Fn(Mode) -> Result<(), String>, on_changed: &dyn Fn()) -> Result<(), String> {
+    let _guard = lock(&MODE_WRITE);
+    write(mode)?;
+    *lock(&MODE) = Some(mode);
+    on_changed();
+    Ok(())
+}
+
 // ═══ 命令 ═══
 
 #[tauri::command]
@@ -464,14 +598,21 @@ pub(crate) async fn github_status_remote() -> Result<GithubConnectionDto, String
 #[tauri::command]
 pub(crate) async fn github_set_mode(app: tauri::AppHandle, mode: String) -> Result<GithubConnectionDto, String> {
     let parsed = Mode::parse(&mode).ok_or("github/invalid_mode")?;
-    crate::settings::patch_settings(app, move |s| s.github_connection = parsed.as_str().into()).await?;
-    *lock(&MODE) = Some(parsed);
-    tauri::async_runtime::spawn_blocking(|| {
-        connection_changed();
-        status_now()
+    let emit_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let write = |mode: Mode| {
+            let settings = crate::settings::update_settings(|s| {
+                s.github_connection = mode.as_str().into();
+                Ok(s.clone())
+            })?;
+            crate::settings::emit_settings_changed(&emit_app, settings);
+            Ok(())
+        };
+        set_mode_with(parsed, &write, &connection_changed)?;
+        Ok(status_now())
     })
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -492,22 +633,21 @@ pub(crate) async fn github_login_start(app: tauri::AppHandle) -> Result<GithubDe
         if !SystemVault.supported() {
             return Err("github/credential_unsupported".to_string());
         }
-        let code = device::request_code(&RealHttp, CLIENT_ID)?;
-        let dto = GithubDeviceCodeDto {
-            user_code: code.user_code.clone(),
-            verification_uri: code.verification_uri.clone(),
-            expires_at: crate::now_ms() + code.expires_in as i64 * 1000,
-        };
-        let generation = {
-            let mut slot = lock(&LOGIN);
-            slot.generation += 1;
-            slot.pending = Some(dto.clone());
-            slot.generation
-        };
+        let (generation, code, dto) = begin_login_with(&LOGIN, &RealHttp, CLIENT_ID, crate::now_ms())?;
         std::thread::spawn(move || {
             let cancelled = || lock(&LOGIN).generation != generation;
             let outcome = device::wait_for_token(&RealHttp, CLIENT_ID, &code, &cancelled, &std::thread::sleep);
-            finish_login(&app, generation, outcome);
+            let stored = |token: &Token| set_token(Some(token.clone()));
+            match finish_login_with(&LOGIN, generation, outcome, &RealHttp, &SystemVault, &record_path(), &stored) {
+                Finish::SignedIn(_) => {
+                    connection_changed();
+                    emit_login(&app, "ok", None);
+                }
+                Finish::Stale => {}
+                Finish::Expired => emit_login(&app, "expired", None),
+                Finish::Denied => emit_login(&app, "denied", None),
+                Finish::Failed(e) => emit_login(&app, "error", Some(e)),
+            }
         });
         Ok(dto)
     })
@@ -515,31 +655,7 @@ pub(crate) async fn github_login_start(app: tauri::AppHandle) -> Result<GithubDe
     .map_err(|e| e.to_string())?
 }
 
-fn finish_login(app: &tauri::AppHandle, generation: u64, outcome: device::Outcome) {
-    // 拿着登录锁做完收尾：取消要么在这之前（这里看到代号变了，令牌直接丢掉、不落库），要么在这之后（已登录）。
-    let mut slot = lock(&LOGIN);
-    if slot.generation != generation {
-        return;
-    }
-    slot.pending = None;
-    match outcome {
-        device::Outcome::Token(token) => match complete_login(&RealHttp, &SystemVault, &record_path(), &token) {
-            Ok(_) => {
-                set_token(Some(token));
-                drop(slot);
-                connection_changed();
-                emit_login(app, "ok", None);
-            }
-            Err(e) => emit_login(app, "error", Some(e)),
-        },
-        device::Outcome::Expired => emit_login(app, "expired", None),
-        device::Outcome::Denied => emit_login(app, "denied", None),
-        device::Outcome::Cancelled => {}
-        device::Outcome::Failed(e) => emit_login(app, "error", Some(e)),
-    }
-}
-
-/// 取消进行中的登录：作废代号，后台轮询在下一次醒来时退出，晚到的令牌不会落库。
+/// 取消进行中的登录：作废代次，后台轮询在 250ms 内退出，晚到的令牌不会落库。
 #[tauri::command]
 pub(crate) async fn github_login_cancel() -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(|| {
@@ -556,15 +672,10 @@ pub(crate) async fn github_login_cancel() -> Result<(), String> {
 #[tauri::command]
 pub(crate) async fn github_logout() -> Result<GithubConnectionDto, String> {
     tauri::async_runtime::spawn_blocking(|| {
-        {
-            let mut slot = lock(&LOGIN);
-            slot.generation += 1;
-            slot.pending = None;
-        }
-        SystemVault.delete()?;
-        set_token(None);
-        save_record(&record_path(), &AccountRecord::default())?;
-        connection_changed();
+        logout_with(&LOGIN, &SystemVault, &record_path(), &|| {
+            set_token(None);
+            connection_changed();
+        })?;
         Ok(status_now())
     })
     .await

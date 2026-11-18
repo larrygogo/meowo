@@ -1094,11 +1094,40 @@ impl Ctx<'static> {
 /// 生产的 gh 入口：按设置里的 GitHub 连接分派（见 github.rs）。关闭时什么都不发（等同没装 gh）；
 /// Meowo 登录时交给内置实现（forge/builtin.rs）；否则是本机 gh。forge、侧栏、标题栏、worktree 清理都经这里。
 pub(crate) fn connected_gh(dir: &str, args: &[&str]) -> Option<CmdOut> {
-    match crate::github::executor() {
-        crate::github::Executor::Off => None,
-        crate::github::Executor::Gh => real_gh(dir, args),
-        crate::github::Executor::Meowo(token) => Some(builtin::run_real(dir, args, token.as_ref())),
+    dispatch_gh(crate::github::executor(), dir, args, &real_gh, &builtin::run_real, &targets_github_com)
+}
+
+/// 内置实现的入口形状：(目录, 参数, 令牌)。
+pub(crate) type BuiltinExec<'a> = &'a dyn Fn(&str, &[&str], Option<&crate::github::Token>) -> CmdOut;
+
+/// 分派本身（可注入，单测覆盖四种方式与自动方式按主机分流）。
+pub(crate) fn dispatch_gh(executor: crate::github::Executor, dir: &str, args: &[&str], gh: GhExec, builtin: BuiltinExec, is_github: &dyn Fn(&str, &[&str]) -> bool) -> Option<CmdOut> {
+    use crate::github::Executor;
+    match executor {
+        Executor::Off => None,
+        Executor::Gh => gh(dir, args),
+        Executor::Meowo(token) => Some(builtin(dir, args, token.as_ref())),
+        // 自动：Meowo 登录只认 github.com；企业版等别的主机照旧交给本机 gh。
+        Executor::Auto(token) if is_github(dir, args) => Some(builtin(dir, args, Some(&token))),
+        Executor::Auto(_) => gh(dir, args),
     }
+}
+
+/// 这条 gh 调用是不是冲着 github.com：带链接看链接的主机；带 --repo 的、api、登录状态与 merge --help 是
+/// forge 只对 github.com 远端发的（forge 认不出主机时不带 --repo）；剩下的（worktree 清理、标题栏直查）按
+/// 目录的远端认。
+pub(crate) fn targets_github_com(dir: &str, args: &[&str]) -> bool {
+    if let Some(url) = args.iter().find(|a| a.starts_with("https://")) {
+        return url.starts_with("https://github.com/") || url.starts_with("https://api.github.com/");
+    }
+    match args {
+        ["auth", "status", ..] | ["api", ..] | ["pr", "merge", "--help"] => return true,
+        _ => {}
+    }
+    if args.iter().any(|a| *a == "--repo" || *a == "-R") {
+        return true;
+    }
+    repo_head(dir, &[], &prefs_path(), false).is_some_and(|(info, _, _)| info.gh.slug().is_some())
 }
 
 /// 本机找得到 gh（设置页显示用；与 real_gh 同一套查找）。

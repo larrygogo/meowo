@@ -56,7 +56,7 @@ fn token() -> Token {
 
 fn run(api: &Api, prefs: &Path, dir: &str, args: &[&str]) -> CmdOut {
     let token = token();
-    Builtin { http: api, token: Some(&token), on_unauthorized: &|| {}, prefs }.run(dir, args)
+    Builtin { http: api, token: Some(&token), on_auth: &|_| {}, prefs }.run(dir, args)
 }
 
 fn json_out(out: &CmdOut) -> Value {
@@ -350,11 +350,13 @@ fn 登录状态_401_与没登录_forge_都认成没登录_401_通知重新登录
     let prefs = std::env::temp_dir().join("meowo-builtin-none.json");
     let api = Api::new(|_, _, _| resp(401, json!({ "message": "Bad credentials" })));
     let flagged = AtomicUsize::new(0);
-    let flag = || {
-        flagged.fetch_add(1, Ordering::SeqCst);
+    let flag = |ok: bool| {
+        if !ok {
+            flagged.fetch_add(1, Ordering::SeqCst);
+        }
     };
     let token = token();
-    let builtin = Builtin { http: &api, token: Some(&token), on_unauthorized: &flag, prefs: &prefs };
+    let builtin = Builtin { http: &api, token: Some(&token), on_auth: &flag, prefs: &prefs };
     let out = builtin.run(".", &["auth", "status", "--hostname", "github.com"]);
     assert_eq!(out.code, Some(1));
     assert!(says_unauthed(&out));
@@ -365,7 +367,7 @@ fn 登录状态_401_与没登录_forge_都认成没登录_401_通知重新登录
     assert_eq!(caches.gh_state(&gh, true), GhState::Unauthed);
     assert_eq!(view_pr(&gh, &caches, ".", Some("acme/repo"), Some("feat")), Err("gh/not_authed".into()));
     // Meowo 模式没登录：不发请求，同样是没登录。
-    let none = Builtin { http: &api, token: None, on_unauthorized: &flag, prefs: &prefs };
+    let none = Builtin { http: &api, token: None, on_auth: &flag, prefs: &prefs };
     let calls = api.calls().len();
     let out = none.run(".", &["auth", "status", "--hostname", "github.com"]);
     assert!(out.code == Some(1) && says_unauthed(&out));
@@ -386,7 +388,7 @@ fn 断网_按查询失败处理() {
     }
     let prefs = std::env::temp_dir().join("meowo-builtin-none.json");
     let token = token();
-    let builtin = Builtin { http: &Down, token: Some(&token), on_unauthorized: &|| {}, prefs: &prefs };
+    let builtin = Builtin { http: &Down, token: Some(&token), on_auth: &|_| {}, prefs: &prefs };
     let gh = |dir: &str, args: &[&str]| Some(builtin.run(dir, args));
     let err = view_pr(&gh, &Caches::default(), ".", Some("acme/repo"), Some("feat")).unwrap_err();
     assert!(err.starts_with("gh/failed") && err.contains("error connecting"), "{err}");
@@ -488,4 +490,66 @@ fn pr_view_按分支_对齐_gh_查30条_默认分支不认已了结的() {
     assert_eq!(number(&["pr", "view", "acme:feature", "--repo", "acme/repo", "--json", "number"]), None);
     assert_eq!(number(&["pr", "view", "main", "--repo", "acme/repo", "--json", "number"]), None, "默认分支上只有已了结的：没有 PR");
     assert_eq!(number(&["pr", "view", "main", "--repo", "acme/other", "--json", "number"]), Some(23), "默认分支上开着的照认");
+}
+/// connected_gh 的分派本身：关闭不发请求、本机 gh、Meowo（含没登录）、自动按主机分流（审查 #6、#9）。
+#[test]
+fn 分派_四种方式_自动按主机() {
+    use crate::github::Executor;
+    let gh_calls = AtomicUsize::new(0);
+    let builtin_calls = Mutex::new(Vec::<Option<String>>::new());
+    let gh = |_: &str, _: &[&str]| {
+        gh_calls.fetch_add(1, Ordering::SeqCst);
+        Some(CmdOut { code: Some(0), stdout: "gh".into(), ..Default::default() })
+    };
+    let builtin = |_: &str, _: &[&str], token: Option<&Token>| {
+        builtin_calls.lock().unwrap().push(token.map(|t| t.expose().to_string()));
+        CmdOut { code: Some(0), stdout: "builtin".into(), ..Default::default() }
+    };
+    let github_com = |dir: &str, _: &[&str]| dir == "github-repo";
+    let args = ["pr", "view", "--json", "number"];
+    let token = Token::new("gho_t").unwrap();
+    let run = |exec: Executor, dir: &str| dispatch_gh(exec, dir, &args, &gh, &builtin, &github_com).map(|o| o.stdout);
+    assert_eq!(run(Executor::Off, "github-repo"), None);
+    assert_eq!(gh_calls.load(Ordering::SeqCst), 0, "关闭：不发任何请求");
+    assert_eq!(run(Executor::Gh, "github-repo").as_deref(), Some("gh"));
+    assert_eq!(run(Executor::Meowo(None), "ghe-repo").as_deref(), Some("builtin"));
+    assert_eq!(run(Executor::Meowo(Some(token.clone())), "ghe-repo").as_deref(), Some("builtin"));
+    assert_eq!(run(Executor::Auto(token.clone()), "github-repo").as_deref(), Some("builtin"));
+    assert_eq!(run(Executor::Auto(token), "ghe-repo").as_deref(), Some("gh"), "自动：企业版仍走本机 gh");
+    assert_eq!(*builtin_calls.lock().unwrap(), [None, Some("gho_t".to_string()), Some("gho_t".to_string())]);
+    assert_eq!(gh_calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn 认主机_链接_repo_参数与目录远端() {
+    let sb = Sandbox::new("builtin-host");
+    let github = github_repo(&sb);
+    let ghe = sb.repo("ghe");
+    sb.git(&ghe, &["remote", "add", "origin", "https://github.example.com/acme/app.git"]);
+    let none = sb.root.join("none");
+    std::fs::create_dir_all(&none).unwrap();
+    assert!(targets_github_com(".", &["pr", "view", "https://github.com/o/r/pull/1", "--json", "number"]));
+    assert!(!targets_github_com(".", &["pr", "view", "https://github.example.com/o/r/pull/1", "--json", "number"]));
+    assert!(targets_github_com(".", &["pr", "view", "feat", "--repo", "o/r", "--json", "number"]));
+    assert!(targets_github_com(".", &["auth", "status", "--hostname", "github.com"]));
+    assert!(targets_github_com(&s(&github), &["pr", "view", "--json", "number"]));
+    assert!(!targets_github_com(&s(&ghe), &["pr", "view", "--json", "number"]));
+    assert!(!targets_github_com(&s(&none), &["pr", "view", "--json", "number"]));
+}
+
+/// 切方式、登录、退出共用的缓存作废：登录状态、gh 新旧、合并方式、PR、入队标记都清掉（审查 #9）。
+#[test]
+fn 连接变了_forge_缓存全部作废() {
+    let key = format!("meowo-test-invalidate-{}", std::process::id());
+    *lock(&CACHES.auth) = Some((Instant::now(), GhState::Ok));
+    *lock(&CACHES.too_old) = Some(false);
+    lock(&CACHES.methods).insert(key.clone(), (Instant::now(), vec!["merge".into()]));
+    lock(&CACHES.prs).insert(key.clone(), (Instant::now(), None));
+    lock(&CACHES.queued).insert((key.clone(), 1, "sha".into()));
+    invalidate_connection();
+    assert!(lock(&CACHES.auth).is_none());
+    assert!(lock(&CACHES.too_old).is_none());
+    assert!(!lock(&CACHES.methods).contains_key(&key));
+    assert!(!lock(&CACHES.prs).contains_key(&key));
+    assert!(!lock(&CACHES.queued).iter().any(|(k, _, _)| *k == key));
 }

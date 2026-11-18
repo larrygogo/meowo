@@ -189,7 +189,8 @@ fn 模式分派_四种方式() {
     assert_eq!(resolve(Mode::Gh, token.clone()), Executor::Gh);
     assert_eq!(resolve(Mode::Meowo, token.clone()), Executor::Meowo(token.clone()));
     assert_eq!(resolve(Mode::Meowo, None), Executor::Meowo(None));
-    assert_eq!(resolve(Mode::Auto, token.clone()), Executor::Meowo(token));
+    assert_eq!(resolve(Mode::Auto, token.clone()), Executor::Auto(token.clone().unwrap()));
+    assert_eq!(Executor::Auto(token.unwrap()).label(), "meowo");
     assert_eq!(resolve(Mode::Auto, None), Executor::Gh);
     for text in ["auto", "meowo", "gh", "off"] {
         assert_eq!(Mode::parse(text).unwrap().as_str(), text);
@@ -250,24 +251,45 @@ fn temp_file(tag: &str) -> PathBuf {
     dir.join("github.json")
 }
 
+const ACCOUNT_JSON: &str = r#"{"login":"octocat","name":"The Octocat","avatar_url":"https://avatars.githubusercontent.com/u/1"}"#;
+
+/// 一轮已开始的登录（代次 1）。
+fn slot_with_pending() -> Mutex<LoginSlot> {
+    let slot = Mutex::new(LoginSlot::new());
+    slot.lock().unwrap().generation = 1;
+    slot.lock().unwrap().pending = Some(GithubDeviceCodeDto { user_code: "ABCD-1234".into(), ..Default::default() });
+    slot
+}
+
 #[test]
 fn 登录收尾_令牌只进凭据库_记录文件与状态里都没有() {
     let path = temp_file("login");
     let vault = MemVault(Mutex::new(None));
-    let http = Script::new(vec![reply(200, r#"{"login":"octocat","name":"The Octocat","avatar_url":"https://avatars.githubusercontent.com/u/1"}"#)]);
+    let http = Script::new(vec![reply(200, ACCOUNT_JSON)]);
     let token = Token::new("gho_TOPSECRET42").unwrap();
-    let account = complete_login(&http, &vault, &path, &token).unwrap();
-    assert_eq!(account.login, "octocat");
+    let slot = slot_with_pending();
+    let stored = Mutex::new(None);
+    let finish = finish_login_with(&slot, 1, Outcome::Token(token.clone()), &http, &vault, &path, &|t| *stored.lock().unwrap() = Some(t.clone()));
+    assert!(matches!(finish, Finish::SignedIn(ref a) if a.login == "octocat"));
     assert_eq!(vault.read().unwrap(), Some(token.clone()));
+    assert_eq!(stored.lock().unwrap().clone(), Some(token.clone()));
+    assert!(slot.lock().unwrap().pending.is_none());
     let file = std::fs::read_to_string(&path).unwrap();
     assert!(file.contains("octocat") && !file.contains("TOPSECRET"));
     let status = status_with(Mode::Auto, Some(token), &load_record(&path), true, true, None);
     assert_eq!(status.active, "meowo");
     assert_eq!(status.account.as_ref().unwrap().login, "octocat");
     assert!(!serde_json::to_string(&status).unwrap().contains("TOPSECRET"));
-    // 退出：记录删掉。
-    save_record(&path, &AccountRecord::default()).unwrap();
+    // 退出：凭据库与记录都删掉，代次作废，回调（清进程内令牌、作废缓存）跑了。
+    let signed_out = AtomicUsize::new(0);
+    logout_with(&slot, &vault, &path, &|| {
+        signed_out.fetch_add(1, Ordering::SeqCst);
+    })
+    .unwrap();
+    assert_eq!(vault.read().unwrap(), None);
     assert!(!path.exists());
+    assert_eq!(slot.lock().unwrap().generation, 2);
+    assert_eq!(signed_out.load(Ordering::SeqCst), 1);
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
@@ -276,13 +298,124 @@ fn 登录收尾_令牌不认就不落库() {
     let path = temp_file("login401");
     let vault = MemVault(Mutex::new(None));
     let http = Script::new(vec![reply(401, r#"{"message":"Bad credentials"}"#)]);
-    let err = complete_login(&http, &vault, &path, &Token::new("gho_bad").unwrap()).unwrap_err();
-    assert_eq!(err, "github/unauthorized");
+    let slot = slot_with_pending();
+    let finish = finish_login_with(&slot, 1, Outcome::Token(Token::new("gho_bad").unwrap()), &http, &vault, &path, &|_| panic!("不该落库"));
+    assert_eq!(finish, Finish::Failed("github/unauthorized".into()));
     assert_eq!(vault.read().unwrap(), None);
     assert!(!path.exists());
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
+/// 回归（独立审查 #3）：问 GitHub「这是谁」时不持登录锁——期间点取消立刻生效（状态查询也不被卡），
+/// 令牌不落库、不报「登录成功」。修复前收尾全程持锁，取消要等网络，令牌照样落库。
+struct CancelDuringFetch<'a> {
+    slot: &'a Mutex<LoginSlot>,
+}
+impl Http for CancelDuringFetch<'_> {
+    fn send(&self, _: &Request) -> Result<Response, String> {
+        // 用户在这时点了取消：锁必须拿得到（不能被收尾占着）。
+        let mut s = self.slot.try_lock().expect("网络阶段不能持有登录锁");
+        s.generation += 1;
+        s.pending = None;
+        drop(s);
+        Ok(Response { status: 200, body: ACCOUNT_JSON.into(), ..Default::default() })
+    }
+}
+
+#[test]
+fn 登录收尾_网络阶段点取消_令牌不落库() {
+    let path = temp_file("login-cancel");
+    let vault = MemVault(Mutex::new(None));
+    let slot = slot_with_pending();
+    let http = CancelDuringFetch { slot: &slot };
+    let finish = finish_login_with(&slot, 1, Outcome::Token(Token::new("gho_late").unwrap()), &http, &vault, &path, &|_| panic!("不该落库"));
+    assert_eq!(finish, Finish::Stale);
+    assert_eq!(vault.read().unwrap(), None);
+    assert!(!path.exists());
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn 登录收尾_已取消的一轮_过期拒绝失败都不报() {
+    let path = temp_file("login-stale");
+    let vault = MemVault(Mutex::new(None));
+    let http = Script::new(vec![]);
+    let slot = slot_with_pending();
+    slot.lock().unwrap().generation = 5;
+    for outcome in [Outcome::Expired, Outcome::Denied, Outcome::Failed("x".into()), Outcome::Cancelled, Outcome::Token(Token::new("gho_t").unwrap())] {
+        assert_eq!(finish_login_with(&slot, 1, outcome, &http, &vault, &path, &|_| panic!("不该落库")), Finish::Stale);
+    }
+    assert!(http.calls().is_empty(), "已取消的一轮不再联网");
+    // 同一轮的过期：清掉进行中的代码。
+    let slot = slot_with_pending();
+    assert_eq!(finish_login_with(&slot, 1, Outcome::Expired, &http, &vault, &path, &|_| {}), Finish::Expired);
+    assert!(slot.lock().unwrap().pending.is_none());
+}
+
+/// 回归（审查 #8）：要代码期间又点了一次登录（或取消），前一次作废，不会把旧代码顶上来。
+struct BumpDuringRequest<'a> {
+    slot: &'a Mutex<LoginSlot>,
+}
+impl Http for BumpDuringRequest<'_> {
+    fn send(&self, _: &Request) -> Result<Response, String> {
+        self.slot.try_lock().expect("要代码时不能持有登录锁").generation += 1;
+        Ok(Response { status: 200, body: r#"{"device_code":"d","user_code":"OLD-CODE","expires_in":900,"interval":5}"#.into(), ..Default::default() })
+    }
+}
+
+#[test]
+fn 开始登录_期间被顶替就作废() {
+    let slot = Mutex::new(LoginSlot::new());
+    let err = begin_login_with(&slot, &BumpDuringRequest { slot: &slot }, "cid", 0).unwrap_err();
+    assert_eq!(err, "github/cancelled");
+    assert!(slot.lock().unwrap().pending.is_none());
+    let ok = Script::new(vec![reply(200, r#"{"device_code":"d","user_code":"NEW-CODE","expires_in":900,"interval":5}"#)]);
+    let (generation, _, dto) = begin_login_with(&slot, &ok, "cid", 1_000).unwrap();
+    assert_eq!((generation, dto.user_code.as_str(), dto.expires_at), (3, "NEW-CODE", 901_000));
+    assert_eq!(slot.lock().unwrap().pending.as_ref().unwrap().user_code, "NEW-CODE");
+}
+
+/// 回归（审查 #5）：旧令牌晚到的 401 不能把新登录标成要重登；之后成功的请求清掉标记。
+#[test]
+fn 令牌被拒_只认当前令牌_成功后清掉() {
+    let path = temp_file("relogin");
+    save_record(&path, &AccountRecord { account: Some(GithubAccountDto { login: "me".into(), ..Default::default() }), needs_relogin: false }).unwrap();
+    let known = Mutex::new(None);
+    let old = Token::new("gho_old").unwrap();
+    let new = Token::new("gho_new").unwrap();
+    assert!(!auth_result_with(&path, Some(&new), &old, false, &known), "旧令牌的 401 不算");
+    assert!(!load_record(&path).needs_relogin);
+    assert!(!auth_result_with(&path, Some(&new), &new, true, &known), "本来就好：不改记录");
+    assert!(auth_result_with(&path, Some(&new), &new, false, &known), "当前令牌被拒：标要重登");
+    assert!(load_record(&path).needs_relogin);
+    assert!(!auth_result_with(&path, Some(&new), &new, false, &known), "重复 401 不重复通知");
+    assert!(auth_result_with(&path, Some(&new), &new, true, &known), "之后成功：清掉");
+    assert!(!load_record(&path).needs_relogin);
+    assert_eq!(load_record(&path).account.unwrap().login, "me");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn 切方式_写设置与内存后作废缓存_写失败不动内存() {
+    let before = *MODE.lock().unwrap();
+    let changed = AtomicUsize::new(0);
+    let on_changed = || {
+        changed.fetch_add(1, Ordering::SeqCst);
+    };
+    let err = set_mode_with(Mode::Off, &|_| Err("settings/write_failed: x".into()), &on_changed).unwrap_err();
+    assert!(err.starts_with("settings/write_failed"));
+    assert_eq!(*MODE.lock().unwrap(), before);
+    assert_eq!(changed.load(Ordering::SeqCst), 0);
+    let written = Mutex::new(None);
+    set_mode_with(Mode::Gh, &|m| {
+        *written.lock().unwrap() = Some(m);
+        Ok(())
+    }, &on_changed)
+    .unwrap();
+    assert_eq!((*written.lock().unwrap(), *MODE.lock().unwrap()), (Some(Mode::Gh), Some(Mode::Gh)));
+    assert_eq!(changed.load(Ordering::SeqCst), 1);
+    *MODE.lock().unwrap() = before;
+}
 #[test]
 fn 状态_没令牌不显示旧账号_要重新登录只在有令牌时() {
     let record = AccountRecord { account: Some(GithubAccountDto { login: "old".into(), ..Default::default() }), needs_relogin: true };

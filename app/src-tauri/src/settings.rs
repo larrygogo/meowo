@@ -809,7 +809,12 @@ pub(crate) async fn set_push_paused(app: tauri::AppHandle, paused: bool) -> Resu
 
 /// 只改设置里的个别字段（手机也调得到的那几个窄口子共用）：落盘后发 settings-changed，
 /// 桌面各窗立刻跟上，手机靠轮询 get_settings 跟上。
-pub(crate) async fn patch_settings(
+/// 单独维护某个字段的命令落盘后，用同一出口（不含远程 token）通知各窗口。
+pub(crate) fn emit_settings_changed(app: &tauri::AppHandle, settings: Settings) {
+    let _ = app.emit("settings-changed", without_remote_token(settings));
+}
+
+async fn patch_settings(
     app: tauri::AppHandle,
     patch: impl FnOnce(&mut Settings) + Send + 'static,
 ) -> Result<(), String> {
