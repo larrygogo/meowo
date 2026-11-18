@@ -58,6 +58,9 @@ describe("「更改」面板按平台的叫法", () => {
     const card = await screen.findByTestId("scm-pr");
     expect(card.textContent).toContain("!42 Fix login");
     expect(card.textContent).toContain("流水线有失败，不能合并");
+    // 顶部汇总与底部提示同一套叫法：流水线 / 作业（审查指出以前顶部写「1 项检查失败」）。
+    expect(card.textContent).toContain("流水线 1 项作业失败");
+    expect(card.textContent).not.toContain("检查失败");
     expect(within(card).getByTestId("scm-merge").hasAttribute("disabled")).toBe(true);
     // 检查都过了：合并框写「合并 MR !42」，方式是 GitLab 的两种。
     cleanup();
@@ -107,6 +110,10 @@ describe("「更改」面板按平台的叫法", () => {
       en.forgeP.openPr(we), en.forgeP.mergeTitle(we, 3), en.forgeP.mergeBlockedPending(we), en.forgeP.prOpenTip(we, 5, "x"),
     ]);
     expect(forgeText(en, "gitlab").mergeBlockedFail).toBe("Pipeline failed. Can't merge.");
+    expect([tz.checksPass(3), tz.checksFail(1), tz.checksPending(2)]).toEqual([zh.forge.checksPass(3), zh.forge.checksFail(1), zh.forge.checksPending(2)]);
+    expect([zh.forgeP.checksPass(w, 3), zh.forgeP.checksFail(w, 1)]).toEqual([zh.forge.checksPass(3), zh.forge.checksFail(1)]);
+    expect([en.forgeP.checksPass(we, 3), en.forgeP.checksFail(we, 1), en.forgeP.checksPending(we, 2)]).toEqual([en.forge.checksPass(3), en.forge.checksFail(1), en.forge.checksPending(2)]);
+    expect(forgeText(en, "gitlab").checksFail(2)).toBe("Pipeline: 2 jobs failed");
   });
 });
 

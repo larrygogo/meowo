@@ -27,6 +27,9 @@ export type ForgeText = {
   prCreate: string;
   prCreated: (n: number) => string;
   checksNone: string;
+  checksPass: (n: number) => string;
+  checksFail: (n: number) => string;
+  checksPending: (n: number) => string;
   mergeTitle: (n: number) => string;
   mergeBlockedFail: string;
   mergeBlockedPending: string;
@@ -60,6 +63,9 @@ export function forgeText(t: T, kind: ForgeKind, host?: string | null): ForgeTex
       prCreate: f.prCreate,
       prCreated: f.prCreated,
       checksNone: f.checksNone,
+      checksPass: f.checksPass,
+      checksFail: f.checksFail,
+      checksPending: f.checksPending,
       mergeTitle: f.mergeTitle,
       mergeBlockedFail: f.mergeBlockedFail,
       mergeBlockedPending: f.mergeBlockedPending,
@@ -92,6 +98,9 @@ export function forgeText(t: T, kind: ForgeKind, host?: string | null): ForgeTex
     prCreate: p.prCreate(w),
     prCreated: (n) => p.prCreated(w, n),
     checksNone: w.noCi,
+    checksPass: (n) => p.checksPass(w, n),
+    checksFail: (n) => p.checksFail(w, n),
+    checksPending: (n) => p.checksPending(w, n),
     mergeTitle: (n) => p.mergeTitle(w, n),
     mergeBlockedFail: p.mergeBlockedFail(w),
     mergeBlockedPending: p.mergeBlockedPending(w),

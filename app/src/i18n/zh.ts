@@ -21,6 +21,10 @@ export type ForgeWord = {
   ciLead: string;
   /** 没有任何检查时的说明。 */
   noCi: string;
+  /** 一项检查叫什么（GitHub「检查」、GitLab「作业」、Bitbucket「构建」）。 */
+  unit: string;
+  /** 检查汇总行的前缀（GitLab「流水线 」，与「流水线有失败」同一套叫法）。 */
+  checksLead: string;
 };
 
 export const zh = {
@@ -2127,10 +2131,10 @@ export const zh = {
   },
   // 代码托管平台的叫法（forgeWords.ts 按平台取）。GitLab 是合并请求（MR），编号写 !12，检查叫流水线。
   forgeWords: {
-    github: { name: "GitHub", pr: "PR", openLead: " Pull Request ", num: "#", ciLead: "CI ", noCi: "这个仓库没配 CI" },
-    gitlab: { name: "GitLab", pr: "MR", openLead: "合并请求 ", num: "!", ciLead: "流水线", noCi: "这个项目没有流水线" },
-    gitea: { name: "Gitea", pr: "PR", openLead: " Pull Request ", num: "#", ciLead: "CI ", noCi: "这个仓库没配 CI" },
-    bitbucket: { name: "Bitbucket", pr: "PR", openLead: " Pull Request ", num: "#", ciLead: "构建", noCi: "这个仓库没配构建" },
+    github: { name: "GitHub", pr: "PR", openLead: " Pull Request ", num: "#", ciLead: "CI ", noCi: "这个仓库没配 CI", unit: "检查", checksLead: "" },
+    gitlab: { name: "GitLab", pr: "MR", openLead: "合并请求 ", num: "!", ciLead: "流水线", noCi: "这个项目没有流水线", unit: "作业", checksLead: "流水线 " },
+    gitea: { name: "Gitea", pr: "PR", openLead: " Pull Request ", num: "#", ciLead: "CI ", noCi: "这个仓库没配 CI", unit: "检查", checksLead: "" },
+    bitbucket: { name: "Bitbucket", pr: "PR", openLead: " Pull Request ", num: "#", ciLead: "构建", noCi: "这个仓库没配构建", unit: "构建", checksLead: "" },
   } as Record<"github" | "gitlab" | "gitea" | "bitbucket", ForgeWord>,
   // 按平台换词的文案（GitHub 仍用 forge.* 的原句，两边一致由 forgeWords.test 核对）。
   forgeP: {
@@ -2143,6 +2147,9 @@ export const zh = {
     prCreate: (w: ForgeWord) => `创建 ${w.pr}`,
     prCreated: (w: ForgeWord, n: number) => `已创建 ${w.pr} ${w.num}${n}`,
     mergeTitle: (w: ForgeWord, n: number) => `合并 ${w.pr} ${w.num}${n}`,
+    checksPass: (w: ForgeWord, n: number) => `${w.checksLead}${n} 项${w.unit}全部通过`,
+    checksFail: (w: ForgeWord, n: number) => `${w.checksLead}${n} 项${w.unit}失败`,
+    checksPending: (w: ForgeWord, n: number) => `${w.checksLead}${n} 项${w.unit}还在跑`,
     mergeBlockedFail: (w: ForgeWord) => `${w.ciLead}有失败，不能合并`,
     mergeBlockedPending: (w: ForgeWord) => `${w.ciLead}还在跑，跑完再合并`,
     mergeBlockedDraft: (w: ForgeWord) => `草稿 ${w.pr}，标为就绪后才能合并`,

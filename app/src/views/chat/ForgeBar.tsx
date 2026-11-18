@@ -451,9 +451,9 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
     const n = checkCounts(p);
     switch (p.checksSummary) {
       case "none": return ft.checksNone;
-      case "fail": return t.forge.checksFail(n.fail);
-      case "pending": return t.forge.checksPending(n.pending);
-      case "pass": return t.forge.checksPass(n.total);
+      case "fail": return ft.checksFail(n.fail);
+      case "pending": return ft.checksPending(n.pending);
+      case "pass": return ft.checksPass(n.total);
       default: return "";
     }
   };
