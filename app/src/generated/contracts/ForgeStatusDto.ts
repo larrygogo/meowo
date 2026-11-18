@@ -48,4 +48,9 @@ repoRemote: string | null,
 /**
  * 多个 GitHub 远端还没定：查状态暂按 origin，开 PR / 合并返回 `gh/ambiguous_repo`，要先选。
  */
-repoNeedsChoice: boolean, };
+repoNeedsChoice: boolean, 
+/**
+ * 这次实际用的 GitHub 连接：`gh`（本机 gh）/ `meowo`（Meowo 登录的令牌）/ `off`（设置里关了，
+ * 这时 `gh` 字段为 `off`，不发任何 GitHub 请求）。旧后端没有这个字段。
+ */
+connection?: string, };

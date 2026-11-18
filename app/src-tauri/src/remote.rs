@@ -253,6 +253,9 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "forge_choose_repo",
     // 侧栏会话行的 PR / CI 与改动数（UI 优化 #54）：只读，每个目录逐一过会话目录收口，不是的直接丢掉。
     "sidebar_git_badges",
+    // GitHub 连接状态（只读：方式、实际在用、账号展示字段；不含令牌，进行中的登录代码也去掉）。
+    // 切方式、登录、退出只在桌面设置页做，见拒绝名单测试。
+    "github_status",
     // 输入框 `@` 补全（2026-11-04 用户决定放行）：只回文件/目录名，不读内容；目录收口同改动列表。
     "file_mention_candidates",
     // Lead 工作流（模块头「例外（2026-11-09）」）
@@ -1705,6 +1708,7 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             let a = args!(ListSubdirectoriesArgs);
             reply(list_subdirectories(a.path).await)
         }
+        "github_status" => reply(crate::github::github_status_remote().await),
         "get_settings" => reply(
             crate::settings::get_settings()
                 .await
@@ -2092,6 +2096,11 @@ mod tests {
             "api_key_login",
             // 账号管理里需要交互式终端或不可逆的部分仍只在电脑上做（2026-11-15 只放行看与切换）。
             "logout_agent",
+            // GitHub 连接：登录、退出、切方式只在桌面设置页做（令牌进的是这台电脑的凭据库）。
+            "github_login_start",
+            "github_login_cancel",
+            "github_logout",
+            "github_set_mode",
             "create_profile",
             "rename_profile",
             "delete_profile",
@@ -2909,6 +2918,7 @@ mod tests {
             | "host_os"
             | "file_access_token"
             | "get_accounts"
+            | "github_status"
             | "list_cleanable_worktrees" => parse::<serde::de::IgnoredAny>(br#"{}"#).map(|_| ()),
             // 白名单新增项必须补样例——落到此臂是样例漏写，不是命令坏了。
             _ => Err(format!("{cmd} 在 sample_payload_parse_check 缺 payload 样例")),

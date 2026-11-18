@@ -80,6 +80,11 @@ fn read_with(ctx: &Ctx, cwd: &str) -> Result<Option<PrReviewDto>, String> {
 
 static REVIEW_CACHE: std::sync::LazyLock<Mutex<HashMap<String, (Instant, PrReviewDto)>>> = std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// GitHub 连接变了：评审缓存作废。
+pub(crate) fn invalidate_cache() {
+    lock(&REVIEW_CACHE).clear();
+}
+
 fn read_cached_with(ctx: &Ctx, cwd: &str) -> Result<Option<PrReviewDto>, String> {
     if let Some((at, review)) = lock(&REVIEW_CACHE).get(cwd).cloned() {
         if at.elapsed() < Duration::from_secs(15) { return Ok(Some(review)); }
