@@ -203,7 +203,7 @@ function SubagentBlockBody({ sessionId, item, outcome, settled, finishedAt }: Su
     ? durationText(endMs - startMs, t)
     : null;
   return (
-    <details className="chat-subagent" open={open || undefined} onToggle={(event) => {
+    <details className="chat-subagent" data-enter-id={item.id} open={open || undefined} onToggle={(event) => {
       // 带着记忆里的展开态挂载时浏览器也会派发一次 toggle（next === open），不重复拉取。
       const next = event.currentTarget.open;
       if (next === open) return;

@@ -11,6 +11,55 @@ type Match = { boxes: { top: number; left: number; width: number; height: number
 /// 叠层只画前 N 处：超长会话里搜一个 `a` 会命中上千处，逐块画矩形比搜索本身还贵。
 const MAX_MARKS = 300;
 
+/// 行内元素：同一个块里被它们切开的文字按用户看到的连续文本匹配。此前逐个文本节点各搜各的，
+/// 「**加粗**词」、行内代码、段尾不折行的那组字（ChatMarkdown 的 .chat-md-keep）把一个词切在两个节点里，
+/// 搜整词搜不到（2026-11-18 复核）。
+const INLINE_TAGS = new Set(["A", "ABBR", "B", "BDI", "BDO", "CITE", "CODE", "DEL", "DFN", "EM", "I", "INS", "KBD", "MARK", "Q", "S", "SAMP", "SMALL", "SPAN", "STRONG", "SUB", "SUP", "TIME", "U", "VAR"]);
+function blockOf(node: Node, root: Node): Node {
+  let el = node.parentElement;
+  while (el && el !== root && INLINE_TAGS.has(el.tagName)) el = el.parentElement;
+  return el ?? root;
+}
+
+/// 在 root 里找 needle（已小写）的全部命中，每处给一个可能跨多个文本节点的 Range。
+/// 同一个块里相邻的文本节点拼成一段再搜，命中位置映射回各自的节点与偏移。
+export function findTextRanges(root: Node, needle: string, limit = MAX_MARKS): Range[] {
+  const out: Range[] = [];
+  if (!needle) return out;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let run: { nodes: Text[]; starts: number[]; text: string; block: Node | null } = { nodes: [], starts: [], text: "", block: null };
+  const locate = (offset: number, end: boolean): [Text, number] => {
+    // end 取「这个位置之前那个字所在的节点」，免得范围的终点落到下一个节点的 0 号位置上（矩形多出一截空框）。
+    let index = run.nodes.length - 1;
+    while (index > 0 && (end ? run.starts[index] >= offset : run.starts[index] > offset)) index -= 1;
+    return [run.nodes[index], offset - run.starts[index]];
+  };
+  const flush = () => {
+    const hay = run.text.toLowerCase();
+    let at = hay.indexOf(needle);
+    while (at >= 0 && out.length < limit) {
+      const range = document.createRange();
+      const [startNode, startOffset] = locate(at, false);
+      const [endNode, endOffset] = locate(at + needle.length, true);
+      range.setStart(startNode, startOffset);
+      range.setEnd(endNode, endOffset);
+      out.push(range);
+      at = hay.indexOf(needle, at + needle.length);
+    }
+    run = { nodes: [], starts: [], text: "", block: null };
+  };
+  for (let node = walker.nextNode() as Text | null; node && out.length < limit; node = walker.nextNode() as Text | null) {
+    const block = blockOf(node, root);
+    if (run.block !== null && block !== run.block) flush();
+    run.block = block;
+    run.starts.push(run.text.length);
+    run.nodes.push(node);
+    run.text += node.data;
+  }
+  if (run.nodes.length > 0 && out.length < limit) flush();
+  return out;
+}
+
 /**
  * 对话区内搜索（对照 Kimi Code 桌面的 TranscriptSearch）。
  *
@@ -46,41 +95,27 @@ export function TranscriptSearch({ scrollRef, onClose }: { scrollRef: RefObject<
     const originX = hostRect?.left ?? 0;
     const originY = hostRect?.top ?? 0;
     const out: Match[] = [];
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
-      acceptNode: (node) => (node.textContent?.trim() ? 1 : 2),
-    });
-    let text = walker.nextNode();
-    while (text && out.length < MAX_MARKS) {
-      const value = text.textContent ?? "";
-      const hay = value.toLowerCase();
-      let at = hay.indexOf(needle);
-      while (at >= 0 && out.length < MAX_MARKS) {
-        const range = document.createRange();
-        range.setStart(text, at);
-        range.setEnd(text, Math.min(at + needle.length, value.length));
-        // 逐行矩形才能框住折行的句子；jsdom 与旧内核上 Range 的量高方法可能缺席，
-        // 退回宿主元素的外接矩形（至少这一处命中看得见）。
-        const own = typeof range.getClientRects === "function" ? [...range.getClientRects()] : [];
-        const owner = text.parentElement;
-        const fallback = own.length > 0
-          ? own
-          : typeof range.getBoundingClientRect === "function"
-            ? [range.getBoundingClientRect()]
-            : owner && typeof owner.getBoundingClientRect === "function"
-              ? [owner.getBoundingClientRect()]
-              : [];
-        const boxes = fallback
-          .filter((rect) => rect.width > 0 && rect.height > 0)
-          .map((rect) => ({
-            top: Math.round(rect.top - originY),
-            left: Math.round(rect.left - originX),
-            width: Math.round(rect.width),
-            height: Math.round(rect.height),
-          }));
-        if (boxes.length > 0) out.push({ boxes });
-        at = hay.indexOf(needle, at + needle.length);
-      }
-      text = walker.nextNode();
+    for (const range of findTextRanges(el, needle)) {
+      // 逐行矩形才能框住折行的句子；jsdom 与旧内核上 Range 的量高方法可能缺席，
+      // 退回宿主元素的外接矩形（至少这一处命中看得见）。
+      const own = typeof range.getClientRects === "function" ? [...range.getClientRects()] : [];
+      const owner = range.startContainer.parentElement;
+      const fallback = own.length > 0
+        ? own
+        : typeof range.getBoundingClientRect === "function"
+          ? [range.getBoundingClientRect()]
+          : owner && typeof owner.getBoundingClientRect === "function"
+            ? [owner.getBoundingClientRect()]
+            : [];
+      const boxes = fallback
+        .filter((rect) => rect.width > 0 && rect.height > 0)
+        .map((rect) => ({
+          top: Math.round(rect.top - originY),
+          left: Math.round(rect.left - originX),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        }));
+      if (boxes.length > 0) out.push({ boxes });
     }
     setMarks(out);
     // 只有换了搜索词才回到第一处。滚动/流式追加触发的重测若也归零，「下一处」一滚动就

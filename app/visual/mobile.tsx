@@ -57,7 +57,7 @@ const inChat = tmsChat || cardScene !== null || toolScene !== null || scene === 
 function taskItems(zh: boolean): unknown[] {
   const at = (minutes: number) => new Date(FIXED_NOW - minutes * 60_000).toISOString();
   const bash = (id: string, command: string, description: string, start: number, end: number | null) => [
-    { type: "tool_use", id, timestamp: at(start), name: "Bash", summary: command, detail: { kind: "command", command, description } },
+    { type: "tool_use", id, timestamp: at(start), name: "Bash", kind: "run", summary: command, detail: { kind: "command", command, description } },
     { type: "tool_result", id: `r-${id}`, timestamp: at(end ?? start), tool_use_id: id, text: end === null ? "started" : "done", is_error: false,
       subagent: end === null ? { running: 1, completed: 0, failed: 0, task_id: `task-${id}` } : { running: 0, completed: 1, failed: 0, task_id: `task-${id}` } },
   ];
@@ -67,7 +67,7 @@ function taskItems(zh: boolean): unknown[] {
     ...bash("mt-b2", "bun run test", zh ? "跑全量测试" : "Run all tests", 26, 22),
     ...bash("mt-b3", "bun run lint", zh ? "跑 lint" : "Run lint", 21, 20),
     ...bash("mt-b4", "bun run dev --host 127.0.0.1", zh ? "起开发服务" : "Start the dev server", 19, null),
-    { type: "tool_use", id: "mt-a1", timestamp: at(10), name: "Agent", summary: zh ? "复核 schema 的边界情况" : "Review schema edge cases",
+    { type: "tool_use", id: "mt-a1", timestamp: at(10), name: "Agent", kind: "agent", summary: zh ? "复核 schema 的边界情况" : "Review schema edge cases",
       subagent: { description: zh ? "复核 schema 的边界情况" : "Review schema edge cases", agent_type: "Explore", count: 1 } },
     { type: "assistant_text", id: "mt-t1", timestamp: at(9), text: zh ? "开发服务已经起来了，子代理在复核边界情况。" : "The dev server is up; a subagent is reviewing the edge cases." },
   ];

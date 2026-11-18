@@ -41,3 +41,21 @@ describe("ChatMarkdown 代码块换行", () => {
     }
   });
 });
+
+describe("段尾不留孤字（U2）", () => {
+  it("中文段落最后四个字包成一组不折行，文字本身不变", () => {
+    const text = "这是一段很长的段落，用来检查消息列宽，而不是把一行拉得很长导致阅读困难。";
+    const { container } = render(<ChatMarkdown text={text} />);
+    const keep = container.querySelector("p .chat-md-keep");
+    expect(keep?.textContent).toBe("读困难。");
+    expect(container.querySelector("p")?.textContent).toBe(text);
+  });
+  it("列表项里的段落同样处理", () => {
+    const { container } = render(<ChatMarkdown text={"- 第一项写得比较长一些，看看末尾\n- 第二项也写得比较长，看看末尾的字"} />);
+    expect([...container.querySelectorAll("li .chat-md-keep")].map((el) => el.textContent)).toEqual(["看看末尾", "末尾的字"]);
+  });
+  it("西文、末尾是链接或行内代码、很短的段落不碰", () => {
+    const { container } = render(<ChatMarkdown text={"Plain English paragraph that wraps.\n\n结尾是代码 `src/a.ts`\n\n结尾是链接 [文档](https://example.com)\n\n好的。"} />);
+    expect(container.querySelector(".chat-md-keep")).toBeNull();
+  });
+});

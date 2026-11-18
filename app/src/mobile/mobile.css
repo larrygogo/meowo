@@ -32,7 +32,7 @@ body.remote-ui .chat-diff-head {
 }
 /* 头行的返回箭头与标题：与对话页标题行同一读法（‹ + 名称），箭头单独成钮、不带字。 */
 body.remote-ui .chat-diff-head .chat-diff-back { padding: 6px; margin-left: -4px; color: var(--cc-text-dim); }
-body.remote-ui .chat-diff-title { min-width: 0; color: var(--cc-text); font-size: 16px; font-weight: 600; }
+body.remote-ui .chat-diff-title { min-width: 0; color: var(--cc-text); font-size: 16px; font-weight: var(--fw-semibold); }
 
 /* 远程页关掉对话条目的 content-visibility:auto（用户反馈手机上滑动很卡）。屏外条目先按
    60px 占位，上滑到跟前才排版长回实高，WebKit 不替这种长高做滚动锚定：Playwright WebKit
@@ -496,7 +496,7 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
   flex: 0 0 auto;
   padding: calc(20px + env(safe-area-inset-top, 0px)) 20px 14px;
 }
-.remote-session-list-head h1 { margin: 0; font-size: 30px; font-weight: 600; line-height: 1.2; letter-spacing: -0.02em; }
+.remote-session-list-head h1 { margin: 0; font-size: 30px; font-weight: var(--fw-semibold); line-height: 1.2; letter-spacing: -0.02em; }
 .remote-session-list-head p { margin: 4px 0 0; color: var(--cc-text-faint); font-size: 13px; line-height: 1.4; }
 .remote-session-list-pane { flex: 1; min-height: 0; display: flex; }
 .remote-session-list-pane[hidden] { display: none; }
@@ -519,7 +519,7 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
   border: 0;
   border-radius: var(--radius-lg);
   background: var(--fill-selected);
-  font-weight: 400;
+  font-weight: var(--fw-regular);
 }
 .remote-session-list .chat-sidebar-search input::placeholder { color: var(--cc-text-faint); }
 .remote-session-list .chat-sidebar-search input:hover,
@@ -540,14 +540,14 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
 .remote-session-list .chat-sidebar-tabs button { border-radius: 9px; font-size: 14px; color: var(--cc-text-dim); }
 /* 凹槽用最淡一档填充、选中块用 L2 色加细线和一点阴影：深浅两套主题下选中块都比凹槽亮，
    不需要按主题分写。 */
-.remote-session-list .chat-sidebar-tabs button.is-active { color: var(--cc-text); background: var(--cc-panel-raised); box-shadow: 0 0 0 var(--hairline) var(--cc-border), var(--shadow-sm); }
+.remote-session-list .chat-sidebar-tabs button.is-active { color: var(--cc-text); background: var(--cc-panel-raised); box-shadow: var(--shadow-sm); }
 /* 小节标题与右侧的筛选钮：左缘对齐大标题的 20px；右边让筛选图标和卡内内容（⋯、时间那一列）的右缘同线，
    不对卡片外框（对齐按墨迹算）。量 375 宽：图标墨迹右缘 353，卡内 ⋯ 墨迹右缘 346.5，卡片外缘 359，
    两条线都没对上；右内边距 14 → 21 后图标墨迹右缘落在 346.5，和 ⋯ 同线。 */
 .remote-session-list .chat-sidebar-section { padding: 0 21px 6px 20px; }
 .remote-session-list .chat-sidebar-section-label { font-size: 13px; }
 .remote-session-list .chat-sidebar-scope { margin: 0 16px 8px; }
-/* 会话卡：一张 L2 卡一条会话，卡间 8px。描边用内阴影细线，常驻卡片不加投影。
+/* 会话卡：一张 L2 卡一条会话，卡间 8px。不描边（U4，2026-11-18）：卡面抬一档 + 很淡的卡片阴影，浅色白卡压在浅灰底上也分得开。
    末尾留出底栏的位置：列表滚到底时最后一张卡停在底栏上方。 */
 .remote-session-list .chat-sidebar-list { padding: 2px 16px var(--remote-tabbar-clear); gap: 8px; }
 .remote-session-list .chat-sidebar-group { gap: 8px; }
@@ -558,7 +558,7 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
   padding: 12px 12px 12px 12px;
   border-radius: var(--radius-lg);
   background: var(--cc-panel-raised);
-  box-shadow: inset 0 0 0 var(--hairline) var(--cc-border);
+  box-shadow: var(--shadow-card);
 }
 /* 触屏点过的行会留着 :hover；卡片只在按下时给反馈。选中只换中性底色。 */
 .remote-session-list .chat-sidebar-item:hover { background: var(--cc-panel-raised); }
@@ -569,8 +569,8 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
 /* 圆点列与标题首行同高（16px × 1.35），圆点才对得上标题的视觉中线。 */
 .remote-session-list .chat-sidebar-lead { flex-basis: 14px; height: calc(16px * 1.35); }
 .remote-session-list .chat-sidebar-lead .chat-sidebar-dot { width: 8px; height: 8px; }
-body.remote-ui .remote-session-list .chat-sidebar-name { font-size: 16px; font-weight: 500; line-height: 1.35; }
-.remote-session-list .chat-sidebar-item.is-active .chat-sidebar-name { font-weight: 500; }
+body.remote-ui .remote-session-list .chat-sidebar-name { font-size: 16px; font-weight: var(--fw-medium); line-height: 1.35; }
+.remote-session-list .chat-sidebar-item.is-active .chat-sidebar-name { font-weight: var(--fw-medium); }
 .remote-session-list .chat-sidebar-metaline { margin-top: 3px; }
 body.remote-ui .remote-session-list .chat-sidebar-meta { font-size: 13px; }
 /* 右列两行：上面状态文字，下面时间和 ⋯。与左列的「标题 / 项目」两行逐行对齐。 */
@@ -591,7 +591,7 @@ body.remote-ui .remote-session-list .chat-sidebar-meta { font-size: 13px; }
   display: block;
   grid-column: 1 / -1;
   font-size: 12px;
-  font-weight: 500;
+  font-weight: var(--fw-medium);
   line-height: calc(16px * 1.35);
   white-space: nowrap;
   color: var(--cc-text-faint);
@@ -611,7 +611,7 @@ body.remote-ui .remote-session-list .chat-sidebar-meta { font-size: 13px; }
 body.remote-ui .remote-session-list .chat-sidebar-group-head { padding-left: 4px; padding-right: 4px; min-height: 32px; font-size: 13px; }
 /* 空态 / 加载 / 首载失败：一句话居中，下一步（新建、重试）是它下面一颗 44px 的次按钮。 */
 body.remote-ui .remote-session-list .chat-sidebar-empty { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 56px 24px; font-size: 15px; line-height: 1.5; }
-.remote-session-list .chat-sidebar-retry { min-height: 44px; margin: 0; padding: 0 20px; border: 0; border-radius: var(--radius-lg); color: var(--cc-text); background: var(--fill-selected); font-size: 15px; font-weight: 500; }
+.remote-session-list .chat-sidebar-retry { min-height: 44px; margin: 0; padding: 0 20px; border: 0; border-radius: var(--radius-lg); color: var(--cc-text); background: var(--fill-selected); font-size: 15px; font-weight: var(--fw-medium); }
 .remote-session-list .chat-sidebar-retry:active { background: var(--fill-selected-hover); }
 /* 搜索框聚焦（键盘弹出）时底栏先让开：可视高度只剩一半，底栏会盖住搜索结果。失焦即回来。 */
 .remote-session-list:has(.chat-sidebar-search input:focus) .remote-tabbar { opacity: 0; visibility: hidden; pointer-events: none; }
@@ -640,7 +640,7 @@ body.remote-ui .remote-session-list .chat-sidebar-empty { display: flex; flex-di
   background: color-mix(in srgb, var(--cc-panel-raised) 78%, transparent);
   -webkit-backdrop-filter: blur(20px) saturate(1.6);
   backdrop-filter: blur(20px) saturate(1.6);
-  box-shadow: 0 0 0 var(--hairline) var(--cc-border), var(--shadow-lg);
+  box-shadow: var(--edge-float), var(--shadow-lg);
 }
 .remote-tabbar-item {
   min-width: 76px;
@@ -652,14 +652,14 @@ body.remote-ui .remote-session-list .chat-sidebar-empty { display: flex; flex-di
   background: transparent;
   font: inherit;
   font-size: 15px;
-  font-weight: 500;
+  font-weight: var(--fw-medium);
   white-space: nowrap;
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
 .remote-tabbar-item:active { background: var(--fill-selected); transform: scale(0.98); }
 .remote-tabbar-item.is-active,
-.remote-tabbar-item.is-active:active { color: var(--cc-on-accent); background: var(--cc-accent); font-weight: 600; }
+.remote-tabbar-item.is-active:active { color: var(--cc-on-accent); background: var(--cc-accent); font-weight: var(--fw-semibold); }
 /* 三项紧挨着（间隔 2px）、本身已 44px 高：不要触屏块给按钮统一加的 6px 外扩，否则命中面互相压。 */
 :where(body.remote-ui) .remote-tabbar-item::after { inset: 0; }
 :root[data-im="kbd"] .remote-tabbar-item:focus-visible { outline: none; box-shadow: var(--focus-ring); }
@@ -700,7 +700,7 @@ body.remote-ui .remote-session-list .chat-sidebar-empty { display: flex; flex-di
   border-radius: var(--radius-lg);
   color: var(--cc-text);
   background: var(--cc-menu-bg);
-  box-shadow: 0 0 0 var(--hairline) var(--cc-border), var(--shadow-menu);
+  box-shadow: var(--edge-float), var(--shadow-menu);
 }
 .remote-settings-group {
   margin-top: 10px;
@@ -725,7 +725,7 @@ body.remote-ui .remote-session-list .chat-sidebar-empty { display: flex; flex-di
 .remote-usage-head { display: flex; align-items: center; gap: 8px; min-height: 32px; }
 .remote-usage-logo { display: grid; place-items: center; flex: 0 0 auto; width: 22px; height: 22px; }
 .remote-usage-logo svg, .remote-usage-logo img { width: 18px; height: 18px; }
-.remote-usage-name { font-size: 14px; font-weight: 600; }
+.remote-usage-name { font-size: 14px; font-weight: var(--fw-semibold); }
 .remote-usage-updated { margin-left: auto; color: var(--cc-text-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
 .remote-usage-refresh {
   position: relative;
@@ -798,10 +798,10 @@ body.remote-ui .remote-session-list .chat-sidebar-empty { display: flex; flex-di
   width: min(340px, calc(100vw - 32px));
   box-sizing: border-box;
   padding: 18px 18px 14px;
-  border: var(--hairline) solid var(--cc-border);
+  border: var(--hairline) solid transparent;
   border-radius: var(--radius-lg);
   background: var(--cc-panel-raised);
-  box-shadow: var(--shadow-menu);
+  box-shadow: var(--edge-float), var(--shadow-menu);
 }
 .remote-confirm p { max-height: 50vh; overflow: auto; }
 .remote-confirm .app-confirm-actions button { position: relative; height: var(--btn-h-lg); }
@@ -820,7 +820,7 @@ body.remote-ui .remote-session-list .chat-sidebar-empty { display: flex; flex-di
   padding: 0 16px;
   border-radius: var(--radius-lg);
   background: var(--cc-panel-raised);
-  box-shadow: inset 0 0 0 var(--hairline) var(--cc-border);
+  box-shadow: var(--shadow-card);
 }
 .remote-settings-screen .remote-settings-row { min-height: 56px; padding: 8px 0; }
 .remote-settings-screen .remote-settings-row + .remote-settings-row { border-top: var(--hairline) solid var(--cc-border); }
@@ -876,13 +876,13 @@ body.remote-ui .remote-session-list .chat-sidebar-empty { display: flex; flex-di
   padding: 28px 24px 24px;
   border-radius: var(--radius-xl);
   background: var(--cc-panel-raised);
-  box-shadow: 0 0 0 var(--hairline) var(--cc-border), var(--shadow-md);
+  box-shadow: var(--edge-float), var(--shadow-md);
 }
 
 .remote-gate-brand { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 12px; }
 .remote-gate-brand img { border-radius: var(--radius-lg); }
-.remote-gate-brand span { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
-.remote-gate-card h1 { margin: 0; font-size: 22px; font-weight: 600; line-height: 1.25; text-align: center; letter-spacing: -0.015em; }
+.remote-gate-brand span { font-size: 18px; font-weight: var(--fw-semibold); letter-spacing: -0.02em; }
+.remote-gate-card h1 { margin: 0; font-size: 22px; font-weight: var(--fw-semibold); line-height: 1.25; text-align: center; letter-spacing: -0.015em; }
 .remote-gate-card > p { text-align: center; }
 .remote-gate-card p { margin: 0; color: var(--cc-text-dim); font-size: 14px; line-height: 1.55; }
 /* 出错提示：错误色字 + 同色淡底，是这一屏里最重的元素。 */
@@ -916,7 +916,7 @@ body.remote-ui .remote-session-list .chat-sidebar-empty { display: flex; flex-di
   border: none;
   border-radius: var(--radius-lg);
   font-size: 16px;
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
@@ -936,7 +936,7 @@ body.remote-ui .remote-session-list .chat-sidebar-empty { display: flex; flex-di
   body.remote-ui .chat-bar .chat-end { padding: 0; width: var(--icon-button-sm); height: var(--icon-button-sm); justify-content: center; }
   body.remote-ui .chat-bar .chat-end-ico { display: block; }
   body.remote-ui .chat-bar .chat-end-label { display: none; }
-  body.remote-ui .chat-title { font-size: 16px; font-weight: 600; }
+  body.remote-ui .chat-title { font-size: 16px; font-weight: var(--fw-semibold); }
   body.remote-ui .chat-title-project { display: none; }
   body.remote-ui .chat-title-btn { padding-left: 6px; padding-right: 6px; margin-left: -6px; }
   body.remote-ui .chat-title-agent { width: 18px; height: 18px; }
@@ -971,7 +971,7 @@ body.remote-ui .remote-session-list .chat-sidebar-empty { display: flex; flex-di
   .remote-new-session-overlay .ns-close { width: 44px; height: 44px; border-radius: var(--radius-full); font-size: 22px; color: var(--cc-text-dim); }
   .remote-new-session-overlay .ns-body { padding: 8px 16px 16px; gap: 22px; }
   .remote-new-session-overlay .ns-field { gap: 8px; }
-  .remote-new-session-overlay .ns-label { padding-left: 4px; font-size: 13px; font-weight: 500; letter-spacing: 0; color: var(--cc-text-faint); }
+  .remote-new-session-overlay .ns-label { padding-left: 4px; font-size: 13px; font-weight: var(--fw-medium); letter-spacing: 0; color: var(--cc-text-faint); }
   .remote-new-session-overlay .ns-picker { border: 0; border-radius: var(--radius-lg); background: var(--cc-panel-raised); box-shadow: inset 0 0 0 var(--hairline) var(--cc-border); }
   .remote-new-session-overlay .ns-picker:focus-within { box-shadow: inset 0 0 0 1px var(--cc-accent); }
   .remote-new-session-overlay .ns-picker .ns-input { min-height: 48px; padding: 0 14px; }
@@ -984,8 +984,8 @@ body.remote-ui .remote-session-list .chat-sidebar-empty { display: flex; flex-di
   .remote-new-session-overlay .ns-actions { padding: 12px 16px max(12px, env(safe-area-inset-bottom, 0px)); gap: 10px; border-top: 0; background: var(--cc-l0); flex-wrap: wrap; }
   /* 安全区已由上一行的 padding-bottom 吃掉，浮层容器不再重复留。 */
   .remote-new-session-overlay .ns-window { padding-bottom: 0; }
-  .remote-new-session-overlay .ns-btn { flex: 1 1 0; min-height: 48px; border-radius: var(--radius-lg); font-size: 16px; font-weight: 500; }
-  .remote-new-session-overlay .ns-btn.btn-primary { font-weight: 600; }
+  .remote-new-session-overlay .ns-btn { flex: 1 1 0; min-height: 48px; border-radius: var(--radius-lg); font-size: 16px; font-weight: var(--fw-medium); }
+  .remote-new-session-overlay .ns-btn.btn-primary { font-weight: var(--fw-semibold); }
   /* 最近目录与浏览目录共用这一行：桌面行高约 23px，手指点下去常落到相邻一行。
      列表上限跟着放高，手机上新建页下半屏本来就空着。 */
   .remote-new-session-overlay .ns-recent-item { min-height: 44px; }
@@ -1197,7 +1197,7 @@ body.remote-ui .chat-remote-screen { padding: 10px 12px; border-radius: var(--ra
 body.remote-ui .chat-remote-keyrow { gap: 8px; }
 body.remote-ui .chat-remote-keyrow button { justify-content: center; min-width: 44px; min-height: 44px; border: 0; background: var(--fill-selected); font-size: 14px; }
 body.remote-ui .chat-remote-keyrow button:active { background: var(--fill-selected-hover); }
-body.remote-ui .chat-remote-keyrow button.is-enter { justify-content: center; text-align: center; color: var(--cc-on-accent); background: var(--cc-accent); font-weight: 600; }
+body.remote-ui .chat-remote-keyrow button.is-enter { justify-content: center; text-align: center; color: var(--cc-on-accent); background: var(--cc-accent); font-weight: var(--fw-semibold); }
 body.remote-ui .chat-remote-keyrow button.is-enter:active { background: var(--cc-accent-dim); }
 body.remote-ui .chat-remote-type { gap: 8px; }
 body.remote-ui .chat-remote-type input { min-height: 44px; padding: 0 12px; border: 0; background: var(--fill-hover); box-shadow: inset 0 0 0 var(--hairline) var(--cc-border); }

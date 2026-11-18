@@ -56,9 +56,13 @@ describe("RemoteUsage", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    vi.useRealTimers();
   });
 
   it("先展示缓存的全部泳道、余额、重置时间和备注，不自动联网刷新", async () => {
+    // 「30 分钟后重置」只在同一天里成立：23:30 之后跑，重置时刻落到次日，文案变成「明天 …」。钉在中午。
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 18, 12, 0));
     api.getAccounts.mockResolvedValue([
       payload("claude", {
         usage: {

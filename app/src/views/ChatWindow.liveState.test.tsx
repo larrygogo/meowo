@@ -6,6 +6,7 @@ import { respondWithHistory } from "./chatWindow.harness";
 import { ChatWindow } from "./ChatWindow";
 import { sessionTone } from "../api";
 import { replaySample } from "../test/replaySamples";
+import { visibleText } from "../test/visibleText";
 
 // claude 的一场真实会话（原顺序片段）：读文件、跑命令、写文件、再跑命令。
 const claude = replaySample("claude.152e4c8e");
@@ -26,7 +27,7 @@ describe("ChatWindow 会话状态与侧栏同源", () => {
     window.history.replaceState({}, "", "/?sessionId=61");
     respondWithHistory({ ...base, sessionId: 61, status: "waiting", busySubagents: 2 });
     render(<ChatWindow />);
-    await waitFor(() => expect(screen.getByText("子任务派出去了，我先停一下。")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(visibleText("子任务派出去了，我先停一下。"))).toBeTruthy());
     await waitFor(() => expect(document.querySelector(".chat-running")).not.toBeNull());
   });
 
@@ -35,7 +36,7 @@ describe("ChatWindow 会话状态与侧栏同源", () => {
     window.history.replaceState({}, "", "/?sessionId=62");
     respondWithHistory({ ...base, sessionId: 62, status: "waiting", busySubagents: 0 });
     render(<ChatWindow />);
-    await waitFor(() => expect(screen.getByText("子任务派出去了，我先停一下。")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(visibleText("子任务派出去了，我先停一下。"))).toBeTruthy());
     expect(document.querySelector(".chat-running")).toBeNull();
   });
 });

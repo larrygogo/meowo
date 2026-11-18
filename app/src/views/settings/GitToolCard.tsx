@@ -2,6 +2,7 @@
 // user.email）。leader 2026-11-18：「把 git 工具和 git 平台都放在这里」，只做这两项，不做别的 git 配置。
 // 找不到 git 时说明影响（提交、推送、改动列表、PR 都用不了）并给官网下载链接。后端 git_tool.rs。
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useFlash } from "../../hooks/useFlash";
 import { gitIdentitySet, gitToolStatus, openLink, type GitToolDto } from "../../api";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
@@ -18,7 +19,7 @@ export function GitToolCard() {
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState<"check" | "save" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const { shown: saved, flash: flashSaved, hide: hideSaved, fx: savedFx } = useFlash();
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -43,9 +44,9 @@ export function GitToolCard() {
     if (busy || !dirty) return;
     setBusy("save");
     setError(null);
-    setSaved(false);
+    hideSaved();
     gitIdentitySet(name, email)
-      .then((s) => { if (alive.current) { apply(s); setSaved(true); } })
+      .then((s) => { if (alive.current) { apply(s); flashSaved(); } })
       .catch((e) => { if (alive.current) setError(formatBackendError(e, t.locale)); })
       .finally(() => { if (alive.current) setBusy(null); });
   };
@@ -83,18 +84,18 @@ export function GitToolCard() {
             <div className="row forge-field">
               <label className="row-label" htmlFor="git-user-name">{g.userName}</label>
               <input id="git-user-name" className="ns-input" type="text" autoComplete="off" spellCheck={false}
-                value={name} placeholder={g.userNamePlaceholder} onChange={(e) => { setName(e.target.value); setSaved(false); }}
+                value={name} placeholder={g.userNamePlaceholder} onChange={(e) => { setName(e.target.value); hideSaved(); }}
                 onKeyDown={(e) => { if (e.key === "Enter") save(); }} />
             </div>
             <div className="row forge-field">
               <label className="row-label" htmlFor="git-user-email">{g.userEmail}</label>
               <input id="git-user-email" className="ns-input" type="email" autoComplete="off" spellCheck={false}
-                value={email} placeholder={g.userEmailPlaceholder} onChange={(e) => { setEmail(e.target.value); setSaved(false); }}
+                value={email} placeholder={g.userEmailPlaceholder} onChange={(e) => { setEmail(e.target.value); hideSaved(); }}
                 onKeyDown={(e) => { if (e.key === "Enter") save(); }} />
               <div className="row-desc is-full forge-field-note">{g.identityNote}</div>
             </div>
             <div className="row forge-actions">
-              {saved && <span className="row-desc git-tool-saved" role="status">{g.saved}</span>}
+              {saved && <span className={"row-desc git-tool-saved" + savedFx} role="status">{g.saved}</span>}
               <button type="button" className="sbtn btn-primary" data-testid="git-identity-save" aria-disabled={busy !== null || !dirty || undefined}
                 aria-busy={busy === "save" || undefined} onClick={save}>
                 {busy === "save" ? g.saving : g.save}
