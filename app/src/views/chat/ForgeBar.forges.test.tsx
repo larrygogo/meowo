@@ -88,6 +88,16 @@ describe("「更改」面板按平台的叫法", () => {
     expect(screen.queryByTestId("forge-error")).toBeNull();
   });
 
+  it("Gitee：能否合并不给原因（UNKNOWN）时不挡合并按钮；没有检查不编造", async () => {
+    status = gitlab({ forge: "gitee", forgeHost: "gitee.com", repoUrl: "https://gitee.com/o/app", mergeMethods: ["merge", "squash", "rebase"],
+      pr: mr({ number: 316, url: "https://gitee.com/o/app/pulls/316", forge: "gitee", mergeable: "UNKNOWN", mergeState: "UNKNOWN", checks: [], checksSummary: "none" }) });
+    renderBar();
+    const card = await screen.findByTestId("scm-pr");
+    expect(card.textContent).toContain("!316 Fix login");
+    expect(card.textContent).toContain(zh.forgeWords.gitee.noCi);
+    expect(within(card).getByTestId("scm-merge").hasAttribute("disabled")).toBe(false);
+  });
+
   it("令牌失效：说清楚并引导重新添加；Codeberg 用站点名", async () => {
     status = gitlab({ gh: "unauthenticated", forge: "gitea", forgeHost: "codeberg.org", repoUrl: "https://codeberg.org/o/r", compareUrl: "https://codeberg.org/o/r/compare/main...feat/x" });
     renderBar();
@@ -131,6 +141,11 @@ describe("侧栏与标题栏按平台的叫法", () => {
     render(<PullRequestChip pr={{ number: 7, state: "merged", url: "https://gitlab.com/g/r/-/merge_requests/7", title: "t" }} />);
     expect(screen.getByRole("button").getAttribute("data-tip")).toBe("打开合并请求 !7：t");
     expect(kindOfUrl("https://codeberg.org/o/r/pulls/3")).toBe("gitea");
+    // Gitee：链接与 Gitea 同形，按主机认；编号写 !号，叫法仍是 Pull Request。
+    expect(kindOfUrl("https://gitee.com/openharmony/docs/pulls/95569")).toBe("gitee");
+    cleanup();
+    render(<PullRequestChip pr={{ number: 95569, state: "open", url: "https://gitee.com/openharmony/docs/pulls/95569", title: "t", forge: "gitee" }} />);
+    expect(screen.getByRole("button").getAttribute("data-tip")).toBe("打开 Pull Request !95569：t");
   });
 });
 

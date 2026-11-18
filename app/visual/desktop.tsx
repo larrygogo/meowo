@@ -168,23 +168,35 @@ async function boot(): Promise<React.ReactNode> {
           return { ...status, pr: { ...status.pr, state: "merged" } };
         }
       }
-      // ?forge=gitlab：仓库在 gitlab.com，MR !42 带流水线（一项失败）；?forge=noaccount：认得出 GitLab 但没加账号。
+      // ?forge=gitlab：仓库在 gitlab.com，MR !42 带流水线（一项失败）；?forge=noaccount：认得出 GitLab 但没加账号；
+      // ?forge=codeberg / bitbucket / gitee：各平台的 PR 区块，侧栏角标与标题栏同一个 PR。
       const forgeKind = q.get("forge");
-      if (forgeKind && cmd === "git_forge_status") {
+      const title = lang === "zh" ? "重构登录页表单校验" : "Refactor login form validation";
+      const PLATFORM_PR: Record<string, { forge: string; host: string; repo: string; number: number; url: string; methods: string[]; checks: { name: string; workflow: string | null; state: string; url: null }[]; summary: string }> = {
+        gitlab: { forge: "gitlab", host: "gitlab.com", repo: "https://gitlab.com/example/web-app", number: 42, url: "https://gitlab.com/example/web-app/-/merge_requests/42", methods: ["merge", "squash"], summary: "fail",
+          checks: [{ name: "lint", workflow: "test", state: "pass", url: null }, { name: "unit", workflow: "test", state: "fail", url: null }, { name: "e2e", workflow: "test", state: "pending", url: null }, { name: "deploy-review", workflow: "deploy", state: "skipped", url: null }] },
+        codeberg: { forge: "gitea", host: "codeberg.org", repo: "https://codeberg.org/example/web-app", number: 57, url: "https://codeberg.org/example/web-app/pulls/57", methods: ["merge", "squash", "rebase"], summary: "pass",
+          checks: [{ name: "ci / test (pull_request)", workflow: null, state: "pass", url: null }, { name: "ci / lint (pull_request)", workflow: null, state: "pass", url: null }, { name: "issue-labels (pull_request_target)", workflow: null, state: "skipped", url: null }] },
+        bitbucket: { forge: "bitbucket", host: "bitbucket.org", repo: "https://bitbucket.org/example/web-app", number: 18, url: "https://bitbucket.org/example/web-app/pull-requests/18", methods: ["merge", "squash", "rebase"], summary: "pending",
+          checks: [{ name: "Pipeline #231 for refactor/login-schema", workflow: null, state: "pending", url: null }, { name: "SonarCloud", workflow: null, state: "pass", url: null }] },
+        gitee: { forge: "gitee", host: "gitee.com", repo: "https://gitee.com/example/web-app", number: 316, url: "https://gitee.com/example/web-app/pulls/316", methods: ["merge", "squash", "rebase"], summary: "none", checks: [] },
+      };
+      const picked = forgeKind ? PLATFORM_PR[forgeKind === "noaccount" ? "gitlab" : forgeKind] : undefined;
+      if (picked && cmd === "git_pull_request") return { number: picked.number, state: "open", url: picked.url, title, forge: picked.forge === "gitea" ? "gitea" : picked.forge };
+      if (picked && forgeKind !== "noaccount" && cmd === "sidebar_git_badges") {
+        const cwds = ((args as { cwds?: string[] } | undefined)?.cwds ?? []).slice(0, 3);
+        return cwds.map((cwd, i) => ({ cwd, additions: 12 + i, deletions: 3, files: 2, pr: i === 0 ? { number: picked.number, state: "open", checks: picked.summary, url: picked.url, title, forge: picked.forge } : undefined }));
+      }
+      if (picked && cmd === "git_forge_status") {
         const status = scmMock(cmd) as Record<string, unknown>;
-        const base = { ...status, forge: "gitlab", forgeHost: "gitlab.com", repoUrl: "https://gitlab.com/example/web-app", mergeMethods: ["merge", "squash"], lastMergeMethod: null,
-          compareUrl: "https://gitlab.com/example/web-app/-/merge_requests/new?merge_request%5Bsource_branch%5D=refactor%2Flogin-schema&merge_request%5Btarget_branch%5D=main" };
+        const base = { ...status, forge: picked.forge, forgeHost: picked.host, repoUrl: picked.repo, mergeMethods: picked.methods, lastMergeMethod: null,
+          compareUrl: picked.forge === "gitlab" ? "https://gitlab.com/example/web-app/-/merge_requests/new?merge_request%5Bsource_branch%5D=refactor%2Flogin-schema&merge_request%5Btarget_branch%5D=main" : null };
         if (forgeKind === "noaccount") return { ...base, gh: "no_account", pr: null };
         return { ...base, pr: {
-          number: 42, state: "open", url: "https://gitlab.com/example/web-app/-/merge_requests/42", title: lang === "zh" ? "重构登录页表单校验" : "Refactor login form validation",
-          baseRef: "main", headRef: "refactor/login-schema", headOid: "deadbeef", mergeable: "MERGEABLE", mergeState: "BLOCKED", forge: "gitlab",
-          checks: [
-            { name: "lint", workflow: "test", state: "pass", url: null },
-            { name: "unit", workflow: "test", state: "fail", url: null },
-            { name: "e2e", workflow: "test", state: "pending", url: null },
-            { name: "deploy-review", workflow: "deploy", state: "skipped", url: null },
-          ],
-          checksSummary: "fail",
+          number: picked.number, state: "open", url: picked.url, title,
+          baseRef: "main", headRef: "refactor/login-schema", headOid: "deadbeef", mergeable: picked.forge === "gitee" ? "UNKNOWN" : "MERGEABLE",
+          mergeState: picked.summary === "pass" ? "CLEAN" : picked.forge === "gitee" ? "UNKNOWN" : "BLOCKED", forge: picked.forge,
+          checks: picked.checks, checksSummary: picked.summary,
         } };
       }
       return checkpointSceneMock(cmd) ?? reviewSceneMock(cmd) ?? scmMock(cmd) ?? panel(cmd, args) ?? chat(cmd);
@@ -468,6 +480,7 @@ async function boot(): Promise<React.ReactNode> {
           { platform: "gitlab", host: "gitlab.com", login: "alice", name: "Alice Chen", needsRelogin: false, oauth: true },
           { platform: "gitea", host: "codeberg.org", login: "carol", name: null, needsRelogin: false, oauth: false },
           { platform: "bitbucket", host: "bitbucket.org", login: "dave", name: "Dave", needsRelogin: false, oauth: false },
+          { platform: "gitee", host: "gitee.com", login: "erin", name: "Erin", needsRelogin: false, oauth: false },
           { platform: "github", host: "github.corp.example", login: "bob", name: null, needsRelogin: true, oauth: false },
         ] : [];
         const pending = fa === "device" ? { platform: "gitlab", host: "gitlab.com", userCode: "0A44L90H", verificationUri: "https://gitlab.com/oauth/device", verificationUriComplete: null, expiresAt: Date.now() + 5 * 60_000 } : null;

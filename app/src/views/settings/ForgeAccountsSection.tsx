@@ -30,20 +30,23 @@ import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import { busyProps } from "../../busyButton";
 import { Icon, type Glyph } from "../../icons/Icon";
-import { icForgeBitbucket, icForgeGitea, icForgeGithub, icForgeGitlab } from "../../icons/glyphs.settings";
+import { icForgeBitbucket, icForgeGitea, icForgeGitee, icForgeGithub, icForgeGitlab } from "../../icons/glyphs.settings";
 import { GithubSection, minutesLeft } from "./GithubSection";
 import { SettingsError } from "./widgets";
 
 const IS_MAC = typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent);
-const PLATFORMS: ForgePlatform[] = ["gitlab", "gitea", "bitbucket", "github"];
+const PLATFORMS: ForgePlatform[] = ["gitlab", "gitea", "bitbucket", "gitee", "github"];
+/** 主机固定的平台（只有一个公共站点）。 */
+const FIXED_HOST: ReadonlySet<ForgePlatform> = new Set<ForgePlatform>(["bitbucket", "gitee"]);
 /** 选平台时主机框的默认值：公共站点直接填好，企业版留空让用户填。 */
-const DEFAULT_HOST: Record<ForgePlatform, string> = { gitlab: "gitlab.com", gitea: "codeberg.org", bitbucket: "bitbucket.org", github: "" };
+const DEFAULT_HOST: Record<ForgePlatform, string> = { gitlab: "gitlab.com", gitea: "codeberg.org", bitbucket: "bitbucket.org", gitee: "gitee.com", github: "" };
 
 export function platformGlyph(platform: string): Glyph {
   switch (platform) {
     case "gitlab": return icForgeGitlab;
     case "gitea": return icForgeGitea;
     case "bitbucket": return icForgeBitbucket;
+    case "gitee": return icForgeGitee;
     default: return icForgeGithub;
   }
 }
@@ -60,6 +63,7 @@ export function tokenPage(platform: ForgePlatform, host: string): string | null 
     case "gitlab": return h ? `https://${h}/-/user_settings/personal_access_tokens?name=Meowo&scopes=api` : null;
     case "gitea": return h ? `https://${h}/user/settings/applications` : null;
     case "bitbucket": return "https://id.atlassian.com/manage-profile/security/api-tokens";
+    case "gitee": return "https://gitee.com/profile/personal_access_tokens";
     case "github": return h ? `https://${h}/settings/tokens/new?description=Meowo&scopes=repo` : null;
   }
 }
@@ -226,9 +230,9 @@ export function ForgeAccountList() {
         <div className="row forge-field">
           <label className="row-label" htmlFor="forge-host">{f.host}</label>
           <input id="forge-host" className="ns-input" type="text" autoComplete="off" spellCheck={false}
-            value={d.host} placeholder={f.hostPlaceholder[d.platform]} disabled={d.platform === "bitbucket"}
+            value={d.host} placeholder={f.hostPlaceholder[d.platform]} disabled={FIXED_HOST.has(d.platform)}
             onChange={(e) => setDraft({ ...d, host: e.target.value, method: "token" })} />
-          {d.platform === "bitbucket" && <div className="row-desc is-full forge-field-note">{f.hostFixed}</div>}
+          {FIXED_HOST.has(d.platform) && <div className="row-desc is-full forge-field-note">{f.hostFixed[d.platform]}</div>}
         </div>
         {device ? (
           <div className="row">

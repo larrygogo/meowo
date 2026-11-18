@@ -1321,6 +1321,15 @@ fn gitee_pr_映射_fork_未知能否合并_没有检查不编造() {
 }
 
 #[test]
+fn 布尔型_mergeable_的平台不因还不知道就挡住合并() {
+    let unknown = |forge: Option<&str>| meowo_protocol::ipc::PullRequestDto { mergeable: Some("UNKNOWN".into()), forge: forge.map(str::to_string), ..Default::default() };
+    assert!(super::super::unknown_blocks_merge(&unknown(None)), "GitHub 正在算，等一轮");
+    assert!(super::super::unknown_blocks_merge(&unknown(Some("gitlab"))));
+    assert!(!super::super::unknown_blocks_merge(&unknown(Some("gitee"))), "交给服务器判");
+    assert!(!super::super::unknown_blocks_merge(&unknown(Some("gitea"))));
+}
+
+#[test]
 fn gitee_按分支找_head_过滤_fork_与同仓库_500_当没找到() {
     let fake = Fake::new(|_, url, _| match url {
         u if u.starts_with("https://gitee.com/api/v5/repos/openharmony/docs/pulls?state=open&head=0704") => {

@@ -2135,7 +2135,9 @@ export const zh = {
     gitlab: { name: "GitLab", pr: "MR", openLead: "合并请求 ", num: "!", ciLead: "流水线", noCi: "这个项目没有流水线", unit: "作业", checksLead: "流水线 " },
     gitea: { name: "Gitea", pr: "PR", openLead: " Pull Request ", num: "#", ciLead: "CI ", noCi: "这个仓库没配 CI", unit: "检查", checksLead: "" },
     bitbucket: { name: "Bitbucket", pr: "PR", openLead: " Pull Request ", num: "#", ciLead: "构建", noCi: "这个仓库没配构建", unit: "构建", checksLead: "" },
-  } as Record<"github" | "gitlab" | "gitea" | "bitbucket", ForgeWord>,
+    // Gitee 网页上 PR 编号写 !号，叫法沿用 Pull Request；检查是 Gitee 的「检查项」（check-runs）。
+    gitee: { name: "Gitee", pr: "PR", openLead: " Pull Request ", num: "!", ciLead: "检查", noCi: "这个仓库没有接入检查", unit: "检查", checksLead: "" },
+  } as Record<"github" | "gitlab" | "gitea" | "bitbucket" | "gitee", ForgeWord>,
   // 按平台换词的文案（GitHub 仍用 forge.* 的原句，两边一致由 forgeWords.test 核对）。
   forgeP: {
     sessionPrs: (w: ForgeWord) => `本会话的 ${w.pr}`,
@@ -2180,10 +2182,10 @@ export const zh = {
     add: "添加账号",
     addTitle: "添加代码托管账号",
     platform: "平台",
-    platformNames: { gitlab: "GitLab", gitea: "Gitea / Forgejo", bitbucket: "Bitbucket", github: "GitHub 企业版" } as Record<string, string>,
+    platformNames: { gitlab: "GitLab", gitea: "Gitea / Forgejo", bitbucket: "Bitbucket", gitee: "Gitee", github: "GitHub 企业版" } as Record<string, string>,
     host: "主机",
-    hostPlaceholder: { gitlab: "gitlab.com 或自管实例的域名", gitea: "codeberg.org 或自建实例的域名", bitbucket: "bitbucket.org", github: "github.example.com" } as Record<string, string>,
-    hostFixed: "只支持 Bitbucket Cloud",
+    hostPlaceholder: { gitlab: "gitlab.com 或自管实例的域名", gitea: "codeberg.org 或自建实例的域名", bitbucket: "bitbucket.org", gitee: "gitee.com", github: "github.example.com" } as Record<string, string>,
+    hostFixed: { bitbucket: "只支持 Bitbucket Cloud", gitee: "只支持 gitee.com，Gitee 企业版与私有部署暂不支持" } as Record<string, string>,
     deviceTitle: "用浏览器登录",
     deviceDesc: "在 gitlab.com 上授权 Meowo，不用自己生成令牌。",
     deviceStart: "登录 GitLab",
@@ -2197,6 +2199,7 @@ export const zh = {
       gitlab: "个人访问令牌勾选 api 权限。",
       gitea: "访问令牌给 repository、issue 读写与 user 读权限。",
       bitbucket: "创建带权限的 API token，应用选 Bitbucket，勾选 read:user、read:repository、read:pullrequest、write:pullrequest。App password 已停用。",
+      gitee: "私人令牌勾选 user_info、projects、pull_requests、notes 权限。",
       github: "经典令牌勾选 repo。细粒度令牌给 Pull requests 与 Contents 读写。",
     } as Record<string, string>,
     createToken: "去生成令牌",

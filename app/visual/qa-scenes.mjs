@@ -208,6 +208,17 @@ export const QA_SHOTS = [
   // 仓库在 gitlab.com：MR !42、流水线一项失败；没加账号时引导去设置添加。
   { name: "qa-panel-gitlab", scene: "panel-changes", params: "forge=gitlab", size: W620, sel: "[data-testid=scm-pr]", langs: ["zh", "en"] },
   { name: "qa-panel-gitlab-noaccount", scene: "panel-changes", params: "forge=noaccount", size: W620, sel: "[data-testid=forge-connection-notice]", langs: ["zh", "en"] },
+  // Codeberg（Gitea / Forgejo）、Bitbucket、Gitee：PR 区块、侧栏角标、标题栏用各自的叫法（宽窗，侧栏与标题栏都在）。
+  { name: "qa-panel-codeberg", scene: "panel-changes", params: "forge=codeberg", sel: ".tb-pr" },
+  { name: "qa-panel-bitbucket", scene: "panel-changes", params: "forge=bitbucket", sel: ".tb-pr" },
+  { name: "qa-panel-gitee", scene: "panel-changes", params: "forge=gitee", sel: ".tb-pr", langs: ["zh", "en"] },
+  { name: "qa-panel-gitlab-wide", scene: "panel-changes", params: "forge=gitlab", sel: ".tb-pr" },
+  // 标题栏的 PR 胶囊与侧栏角标（面板开着时窄窗会把胶囊收进溢出菜单，用超宽窗拍；chat 场景在这个分支的基线上本来就报错）。
+  { name: "qa-title-gitlab", scene: "panel-changes", params: "forge=gitlab", size: [2560, 1440], sel: ".tb-pr" },
+  { name: "qa-title-codeberg", scene: "panel-changes", params: "forge=codeberg", size: [2560, 1440], sel: ".tb-pr" },
+  { name: "qa-title-bitbucket", scene: "panel-changes", params: "forge=bitbucket", size: [2560, 1440], sel: ".tb-pr" },
+  { name: "qa-title-gitee", scene: "panel-changes", params: "forge=gitee", size: [2560, 1440], sel: ".tb-pr" },
+  { name: "qa-set-forge-add-gitee", scene: "settingswin-github", size: SETTINGS, sel: "[data-testid=forge-add]", steps: [["eval", FORGE_SCROLL], ["click", "[data-testid=forge-empty] button"], ["click", "[data-testid=forge-add] [role=radio] >> nth=3"], ["eval", FORGE_ADD_SCROLL]] },
   // 查看非 active 账号只换用量视图：账号名、按下态和非 active 用量都要入镜。
   { name: "qa-set-profile-usage", scene: "settingswin-account", size: SETTINGS, sel: ".usage-card-title", steps: [["click", '[data-testid="profile-usage-claude-work"]']], langs: ["zh", "en"] },
   { name: "qa-set-dropdown-sessions", scene: "settingswin-sessions", size: SETTINGS, sel: ".dd-menu", steps: [["click", ".dd > .dd-btn >> nth=1"]] },

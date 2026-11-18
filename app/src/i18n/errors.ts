@@ -178,6 +178,7 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "forge/invalid_platform", exact: true, zh: "不支持这个平台", en: "This service isn't supported" },
   { m: "forge/use_github_login", exact: true, zh: "github.com 在上面的 GitHub 连接方式里登录", en: "Sign in to github.com in the GitHub section above" },
   { m: "forge/platform_mismatch", tail: true, zh: "这台主机不是所选的平台", en: "This host runs a different service" },
+  { m: "forge/gitee_com_only", exact: true, zh: "只支持 gitee.com，Gitee 企业版与私有部署暂不支持", en: "Only gitee.com is supported. Gitee Enterprise and self-hosted Gitee aren't." },
   { m: "forge/bitbucket_cloud_only", exact: true, zh: "只支持 Bitbucket Cloud（bitbucket.org）", en: "Only Bitbucket Cloud (bitbucket.org) is supported" },
   { m: "forge/device_unavailable", exact: true, zh: "这个版本没有配置 GitLab 浏览器登录，请用访问令牌", en: "Browser sign-in for GitLab isn't set up in this build. Use an access token." },
   { m: "forge/login_failed", tail: true, zh: "GitLab 登录失败", en: "GitLab sign-in failed" },

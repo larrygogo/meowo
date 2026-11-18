@@ -15,4 +15,5 @@ export const icSmartphone: Glyph = { body: <><rect x="6.5" y="2.5" width="11" he
 export const icForgeGithub: Glyph = { body: <><path d="M5.2 9.6 4.6 4.2l4 2.6a8.6 8.6 0 0 1 6.8 0l4-2.6-.6 5.4A7.6 7.6 0 1 1 5.2 9.6z" /><path d="M9.5 14.5h.01M14.5 14.5h.01" /></> };
 export const icForgeGitlab: Glyph = { body: <path d="M12 20.5 3.6 14.2 6.2 4.5l2.6 7.3h6.4l2.6-7.3 2.6 9.7z" /> };
 export const icForgeGitea: Glyph = { body: <><path d="M4 9h12v4.5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5z" /><path d="M16 10.5h1.5a2.5 2.5 0 0 1 0 5H15" /><path d="M8 3.5v2.5M12 3.5v2.5" /></> };
+export const icForgeGitee: Glyph = { body: <><circle cx="12" cy="12" r="8.5" /><path d="M16 9h-5a2 2 0 0 0-2 2v2.5a2 2 0 0 0 2 2h3a2 2 0 0 0 2-2V12h-4" /></> };
 export const icForgeBitbucket: Glyph = { body: <><path d="M3.5 4.5h17l-2.7 15H6.2z" /><path d="M9.6 10.5h4.8l-.8 4.5h-3.2z" /></> };

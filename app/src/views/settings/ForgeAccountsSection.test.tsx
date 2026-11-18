@@ -122,6 +122,22 @@ describe("代码托管账号", () => {
     expect(screen.queryByTestId("forge-code")).toBeNull();
   });
 
+  it("Gitee：主机固定为 gitee.com，写明私人令牌的权限", async () => {
+    api.forgeAccounts.mockResolvedValue(empty);
+    api.forgeAccountAdd.mockResolvedValue(empty);
+    render(<ForgeAccountList />);
+    fireEvent.click(await screen.findByRole("button", { name: f.add }));
+    fireEvent.click(screen.getByRole("radio", { name: f.platformNames.gitee }));
+    const host = screen.getByLabelText(f.host) as HTMLInputElement;
+    expect(host.disabled).toBe(true);
+    expect(host.value).toBe("gitee.com");
+    expect(screen.getByText(f.hostFixed.gitee)).toBeTruthy();
+    expect(screen.getByText(f.scopes.gitee, { exact: false })).toBeTruthy();
+    fireEvent.change(screen.getByTestId("forge-token"), { target: { value: "abc123" } });
+    fireEvent.click(screen.getByTestId("forge-verify"));
+    await waitFor(() => expect(api.forgeAccountAdd).toHaveBeenCalledWith("gitee", "gitee.com", "abc123", null));
+  });
+
   it("gitlab.com 没配应用：只有令牌入口；自管实例也只有令牌", async () => {
     api.forgeAccounts.mockResolvedValue(empty);
     render(<ForgeAccountList />);
@@ -148,5 +164,6 @@ describe("代码托管账号", () => {
     expect(tokenPage("github", "ghe.corp.example")).toBe("https://ghe.corp.example/settings/tokens/new?description=Meowo&scopes=repo");
     expect(tokenPage("bitbucket", "bitbucket.org")).toBe("https://id.atlassian.com/manage-profile/security/api-tokens");
     expect(tokenPage("gitea", "")).toBeNull();
+    expect(tokenPage("gitee", "gitee.com")).toBe("https://gitee.com/profile/personal_access_tokens");
   });
 });

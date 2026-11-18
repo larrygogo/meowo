@@ -161,8 +161,10 @@ export function mergeBlock(t: ReturnType<typeof useT>, forge: ForgeStatusDto, pr
   if (forge.ghTooOld) return t.forge.mergeTooOld;
   if (forge.mergeMethods.length === 0) return t.forge.mergeNoMethods;
   if (pr.checksSummary === "fail") return ft.mergeBlockedFail;
-  // GitHub 还在算能不能合（UNKNOWN）同「检查在跑」：等一轮再合（定案设计）。
-  if (pr.checksSummary === "pending" || pr.mergeable === "UNKNOWN") return ft.mergeBlockedPending;
+  // GitHub 还在算能不能合（UNKNOWN）同「检查在跑」：等一轮再合（定案设计）。Gitea / Gitee 的 UNKNOWN 只是平台不给原因，
+  // 不挡，交给服务器判（与后端 unknown_blocks_merge 同一规则）。
+  if (pr.checksSummary === "pending") return ft.mergeBlockedPending;
+  if (pr.mergeable === "UNKNOWN" && pr.forge !== "gitea" && pr.forge !== "gitee") return ft.mergeBlockedPending;
   return null;
 }
 

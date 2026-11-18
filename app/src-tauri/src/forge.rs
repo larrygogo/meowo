@@ -1494,6 +1494,13 @@ pub(crate) async fn gh_pr_create(
     .map_err(|e| e.to_string())?
 }
 
+/// 「还不知道能不能合」要不要挡住合并：GitHub、GitLab 的 UNKNOWN 是平台正在算，等一轮再合；Gitea / Forgejo、Gitee 的
+/// mergeable 只是个不给原因的布尔（还在检查、冲突、待审查都可能是 false），一直挡着用户就合不了——交给服务器判，
+/// 拒绝时按原话归类（冲突、要审查等）。
+pub(crate) fn unknown_blocks_merge(pr: &PullRequestDto) -> bool {
+    pr.mergeable.as_deref() == Some("UNKNOWN") && !matches!(pr.forge.as_deref(), Some("gitea" | "gitee"))
+}
+
 /// 应用内合并。后端重查一次 PR（不走缓存）再判：头提交没变、检查 none/pass、没冲突、方式是仓库允许的。
 pub(crate) fn pr_merge_with(ctx: &Ctx, cwd: &str, number: u32, method: &str, expected_head_oid: &str) -> Result<MergeResultDto, String> {
     let dir = existing_dir(cwd)?;
@@ -1540,7 +1547,7 @@ pub(crate) fn pr_merge_with(ctx: &Ctx, cwd: &str, number: u32, method: &str, exp
         return Err(format!("gh/merge_conflict: {}", pr.url));
     }
     // GitHub 还在算能不能合（UNKNOWN）：按进行中处理，过一会儿再试（定案设计）。
-    if pr.mergeable.as_deref() == Some("UNKNOWN") {
+    if unknown_blocks_merge(&pr) {
         return Err("gh/checks_pending".into());
     }
     let merged = forge.merge(dir, &slug, &pr, method, &head);

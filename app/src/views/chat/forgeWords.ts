@@ -5,9 +5,9 @@
 import type { useT } from "../../i18n";
 
 type T = ReturnType<typeof useT>;
-export type ForgeKind = "github" | "gitlab" | "gitea" | "bitbucket";
+export type ForgeKind = "github" | "gitlab" | "gitea" | "bitbucket" | "gitee";
 
-const KINDS: readonly ForgeKind[] = ["github", "gitlab", "gitea", "bitbucket"];
+const KINDS: readonly ForgeKind[] = ["github", "gitlab", "gitea", "bitbucket", "gitee"];
 
 /** 后端的平台字段 → 平台；没有（旧后端、GitHub）按 GitHub。 */
 export function forgeKind(forge: string | null | undefined): ForgeKind {
@@ -123,7 +123,8 @@ export function forgeText(t: T, kind: ForgeKind, host?: string | null): ForgeTex
 export function prPathSegment(kind: ForgeKind): string {
   switch (kind) {
     case "gitlab": return "/-/merge_requests/";
-    case "gitea": return "/pulls/";
+    case "gitea":
+    case "gitee": return "/pulls/";
     case "bitbucket": return "/pull-requests/";
     default: return "/pull/";
   }
@@ -133,6 +134,8 @@ export function prPathSegment(kind: ForgeKind): string {
 export function kindOfUrl(url: string): ForgeKind {
   if (url.includes("/-/merge_requests/")) return "gitlab";
   if (url.includes("/pull-requests/")) return "bitbucket";
+  // Gitee 与 Gitea 的链接同形（/pulls/N），按主机分。
+  if (/^https:\/\/gitee\.com\//i.test(url) && /\/pulls\/\d+/.test(url)) return "gitee";
   if (/\/pulls\/\d+/.test(url)) return "gitea";
   return "github";
 }

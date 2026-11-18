@@ -1056,7 +1056,7 @@ export function githubLogout(): Promise<GithubConnectionDto> {
 // 账号变了后端发 GITHUB_CHANGED_EVENT（PR 区块、侧栏角标与设置页一起重拉）。
 
 /** 平台：github（企业版）/ gitlab / gitea（含 Forgejo、Codeberg）/ bitbucket。 */
-export type ForgePlatform = "github" | "gitlab" | "gitea" | "bitbucket";
+export type ForgePlatform = "github" | "gitlab" | "gitea" | "bitbucket" | "gitee";
 export type { ForgeAccountDto, ForgeAccountsDto, ForgeDeviceCodeDto };
 /** gitlab.com 设备码登录结束。取消不发。 */
 export const FORGE_LOGIN_EVENT = "forge-login-finished";
