@@ -151,6 +151,11 @@ pub struct SubagentProbeDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional, type = "number"))]
     pub tokens: Option<u64>,
+    /// 侧车元数据里记的这次委派的说明（claude 的 `agent-<id>.meta.json` 的 description）。面板里由
+    /// SendMessage 代表、最初委派不在已载入窗口里的子代理，靠它显示原来的名字，而不是续上时那句话。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub description: Option<String>,
     /// 侧车最后一次落盘的时刻（ISO-8601）。面板据此把耗时从「委派→现在」纠正成
     /// 真实执行时长；还在跑时为 None。
     #[serde(default, skip_serializing_if = "Option::is_none")]

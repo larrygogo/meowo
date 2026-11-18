@@ -2133,6 +2133,20 @@ impl SubagentSpec for ClaudeSubagents {
         stream_tokens_cached(stream)
     }
 
+    /// `agent-<id>.jsonl` 旁的 `agent-<id>.meta.json`（实拍：`{"agentType":"general-purpose",
+    /// "description":"Implement GitHub connection feature","toolUseId":"toolu_…",…}`）。
+    fn stream_description(&self, stream: &Path) -> Option<String> {
+        let stem = stream.file_name()?.to_str()?.strip_suffix(".jsonl")?;
+        let meta = std::fs::read_to_string(stream.with_file_name(format!("{stem}.meta.json"))).ok()?;
+        serde_json::from_str::<serde_json::Value>(&meta)
+            .ok()?
+            .get("description")?
+            .as_str()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+    }
+
     /// 后台任务的**启动回执**:`Agent` 现版本默认异步,立即回一句
     /// `Async agent launched successfully. …`;后台 Bash(`run_in_background`)同理回
     /// `Command running in background with ID: …`。两者此时都才刚开跑。没有这个信号,
@@ -3576,6 +3590,35 @@ mod tests {
     /// 消失（新回合起跑到出第一条 thinking 可能隔几分钟），新回合里再出错照样标红。
     /// 子代理用量对齐 Claude Code 终端的「↓ N tokens」：最近一条的输入（含缓存）+ 各条输出
     /// 累加；同一回复拆成多行落盘时按 message.id 只算一次（样本照本机侧车行形态，脱敏）。
+    /// 被续上的子代理在面板上只剩 agentId（最初委派不在已载入窗口里）：按 id 找到侧车，带回用量与
+    /// meta.json 里最初委派的说明（目录与 meta 形状照本机实拍，脱敏）。
+    #[test]
+    fn probe_by_agent_id_returns_tokens_and_description() {
+        let root = std::env::temp_dir().join(format!("meowo-probe-agent-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let main = root.join("0ebbc4dc.jsonl");
+        let subs = root.join("0ebbc4dc").join("subagents");
+        std::fs::create_dir_all(&subs).unwrap();
+        std::fs::write(&main, "").unwrap();
+        std::fs::write(
+            subs.join("agent-acb4b19.jsonl"),
+            r#"{"isSidechain":true,"type":"assistant","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"x"}],"usage":{"input_tokens":2,"cache_creation_input_tokens":100,"cache_read_input_tokens":800,"output_tokens":50}}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            subs.join("agent-acb4b19.meta.json"),
+            r#"{"agentType":"general-purpose","isBuiltIn":true,"description":"Implement GitHub connection feature","toolUseId":"toolu_01Vio","spawnDepth":1,"finished":true}"#,
+        )
+        .unwrap();
+        let probe = crate::transcript::probe_subagent_state(&CLAUDE_TRANSCRIPT, &main, "acb4b19")
+            .expect("按 agentId 应找到侧车");
+        assert_eq!(probe.tokens, Some(952));
+        assert_eq!(probe.description.as_deref(), Some("Implement GitHub connection feature"));
+        // 拼路径的 id 只收字母数字。
+        assert!(crate::transcript::probe_subagent_state(&CLAUDE_TRANSCRIPT, &main, "../x").is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn stream_tokens_matches_tui_formula() {
         let line = |id: &str, input: u64, cache_read: u64, cache_write: u64, output: u64| format!(

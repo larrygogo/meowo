@@ -11,7 +11,7 @@ import { pushEscLayer } from "../../escLayers";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import { latestPlan, PlanPanel } from "./PlanPanel";
-import { collectBackgroundTasks, TasksDockPanel } from "./TasksPanel";
+import { collectBackgroundTasks, TasksDockPanel, type TaskProbe } from "./TasksPanel";
 import { TodoListItems, type TodoRow } from "./TodoPanel";
 import { LeadGateCard, LeadPanel, LeadPill, useLeadTask, type LeadTaskState } from "./LeadPanel";
 import { ASSUME_LIVE, type SessionLive } from "./toolState";
@@ -137,10 +137,10 @@ export function DockWork({ sessionId, cwd, ccSessionId, items, history, loading,
   // 也顺带封住无界增长。
   const taskUpdateCacheRef = useRef<TaskUpdateCache>(new Map());
   useEffect(() => { taskUpdateCacheRef.current = new Map(); }, [sessionId]);
-  // 子代理面板的 token：向侧车实测（probe_subagent_states 带回 tokens），拿不到的 provider 不显示。
-  const probeTokens = useCallback((ids: string[]) => probeSubagentStates(sessionId, ids).then((probes) => {
-    const out: Record<string, number> = {};
-    for (const [id, probe] of Object.entries(probes)) if (typeof probe.tokens === "number") out[id] = probe.tokens;
+  // 子代理面板的 token 与最初委派的说明：向侧车实测（probe_subagent_states），拿不到的 provider 不显示。
+  const probeSubagents = useCallback((ids: string[]) => probeSubagentStates(sessionId, ids).then((probes) => {
+    const out: Record<string, TaskProbe> = {};
+    for (const [id, probe] of Object.entries(probes)) out[id] = { tokens: probe.tokens, description: probe.description };
     return out;
   }), [sessionId]);
   const transcriptTodos = useMemo(
@@ -223,7 +223,7 @@ export function DockWork({ sessionId, cwd, ccSessionId, items, history, loading,
     : panel === "tasks" && backgroundTasks.bash.length > 0
       ? <TasksDockPanel key="bash" title={t.chat.tasksBackground} icon={<TerminalPillIcon className="dock-work-title-icon" />} tasks={backgroundTasks.bash} onClose={close} />
     : panel === "subagents" && backgroundTasks.subagents.length > 0
-      ? <TasksDockPanel key="subagents" title={t.chat.tasksSubagents} icon={<SparklesPillIcon className="dock-work-title-icon" />} tasks={backgroundTasks.subagents} onClose={close} probeTokens={probeTokens} />
+      ? <TasksDockPanel key="subagents" title={t.chat.tasksSubagents} icon={<SparklesPillIcon className="dock-work-title-icon" />} tasks={backgroundTasks.subagents} onClose={close} probe={probeSubagents} />
     : null;
   return (
     <>

@@ -20,6 +20,27 @@ pub fn dispatch(
     let event = meowo_agent::by_id(provider).map_or(ev.hook_event_name.as_str(), |p| {
         p.canonical_event(&ev.hook_event_name)
     });
+    // 子代理里的事件只管「要人处理」的那几样（审批、提问、计划，以及改文件前的检查点），不碰主会话的
+    // 运行状态、活动名与待办：子代理的 PostToolUse 带着主会话的 session_id，照常落库会把已结束的主回合
+    // 翻回 running、把子代理跑的命令写进运行条（实拍 2026-11-18：主回合空闲、只剩后台子代理，对话页
+    // 却「工作中…(6m 25s)」，运行条是子代理的命令）。子代理在跑由 transcript 的后台任务计数表达。
+    if ev.from_subagent() {
+        match event {
+            "PostToolUse" => {
+                if let Some(sid) = lookup_session(store, ev)? {
+                    let settled_kind = match ev.tool_name.as_deref() {
+                        Some("AskUserQuestion") => PendingReview::Question,
+                        Some("ExitPlanMode") => PendingReview::Plan,
+                        _ => PendingReview::Approval,
+                    };
+                    store.clear_pending_review_kind(sid, settled_kind, now_ms)?;
+                }
+                return Ok(());
+            }
+            "PreToolUse" | "PermissionRequest" | "PermissionResult" | "Notification" => {}
+            _ => return Ok(()),
+        }
+    }
     match event {
         "SessionStart" => {
             let Some(cwd) = ev.cwd.as_deref() else {
@@ -175,6 +196,9 @@ pub fn dispatch(
                 // 切模型的钉子只看回合计数，不看模型，不受这一点先后影响。
                 crate::checkpoint::finish_turn(store, sid, store.session_turns(sid)? + 1, now_ms);
                 store.finish_turn(sid, out.last_ai.as_deref(), now_ms)?;
+                // 回合结束，活动名随之作废（同 StopFailure/Interrupt）：留着的话，下一次有人把会话
+                // 判成在跑（后台子代理、迟到事件），运行条就会顶着这一轮最后那条早已跑完的命令。
+                store.clear_current_activity(sid, now_ms)?;
                 // stop_outputs 的模型(config.update 通道,/model 切换即时反映)比 usage 通道
                 // (最后一条 usage.record,切换后仍是旧回合的模型)更新。写过它之后,下面的
                 // read_context 就不许再带 model——否则后写的旧值把刚切换的模型顶回去。

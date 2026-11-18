@@ -245,7 +245,7 @@ export function qaFlowMock(scene: string, lang: Lang, chat: (cmd: string) => unk
         { type: "tool_result", id: "bg-s1r", timestamp: at(3.47), tool_use_id: "bg-s1", text: "{\"success\":true,\"message\":\"Resuming agent acb4b19\"}", is_error: false, subagent: { running: 1, completed: 0, failed: 0, task_id: "acb4b19" } },
         { type: "assistant_text", id: "bg-t1", timestamp: at(3), text: zh ? "两个子代理都在后台跑，结果回来我再汇总。" : "Both subagents are running in the background; I'll summarize when they report back." },
       ];
-      if (cmd === "probe_subagent_states") return { "bg-a1": { status: "unknown", branches: [], tokens: 341_712 }, "bg-a2": { status: "unknown", branches: [], tokens: 26_548 }, acb4b19: { status: "unknown", branches: [], tokens: 540_812 } };
+      if (cmd === "probe_subagent_states") return { "bg-a1": { status: "unknown", branches: [], tokens: 341_712 }, "bg-a2": { status: "unknown", branches: [], tokens: 26_548 }, acb4b19: { status: "unknown", branches: [], tokens: 540_812, description: zh ? "复核 SourceControl 的暂存逻辑" : "Review the staging logic in SourceControl" } };
       if (cmd === "get_chat_history") {
         if (kind === "api-stalled") return { ...base(), items: items.slice(0, 3), pendingReview: null, status: "running", screenState: "working", busySubagents: 0 };
         return { ...base(), items, pendingReview: null, status: "waiting", screenState: "idle", busySubagents: 2 };
