@@ -1,0 +1,328 @@
+{
+ "values": [
+  {
+   "id": 672805496,
+   "created_on": "2025-08-21T07:30:03.385996+00:00",
+   "updated_on": "2025-08-21T07:30:03.389163+00:00",
+   "content": {
+    "type": "rendered",
+    "raw": "##### ⚠️ Maintainability  \n\nThe Redis `keys` operation with pattern `installation:*;` is inefficient and blocks the Redis server - consider using `SCAN` for better performance in production.",
+    "markup": "markdown",
+    "html": "<h5 id=\"markdown-header-maintainability\">⚠️ Maintainability</h5>\n<p>The Redis <code>keys</code> operation with pattern <code>installation:*;</code> is inefficient and blocks the Redis server - consider using <code>SCAN</code> for better performance in production.</p>"
+   },
+   "user": {
+    "type": "app_user",
+    "links": {
+     "avatar": {
+      "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/712020:a1f21f74-c46d-42cc-be1a-639774742190/7e5b5a33-a565-4106-8b3c-a972c49c5a33/128"
+     }
+    },
+    "uuid": "{84d3c1be-f829-4e0c-b305-1c11a143484a}",
+    "account_id": "712020:a1f21f74-c46d-42cc-be1a-639774742190",
+    "kind": "atlassian_app",
+    "created_on": "2025-03-05T04:56:53.699310+00:00",
+    "display_name": "Code Reviewer",
+    "account_status": "active",
+    "nickname": "Autoreview",
+    "ai_agent": true
+   },
+   "deleted": false,
+   "inline": {
+    "from": null,
+    "to": 99,
+    "path": "lib/store/redis.js",
+    "start_from": null,
+    "start_to": null
+   },
+   "pending": false,
+   "type": "pullrequest_comment",
+   "links": {
+    "self": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/552/comments/672805496"
+    },
+    "html": {
+     "href": "https://bitbucket.org/atlassian/atlassian-connect-express/pull-requests/552/_/diff#comment-672805496"
+    },
+    "code": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/diff/atlassian/atlassian-connect-express:7f9d4e6279c8..9c5c85803bfb?path=lib%2Fstore%2Fredis.js"
+    }
+   },
+   "pullrequest": {
+    "type": "pullrequest",
+    "id": 552,
+    "title": "ONECLOUD-13657/add on settings",
+    "draft": true,
+    "links": {
+     "self": {
+      "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/552"
+     },
+     "html": {
+      "href": "https://bitbucket.org/atlassian/atlassian-connect-express/pull-requests/552"
+     }
+    },
+    "queued": false
+   }
+  },
+  {
+   "id": 672805506,
+   "created_on": "2025-08-21T07:30:04.807339+00:00",
+   "updated_on": "2025-08-21T07:30:04.815678+00:00",
+   "content": {
+    "type": "rendered",
+    "raw": "##### ⚠️ Maintainability - Best Practices \n\nThe `fetchCloudIdFromEdge` function uses the deprecated `request` library which is no longer maintained - consider migrating to `axios` or native `fetch`.",
+    "markup": "markdown",
+    "html": "<h5 id=\"markdown-header-maintainability-best-practices\">⚠️ Maintainability - Best Practices</h5>\n<p>The <code>fetchCloudIdFromEdge</code> function uses the deprecated <code>request</code> library which is no longer maintained - consider migrating to <code>axios</code> or native <code>fetch</code>.</p>"
+   },
+   "user": {
+    "type": "app_user",
+    "links": {
+     "avatar": {
+      "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/712020:a1f21f74-c46d-42cc-be1a-639774742190/7e5b5a33-a565-4106-8b3c-a972c49c5a33/128"
+     }
+    },
+    "uuid": "{84d3c1be-f829-4e0c-b305-1c11a143484a}",
+    "account_id": "712020:a1f21f74-c46d-42cc-be1a-639774742190",
+    "kind": "atlassian_app",
+    "created_on": "2025-03-05T04:56:53.699310+00:00",
+    "display_name": "Code Reviewer",
+    "account_status": "active",
+    "nickname": "Autoreview",
+    "ai_agent": true
+   },
+   "deleted": false,
+   "inline": {
+    "from": null,
+    "to": 1,
+    "path": "lib/store/utils.js",
+    "start_from": null,
+    "start_to": null
+   },
+   "pending": false,
+   "type": "pullrequest_comment",
+   "links": {
+    "self": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/552/comments/672805506"
+    },
+    "html": {
+     "href": "https://bitbucket.org/atlassian/atlassian-connect-express/pull-requests/552/_/diff#comment-672805506"
+    },
+    "code": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/diff/atlassian/atlassian-connect-express:7f9d4e6279c8..9c5c85803bfb?path=lib%2Fstore%2Futils.js"
+    }
+   },
+   "pullrequest": {
+    "type": "pullrequest",
+    "id": 552,
+    "title": "ONECLOUD-13657/add on settings",
+    "draft": true,
+    "links": {
+     "self": {
+      "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/552"
+     },
+     "html": {
+      "href": "https://bitbucket.org/atlassian/atlassian-connect-express/pull-requests/552"
+     }
+    },
+    "queued": false
+   }
+  },
+  {
+   "id": 672805515,
+   "created_on": "2025-08-21T07:30:06.256976+00:00",
+   "updated_on": "2025-08-21T07:30:06.270878+00:00",
+   "content": {
+    "type": "rendered",
+    "raw": "🎁 Want more personalised PR comments from Code Reviewer?\n\nApply custom instructions and coding standards to guide the AI agent!\n\n1. Check out our [User Guide](https://hello.atlassian.net/wiki/x/_Qi7RAE) for setup instructions.\n2. Commit the config file in your repo, raise a few PRs to test, and you are good to go!\n##### For more support or inspiration, join our community Slack channel: [#dev-ai-autoreview-champions](https://atlassian.slack.com/archives/C08KLCW34TA)",
+    "markup": "markdown",
+    "html": "<p>🎁 Want more personalised PR comments from Code Reviewer?</p>\n<p>Apply custom instructions and coding standards to guide the AI agent!</p>\n<ol>\n<li>Check out our <a data-is-external-link=\"true\" href=\"https://hello.atlassian.net/wiki/x/_Qi7RAE\" rel=\"nofollow\">User Guide</a> for setup instructions.</li>\n<li>Commit the config file in your repo, raise a few PRs to test, and you are good to go!</li>\n</ol>\n<h5 id=\"markdown-header-for-more-support-or-inspiration-join-our-community-slack-channel-dev-ai-autoreview-champions\">For more support or inspiration, join our community Slack channel: <a data-is-external-link=\"true\" href=\"https://atlassian.slack.com/archives/C08KLCW34TA\" rel=\"nofollow\">#dev-ai-autoreview-champions</a></h5>"
+   },
+   "user": {
+    "type": "app_user",
+    "links": {
+     "avatar": {
+      "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/712020:a1f21f74-c46d-42cc-be1a-639774742190/7e5b5a33-a565-4106-8b3c-a972c49c5a33/128"
+     }
+    },
+    "uuid": "{84d3c1be-f829-4e0c-b305-1c11a143484a}",
+    "account_id": "712020:a1f21f74-c46d-42cc-be1a-639774742190",
+    "kind": "atlassian_app",
+    "created_on": "2025-03-05T04:56:53.699310+00:00",
+    "display_name": "Code Reviewer",
+    "account_status": "active",
+    "nickname": "Autoreview",
+    "ai_agent": true
+   },
+   "deleted": false,
+   "pending": false,
+   "type": "pullrequest_comment",
+   "links": {
+    "self": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/552/comments/672805515"
+    },
+    "html": {
+     "href": "https://bitbucket.org/atlassian/atlassian-connect-express/pull-requests/552/_/diff#comment-672805515"
+    }
+   },
+   "pullrequest": {
+    "type": "pullrequest",
+    "id": 552,
+    "title": "ONECLOUD-13657/add on settings",
+    "draft": true,
+    "links": {
+     "self": {
+      "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/552"
+     },
+     "html": {
+      "href": "https://bitbucket.org/atlassian/atlassian-connect-express/pull-requests/552"
+     }
+    },
+    "queued": false
+   }
+  },
+  {
+   "id": 672854442,
+   "created_on": "2025-08-21T09:08:23.253704+00:00",
+   "updated_on": "2025-08-21T09:08:55.320008+00:00",
+   "content": {
+    "type": "rendered",
+    "raw": "This could have woeful performance due to:\n\n1. DB loading all of the client infos into memory from disk, sending across the network and loading into the application’s memory. Has the potential to OOM.\n2. Reaching out to the edge for potentially every client info if no match is found\n\nIt would be much more preferable to push the filtering down to the DB itself, where possible, and only query for a matching product \\+ baseUrl or cloudId \\(if one already exists\\).\n\nAlternatively, can we traverse the relationship in the other direction, i.e. can we request the tenant information from the edge using the provided cloudId, and then query the DB for the resulting baseUrl?",
+    "markup": "markdown",
+    "html": "<p>This could have woeful performance due to:</p>\n<ol>\n<li>DB loading all of the client infos into memory from disk, sending across the network and loading into the application’s memory. Has the potential to OOM.</li>\n<li>Reaching out to the edge for potentially every client info if no match is found</li>\n</ol>\n<p>It would be much more preferable to push the filtering down to the DB itself, where possible, and only query for a matching product + baseUrl or cloudId (if one already exists).</p>\n<p>Alternatively, can we traverse the relationship in the other direction, i.e. can we request the tenant information from the edge using the provided cloudId, and then query the DB for the resulting baseUrl?</p>"
+   },
+   "user": {
+    "display_name": "Mitchell Mc Cue",
+    "links": {
+     "self": {
+      "href": "https://api.bitbucket.org/2.0/users/%7B64d8d852-4dda-429a-bb5e-7fe9ae157223%7D"
+     },
+     "avatar": {
+      "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/initials/MC-2.png"
+     },
+     "html": {
+      "href": "https://bitbucket.org/%7B64d8d852-4dda-429a-bb5e-7fe9ae157223%7D/"
+     }
+    },
+    "type": "user",
+    "uuid": "{64d8d852-4dda-429a-bb5e-7fe9ae157223}",
+    "account_id": "712020:364151f0-be14-42ad-9e79-2abebf2272af",
+    "nickname": "Mitch McCue"
+   },
+   "deleted": false,
+   "inline": {
+    "from": null,
+    "to": 364,
+    "path": "lib/store/sequelize.js",
+    "start_from": null,
+    "start_to": null
+   },
+   "pending": false,
+   "type": "pullrequest_comment",
+   "links": {
+    "self": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/552/comments/672854442"
+    },
+    "html": {
+     "href": "https://bitbucket.org/atlassian/atlassian-connect-express/pull-requests/552/_/diff#comment-672854442"
+    },
+    "code": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/diff/atlassian/atlassian-connect-express:c107981e67a5..28144ba87de0?path=lib%2Fstore%2Fsequelize.js"
+    }
+   },
+   "pullrequest": {
+    "type": "pullrequest",
+    "id": 552,
+    "title": "ONECLOUD-13657/add on settings",
+    "draft": true,
+    "links": {
+     "self": {
+      "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/552"
+     },
+     "html": {
+      "href": "https://bitbucket.org/atlassian/atlassian-connect-express/pull-requests/552"
+     }
+    },
+    "queued": false
+   }
+  },
+  {
+   "id": 672856085,
+   "created_on": "2025-08-21T09:11:56.871148+00:00",
+   "updated_on": "2025-08-21T09:27:42.939185+00:00",
+   "content": {
+    "type": "rendered",
+    "raw": "Yeah this is also my main concern - I couldn’t find a documented API to go from cloudId to baseUrl, which is why I implemented this way.\n\nI can look into this further tomorrow  \nEdit: Rovo says `There is no public Atlassian REST API that allows you to directly convert a cloudId to a baseUrl.`",
+    "markup": "markdown",
+    "html": "<p>Yeah this is also my main concern - I couldn’t find a documented API to go from cloudId to baseUrl, which is why I implemented this way.</p>\n<p>I can look into this further tomorrow<br>\nEdit: Rovo says <code>There is no public Atlassian REST API that allows you to directly convert a cloudId to a baseUrl.</code></p>"
+   },
+   "user": {
+    "display_name": "Vincent Nguyen",
+    "links": {
+     "self": {
+      "href": "https://api.bitbucket.org/2.0/users/%7B8921678d-cc20-474a-b7e3-8c6ff3b1a140%7D"
+     },
+     "avatar": {
+      "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/initials/VN-3.png"
+     },
+     "html": {
+      "href": "https://bitbucket.org/%7B8921678d-cc20-474a-b7e3-8c6ff3b1a140%7D/"
+     }
+    },
+    "type": "user",
+    "uuid": "{8921678d-cc20-474a-b7e3-8c6ff3b1a140}",
+    "account_id": "712020:cf50c3cb-714f-4214-be27-f5bace22a1f9",
+    "nickname": "Vincent Nguyen"
+   },
+   "deleted": false,
+   "parent": {
+    "id": 672854442,
+    "links": {
+     "self": {
+      "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/552/comments/672854442"
+     },
+     "html": {
+      "href": "https://bitbucket.org/atlassian/atlassian-connect-express/pull-requests/552/_/diff#comment-672854442"
+     }
+    }
+   },
+   "inline": {
+    "from": null,
+    "to": 364,
+    "path": "lib/store/sequelize.js",
+    "start_from": null,
+    "start_to": null
+   },
+   "pending": false,
+   "type": "pullrequest_comment",
+   "links": {
+    "self": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/552/comments/672856085"
+    },
+    "html": {
+     "href": "https://bitbucket.org/atlassian/atlassian-connect-express/pull-requests/552/_/diff#comment-672856085"
+    },
+    "code": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/diff/atlassian/atlassian-connect-express:c107981e67a5..28144ba87de0?path=lib%2Fstore%2Fsequelize.js"
+    }
+   },
+   "pullrequest": {
+    "type": "pullrequest",
+    "id": 552,
+    "title": "ONECLOUD-13657/add on settings",
+    "draft": true,
+    "links": {
+     "self": {
+      "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/552"
+     },
+     "html": {
+      "href": "https://bitbucket.org/atlassian/atlassian-connect-express/pull-requests/552"
+     }
+    },
+    "queued": false
+   }
+  }
+ ],
+ "pagelen": 5,
+ "size": 7,
+ "page": 1,
+ "next": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/552/comments?pagelen=5&page=2"
+}

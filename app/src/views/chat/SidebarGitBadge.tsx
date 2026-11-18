@@ -10,6 +10,7 @@ import { listen } from "@tauri-apps/api/event";
 import { GITHUB_CHANGED_EVENT, getSidebarGitBadges, type SidebarGitBadgeDto } from "../../api";
 import { remoteUi } from "../../remoteMode";
 import { useT } from "../../i18n";
+import { forgeKind, forgeText, kindOfUrl } from "./forgeWords";
 
 /** 前端多久问一次。后端 PR 每仓库 60 秒才真查一次 GitHub、改动数 15 秒一算，这里问得再勤也只是读缓存。 */
 const POLL_MS = 30_000;
@@ -105,9 +106,11 @@ export function SidebarGitBadgeSlot({ store, cwd }: { store: GitBadgeStore; cwd:
 export function SidebarGitBadge({ badge }: { badge: SidebarGitBadgeDto }) {
   const t = useT();
   const pr = badge.pr;
+  // 平台叫法：GitLab 写 MR !12（forgeWords.ts）。
+  const ft = forgeText(t, pr?.forge ? forgeKind(pr.forge) : kindOfUrl(pr?.url ?? ""));
   const ci = pr?.checks && pr.checks !== "none" ? pr.checks : null;
   const parts = [
-    pr ? t.chat.sidebarPr(pr.number, t.chat.prState[pr.state] ?? pr.state) : null,
+    pr ? ft.sidebarPr(pr.number, t.chat.prState[pr.state] ?? pr.state) : null,
     ci ? t.chat.sidebarCi(t.forge.checkState[ci] ?? ci) : null,
     badge.files > 0 ? t.chat.uncommitted(badge.files) : null,
   ].filter(Boolean);
@@ -116,7 +119,7 @@ export function SidebarGitBadge({ badge }: { badge: SidebarGitBadgeDto }) {
   return (
     <span className="chat-sidebar-git" role="img" aria-label={label} data-tip={label} data-testid="sidebar-git-badge">
       {/* 点旁写编号：一个色点自己读不出是什么（同一实拍）。 */}
-      {pr && <span className="chat-sidebar-prnum" aria-hidden="true"><i className={`chat-sidebar-pr is-${pr.state}`} />#{pr.number}</span>}
+      {pr && <span className="chat-sidebar-prnum" aria-hidden="true"><i className={`chat-sidebar-pr is-${pr.state}`} />{ft.num(pr.number)}</span>}
       {ci && <i className={`chat-sidebar-ci is-${ci}`} aria-hidden="true" />}
       {badge.files > 0 && (lines
         ? <span className="chat-sidebar-diff" aria-hidden="true"><span className="chat-sidebar-add">+{badge.additions}</span><span className="chat-sidebar-del">−{badge.deletions}</span></span>

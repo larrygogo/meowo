@@ -4,28 +4,25 @@ import type { PrDefaultsDto } from "./PrDefaultsDto";
 import type { PullRequestDto } from "./PullRequestDto";
 
 /**
- * 「更改」面板的 GitHub 区块（`git_forge_status`）：gh 能不能用、开 PR 的默认值、当前分支的 PR 与检查。
- * gh 不可用时只有 `compare_url`（前端开 PR 改为打开 GitHub 网页），不显示 CI、不能在应用里合并。
+ * 「更改」面板的 PR / MR 区块（`git_forge_status`）：有没有账号、开 PR 的默认值、当前分支的 PR 与检查。
+ * 没账号时只有 `compare_url`（前端开 PR 改为打开网页），不显示 CI、不能在应用里合并。
  */
 export type ForgeStatusDto = { 
 /**
- * `ok` / `missing`（没装）/ `unauthenticated`（没登录）/ `not_github`（远端不是 GitHub）/ `no_remote`。
+ * `ok` / `no_account`（认出了平台、没有这台主机的账号）/ `unauthenticated`（令牌失效，要重新登录）/
+ * `not_github`（远端认不出平台）/ `no_remote`。字段名沿用改版前的写法；Meowo 不调用本机 gh。
  */
 gh: string, 
-/**
- * gh 太旧（`gh pr merge` 没有 `--match-head-commit`）：合并按钮不可用并说明。
- */
-ghTooOld: boolean, 
 /**
  * GitHub 仓库首页（`https://github.com/<owner>/<repo>`）。远端不是 GitHub 时为 None。
  */
 repoUrl: string | null, 
 /**
- * 当前分支对默认分支的 compare 网页（没装 gh 时「开 PR」打开它）。
+ * 当前分支对默认分支的 compare 网页（没有账号时「开 PR」打开它）。
  */
 compareUrl: string | null, 
 /**
- * 仓库允许的合并方式（`merge` / `squash` / `rebase`），gh repo view 读，缓存 1 小时。
+ * 仓库允许的合并方式（`merge` / `squash` / `rebase`），向平台查，缓存 1 小时。
  */
 mergeMethods: Array<string>, 
 /**
@@ -37,20 +34,24 @@ lastMergeMethod: string | null, pr: PullRequestDto | null,
  */
 prDefaults: PrDefaultsDto | null, 
 /**
- * 多个 GitHub 远端、又没用 `gh repo set-default` 定过时，PR 可以开在哪些远端的仓库（界面上让用户选，
- * 选择按仓库记在 `~/.meowo/forge.json`）。只有一个 GitHub 远端或 gh 已定时为空。
+ * 多个认得出平台的远端时，PR 可以开在哪些远端的仓库（界面上让用户选，选择按仓库记在 `~/.meowo/forge.json`）。
+ * 只有一个时为空。
  */
 repoChoices: Array<ForgeRepoChoiceDto>, 
 /**
- * PR 现在按哪个远端的仓库算（gh-resolved、用户选的、唯一的；没定时是暂按的 origin）。
+ * PR 现在按哪个远端的仓库算（用户选的、唯一的；没定时是暂按的 origin）。
  */
 repoRemote: string | null, 
 /**
- * 多个 GitHub 远端还没定：查状态暂按 origin，开 PR / 合并返回 `gh/ambiguous_repo`，要先选。
+ * 多个远端还没定：查状态暂按 origin，开 PR / 合并返回 `gh/ambiguous_repo`，要先选。
  */
 repoNeedsChoice: boolean, 
 /**
- * 这次实际用的 GitHub 连接：`gh`（本机 gh）/ `meowo`（Meowo 登录的令牌）/ `off`（设置里关了，
- * 这时 `gh` 字段为 `off`，不发任何 GitHub 请求）。旧后端没有这个字段。
+ * 仓库所在的代码托管平台：`github` / `gitlab` / `gitea` / `bitbucket` / `gitee`。远端认不出平台时为 None。
+ * `gh` 为 `no_account` 时表示认出了平台、但设置里还没有这台主机的账号（不发请求，界面引导去添加）。
  */
-connection?: string, };
+forge?: string, 
+/**
+ * 平台所在主机（`github.com`、`gitlab.com`、自建主机名）。
+ */
+forgeHost?: string, };

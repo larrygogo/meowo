@@ -54,7 +54,7 @@ export function worktreeReasonText(t: Dict, status: WorktreeStatusDto): string {
   }
 }
 
-/** 取一次判定（gh 要联网，约 1 秒）。sessionId 为 null 时不查。查询失败按「不可清理」处理。 */
+/** 取一次判定（查 PR 要联网，约 1 秒）。sessionId 为 null 时不查。查询失败按「不可清理」处理。 */
 export function useWorktreeStatus(sessionId: number | null): WorktreeStatusDto | null {
   const [status, setStatus] = useState<WorktreeStatusDto | null>(null);
   useEffect(() => {

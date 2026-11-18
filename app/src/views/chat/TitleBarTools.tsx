@@ -16,6 +16,7 @@ import { changedFileCount } from "./gitDiff";
 import { Icon } from "../../icons/Icon";
 import { icCode, icGitBranch, icPullRequest } from "../../icons/glyphs.chat";
 import { icFolder } from "../../icons/glyphs";
+import { forgeKind, forgeText, kindOfUrl } from "./forgeWords";
 
 /** 上次选的打开方式（编辑器 id 或 "files"）。只是界面偏好，存本机即可。 */
 const OPENER_KEY = "meowo-folder-opener";
@@ -148,11 +149,13 @@ export function OpenInEditor({ cwd, onError, openers }: { cwd: string; onError: 
 /// 按状态配色（开着绿、草稿灰、已合并紫、已关闭红），点一下在浏览器打开。
 export function PullRequestChip({ pr }: { pr: PullRequestDto }) {
   const t = useT();
-  const tip = t.chat.prOpenTip(pr.number, pr.title);
+  // 平台叫法：GitLab 是「打开合并请求 !12」（forgeWords.ts）。
+  const ft = forgeText(t, pr.forge ? forgeKind(pr.forge) : kindOfUrl(pr.url));
+  const tip = ft.prOpenTip(pr.number, pr.title);
   return (
     <button type="button" className={`tb-pr is-${pr.state}`} aria-label={tip} data-tip={tip} onClick={() => void openLink(pr.url).catch(() => {})}>
       <Icon glyph={icPullRequest} size={14} />
-      <span>#{pr.number}</span>
+      <span>{ft.num(pr.number)}</span>
       <span className="tb-pr-state">{t.chat.prState[pr.state] ?? pr.state}</span>
     </button>
   );
