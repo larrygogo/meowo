@@ -529,7 +529,7 @@ html, body {
 }
 /* UA 默认粗体（strong/b/th/标题是 bold 或 bolder）不走 token，深色下会比周围粗出两档；统一接到 --fw-bold。 */
 :where(strong, b, th, h1, h2, h3, h4, h5, h6) { font-weight: var(--fw-bold); }
-/* 断行（U2，2026-11-18）：正文类文字整体 pretty——末行不留一两个字的孤行（ChatGPT、Kimi 的回复区同做法）；
+/* 断行（U2，2026-11-18）：正文类文字整体 pretty——末行不留一两个字的孤行；
    标题类 balance，多行时各行等长。只写 text-wrap-style 这个长属性，不写 text-wrap 简写：简写会连带把
    text-wrap-mode 设回 wrap，盖掉各处 white-space: nowrap / pre 的单行与原样排版。
    该属性会继承，所以在代码、终端、表格、输入框上显式退回 auto：等宽内容按字符原样折，不参与重排。
