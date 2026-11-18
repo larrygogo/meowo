@@ -2,12 +2,14 @@
 //!
 //! - push：真 git + 本地 bare 远端（无上游自动设上游、被拒、服务器钩子拒、本地钩子拒、无远端、detached），
 //!   凭据失败用本机起的「回 401 的 HTTP 服务」模拟、超时用「接了连接不回话」的服务模拟，确认不会卡在密码提示上。
-//! - gh：全部经注入的假 gh。fixtures 里不带 derived_ 前缀的是 2026-11-10 用 gh 2.96 对真实仓库只读录的
+//! - GitHub：全部经注入的假 HTTP（[`FakeGithub`]，内置实现照常把每个操作翻成 REST / GraphQL，测试断言请求本身）。
+//!   Meowo 不调用本机 gh；fixtures 里不带 derived_ 前缀的是 2026-11-10 用 gh 2.96 对真实仓库只读录的
 //!   `gh pr view --json <PR_FIELDS>`（larrygogo/meowo#161 全是 CheckRun；kubernetes/kubernetes 的
 //!   StatusContext 与 CONFLICTING；facebook/react 的 FAILURE，检查项截到 5 条）；`repo_view_drill.json` 录自
 //!   larrygogo/meowo-pr-drill。derived_ 开头的是在录制样例上改字段造的（无检查、进行中、UNKNOWN）。
 
 use super::*;
+use super::platform::{self, Forges, Platform};
 use crate::git::{git_diff_summary_blocking, parse_branch_header, BranchHeader};
 use std::path::{Path, PathBuf};
 
@@ -579,81 +581,195 @@ fn gh_合并失败归类() {
     assert!(classify_gh_failure(&out("X Pull request #3 is not mergeable: the base branch policy prohibits the merge."), None).starts_with("gh/merge_blocked"));
 }
 
-// ═══ 状态 / 开 PR / 合并（假 gh）═══
+// ═══ 状态 / 开 PR / 合并（假 GitHub HTTP）═══
 
-/// 假 gh：按参数前缀回录制好的输出，记下每次调用。
-struct FakeGh {
-    calls: Mutex<Vec<String>>,
-    installed: bool,
-    authed: bool,
-    pr_view: Mutex<Vec<CmdOut>>,
-    repo_view: String,
-    merge_help: String,
-    merge_out: CmdOut,
-    create_out: CmdOut,
-    /// 模拟 fork + upstream 两个远端、没设 gh default repo：pr 子命令不带 --repo 就报 set-default（gh 2.x 原话）。
-    require_repo: bool,
+/// gh `pr view --json` 的实录 → GitHub GraphQL 的 PR 节点（内置实现查到的原样）。owner / cross：head 所在仓库的
+/// 主人、是不是从 fork 发来的。
+pub(super) fn gql_node(gh: &serde_json::Value, owner: &str, cross: bool) -> serde_json::Value {
+    use serde_json::{json, Value};
+    let mut node = gh.clone();
+    let contexts: Vec<Value> = gh["statusCheckRollup"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|c| {
+            let blank = |v: &Value| if v.as_str().is_some_and(|s| s.is_empty() || s == "0001-01-01T00:00:00Z") { Value::Null } else { v.clone() };
+            if c["__typename"] == "StatusContext" {
+                json!({ "__typename": "StatusContext", "context": c["context"], "state": c["state"], "targetUrl": c["targetUrl"], "createdAt": c["startedAt"] })
+            } else {
+                json!({
+                    "__typename": "CheckRun", "name": c["name"], "status": c["status"], "conclusion": blank(&c["conclusion"]),
+                    "detailsUrl": c["detailsUrl"], "startedAt": blank(&c["startedAt"]), "completedAt": blank(&c["completedAt"]),
+                    "checkSuite": { "workflowRun": { "workflow": { "name": c["workflowName"] } } },
+                })
+            }
+        })
+        .collect();
+    let obj = node.as_object_mut().unwrap();
+    obj.remove("statusCheckRollup");
+    obj.insert("commits".into(), json!({ "nodes": [{ "commit": { "statusCheckRollup": { "contexts": { "nodes": contexts, "pageInfo": { "hasNextPage": false, "endCursor": null } } } } }] }));
+    obj.insert("meowoId".into(), json!("PR_kwDO"));
+    obj.insert("meowoState".into(), gh["state"].clone());
+    obj.insert("meowoCross".into(), json!(cross));
+    obj.insert("meowoOwner".into(), json!({ "login": owner }));
+    obj.insert("meowoHead".into(), gh["headRefName"].clone());
+    node
 }
 
-fn ok(stdout: &str) -> CmdOut {
-    CmdOut { code: Some(0), stdout: stdout.into(), ..Default::default() }
+/// 合并接口怎么回。
+#[derive(Clone, Copy, PartialEq)]
+enum MergeReply {
+    /// `PUT …/merge` 200 `{"merged":true}`。
+    Merged,
+    /// 仓库要求合并队列：PUT 回 405「must be made through the merge queue」，内置实现改走 GraphQL enqueuePullRequest。
+    Queue,
 }
 
-fn fail(stderr: &str) -> CmdOut {
-    CmdOut { code: Some(1), stderr: stderr.into(), ..Default::default() }
+/// 假 GitHub（github.com）：内置实现（forge/builtin.rs）的 HTTP 换成它，按请求回包、记下每个请求（方法、地址、JSON 体）。
+/// 同时当 [`Forges`]：account = github.com 账号的状态（None = 没添加账号，平台接口拿不到，一个请求都不该发）。
+/// PR 的回包由 forge/fixtures 里 gh 实录的 `pr view --json` 反推成 GraphQL 节点（[`gql_node`]）。
+struct FakeGithub {
+    calls: Mutex<Vec<(String, String, serde_json::Value)>>,
+    account: Option<GhState>,
+    /// 每次查 PR（按分支或按号）依次回这些实录（None = 没有 PR；最后一个之后一直回最后一个）。
+    views: Mutex<Vec<Option<serde_json::Value>>>,
+    repo_view: serde_json::Value,
+    merge: MergeReply,
+    /// 开 PR：Some(号) = 201 建好；None = 422「A pull request already exists」，已有的是 7 号。
+    create: Option<u32>,
+    /// 查 PR 一律回 403 限流（断网、限流时的节流测试）。
+    rate_limited: bool,
 }
 
-impl FakeGh {
+impl FakeGithub {
     fn new() -> Self {
-        FakeGh {
+        FakeGithub {
             calls: Mutex::new(Vec::new()),
-            installed: true,
-            authed: true,
-            pr_view: Mutex::new(vec![fail("no pull requests found for branch \"meowo/drill\"")]),
-            repo_view: fixture("repo_view_drill.json"),
-            merge_help: "Flags:\n      --match-head-commit SHA   Commit SHA that the pull request head must match to allow merge".into(),
-            merge_out: ok(""),
-            create_out: ok("https://github.com/larrygogo/meowo-pr-drill/pull/12\n"),
-            require_repo: false,
+            account: Some(GhState::Ok),
+            views: Mutex::new(vec![None]),
+            repo_view: serde_json::from_str(&fixture("repo_view_drill.json")).unwrap(),
+            merge: MergeReply::Merged,
+            create: Some(12),
+            rate_limited: false,
         }
     }
-    /// pr view 依次回这些（最后一个之后一直回最后一个）。
-    fn views(self, outs: Vec<CmdOut>) -> Self {
-        *self.pr_view.lock().unwrap() = outs;
+    /// 查 PR 依次回这些实录文件。
+    fn views(self, files: &[&str]) -> Self {
+        *self.views.lock().unwrap() = files.iter().map(|f| Some(serde_json::from_str(&fixture(f)).unwrap())).collect();
         self
     }
-    fn run(&self, _dir: &str, args: &[&str]) -> Option<CmdOut> {
-        if !self.installed {
-            return None;
-        }
-        let line = args.join(" ");
-        self.calls.lock().unwrap().push(line.clone());
-        if self.require_repo && line.starts_with("pr ") && line != "pr merge --help" && !line.contains("--repo ") {
-            return Some(fail("X No default remote repository has been set. To learn more about the default repository, run: gh repo set-default --help"));
-        }
-        Some(if line.starts_with("auth status") {
-            if self.authed { ok("") } else { fail("You are not logged into any GitHub hosts. To log in, run: gh auth login") }
-        } else if line.starts_with("pr view") {
-            let mut views = self.pr_view.lock().unwrap();
-            if views.len() > 1 { views.remove(0) } else { views[0].clone() }
-        } else if line.starts_with("repo view") {
-            ok(&self.repo_view)
-        } else if line == "pr merge --help" {
-            ok(&self.merge_help)
-        } else if line.starts_with("pr merge") {
-            self.merge_out.clone()
-        } else if line.starts_with("pr create") {
-            self.create_out.clone()
-        } else {
-            fail("unexpected")
-        })
+    fn view_values(self, values: Vec<serde_json::Value>) -> Self {
+        *self.views.lock().unwrap() = values.into_iter().map(Some).collect();
+        self
     }
-    fn count(&self, prefix: &str) -> usize {
-        self.calls.lock().unwrap().iter().filter(|c| c.starts_with(prefix)).count()
+    fn next_view(&self) -> Option<serde_json::Value> {
+        let mut views = self.views.lock().unwrap();
+        if views.len() > 1 {
+            views.remove(0)
+        } else {
+            views[0].clone()
+        }
+    }
+    fn calls(&self) -> Vec<(String, String, serde_json::Value)> {
+        self.calls.lock().unwrap().clone()
+    }
+    /// 请求归类：view（查 PR）/ repo（合并方式）/ merge（PUT …/merge）/ enqueue / create（POST …/pulls）/ exists（查已有 PR）。
+    fn kind(method: &str, url: &str, body: &serde_json::Value) -> &'static str {
+        let q = body["query"].as_str().unwrap_or_default();
+        match method {
+            "POST" if url.ends_with("/graphql") && q.contains("enqueuePullRequest") => "enqueue",
+            "POST" if url.ends_with("/graphql") && q.contains("{id baseRefName}") => "queue-lookup",
+            "POST" if url.ends_with("/graphql") && q.contains("mergeCommitAllowed") => "repo",
+            "POST" if url.ends_with("/graphql") && (q.contains("pullRequests(headRefName") || q.contains("pullRequest(number")) => "view",
+            "PUT" if url.ends_with("/merge") => "merge",
+            "POST" if url.ends_with("/pulls") => "create",
+            "GET" if url.contains("/pulls?state=open") => "exists",
+            _ => "other",
+        }
+    }
+    fn count(&self, kind: &str) -> usize {
+        self.calls().iter().filter(|(m, u, b)| Self::kind(m, u, b) == kind).count()
+    }
+    /// 按这个分支查 PR 的次数。
+    fn count_head(&self, head: &str) -> usize {
+        self.calls().iter().filter(|(m, u, b)| Self::kind(m, u, b) == "view" && b["variables"]["head"] == head).count()
+    }
+    /// 某一类的第一个请求（方法、地址、JSON 体）。
+    fn first(&self, kind: &str) -> (String, String, serde_json::Value) {
+        self.calls().into_iter().find(|(m, u, b)| Self::kind(m, u, b) == kind).unwrap_or_else(|| panic!("没有 {kind} 请求：{:?}", self.calls()))
     }
 }
 
-/// 连着 GitHub 地址的仓库（不联网：只有 git 本地操作，gh 是假的）。分支 meowo/drill 上一个提交，
+impl crate::github::Http for FakeGithub {
+    fn send(&self, req: &crate::github::Request) -> Result<crate::github::Response, String> {
+        use serde_json::{json, Value};
+        assert!(crate::github::allowed_url(req.url), "只许发往 GitHub：{}", req.url);
+        assert!(req.token.is_some(), "内置实现的请求都要带令牌");
+        let body = match &req.body {
+            Some(crate::github::Body::Json(v)) => v.clone(),
+            _ => Value::Null,
+        };
+        self.calls.lock().unwrap().push((req.method.to_string(), req.url.to_string(), body.clone()));
+        let resp = |status: u16, v: Value| crate::github::Response { status, body: v.to_string(), ..Default::default() };
+        let vars = &body["variables"];
+        Ok(match Self::kind(req.method, req.url, &body) {
+            "view" if self.rate_limited => resp(403, json!({ "message": "API rate limit exceeded for user ID 1." })),
+            "view" if vars.get("head").is_some() => {
+                // head 不在 PR 所在仓库（fork 工作流）：节点标成 cross、主人是 larrygogo。
+                let cross = vars["owner"] != "larrygogo";
+                // 节点的 head 用查询的分支名（实录样例来自别的仓库，分支名对不上）。
+                let nodes: Vec<Value> = self
+                    .next_view()
+                    .map(|v| {
+                        let mut node = gql_node(&v, "larrygogo", cross);
+                        node["meowoHead"] = vars["head"].clone();
+                        node
+                    })
+                    .into_iter()
+                    .collect();
+                resp(200, json!({ "data": { "repository": { "pullRequests": { "nodes": nodes }, "defaultBranchRef": { "name": "main" } } } }))
+            }
+            "view" => {
+                let node = self.next_view().map(|v| gql_node(&v, "larrygogo", false)).unwrap_or(Value::Null);
+                resp(200, json!({ "data": { "repository": { "pullRequest": node } } }))
+            }
+            "repo" => resp(200, json!({ "data": { "repository": self.repo_view } })),
+            "merge" if self.merge == MergeReply::Queue => resp(405, json!({ "message": "Changes must be made through the merge queue" })),
+            "merge" => resp(200, json!({ "sha": "abc", "merged": true, "message": "Pull Request successfully merged" })),
+            "queue-lookup" => resp(200, json!({ "data": { "repository": { "pullRequest": { "id": "PR_kwDO", "baseRefName": "main" } } } })),
+            "enqueue" => resp(200, json!({ "data": { "enqueuePullRequest": { "mergeQueueEntry": { "id": "MQE_1" } } } })),
+            "create" => match self.create {
+                Some(n) => resp(201, json!({ "number": n, "html_url": format!("https://github.com/larrygogo/meowo-pr-drill/pull/{n}") })),
+                None => resp(422, json!({ "message": "Validation Failed", "errors": [{ "message": "A pull request already exists for larrygogo:meowo/drill." }] })),
+            },
+            "exists" => resp(200, json!([{ "number": 7, "html_url": "https://github.com/larrygogo/meowo-pr-drill/pull/7" }])),
+            _ => resp(404, json!({ "message": "Not Found" })),
+        })
+    }
+}
+
+impl Forges for FakeGithub {
+    fn platform(&self, host: &str) -> Option<Platform> {
+        platform::public_platform(host)
+    }
+    fn open(&self, host: &str) -> Option<Box<dyn ForgeApi + '_>> {
+        if platform::host_name(host) != platform::GITHUB_COM {
+            return None;
+        }
+        let state = self.account?;
+        Some(Box::new(super::builtin::forge(
+            Box::new(self),
+            super::builtin::Endpoints::github_com(),
+            Some(crate::github::Token::new("gho_TESTTOKEN").unwrap()),
+            state,
+            std::env::temp_dir().join("meowo-fake-github-none.json"),
+            Box::new(|_| {}),
+        )))
+    }
+}
+
+/// 连着 GitHub 地址的仓库（不联网：只有 git 本地操作，GitHub 是假的）。分支 meowo/drill 上一个提交，
 /// origin/main 指向初始提交。
 fn github_repo(sb: &Sandbox) -> PathBuf {
     let repo = sb.repo("gh");
@@ -665,44 +781,64 @@ fn github_repo(sb: &Sandbox) -> PathBuf {
     repo
 }
 
-fn status(fake: &FakeGh, caches: &Caches, prefs: &Path, repo: &Path, force: bool) -> ForgeStatusDto {
-    let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches, prefs: prefs.to_path_buf(), env: &[] };
-    forge_status_with(&ctx, &s(repo), force).unwrap()
+fn ctx_of<'a>(fake: &'a FakeGithub, caches: &'a Caches, prefs: &Path) -> Ctx<'a> {
+    Ctx { forges: fake, caches, prefs: prefs.to_path_buf(), env: &[] }
 }
 
+fn status(fake: &FakeGithub, caches: &Caches, prefs: &Path, repo: &Path, force: bool) -> ForgeStatusDto {
+    forge_status_with(&ctx_of(fake, caches, prefs), &s(repo), force).unwrap()
+}
+
+/// 改版前：没装 gh → `missing`。现在 github.com 与其他平台一样：没添加账号 → `no_account`，只给网页与默认标题，
+/// 一个请求都不发。
 #[test]
-fn 状态_没装_gh_只给_compare_网页与默认标题() {
+fn 状态_github_没账号_只给_compare_网页与默认标题_不发请求() {
     let sb = Sandbox::new("st-missing");
     let repo = github_repo(&sb);
-    let fake = FakeGh { installed: false, ..FakeGh::new() };
+    let fake = FakeGithub { account: None, ..FakeGithub::new() };
     let dto = status(&fake, &Caches::default(), &sb.root.join("forge.json"), &repo, false);
-    assert_eq!(dto.gh, "missing");
+    assert_eq!((dto.gh.as_str(), dto.forge.as_deref(), dto.forge_host.as_deref()), ("no_account", Some("github"), Some("github.com")));
     assert_eq!(dto.compare_url.as_deref(), Some("https://github.com/larrygogo/meowo-pr-drill/compare/main...meowo/drill?expand=1"));
     assert_eq!(dto.repo_url.as_deref(), Some("https://github.com/larrygogo/meowo-pr-drill"));
     assert!(dto.pr.is_none() && dto.merge_methods.is_empty());
     let defaults = dto.pr_defaults.unwrap();
     assert_eq!((defaults.title.as_str(), defaults.body.as_str(), defaults.base.as_str()), ("feat: drill one", "- feat: drill one", "main"));
+    assert!(fake.calls().is_empty(), "{:?}", fake.calls());
 }
 
 #[test]
-fn 状态_没登录与不是_github() {
+fn 状态_令牌失效与不是_github() {
     let sb = Sandbox::new("st-auth");
     let repo = github_repo(&sb);
-    let fake = FakeGh { authed: false, ..FakeGh::new() };
+    let fake = FakeGithub { account: Some(GhState::Unauthed), ..FakeGithub::new() };
     let dto = status(&fake, &Caches::default(), &sb.root.join("forge.json"), &repo, false);
     assert_eq!(dto.gh, "unauthenticated");
-    assert_eq!(fake.count("pr view"), 0, "没登录不去查 PR");
+    assert!(fake.calls().is_empty(), "令牌失效不去查 PR：{:?}", fake.calls());
+    // 认不出平台的主机（没加账号的自建实例）：照旧按「不是 GitHub」，不发请求。
+    sb.git(&repo, &["remote", "set-url", "origin", "https://git.example.com/o/r.git"]);
+    let fake = FakeGithub::new();
+    let dto = status(&fake, &Caches::default(), &sb.root.join("forge.json"), &repo, false);
+    assert_eq!((dto.gh.as_str(), dto.compare_url, dto.forge), ("not_github", None, None));
+    assert!(fake.calls().is_empty(), "{:?}", fake.calls());
+    // gitlab.com 认得出平台，但设置里没有账号：引导去添加账号，不报错、一个请求都不发。
     sb.git(&repo, &["remote", "set-url", "origin", "https://gitlab.com/o/r.git"]);
-    let dto = status(&FakeGh::new(), &Caches::default(), &sb.root.join("forge.json"), &repo, false);
-    assert_eq!((dto.gh.as_str(), dto.compare_url), ("not_github", None));
+    let fake = FakeGithub::new();
+    let dto = status(&fake, &Caches::default(), &sb.root.join("forge.json"), &repo, false);
+    assert_eq!((dto.gh.as_str(), dto.forge.as_deref(), dto.forge_host.as_deref()), ("no_account", Some("gitlab"), Some("gitlab.com")));
+    assert_eq!(dto.repo_url.as_deref(), Some("https://gitlab.com/o/r"));
+    assert_eq!(
+        dto.compare_url.as_deref(),
+        Some("https://gitlab.com/o/r/-/merge_requests/new?merge_request%5Bsource_branch%5D=meowo%2Fdrill&merge_request%5Btarget_branch%5D=main")
+    );
+    assert!(dto.pr.is_none() && dto.merge_methods.is_empty() && dto.pr_defaults.is_some());
+    assert!(fake.calls().is_empty(), "{:?}", fake.calls());
 }
 
 #[test]
-fn 状态_有_gh_每仓库_60_秒最多查一次_手动刷新最短_10_秒() {
+fn 状态_有账号_每仓库_60_秒最多查一次_手动刷新最短_10_秒() {
     let sb = Sandbox::new("st-cache");
     let repo = github_repo(&sb);
-    let fake = FakeGh::new().views(vec![ok(&fixture("derived_pr_in_progress.json"))]);
+    let fake = FakeGithub::new().views(&["derived_pr_in_progress.json"]);
     let caches = Caches::default();
     let prefs = sb.root.join("forge.json");
     let first = status(&fake, &caches, &prefs, &repo, false);
@@ -710,10 +846,14 @@ fn 状态_有_gh_每仓库_60_秒最多查一次_手动刷新最短_10_秒() {
     assert_eq!((pr.number, pr.checks_summary.as_deref(), pr.checks.len()), (12, Some("pending"), 2));
     assert_eq!(first.merge_methods, vec!["merge", "squash", "rebase"]);
     assert!(first.pr_defaults.is_none(), "已有 PR 不给开 PR 的默认值");
+    // 按分支查：仓库与分支都在 GraphQL 变量里。
+    let (_, url, body) = fake.first("view");
+    assert_eq!(url, "https://api.github.com/graphql");
+    assert_eq!(body["variables"], serde_json::json!({ "owner": "larrygogo", "name": "meowo-pr-drill", "head": "meowo/drill" }));
     status(&fake, &caches, &prefs, &repo, false);
     status(&fake, &caches, &prefs, &repo, true);
-    assert_eq!(fake.count("pr view"), 1, "60 秒内（含 10 秒内的手动刷新）只查一次 GitHub");
-    assert_eq!(fake.count("repo view"), 1, "合并方式缓存 1 小时");
+    assert_eq!(fake.count("view"), 1, "60 秒内（含 10 秒内的手动刷新）只查一次 GitHub");
+    assert_eq!(fake.count("repo"), 1, "合并方式缓存 1 小时");
     // 缓存过了 10 秒：手动刷新会重查。
     {
         let mut prs = caches.prs.lock().unwrap();
@@ -722,21 +862,20 @@ fn 状态_有_gh_每仓库_60_秒最多查一次_手动刷新最短_10_秒() {
         }
     }
     status(&fake, &caches, &prefs, &repo, false);
-    assert_eq!(fake.count("pr view"), 1, "没到 60 秒，轮询不重查");
+    assert_eq!(fake.count("view"), 1, "没到 60 秒，轮询不重查");
     status(&fake, &caches, &prefs, &repo, true);
-    assert_eq!(fake.count("pr view"), 2);
+    assert_eq!(fake.count("view"), 2);
 }
 
-fn merge(fake: &FakeGh, caches: &Caches, prefs: &Path, repo: &Path, method: &str, head: &str) -> Result<MergeResultDto, String> {
-    let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches, prefs: prefs.to_path_buf(), env: &[] };
-    pr_merge_with(&ctx, &s(repo), 12, method, head)
+fn merge(fake: &FakeGithub, caches: &Caches, prefs: &Path, repo: &Path, method: &str, head: &str) -> Result<MergeResultDto, String> {
+    pr_merge_with(&ctx_of(fake, caches, prefs), &s(repo), 12, method, head)
 }
 
 const HEAD: &str = "1111111111111111111111111111111111111111";
 
+/// 改版前这里还有「gh 太旧（没有 --match-head-commit）不合」：不再调用 gh，内置实现总是钉住头提交，那一条删了。
 #[test]
-fn 合并_检查没过或在跑_有冲突_头提交变了_都不调_gh_pr_merge() {
+fn 合并_检查没过或在跑_有冲突_头提交变了_都不发合并请求() {
     let sb = Sandbox::new("merge-guard");
     let repo = github_repo(&sb);
     let prefs = sb.root.join("forge.json");
@@ -745,70 +884,67 @@ fn 合并_检查没过或在跑_有冲突_头提交变了_都不调_gh_pr_merge(
         ("derived_pr_unknown_mergeable.json", "gh/checks_pending".to_string()),
     ];
     for (file, want) in cases {
-        let fake = FakeGh::new().views(vec![ok(&fixture(file))]);
+        let fake = FakeGithub::new().views(&[file]);
         assert_eq!(merge(&fake, &Caches::default(), &prefs, &repo, "squash", HEAD).unwrap_err(), want, "{file}");
-        assert_eq!(fake.count("pr merge 12"), 0, "{file}");
+        assert_eq!(fake.count("merge"), 0, "{file}");
     }
     // 检查失败：拿录制的 react 样例改成 12 号、头提交对上。
     let mut failing: serde_json::Value = serde_json::from_str(&fixture("pr_checkrun_fail.json")).unwrap();
     failing["number"] = 12.into();
     failing["headRefOid"] = HEAD.into();
-    let fake = FakeGh::new().views(vec![ok(&failing.to_string())]);
+    let fake = FakeGithub::new().view_values(vec![failing]);
     assert_eq!(merge(&fake, &Caches::default(), &prefs, &repo, "squash", HEAD).unwrap_err(), "gh/checks_failed");
+    assert_eq!(fake.count("merge"), 0);
     // 冲突：检查全绿也不合，带上网页链接。
     let mut conflict: serde_json::Value = serde_json::from_str(&fixture("pr_conflict.json")).unwrap();
     conflict["number"] = 12.into();
     conflict["headRefOid"] = HEAD.into();
     conflict["statusCheckRollup"] = serde_json::json!([]);
     conflict["isDraft"] = false.into();
-    let fake = FakeGh::new().views(vec![ok(&conflict.to_string())]);
+    let fake = FakeGithub::new().view_values(vec![conflict]);
     let err = merge(&fake, &Caches::default(), &prefs, &repo, "squash", HEAD).unwrap_err();
     assert!(err.starts_with("gh/merge_conflict: https://github.com/kubernetes/kubernetes/pull/"), "{err}");
+    assert_eq!(fake.count("merge"), 0);
     // 确认框打开后有人推了新提交。
-    let fake = FakeGh::new().views(vec![ok(&fixture("derived_pr_no_checks.json"))]);
+    let fake = FakeGithub::new().views(&["derived_pr_no_checks.json"]);
     assert_eq!(merge(&fake, &Caches::default(), &prefs, &repo, "squash", "2222").unwrap_err(), "gh/head_changed");
+    assert_eq!(fake.count("merge"), 0);
     // 仓库不允许的方式。
-    let fake = FakeGh { repo_view: r#"{"mergeCommitAllowed":false,"rebaseMergeAllowed":false,"squashMergeAllowed":true}"#.into(), ..FakeGh::new() };
+    let fake = FakeGithub { repo_view: serde_json::json!({ "mergeCommitAllowed": false, "rebaseMergeAllowed": false, "squashMergeAllowed": true }), ..FakeGithub::new() };
     assert_eq!(merge(&fake, &Caches::default(), &prefs, &repo, "rebase", HEAD).unwrap_err(), "gh/method_not_allowed");
-    // gh 太旧：没有 --match-head-commit 就不合。
-    let fake = FakeGh { merge_help: "Flags:\n  --squash".into(), ..FakeGh::new() };
-    assert_eq!(merge(&fake, &Caches::default(), &prefs, &repo, "squash", HEAD).unwrap_err(), "gh/too_old");
-    assert_eq!(fake.count("pr merge 12"), 0);
+    assert_eq!(fake.count("merge"), 0);
 }
 
 #[test]
-fn 合并_无检查允许_带头提交_不删分支_记住方式() {
+fn 合并_无检查允许_钉住头提交_不删分支_记住方式() {
     let sb = Sandbox::new("merge-ok");
     let repo = github_repo(&sb);
     let prefs = sb.root.join("forge.json");
     let caches = Caches::default();
-    let fake = FakeGh::new().views(vec![ok(&fixture("derived_pr_no_checks.json")), ok(&fixture("derived_pr_no_checks_merged.json"))]);
+    let fake = FakeGithub::new().views(&["derived_pr_no_checks.json", "derived_pr_no_checks_merged.json"]);
     let result = merge(&fake, &caches, &prefs, &repo, "squash", HEAD).unwrap();
     assert_eq!(result, MergeResultDto { merged: true, queued: false });
-    let calls = fake.calls.lock().unwrap().clone();
-    let merge_call = calls.iter().find(|c| c.starts_with("pr merge 12")).unwrap();
-    assert_eq!(merge_call, &format!("pr merge 12 --squash --match-head-commit {HEAD} --repo larrygogo/meowo-pr-drill"));
-    assert!(!merge_call.contains("--delete-branch"));
+    let (method, url, body) = fake.first("merge");
+    assert_eq!((method.as_str(), url.as_str()), ("PUT", "https://api.github.com/repos/larrygogo/meowo-pr-drill/pulls/12/merge"));
+    assert_eq!(body, serde_json::json!({ "merge_method": "squash", "sha": HEAD }), "钉住头提交，不带删分支");
+    assert!(!fake.calls().iter().any(|(m, u, _)| m == "DELETE" || u.contains("/git/refs")), "不删远端分支：{:?}", fake.calls());
     assert_eq!(last_merge_method(&prefs, "larrygogo/meowo-pr-drill").as_deref(), Some("squash"));
-    let fake = FakeGh::new();
+    let fake = FakeGithub::new();
     assert_eq!(status(&fake, &caches, &prefs, &repo, false).last_merge_method.as_deref(), Some("squash"));
 }
 
 /// 做空审查：合并成功后 GitHub 有延迟，立刻 view 还是 OPEN，以前就被当成「已加入合并队列」，
-/// 还记进 queued 缓存，之后刷新一直挂着「在队列里」。只有 gh 明说进了队列才算排队。
+/// 还记进 queued 缓存，之后刷新一直挂着「在队列里」。只有明说进了队列才算排队。
 #[test]
 fn 合并_成功后立刻查还是_open_不当成进了队列_按已合并_下次刷新以服务器为准() {
     let sb = Sandbox::new("merge-lag");
     let repo = github_repo(&sb);
     let prefs = sb.root.join("forge.json");
     let caches = Caches::default();
-    let open = ok(&fixture("derived_pr_no_checks.json"));
-    let fake = FakeGh {
-        merge_out: CmdOut { code: Some(0), stderr: "✓ Squashed and merged pull request larrygogo/meowo-pr-drill#12".into(), ..Default::default() },
-        ..FakeGh::new().views(vec![open.clone(), open, ok(&fixture("derived_pr_no_checks_merged.json"))])
-    };
+    let fake = FakeGithub::new().views(&["derived_pr_no_checks.json", "derived_pr_no_checks.json", "derived_pr_no_checks_merged.json"]);
     let result = merge(&fake, &caches, &prefs, &repo, "squash", HEAD).unwrap();
     assert_eq!(result, MergeResultDto { merged: true, queued: false });
+    assert_eq!(fake.count("enqueue"), 0);
     assert!(caches.queued.lock().unwrap().is_empty(), "没进队列就不记队列标记");
     let pr = status(&fake, &caches, &prefs, &repo, false).pr.unwrap();
     assert_eq!((pr.state.as_str(), pr.queued), ("merged", false), "下一次刷新以服务器为准");
@@ -820,37 +956,37 @@ fn 合并_进了合并队列不说已合并_刷新后仍显示在队列里() {
     let repo = github_repo(&sb);
     let prefs = sb.root.join("forge.json");
     let caches = Caches::default();
-    let open = ok(&fixture("derived_pr_no_checks.json"));
-    let fake = FakeGh {
-        merge_out: CmdOut { code: Some(0), stderr: "✓ Pull request larrygogo/meowo-pr-drill#12 will be added to the merge queue for main when ready".into(), ..Default::default() },
-        ..FakeGh::new().views(vec![open.clone(), open])
-    };
+    let fake = FakeGithub { merge: MergeReply::Queue, ..FakeGithub::new().views(&["derived_pr_no_checks.json"]) };
     let result = merge(&fake, &caches, &prefs, &repo, "merge", HEAD).unwrap();
     assert_eq!(result, MergeResultDto { merged: false, queued: true });
+    let (_, _, body) = fake.first("enqueue");
+    assert_eq!(body["variables"]["input"], serde_json::json!({ "pullRequestId": "PR_kwDO", "expectedHeadOid": HEAD }), "入队也钉住头提交");
     let dto = status(&fake, &caches, &prefs, &repo, false);
     let pr = dto.pr.unwrap();
     assert_eq!((pr.state.as_str(), pr.queued), ("open", true));
 }
 
+/// 改版前：没装 gh → `gh/not_installed`。现在：github.com 没添加账号 → `forge/no_account: github`（前端改开网页、
+/// 引导去设置添加账号），不推送、不发请求。
 #[test]
-fn 开_pr_没装_gh_报错_前端改开网页() {
+fn 开_pr_github_没账号_报错_前端改开网页() {
     let sb = Sandbox::new("create-missing");
     let repo = github_repo(&sb);
-    let fake = FakeGh { installed: false, ..FakeGh::new() };
-    let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches: &Caches::default(), prefs: sb.root.join("forge.json"), env: &[] };
-    let err = pr_create_with(&ctx, &s(&repo), None, None, None, false, &|_| panic!("没 gh 不该推")).unwrap_err();
-    assert_eq!(err, "gh/not_installed");
+    let fake = FakeGithub { account: None, ..FakeGithub::new() };
+    let caches = Caches::default();
+    let ctx = ctx_of(&fake, &caches, &sb.root.join("forge.json"));
+    let err = pr_create_with(&ctx, &s(&repo), None, None, None, false, &|_| panic!("没账号不该推")).unwrap_err();
+    assert_eq!(err, "forge/no_account: github");
+    assert!(fake.calls().is_empty());
 }
 
 #[test]
 fn 开_pr_先推再建_默认标题正文_已有_pr_带回链接() {
     let sb = Sandbox::new("create-ok");
     let repo = github_repo(&sb);
-    let fake = FakeGh::new().views(vec![ok(&fixture("derived_pr_no_checks.json"))]);
-    let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
+    let fake = FakeGithub::new().views(&["derived_pr_no_checks.json"]);
     let caches = Caches::default();
-    let ctx = Ctx { gh: &gh, caches: &caches, prefs: sb.root.join("forge.json"), env: &[] };
+    let ctx = ctx_of(&fake, &caches, &sb.root.join("forge.json"));
     let pushed = std::sync::atomic::AtomicUsize::new(0);
     let push = |_: &str| {
         pushed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -859,42 +995,44 @@ fn 开_pr_先推再建_默认标题正文_已有_pr_带回链接() {
     let pr = pr_create_with(&ctx, &s(&repo), None, None, None, false, &push).unwrap();
     assert_eq!(pr.number, 12);
     assert_eq!(pushed.load(std::sync::atomic::Ordering::SeqCst), 1, "没上游：先推");
-    let create = fake.calls.lock().unwrap().iter().find(|c| c.starts_with("pr create")).cloned().unwrap();
-    assert_eq!(create, "pr create --title feat: drill one --body - feat: drill one --base main --head meowo/drill --repo larrygogo/meowo-pr-drill");
+    let (method, url, body) = fake.first("create");
+    assert_eq!((method.as_str(), url.as_str()), ("POST", "https://api.github.com/repos/larrygogo/meowo-pr-drill/pulls"));
+    assert_eq!(body, serde_json::json!({ "title": "feat: drill one", "body": "- feat: drill one", "base": "main", "head": "meowo/drill", "draft": false }));
 
-    let exists = FakeGh {
-        create_out: fail("a pull request for branch \"meowo/drill\" into branch \"main\" already exists:\nhttps://github.com/larrygogo/meowo-pr-drill/pull/7"),
-        ..FakeGh::new()
-    };
-    let gh = |dir: &str, args: &[&str]| exists.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches: &Caches::default(), prefs: sb.root.join("forge.json"), env: &[] };
+    let exists = FakeGithub { create: None, ..FakeGithub::new() };
+    let caches = Caches::default();
+    let ctx = ctx_of(&exists, &caches, &sb.root.join("forge.json"));
     let err = pr_create_with(&ctx, &s(&repo), Some("自定义标题"), Some("正文"), Some("main"), true, &push).unwrap_err();
     assert_eq!(err, "gh/pr_exists: https://github.com/larrygogo/meowo-pr-drill/pull/7");
-    let create = exists.calls.lock().unwrap().iter().find(|c| c.starts_with("pr create")).cloned().unwrap();
-    assert!(create.starts_with("pr create --title 自定义标题 --body 正文 --base main") && create.contains(" --draft"), "{create}");
+    let (_, _, body) = exists.first("create");
+    assert_eq!(body, serde_json::json!({ "title": "自定义标题", "body": "正文", "base": "main", "head": "meowo/drill", "draft": true }));
+    let (_, url, _) = exists.first("exists");
+    assert_eq!(url, "https://api.github.com/repos/larrygogo/meowo-pr-drill/pulls?state=open&head=larrygogo%3Ameowo%2Fdrill&base=main");
 }
 
 #[test]
 fn 开_pr_上游是_origin_main_先推同名分支_head_是功能分支_不碰_main() {
     let sb = Sandbox::new("create-feat-main");
     let (repo, remote) = feat_tracking_main(&sb, "r");
+    // 远端写成 GitHub 地址（PR 开在 github.com），推送经 insteadOf 落到本地 bare 仓库。改版前远端是本地路径时交给
+    // 本机 gh 自己认；现在认不出平台的远端不发请求（forge/unknown_host），所以这里显式给 GitHub 地址。
+    let gh_url = "https://github.com/larrygogo/meowo-pr-drill.git";
+    sb.git(&repo, &["remote", "set-url", "origin", gh_url]);
+    sb.git(&repo, &["config", &format!("url.{}.insteadOf", remote.to_string_lossy()), gh_url]);
     let main_before = sb.git(&remote, &["rev-parse", "main"]);
-    let fake = FakeGh::new().views(vec![ok(&fixture("derived_pr_no_checks.json"))]);
-    let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
+    let fake = FakeGithub::new().views(&["derived_pr_no_checks.json"]);
     let owned = sb.env();
     let env: Vec<(&str, Option<&str>)> = owned.iter().map(|(k, v)| (*k, v.as_deref())).collect();
     let caches = Caches::default();
-    let ctx = Ctx { gh: &gh, caches: &caches, prefs: sb.root.join("forge.json"), env: &env };
+    let ctx = Ctx { forges: &fake, caches: &caches, prefs: sb.root.join("forge.json"), env: &env };
     let real_push = |dir: &str| push_with(dir, &env, Duration::from_secs(60));
     pr_create_with(&ctx, &s(&repo), None, None, None, false, &real_push).unwrap();
     assert_eq!(sb.git(&remote, &["rev-parse", "main"]), main_before, "开 PR 前的推送不能进 main");
     assert_eq!(sb.git(&remote, &["rev-parse", "feat"]), sb.git(&repo, &["rev-parse", "HEAD"]));
-    let create = fake.calls.lock().unwrap().iter().find(|c| c.starts_with("pr create")).cloned().unwrap();
-    assert!(create.contains("--base main --head feat"), "{create}");
+    let (_, _, body) = fake.first("create");
+    assert_eq!((body["base"].as_str(), body["head"].as_str()), (Some("main"), Some("feat")), "{body}");
 }
 
-/// 做空第一轮：fork + upstream 两个远端、没设 gh default repo 时，gh pr view/create/merge 不带 --repo
-/// 会报 set-default，所以一律显式带 --repo；pr view 带了 --repo 之后 gh 不再认当前分支，必须把分支名作参数。
 /// 做空第二轮：两个都是 GitHub 远端又没定时，静默挑 origin 会把 PR 开错仓库。查状态暂按 origin，
 /// 开 PR / 合并返回 gh/ambiguous_repo，界面给出远端列表；选了之后按选的仓库、head 带 fork owner。
 #[test]
@@ -904,10 +1042,9 @@ fn 多个_github_远端没定_查状态按_origin_开_pr_合并要先选_选了�
     sb.git(&repo, &["remote", "add", "upstream", "https://github.com/someone-else/meowo-pr-drill.git"]);
     let prefs = sb.root.join("forge.json");
     let caches = Caches::default();
-    let open = ok(&fixture("derived_pr_no_checks.json"));
-    let fake = FakeGh { require_repo: true, ..FakeGh::new().views(vec![open.clone()]) };
+    let fake = FakeGithub::new().views(&["derived_pr_no_checks.json"]);
     let dto = status(&fake, &caches, &prefs, &repo, false);
-    assert_eq!(dto.pr.map(|p| p.number), Some(12), "带 --repo 才查得到 PR");
+    assert_eq!(dto.pr.map(|p| p.number), Some(12));
     assert!(dto.repo_needs_choice);
     assert_eq!(dto.repo_remote.as_deref(), Some("origin"));
     let choices: Vec<(String, String)> = dto.repo_choices.iter().map(|c| (c.remote.clone(), c.slug.clone())).collect();
@@ -918,39 +1055,64 @@ fn 多个_github_远端没定_查状态按_origin_开_pr_合并要先选_选了�
             ("upstream".to_string(), "someone-else/meowo-pr-drill".to_string())
         ]
     );
-    let view = fake.calls.lock().unwrap().iter().find(|c| c.starts_with("pr view")).cloned().unwrap();
-    assert!(view.starts_with("pr view meowo/drill --repo larrygogo/meowo-pr-drill"), "{view}");
+    let (_, _, body) = fake.first("view");
+    assert_eq!(body["variables"], serde_json::json!({ "owner": "larrygogo", "name": "meowo-pr-drill", "head": "meowo/drill" }));
     assert_eq!(merge(&fake, &caches, &prefs, &repo, "squash", HEAD), Err("gh/ambiguous_repo".into()));
-    assert_eq!(fake.count("pr merge 12"), 0);
-    let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches: &caches, prefs: prefs.clone(), env: &[] };
+    assert_eq!(fake.count("merge"), 0);
+    let ctx = ctx_of(&fake, &caches, &prefs);
     assert_eq!(pr_create_with(&ctx, &s(&repo), None, None, None, false, &|_| panic!("没定仓库不该推")), Err("gh/ambiguous_repo".into()));
-    assert_eq!(fake.count("pr create"), 0);
+    assert_eq!(fake.count("create"), 0);
 
     // 界面上选了 upstream：记在测试的 forge.json 里，按公共 .git 目录。
-    assert_eq!(choose_repo_with(&prefs, &s(&repo), "nope", &[]), Err("git/no_remote".into()));
-    choose_repo_with(&prefs, &s(&repo), "upstream", &[]).unwrap();
+    assert_eq!(choose_repo_with(&prefs, &s(&repo), "nope", &[], &fake), Err("git/no_remote".into()));
+    choose_repo_with(&prefs, &s(&repo), "upstream", &[], &fake).unwrap();
     assert!(std::fs::read_to_string(&prefs).unwrap().contains("\"repoRemote\""));
-    let fake = FakeGh { require_repo: true, ..FakeGh::new().views(vec![open.clone(), open.clone(), ok(&fixture("derived_pr_no_checks_merged.json"))]) };
+    let fake = FakeGithub::new().views(&["derived_pr_no_checks.json", "derived_pr_no_checks.json", "derived_pr_no_checks_merged.json"]);
     let dto = status(&fake, &caches, &prefs, &repo, false);
     assert!(!dto.repo_needs_choice);
     assert_eq!((dto.repo_remote.as_deref(), dto.repo_choices.len()), (Some("upstream"), 2), "选过之后还能换");
     assert_eq!(dto.repo_url.as_deref(), Some("https://github.com/someone-else/meowo-pr-drill"));
     assert!(merge(&fake, &caches, &prefs, &repo, "squash", HEAD).unwrap().merged);
-    let calls = fake.calls.lock().unwrap().clone();
-    let view = calls.iter().find(|c| c.starts_with("pr view")).unwrap();
-    assert!(view.starts_with("pr view larrygogo:meowo/drill --repo someone-else/meowo-pr-drill"), "{view}");
-    let merge_call = calls.iter().find(|c| c.starts_with("pr merge 12")).unwrap();
-    assert!(merge_call.contains("--repo someone-else/meowo-pr-drill"), "{merge_call}");
+    let (_, _, body) = fake.first("view");
+    assert_eq!(body["variables"], serde_json::json!({ "owner": "someone-else", "name": "meowo-pr-drill", "head": "meowo/drill" }), "按上游仓库查");
+    let (_, url, _) = fake.first("merge");
+    assert_eq!(url, "https://api.github.com/repos/someone-else/meowo-pr-drill/pulls/12/merge");
     assert_eq!(last_merge_method(&prefs, "someone-else/meowo-pr-drill").as_deref(), Some("squash"), "合并方式按 PR 所在仓库记");
 
-    let fake = FakeGh { require_repo: true, ..FakeGh::new().views(vec![open]) };
-    let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches: &Caches::default(), prefs: prefs.clone(), env: &[] };
+    let fake = FakeGithub::new().views(&["derived_pr_no_checks.json"]);
+    let caches = Caches::default();
+    let ctx = ctx_of(&fake, &caches, &prefs);
     let push = |_: &str| Ok(PushResultDto { remote: "origin".into(), branch: "meowo/drill".into(), set_upstream: true, pushed: 1 });
     pr_create_with(&ctx, &s(&repo), None, None, None, false, &push).unwrap();
-    let create = fake.calls.lock().unwrap().iter().find(|c| c.starts_with("pr create")).cloned().unwrap();
-    assert!(create.ends_with("--head larrygogo:meowo/drill --repo someone-else/meowo-pr-drill"), "{create}");
+    let (_, url, body) = fake.first("create");
+    assert_eq!(url, "https://api.github.com/repos/someone-else/meowo-pr-drill/pulls");
+    assert_eq!(body["head"].as_str(), Some("larrygogo:meowo/drill"), "{body}");
+}
+
+/// worktree 清理查 PR：改版前在目录里跑 `gh pr view --json number,state,headRefOid`；现在经平台接口按当前分支查。
+/// 已合并 → MERGED（带头提交）；没有 PR → NoPr；github.com 没账号 → Unavailable（交给本地判定），不发请求。
+#[test]
+fn worktree_清理查_pr_经平台接口_没账号算查不了() {
+    use crate::worktree::PrLookup;
+    let sb = Sandbox::new("wt-lookup");
+    let repo = github_repo(&sb);
+    let prefs = sb.root.join("forge.json");
+    let caches = Caches::default();
+    let merged = FakeGithub::new().views(&["derived_pr_no_checks_merged.json"]);
+    let want: serde_json::Value = serde_json::from_str(&fixture("derived_pr_no_checks_merged.json")).unwrap();
+    assert_eq!(
+        platform_pr_lookup_with(&ctx_of(&merged, &caches, &prefs), &s(&repo)),
+        PrLookup::Found { number: 12, state: "MERGED".into(), head_oid: want["headRefOid"].as_str().unwrap().into() }
+    );
+    let (_, _, body) = merged.first("view");
+    assert_eq!(body["variables"]["head"], "meowo/drill");
+    assert_eq!(platform_pr_lookup_with(&ctx_of(&FakeGithub::new(), &caches, &prefs), &s(&repo)), PrLookup::NoPr);
+    let none = FakeGithub { account: None, ..FakeGithub::new() };
+    assert_eq!(platform_pr_lookup_with(&ctx_of(&none, &caches, &prefs), &s(&repo)), PrLookup::Unavailable);
+    assert!(none.calls().is_empty());
+    let stale = FakeGithub { account: Some(GhState::Unauthed), ..FakeGithub::new() };
+    assert_eq!(platform_pr_lookup_with(&ctx_of(&stale, &caches, &prefs), &s(&repo)), PrLookup::Unavailable);
+    assert!(stale.calls().is_empty());
 }
 
 /// 只有一个 GitHub 远端（另一个是公司 GitLab 镜像）：直接用它，不要求选。
@@ -960,9 +1122,30 @@ fn 只有一个_github_远端_直接用_不要求选() {
     let repo = github_repo(&sb);
     sb.git(&repo, &["remote", "add", "mirror", "https://gitlab.com/o/meowo-pr-drill.git"]);
     let prefs = sb.root.join("forge.json");
-    let dto = status(&FakeGh::new(), &Caches::default(), &prefs, &repo, false);
+    let dto = status(&FakeGithub::new(), &Caches::default(), &prefs, &repo, false);
     assert!(!dto.repo_needs_choice && dto.repo_choices.is_empty());
     assert_eq!(dto.repo_url.as_deref(), Some("https://github.com/larrygogo/meowo-pr-drill"));
+}
+
+/// 审查指出的回退：origin 在 gitlab.com、分支推在 github.com 的远端、没加 GitLab 账号（有 GitHub 账号）。「更改」
+/// 面板照常显示 GitHub 的 PR；不能因为 origin 认得出是 GitLab 就整块变成「去添加账号」。
+#[test]
+fn origin_在_gitlab_没账号_另一远端在_github_照常用_github() {
+    let sb = Sandbox::new("gl-origin");
+    let repo = github_repo(&sb);
+    sb.git(&repo, &["remote", "rename", "origin", "gh"]);
+    sb.git(&repo, &["remote", "add", "origin", "https://gitlab.com/o/meowo-pr-drill.git"]);
+    let init = sb.git(&repo, &["rev-parse", "HEAD~1"]);
+    sb.git(&repo, &["update-ref", "refs/remotes/gh/main", &init]);
+    sb.git(&repo, &["update-ref", "refs/remotes/gh/meowo/drill", &init]);
+    sb.git(&repo, &["branch", "-q", "--set-upstream-to", "gh/meowo/drill"]);
+    let prefs = sb.root.join("forge.json");
+    let fake = FakeGithub::new().views(&["derived_pr_no_checks.json"]);
+    let dto = status(&fake, &Caches::default(), &prefs, &repo, false);
+    assert_eq!((dto.gh.as_str(), dto.forge.as_deref()), ("ok", Some("github")));
+    assert_eq!(dto.repo_url.as_deref(), Some("https://github.com/larrygogo/meowo-pr-drill"));
+    assert_eq!(dto.pr.map(|p| p.number), Some(12));
+    assert!(!dto.repo_needs_choice);
 }
 
 // ═══ 推送 / PR 目标判定（做空第二轮，scratchpad/redteam2r 的 rt2_ 实验转正）═══
@@ -1024,30 +1207,6 @@ fn 目标判定_跟踪不同名的功能分支_推到这个上游_不另建同�
     assert_eq!(sb.git(&repo, &["rev-parse", "--abbrev-ref", "fix@{upstream}"]), "origin/bugfix-123", "上游不改");
 }
 
-/// 同上，PR 这一侧：PR 的 head 是推去的远端分支 bugfix-123，查 PR、开 PR、compare 链接都按它。
-#[test]
-fn 目标判定_跟踪不同名的功能分支_pr_按上游分支查和开() {
-    let sb = Sandbox::new("tgt-rename-pr");
-    let repo = github_repo(&sb);
-    let head = sb.git(&repo, &["rev-parse", "HEAD"]);
-    sb.git(&repo, &["update-ref", "refs/remotes/origin/bugfix-123", &head]);
-    sb.git(&repo, &["config", "branch.meowo/drill.remote", "origin"]);
-    sb.git(&repo, &["config", "branch.meowo/drill.merge", "refs/heads/bugfix-123"]);
-    let prefs = sb.root.join("forge.json");
-    let fake = FakeGh::new();
-    let dto = status(&fake, &Caches::default(), &prefs, &repo, false);
-    assert_eq!(dto.compare_url.as_deref(), Some("https://github.com/larrygogo/meowo-pr-drill/compare/main...bugfix-123?expand=1"));
-    let view = fake.calls.lock().unwrap().iter().find(|c| c.starts_with("pr view")).cloned().unwrap();
-    assert!(view.starts_with("pr view bugfix-123 --repo larrygogo/meowo-pr-drill"), "{view}");
-
-    let fake = FakeGh::new().views(vec![ok(&fixture("derived_pr_no_checks.json"))]);
-    let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches: &Caches::default(), prefs, env: &[] };
-    pr_create_with(&ctx, &s(&repo), None, None, None, false, &|_| panic!("已推到上游，不该再推")).unwrap();
-    let create = fake.calls.lock().unwrap().iter().find(|c| c.starts_with("pr create")).cloned().unwrap();
-    assert!(create.contains("--base main --head bugfix-123 --repo larrygogo/meowo-pr-drill"), "{create}");
-}
-
 /// 做空第二轮 rt2_push_default_与同名上游：feat 跟踪 origin/feat，remote.pushDefault=fork。git 原生 push
 /// 去 fork（pushDefault 优先于 branch.<b>.remote）；以前 Meowo 沿用同名上游推回 origin，摘要也写 origin/feat。
 /// 再看 branch.<b>.pushRemote 压过 pushDefault。
@@ -1080,35 +1239,101 @@ fn 目标判定_push_default_与_push_remote_优先于上游远端_与_git_一�
     assert_eq!(summary.push_target.as_deref(), Some("other/feat"), "branch.<b>.pushRemote 压过 remote.pushDefault");
 }
 
-/// 做空第二轮 rt2_fork_工作流_set_default_被无视：origin 是自己的 fork，upstream 是上游仓库，已
-/// `gh repo set-default upstream`（gh 写 remote.upstream.gh-resolved=base）。PR 应开在上游仓库、head 写
-/// `<fork owner>:<分支>`；以前一律 `--repo` origin，PR 开到了自己的 fork 里。
+/// 同上，PR 这一侧：PR 的 head 是推去的远端分支 bugfix-123，查 PR、开 PR、compare 链接都按它。
 #[test]
-fn 目标判定_fork_工作流_认_gh_set_default_head_带_fork_owner() {
+fn 目标判定_跟踪不同名的功能分支_pr_按上游分支查和开() {
+    let sb = Sandbox::new("tgt-rename-pr");
+    let repo = github_repo(&sb);
+    let head = sb.git(&repo, &["rev-parse", "HEAD"]);
+    sb.git(&repo, &["update-ref", "refs/remotes/origin/bugfix-123", &head]);
+    sb.git(&repo, &["config", "branch.meowo/drill.remote", "origin"]);
+    sb.git(&repo, &["config", "branch.meowo/drill.merge", "refs/heads/bugfix-123"]);
+    let prefs = sb.root.join("forge.json");
+    let fake = FakeGithub::new();
+    let dto = status(&fake, &Caches::default(), &prefs, &repo, false);
+    assert_eq!(dto.compare_url.as_deref(), Some("https://github.com/larrygogo/meowo-pr-drill/compare/main...bugfix-123?expand=1"));
+    let (_, _, body) = fake.first("view");
+    assert_eq!(body["variables"], serde_json::json!({ "owner": "larrygogo", "name": "meowo-pr-drill", "head": "bugfix-123" }));
+
+    let fake = FakeGithub::new().views(&["derived_pr_no_checks.json"]);
+    let caches = Caches::default();
+    let ctx = ctx_of(&fake, &caches, &prefs);
+    pr_create_with(&ctx, &s(&repo), None, None, None, false, &|_| panic!("已推到上游，不该再推")).unwrap();
+    let (_, url, body) = fake.first("create");
+    assert_eq!(url, "https://api.github.com/repos/larrygogo/meowo-pr-drill/pulls");
+    assert_eq!((body["base"].as_str(), body["head"].as_str()), (Some("main"), Some("bugfix-123")), "{body}");
+}
+
+/// fork 工作流：origin 是自己的 fork，upstream 是上游仓库。改版前认 gh 写的 `remote.upstream.gh-resolved=base`
+///（`gh repo set-default upstream`）；现在 Meowo 不依赖 gh，这个配置不再读：两个 GitHub 远端没定时先按 origin、
+/// 要求在界面里选（leader 2026-11-18「取消gh」）。选了 upstream 之后 PR 开在上游仓库、head 写 `<fork owner>:<分支>`。
+#[test]
+fn 目标判定_fork_工作流_不读_gh_resolved_选了上游后_head_带_fork_owner() {
     let sb = Sandbox::new("tgt-fork");
     let repo = github_repo(&sb);
     sb.git(&repo, &["remote", "add", "upstream", "https://github.com/someone-else/meowo-pr-drill.git"]);
     sb.git(&repo, &["config", "remote.upstream.gh-resolved", "base"]);
     let prefs = sb.root.join("forge.json");
-    let fake = FakeGh::new();
+    let fake = FakeGithub::new();
+    let dto = status(&fake, &Caches::default(), &prefs, &repo, false);
+    assert!(dto.repo_needs_choice, "gh-resolved 不再算「定过」");
+    assert_eq!(dto.repo_remote.as_deref(), Some("origin"));
+
+    choose_repo_with(&prefs, &s(&repo), "upstream", &[], &fake).unwrap();
+    let fake = FakeGithub::new();
     let dto = status(&fake, &Caches::default(), &prefs, &repo, false);
     assert_eq!(dto.repo_url.as_deref(), Some("https://github.com/someone-else/meowo-pr-drill"));
     assert_eq!(
         dto.compare_url.as_deref(),
         Some("https://github.com/someone-else/meowo-pr-drill/compare/main...larrygogo:meowo/drill?expand=1")
     );
-    let calls = fake.calls.lock().unwrap().clone();
-    assert!(calls.iter().any(|c| c.starts_with("repo view someone-else/meowo-pr-drill ")), "合并方式按上游仓库查：{calls:?}");
-    let view = calls.iter().find(|c| c.starts_with("pr view")).unwrap();
-    assert!(view.starts_with("pr view larrygogo:meowo/drill --repo someone-else/meowo-pr-drill"), "{view}");
+    let (_, _, body) = fake.first("repo");
+    assert_eq!(body["variables"], serde_json::json!({ "owner": "someone-else", "name": "meowo-pr-drill" }), "合并方式按上游仓库查");
+    let (_, _, body) = fake.first("view");
+    assert_eq!(body["variables"], serde_json::json!({ "owner": "someone-else", "name": "meowo-pr-drill", "head": "meowo/drill" }));
 
-    let fake = FakeGh::new().views(vec![ok(&fixture("derived_pr_no_checks.json"))]);
-    let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches: &Caches::default(), prefs, env: &[] };
+    let fake = FakeGithub::new().views(&["derived_pr_no_checks.json"]);
+    let caches = Caches::default();
+    let ctx = ctx_of(&fake, &caches, &prefs);
     let push = |_: &str| Ok(PushResultDto { remote: "origin".into(), branch: "meowo/drill".into(), set_upstream: true, pushed: 1 });
     pr_create_with(&ctx, &s(&repo), None, None, None, false, &push).unwrap();
-    let create = fake.calls.lock().unwrap().iter().find(|c| c.starts_with("pr create")).cloned().unwrap();
-    assert!(create.ends_with("--base main --head larrygogo:meowo/drill --repo someone-else/meowo-pr-drill"), "{create}");
+    let (_, url, body) = fake.first("create");
+    assert_eq!(url, "https://api.github.com/repos/someone-else/meowo-pr-drill/pulls");
+    assert_eq!((body["base"].as_str(), body["head"].as_str()), (Some("main"), Some("larrygogo:meowo/drill")), "{body}");
+}
+
+// ═══ 真机演练用（#[ignore] 的测试共用；令牌只在内存里，绝不打印）═══
+
+/// 真机演练的 github.com 令牌：环境变量 MEOWO_GITHUB_TOKEN（或 GH_TOKEN），没有就读 Meowo 自己存在系统凭据库里的
+/// github.com 账号。Meowo 不调用本机 gh，所以不再从 `gh auth token` 拿。
+pub(super) fn live_token() -> crate::github::Token {
+    for key in ["MEOWO_GITHUB_TOKEN", "GH_TOKEN"] {
+        if let Some(token) = std::env::var(key).ok().and_then(|t| crate::github::Token::new(t.trim())) {
+            return token;
+        }
+    }
+    crate::github::token().expect("没有 github.com 令牌：设 MEOWO_GITHUB_TOKEN，或先在 Meowo 设置里添加 github.com 账号")
+}
+
+/// 真机演练的账号：github.com = 真 HTTP + 令牌上的内置实现，其他主机没有账号。
+pub(super) struct LiveGithub(pub(super) crate::github::Token);
+
+impl Forges for LiveGithub {
+    fn platform(&self, host: &str) -> Option<Platform> {
+        platform::public_platform(host)
+    }
+    fn open(&self, host: &str) -> Option<Box<dyn ForgeApi + '_>> {
+        (platform::host_name(host) == platform::GITHUB_COM).then(|| {
+            Box::new(super::builtin::forge(
+                Box::new(crate::github::RealHttp),
+                super::builtin::Endpoints::github_com(),
+                Some(self.0.clone()),
+                GhState::Ok,
+                std::env::temp_dir().join("meowo-live-forge.json"),
+                Box::new(|_| {}),
+            )) as Box<dyn ForgeApi>
+        })
+    }
 }
 
 // 侧栏 PR / CI 与改动数的节流（UI 优化 #54），单独一个文件。
@@ -1116,5 +1341,8 @@ mod badge;
 
 mod title_pr;
 
-// Meowo 登录模式的内置 gh（forge/builtin.rs）。
+// GitHub 的内置实现（forge/builtin.rs）。
 mod builtin;
+
+// GitLab / Gitea / Bitbucket / GitHub 企业版的平台实现。
+mod platforms;

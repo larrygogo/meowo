@@ -8,4 +8,8 @@ state: string,
 /**
  * 检查汇总 `none` / `pass` / `fail` / `pending`；拿不到时 None。
  */
-checks?: string, url: string, title: string, };
+checks?: string, url: string, title: string, 
+/**
+ * 平台（同 PullRequestDto.forge；GitHub 不填）。
+ */
+forge?: string, };

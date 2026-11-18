@@ -1,0 +1,106 @@
+[
+ {
+  "id": 18129343459,
+  "name": "tests:coverage",
+  "stage": "test",
+  "status": "success",
+  "web_url": "https://gitlab.com/johan.walles/cli/-/jobs/18129343459",
+  "allow_failure": false
+ },
+ {
+  "id": 18129343458,
+  "name": "tests:integration",
+  "stage": "test",
+  "status": "success",
+  "web_url": "https://gitlab.com/johan.walles/cli/-/jobs/18129343458",
+  "allow_failure": false
+ },
+ {
+  "id": 18129343457,
+  "name": "tests:unit",
+  "stage": "test",
+  "status": "success",
+  "web_url": "https://gitlab.com/johan.walles/cli/-/jobs/18129343457",
+  "allow_failure": false
+ },
+ {
+  "id": 18129343456,
+  "name": "lint",
+  "stage": "test",
+  "status": "success",
+  "web_url": "https://gitlab.com/johan.walles/cli/-/jobs/18129343456",
+  "allow_failure": false
+ },
+ {
+  "id": 18129343455,
+  "name": "lint:comments",
+  "stage": "test",
+  "status": "success",
+  "web_url": "https://gitlab.com/johan.walles/cli/-/jobs/18129343455",
+  "allow_failure": false
+ },
+ {
+  "id": 18129343454,
+  "name": "docs hugo_build",
+  "stage": "documentation",
+  "status": "success",
+  "web_url": "https://gitlab.com/johan.walles/cli/-/jobs/18129343454",
+  "allow_failure": false
+ },
+ {
+  "id": 18129343453,
+  "name": "check_docs_markdown",
+  "stage": "documentation",
+  "status": "success",
+  "web_url": "https://gitlab.com/johan.walles/cli/-/jobs/18129343453",
+  "allow_failure": false
+ },
+ {
+  "id": 18129343452,
+  "name": "check_docs_update",
+  "stage": "documentation",
+  "status": "success",
+  "web_url": "https://gitlab.com/johan.walles/cli/-/jobs/18129343452",
+  "allow_failure": false
+ },
+ {
+  "id": 18129343451,
+  "name": "check_args",
+  "stage": "checks",
+  "status": "success",
+  "web_url": "https://gitlab.com/johan.walles/cli/-/jobs/18129343451",
+  "allow_failure": false
+ },
+ {
+  "id": 18129343450,
+  "name": "check_embed",
+  "stage": "checks",
+  "status": "success",
+  "web_url": "https://gitlab.com/johan.walles/cli/-/jobs/18129343450",
+  "allow_failure": false
+ },
+ {
+  "id": 18129343449,
+  "name": "lint_commit",
+  "stage": "checks",
+  "status": "success",
+  "web_url": "https://gitlab.com/johan.walles/cli/-/jobs/18129343449",
+  "allow_failure": false
+ },
+ {
+  "id": 18129343448,
+  "name": "check_go_generated_code",
+  "stage": "checks",
+  "status": "success",
+  "web_url": "https://gitlab.com/johan.walles/cli/-/jobs/18129343448",
+  "allow_failure": false
+ },
+ {
+  "id": 18129343447,
+  "name": "govulncheck",
+  "stage": "application-security-testing",
+  "status": "manual",
+  "web_url": "https://gitlab.com/johan.walles/cli/-/jobs/18129343447",
+  "allow_failure": true
+ }
+]

@@ -2,11 +2,14 @@
 //! 在一个专门的私有演练仓库里，用二期新写的后端函数完整走一遍
 //! 建 worktree → 提交 → push → 开 PR → 等 CI → CI 失败的 PR 合不了 → 合并 → 本地判定可清理 → 删 worktree。
 //!
-//! 会对远端写入，所以默认 ignored，并且只在显式给出演练仓库路径时才跑：
+//! 会对远端写入，所以默认 ignored，并且只在显式给出演练仓库路径时才跑（令牌见 [`live_token`]，不打印）：
 //! `MEOWO_DRILL_REPO=<演练仓库的本地克隆> cargo test -p meowo-app --lib drill -- --ignored --nocapture`
+//!
+//! 「取消gh」之后：PR 全程走 github.com 账号 + 内置实现（与正式版同一条路），关掉故意失败的 PR 也改用 REST，不再调 gh。
 //! 演练仓库要求：main 上有一个必跑的 CI 检查；另有一个 `ci-fail` 分支会让检查失败。
 //! 不碰 ~/.meowo：合并方式偏好写到临时目录，setup 日志也写临时目录。
 
+use super::tests::{live_token, LiveGithub};
 use super::*;
 use crate::wtnew::{self, Location, Options, Request};
 use std::sync::Arc;
@@ -23,15 +26,6 @@ fn sh(dir: &Path, args: &[&str]) -> String {
         "git {args:?}: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
-}
-
-fn gh(dir: &Path, args: &[&str]) -> String {
-    let out = std::process::Command::new("gh")
-        .current_dir(dir)
-        .args(args)
-        .output()
-        .expect("gh");
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
@@ -73,8 +67,9 @@ fn drill_real_github_end_to_end() {
     let repo = PathBuf::from(repo);
     let tmp = std::env::temp_dir().join(format!("meowo-drill-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).unwrap();
+    let forges = LiveGithub(live_token());
     let ctx = Ctx {
-        gh: &real_gh,
+        forges: &forges,
         caches: &CACHES,
         prefs: tmp.join("forge.json"),
         env: &[],
@@ -180,7 +175,17 @@ fn drill_real_github_end_to_end() {
     let refused = pr_merge_with(&ctx, &fail_dir, fail_pr.number, "squash", &fail_head).unwrap_err();
     eprintln!("[drill] CI 失败的 PR 合并被拒：{refused}");
     assert!(refused.starts_with("gh/checks_failed"), "{refused}");
-    gh(&repo, &["pr", "close", &fail_pr.number.to_string()]);
+    // 关掉故意失败的 PR：REST `PATCH /repos/{slug}/pulls/{号}`，state=closed。
+    let slug = repo_info(&fail_dir, &[], &ctx.prefs, ctx.forges).and_then(|i| i.gh.base).expect("演练仓库在 github.com").slug;
+    let closed = crate::forge::builtin::Builtin {
+        http: &crate::github::RealHttp,
+        token: Some(&forges.0),
+        on_auth: &|_| {},
+        prefs: &ctx.prefs,
+        ends: crate::forge::builtin::Endpoints::github_com(),
+    }
+    .run(&fail_dir, &["api", &format!("repos/{slug}/pulls/{}", fail_pr.number), "-X", "PATCH", "-f", "state=closed"]);
+    assert_eq!(closed.code, Some(0), "关 PR：{}", tail(&closed.both(), 3));
     sh(
         &repo,
         &["worktree", "remove", "--force", fail_wt.to_str().unwrap()],
@@ -206,20 +211,21 @@ fn drill_real_github_end_to_end() {
     assert!(merged.merged, "{merged:?}");
     eprintln!("[drill] PR #{} 已合并", mine.number);
 
-    // 6. 合并后 worktree 可清理（gh 判定），并真的删掉；远端分支不动。
+    // 6. 合并后 worktree 可清理（经平台接口查 PR 判定），并真的删掉；远端分支不动。
     let nobody = |_: &str| 0u32;
-    let st = crate::worktree::status_for_dir(&wt, &nobody, &crate::worktree::gh_pr_lookup);
+    let lookup = |d: &Path| platform_pr_lookup_with(&ctx, &d.to_string_lossy());
+    let st = crate::worktree::status_for_dir(&wt, &nobody, &lookup);
     assert!(st.eligible, "合并后应可清理: {st:?}");
-    // 同一个 worktree，假装没装 gh：本地判定也要认出这次 squash 合并。
-    let no_gh = |_: &Path| crate::worktree::PrLookup::Unavailable;
-    let local = crate::worktree::status_for_dir(&wt, &nobody, &no_gh);
-    assert!(local.eligible, "没 gh 时本地判定也应可清理: {local:?}");
+    // 同一个 worktree，假装查不了 PR（没账号）：本地判定也要认出这次 squash 合并。
+    let no_pr = |_: &Path| crate::worktree::PrLookup::Unavailable;
+    let local = crate::worktree::status_for_dir(&wt, &nobody, &no_pr);
+    assert!(local.eligible, "查不了 PR 时本地判定也应可清理: {local:?}");
     let top = sh(&wt, &["rev-parse", "--show-toplevel"]);
     let removed = crate::worktree::remove_dir_worktree(
         &wt,
         &top,
         &nobody,
-        &crate::worktree::gh_pr_lookup,
+        &lookup,
         &[],
     )
     .expect("删 worktree");

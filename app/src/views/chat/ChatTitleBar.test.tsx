@@ -38,7 +38,7 @@ describe("标题栏的 PR：会话里 agent 建过的优先", () => {
     expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("git_pull_request", expect.anything());
   });
 
-  it("按链接查不到（没装 gh、链接失效）：退回当前分支的 PR", async () => {
+  it("按链接查不到（没账号、链接失效）：退回当前分支的 PR", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
     vi.mocked(invoke).mockImplementation((command: string) => Promise.resolve(command === "git_pull_request" ? pr(530, "merged") : null));
     render(<ChatTitleBar {...props} gitSummary={summary} sessionPrUrl="https://github.com/o/r/pull/536" />);

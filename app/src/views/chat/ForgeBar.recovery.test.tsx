@@ -23,7 +23,7 @@ const repo = (over: Partial<GitDiffSummaryDto> = {}): RepoChangesDto => ({
   root: ROOT, name: "meowo-wt", isCwdRepo: false, summary: summary(over), base: null, baseLabel: null, committed: [],
 });
 const forge = (over: Partial<ForgeStatusDto> = {}): ForgeStatusDto => ({
-  gh: "ok", ghTooOld: false, repoUrl: "https://github.com/o/r", compareUrl: null,
+  gh: "ok", repoUrl: "https://github.com/o/r", compareUrl: null,
   mergeMethods: ["squash"], lastMergeMethod: null, pr: null,
   prDefaults: { title: "feat: drill", body: "- feat: drill", base: "main" }, repoChoices: [], repoRemote: "origin", repoNeedsChoice: false, ...over,
 });

@@ -1,0 +1,202 @@
+{
+ "id": 569290412,
+ "iid": 4453,
+ "project_id": 34675721,
+ "title": "fix(minder): mention and uninstall the local session records",
+ "description": "## Description\n\n`glab` keeps a record of each agent session under `gaig` in its configuration directory: the session ID, the agent, the transcript path and a sync cursor, plus cached agent identities, the agent lists and the fallback sync's status. Since !4396 that includes sessions outside GitLab repositories, which are never uploaded. Setup didn't mention these records, and `glab minder setup --uninstall` left them behind for good, because only the fallback sync job it removes cleans them up.\n\n- The setup prompt now says that glab keeps a local record of each agent session, including sessions outside GitLab repositories.\n- `--uninstall` removes the `gaig` folder last, after the job and the hooks that write to it, and lists it in its prompt. The help text and flag description say so too.\n- A `gaig` folder on its own, for example left by an earlier uninstall, is now something to uninstall rather than \"Nothing to uninstall\".\n- If the Claude Code settings or the OpenCode plugin couldn't be read, their hooks stay installed and could write new records, so the records are kept for a later uninstall. Only a missing folder counts as having no records, and any other error is reported as a warning.\n\nRelated to https://gitlab.com/gitlab-org/cli/-/work_items/8714\n\n## How has this been tested?\n\nNew tests cover removing the records with the rest of the setup, removing records left on their own, and keeping them when the hooks couldn't be read. Several uninstall tests now use their own config directory, so the package's shared test config can't make them depend on each other's order.\n\n```shell\ngo test ./internal/commands/govern/setup/... -shuffle=on\n```",
+ "state": "opened",
+ "created_at": "2026-11-17T02:35:35.108Z",
+ "updated_at": "2026-11-18T06:15:31.769Z",
+ "merged_by": null,
+ "merge_user": null,
+ "merged_at": null,
+ "closed_by": null,
+ "closed_at": null,
+ "target_branch": "main",
+ "source_branch": "8714-uninstall-session-state",
+ "user_notes_count": 12,
+ "upvotes": 0,
+ "downvotes": 0,
+ "author": {
+  "id": 27487407,
+  "username": "jeanvdw",
+  "public_email": "jvanderwalt@gitlab.com",
+  "name": "Jean van der Walt",
+  "state": "active",
+  "locked": false,
+  "avatar_url": "https://gitlab.com/uploads/-/system/user/avatar/27487407/avatar.png?v=1794981343",
+  "web_url": "https://gitlab.com/jeanvdw",
+  "bot": false
+ },
+ "assignees": [
+  {
+   "id": 27487407,
+   "username": "jeanvdw",
+   "public_email": "jvanderwalt@gitlab.com",
+   "name": "Jean van der Walt",
+   "state": "active",
+   "locked": false,
+   "avatar_url": "https://gitlab.com/uploads/-/system/user/avatar/27487407/avatar.png?v=1794981343",
+   "web_url": "https://gitlab.com/jeanvdw"
+  }
+ ],
+ "assignee": {
+  "id": 27487407,
+  "username": "jeanvdw",
+  "public_email": "jvanderwalt@gitlab.com",
+  "name": "Jean van der Walt",
+  "state": "active",
+  "locked": false,
+  "avatar_url": "https://gitlab.com/uploads/-/system/user/avatar/27487407/avatar.png?v=1794981343",
+  "web_url": "https://gitlab.com/jeanvdw"
+ },
+ "reviewers": [
+  {
+   "id": 1786152,
+   "username": "gitlab-bot",
+   "public_email": "",
+   "name": "🤖 GitLab Bot 🤖",
+   "state": "active",
+   "locked": false,
+   "avatar_url": "https://gitlab.com/uploads/-/system/user/avatar/1786152/avatar.png?v=1794980821",
+   "web_url": "https://gitlab.com/gitlab-bot"
+  },
+  {
+   "id": 11809982,
+   "username": "jay_mccure",
+   "public_email": "",
+   "name": "Jay McCure",
+   "state": "active",
+   "locked": false,
+   "avatar_url": "https://gitlab.com/uploads/-/system/user/avatar/11809982/avatar.png?v=1794980155",
+   "web_url": "https://gitlab.com/jay_mccure"
+  },
+  {
+   "id": 21826781,
+   "username": "GitLabDuo",
+   "public_email": null,
+   "name": "GitLab Duo",
+   "state": "active",
+   "locked": false,
+   "avatar_url": "https://gitlab.com/uploads/-/system/user/avatar/21826781/duo-bot.png?v=1794608907",
+   "web_url": "https://gitlab.com/GitLabDuo"
+  }
+ ],
+ "source_project_id": 34675721,
+ "target_project_id": 34675721,
+ "labels": [
+  "Category:AI Governance",
+  "devops::security governance",
+  "group::ai governance",
+  "section::sec",
+  "type::feature"
+ ],
+ "draft": false,
+ "imported": false,
+ "imported_from": "none",
+ "work_in_progress": false,
+ "milestone": null,
+ "merge_when_pipeline_succeeds": false,
+ "merge_status": "can_be_merged",
+ "detailed_merge_status": "discussions_not_resolved",
+ "merge_after": null,
+ "sha": "a582c6434078081418997dd3852277a4e4114148",
+ "merge_commit_sha": null,
+ "squash_commit_sha": null,
+ "discussion_locked": null,
+ "should_remove_source_branch": null,
+ "force_remove_source_branch": true,
+ "prepared_at": "2026-11-17T02:35:38.950Z",
+ "reference": "!4453",
+ "references": {
+  "short": "!4453",
+  "relative": "!4453",
+  "full": "gitlab-org/cli!4453"
+ },
+ "web_url": "https://gitlab.com/gitlab-org/cli/-/merge_requests/4453",
+ "time_stats": {
+  "time_estimate": 0,
+  "total_time_spent": 0,
+  "human_time_estimate": null,
+  "human_total_time_spent": null
+ },
+ "squash": true,
+ "squash_on_merge": true,
+ "task_completion_status": {
+  "count": 0,
+  "completed_count": 0
+ },
+ "has_conflicts": false,
+ "blocking_discussions_resolved": false,
+ "approvals_before_merge": null,
+ "subscribed": false,
+ "changes_count": "6",
+ "latest_build_started_at": "2026-11-18T06:07:05.086Z",
+ "latest_build_finished_at": "2026-11-18T06:23:22.255Z",
+ "first_deployed_to_production_at": null,
+ "pipeline": {
+  "id": 3082509844,
+  "iid": 18048,
+  "project_id": 34675721,
+  "sha": "8aa0cf8da9afbd3041d23043caf9d62d287cf637",
+  "ref": "refs/merge-requests/4453/merge",
+  "status": "success",
+  "source": "merge_request_event",
+  "created_at": "2026-11-18T06:07:03.006Z",
+  "updated_at": "2026-11-18T06:23:22.272Z",
+  "web_url": "https://gitlab.com/gitlab-org/cli/-/pipelines/3082509844"
+ },
+ "head_pipeline": {
+  "id": 3082509844,
+  "iid": 18048,
+  "project_id": 34675721,
+  "sha": "8aa0cf8da9afbd3041d23043caf9d62d287cf637",
+  "ref": "refs/merge-requests/4453/merge",
+  "status": "success",
+  "source": "merge_request_event",
+  "created_at": "2026-11-18T06:07:03.006Z",
+  "updated_at": "2026-11-18T06:23:22.272Z",
+  "web_url": "https://gitlab.com/gitlab-org/cli/-/pipelines/3082509844",
+  "before_sha": "8aa0cf8da9afbd3041d23043caf9d62d287cf637",
+  "tag": false,
+  "yaml_errors": null,
+  "user": {
+   "id": 27487407,
+   "username": "jeanvdw",
+   "public_email": "jvanderwalt@gitlab.com",
+   "name": "Jean van der Walt",
+   "state": "active",
+   "locked": false,
+   "avatar_url": "https://gitlab.com/uploads/-/system/user/avatar/27487407/avatar.png?v=1794981343",
+   "web_url": "https://gitlab.com/jeanvdw"
+  },
+  "started_at": "2026-11-18T06:07:05.086Z",
+  "finished_at": "2026-11-18T06:23:22.255Z",
+  "committed_at": null,
+  "duration": 975,
+  "queued_duration": 2,
+  "coverage": "76.20",
+  "detailed_status": {
+   "icon": "status_success",
+   "text": "Passed",
+   "label": "passed",
+   "group": "success",
+   "tooltip": "passed",
+   "has_details": true,
+   "details_path": "/gitlab-org/cli/-/pipelines/3082509844",
+   "illustration": null,
+   "favicon": "/assets/ci_favicons/favicon_status_success-8451333011eee8ce9f2ab25dc487fe24a8758c694827a582f17f42b0a90446a2.png"
+  },
+  "archived": false
+ },
+ "diff_refs": {
+  "base_sha": "846afac8f13b0328fa2c6b2085d88304ae8e1c64",
+  "head_sha": "a582c6434078081418997dd3852277a4e4114148",
+  "start_sha": "c9534ebb6a1acf5af6e577cbf30e4680b5ffed07"
+ },
+ "merge_error": null,
+ "first_contribution": false,
+ "user": {
+  "can_merge": false
+ }
+}

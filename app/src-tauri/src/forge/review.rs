@@ -1,4 +1,5 @@
-//! GitHub PR 阅读、评论与持久监控。所有 gh 调用继承 forge 的注入点与超时。
+//! PR / MR 阅读、评论与持久监控。经统一的平台接口（forge/api.rs）：GitHub 走内置实现（REST / GraphQL），
+//! GitLab / Gitea / Bitbucket / Gitee 走各自的接口，都用设置里的账号。
 
 use super::*;
 use meowo_protocol::ipc::{PrCommentDto, PrFileDto, PrMonitorDto, PrMonitorEventDto, PrReviewDto, QueueDraftDto};
@@ -45,7 +46,7 @@ fn files(value: &serde_json::Value) -> Vec<PrFileDto> {
     }).collect()
 }
 
-fn parse_review(value: &serde_json::Value, file_value: &serde_json::Value, inline: &serde_json::Value) -> Option<PrReviewDto> {
+pub(crate) fn parse_review(value: &serde_json::Value, file_value: &serde_json::Value, inline: &serde_json::Value) -> Option<PrReviewDto> {
     let pr = parse_pr_full(&serde_json::to_string(value).ok()?)?;
     let mut all_comments = comments(value.get("comments")?, false);
     all_comments.extend(comments(inline, false));
@@ -56,26 +57,11 @@ fn parse_review(value: &serde_json::Value, file_value: &serde_json::Value, inlin
 
 fn read_with(ctx: &Ctx, cwd: &str) -> Result<Option<PrReviewDto>, String> {
     let dir = existing_dir(cwd)?;
-    require_gh(ctx)?;
-    let info = repo_info(dir, ctx.env, &ctx.prefs).ok_or("worktree/not_repo")?;
+    let info = repo_info(dir, ctx.env, &ctx.prefs, ctx.forges).ok_or("worktree/not_repo")?;
+    let forge = usable(ctx, &info)?;
     let branch = info.branch.as_deref().ok_or("git/detached")?;
     let slug = info.gh.slug().map(str::to_string).ok_or("gh/ambiguous_repo")?;
-    let fields = format!("{PR_FIELDS},comments,reviews");
-    let out = (ctx.gh)(dir, &["pr", "view", branch, "--repo", &slug, "--json", &fields]).ok_or("gh/not_installed")?;
-    if !out.ok() {
-        if out.both().to_lowercase().contains("no pull requests found") { return Ok(None); }
-        return Err(classify_gh_failure(&out, None));
-    }
-    let value: serde_json::Value = serde_json::from_str(&out.stdout).map_err(|_| "gh/failed: bad json")?;
-    let number = number(&value, "number").ok_or("gh/failed: missing number")?;
-    let base = format!("repos/{slug}/pulls/{number}");
-    let file_out = (ctx.gh)(dir, &["api", &format!("{base}/files"), "--paginate", "--slurp"]).ok_or("gh/not_installed")?;
-    if !file_out.ok() { return Err(classify_gh_failure(&file_out, None)); }
-    let file_value: serde_json::Value = serde_json::from_str(&file_out.stdout).map_err(|_| "gh/failed: bad files json")?;
-    let inline_out = (ctx.gh)(dir, &["api", &format!("{base}/comments"), "--paginate", "--slurp"]).ok_or("gh/not_installed")?;
-    if !inline_out.ok() { return Err(classify_gh_failure(&inline_out, None)); }
-    let inline: serde_json::Value = serde_json::from_str(&inline_out.stdout).map_err(|_| "gh/failed: bad comments json")?;
-    parse_review(&value, &file_value, &inline).map(Some).ok_or_else(|| "gh/failed: bad review json".into())
+    forge.review(dir, &slug, branch)
 }
 
 static REVIEW_CACHE: std::sync::LazyLock<Mutex<HashMap<String, (Instant, PrReviewDto)>>> = std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -125,18 +111,12 @@ pub(crate) async fn pr_comment(cwd: String, number: u32, body: String, review: b
 }
 fn comment_with(ctx: &Ctx, cwd: &str, number: u32, body: &str, review: bool) -> Result<(), String> {
     if body.trim().is_empty() { return Err("pr/empty_comment".into()); }
-    require_gh(ctx)?;
-    let info = repo_info(cwd, ctx.env, &ctx.prefs).ok_or("worktree/not_repo")?;
+    let info = repo_info(cwd, ctx.env, &ctx.prefs, ctx.forges).ok_or("worktree/not_repo")?;
+    let forge = usable(ctx, &info)?;
     let slug = info.gh.slug().ok_or("gh/ambiguous_repo")?;
-    let number_text = number.to_string();
-    let action = if review { "review" } else { "comment" };
-    let mut args = vec!["pr", action, &number_text, "--repo", slug, "--body", body];
-    if review { args.push("--comment"); }
-    let out = (ctx.gh)(cwd, &args).ok_or("gh/not_installed")?;
-    if out.ok() {
-        lock(&REVIEW_CACHE).remove(cwd);
-        Ok(())
-    } else { Err(classify_gh_failure(&out, None)) }
+    forge.comment(cwd, slug, number, body, review)?;
+    lock(&REVIEW_CACHE).remove(cwd);
+    Ok(())
 }
 
 #[tauri::command]
@@ -146,25 +126,18 @@ pub(crate) async fn pr_line_comment(cwd: String, number: u32, path: String, line
 fn line_comment_with(ctx: &Ctx, cwd: &str, number: u32, path: &str, line: i64, side: &str, body: &str) -> Result<(), String> {
     if body.trim().is_empty() { return Err("pr/empty_comment".into()); }
     if !matches!(side, "NEW" | "OLD") || line <= 0 { return Err("pr/invalid_line".into()); }
-    require_gh(ctx)?;
-    let info = repo_info(cwd, ctx.env, &ctx.prefs).ok_or("worktree/not_repo")?;
+    let info = repo_info(cwd, ctx.env, &ctx.prefs, ctx.forges).ok_or("worktree/not_repo")?;
+    let forge = usable(ctx, &info)?;
     let slug = info.gh.slug().ok_or("gh/ambiguous_repo")?;
-    let number_text = number.to_string();
-    let out = (ctx.gh)(cwd, &["pr", "view", &number_text, "--repo", slug, "--json", "headRefOid"]).ok_or("gh/not_installed")?;
-    if !out.ok() { return Err(classify_gh_failure(&out, None)); }
-    let value: serde_json::Value = serde_json::from_str(&out.stdout).map_err(|_| "gh/failed: bad json")?;
-    let head = string(&value, "headRefOid").ok_or("gh/head_changed")?;
-    let endpoint = format!("repos/{slug}/pulls/{number}/comments");
-    let line_text = line.to_string();
-    let out = (ctx.gh)(cwd, &["api", &endpoint, "-f", &format!("body={body}"), "-f", &format!("commit_id={head}"), "-f", &format!("path={path}"), "-F", &format!("line={line_text}"), "-f", &format!("side={side}")]).ok_or("gh/not_installed")?;
-    if out.ok() {
-        lock(&REVIEW_CACHE).remove(cwd);
-        Ok(())
-    } else { Err(classify_gh_failure(&out, None)) }
+    forge.line_comment(cwd, slug, number, path, line, side, body)?;
+    lock(&REVIEW_CACHE).remove(cwd);
+    Ok(())
 }
 
+/// 监控的键：github.com 是 `owner/repo#号`（与改版前一致，老监控照用）；别的主机 `主机/路径#号`。
+/// 认不出链接时只剩 `#号`，调用方据此拒绝。
 fn pr_key(pr: &PullRequestDto) -> String {
-    let slug = pr.url.split("github.com/").nth(1).and_then(|rest| rest.split("/pull/").next()).unwrap_or("");
+    let slug = super::platform::parse_pr_url(&pr.url).map(|(host, slug, _, _)| super::platform::repo_key(&host, &slug)).unwrap_or_default();
     format!("{slug}#{}", pr.number)
 }
 
@@ -181,7 +154,7 @@ pub(crate) async fn pr_monitor_set(state: tauri::State<'_, crate::AppState>, cwd
     let db = state.db_path.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let store = crate::open_store(&db).map_err(|e| e.to_string())?;
-        // 停止是纯本地操作；离线、无 gh 或 PR 已消失都不能把用户困在监控里。
+        // 停止是纯本地操作；离线、没账号或 PR 已消失都不能把用户困在监控里。
         if !enabled {
             if let Some(key) = key {
                 disable_pr_monitor(&store, &key, session_id)?;
@@ -201,7 +174,11 @@ fn poll_with(ctx: &Ctx, store: &Store, monitor: &PrMonitor, app: Option<&tauri::
         Ok(None) => return Err("pr/not_found".into()),
         Err(error) => return Err(error),
     };
-    let viewer = (ctx.gh)(&monitor.cwd, &["api", "user"]).and_then(|out| if out.ok() { serde_json::from_str(&out.stdout).ok() } else { None }).and_then(|value| string(&value, "login")).unwrap_or_default();
+    let viewer = repo_info(&monitor.cwd, ctx.env, &ctx.prefs, ctx.forges)
+        .and_then(|info| info.gh.base.clone())
+        .and_then(|base| ctx.forge_for(&base).ok())
+        .and_then(|forge| forge.viewer(&monitor.cwd))
+        .unwrap_or_default();
     let mut known: BTreeSet<String> = serde_json::from_str(&monitor.known_comments).unwrap_or_default();
     let current: BTreeSet<String> = review.comments.iter().chain(&review.reviews).map(|comment| comment.id.clone()).collect();
     let now = crate::now_ms();
@@ -229,14 +206,20 @@ fn poll_with(ctx: &Ctx, store: &Store, monitor: &PrMonitor, app: Option<&tauri::
         let _ = app.emit("pr-monitor-changed", &monitor.key);
         for event in store.pr_events(&monitor.key).map_err(|e| e.to_string())?.into_iter().filter(|event| event.created_at == now) {
             let settings = crate::settings::load_settings();
-            crate::push::push_session(&settings, crate::push::PushMessage { title: format!("PR #{}", monitor.number), body: event.summary.clone(), session_id: monitor.session_id, urgent: false });
+            crate::push::push_session(&settings, crate::push::PushMessage { title: monitor_title(monitor), body: event.summary.clone(), session_id: monitor.session_id, urgent: false });
             if let Ok(header) = store.session_header(monitor.session_id) {
                 let lang = crate::settings::ui_lang(&settings);
-                crate::watch::show_session_notification(app, format!("PR #{}", monitor.number), event.summary, monitor.session_id, header.pid.unwrap_or(0), header.title.clone().unwrap_or_default(), header.cwd, None, false, crate::watch::NotifyKind::Waiting, lang.to_string(), settings.notification_sound);
+                crate::watch::show_session_notification(app, monitor_title(monitor), event.summary, monitor.session_id, header.pid.unwrap_or(0), header.title.clone().unwrap_or_default(), header.cwd, None, false, crate::watch::NotifyKind::Waiting, lang.to_string(), settings.notification_sound);
             }
         }
     }
     Ok(())
+}
+
+/// 通知标题：GitLab 的叫合并请求，编号写 `!号`（键里带主机，见 [`pr_key`]）。
+fn monitor_title(monitor: &PrMonitor) -> String {
+    let gitlab = monitor.key.split('#').next().and_then(|slug| slug.split('/').next()).is_some_and(|host| host == "gitlab.com" || crate::forge_accounts::ACCOUNTS.platform(host) == Some(super::platform::Platform::Gitlab));
+    if gitlab { format!("MR !{}", monitor.number) } else { format!("PR #{}", monitor.number) }
 }
 
 pub(crate) fn start_monitor_worker(app: &tauri::AppHandle) {
@@ -314,8 +297,70 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    fn ok(stdout: String) -> Option<CmdOut> {
-        Some(CmdOut { code: Some(0), stdout, stderr: String::new(), timed_out: false })
+    type Handler = dyn Fn(&str, &str, &serde_json::Value) -> serde_json::Value + Sync;
+
+    /// 假 GitHub（github.com 账号 + 内置实现）：按请求回 JSON，记下每个请求（方法、地址、JSON 体）。
+    struct FakeApi {
+        handler: Box<Handler>,
+        calls: Mutex<Vec<(String, String, serde_json::Value)>>,
+    }
+
+    impl FakeApi {
+        fn new(handler: impl Fn(&str, &str, &serde_json::Value) -> serde_json::Value + Sync + 'static) -> Self {
+            FakeApi { handler: Box::new(handler), calls: Mutex::new(Vec::new()) }
+        }
+    }
+
+    impl crate::github::Http for FakeApi {
+        fn send(&self, req: &crate::github::Request) -> Result<crate::github::Response, String> {
+            let body = match &req.body {
+                Some(crate::github::Body::Json(v)) => v.clone(),
+                _ => serde_json::Value::Null,
+            };
+            self.calls.lock().unwrap().push((req.method.to_string(), req.url.to_string(), body.clone()));
+            let reply = (self.handler)(req.method, req.url, &body);
+            Ok(crate::github::Response { status: 200, body: reply.to_string(), ..Default::default() })
+        }
+    }
+
+    impl crate::forge::platform::Forges for FakeApi {
+        fn platform(&self, host: &str) -> Option<crate::forge::platform::Platform> {
+            crate::forge::platform::public_platform(host)
+        }
+        fn open(&self, host: &str) -> Option<Box<dyn crate::forge::api::ForgeApi + '_>> {
+            (host == "github.com").then(|| {
+                Box::new(crate::forge::builtin::forge(
+                    Box::new(self),
+                    crate::forge::builtin::Endpoints::github_com(),
+                    crate::github::Token::new("gho_TESTTOKEN"),
+                    GhState::Ok,
+                    std::env::temp_dir().join("meowo-review-none.json"),
+                    Box::new(|_| {}),
+                )) as Box<dyn crate::forge::api::ForgeApi>
+            })
+        }
+    }
+
+    /// gh 形状的 PR（[`pr_json`]）→ GraphQL 节点：检查照 forge 测试的换法，评论、评审包成连接。
+    fn node_of(pr: &str, head: &serde_json::Value) -> serde_json::Value {
+        let value: serde_json::Value = serde_json::from_str(pr).unwrap();
+        let mut node = crate::forge::tests::gql_node(&value, "acme", false);
+        for conn in ["comments", "reviews"] {
+            node[conn] = serde_json::json!({ "nodes": value[conn].clone(), "pageInfo": { "hasNextPage": false, "endCursor": null } });
+        }
+        if head.is_string() {
+            node["meowoHead"] = head.clone();
+        }
+        node
+    }
+
+    /// GraphQL 查 PR 的回包（按分支回列表，按号回单个）。
+    fn pr_reply(body: &serde_json::Value, node: serde_json::Value) -> serde_json::Value {
+        if body["variables"].get("head").is_some() {
+            serde_json::json!({ "data": { "repository": { "pullRequests": { "nodes": [node] }, "defaultBranchRef": { "name": "trunk" } } } })
+        } else {
+            serde_json::json!({ "data": { "repository": { "pullRequest": node } } })
+        }
     }
     fn git(repo: &Path, args: &[&str]) {
         let out = Command::new("git").current_dir(repo).args(args).output().unwrap();
@@ -352,23 +397,21 @@ mod tests {
     fn poll_seeds_first_then_dedupes_comments_and_check_transitions() {
         let repo = repo();
         let phase = std::sync::Arc::new(AtomicUsize::new(0));
-        let gh_phase = phase.clone();
-        let gh = move |_cwd: &str, args: &[&str]| {
-            if args.starts_with(&["auth", "status"]) { return ok(String::new()); }
-            if args.starts_with(&["api", "user"]) { return ok(r#"{"login":"me"}"#.into()); }
-            if args.starts_with(&["pr", "view"]) {
-                let current = gh_phase.load(Ordering::SeqCst);
+        let api_phase = phase.clone();
+        let api = FakeApi::new(move |_method, url, body| {
+            if url.ends_with("/user") { return serde_json::json!({ "login": "me" }); }
+            if url.ends_with("/graphql") {
+                let current = api_phase.load(Ordering::SeqCst);
                 let comments = if current == 0 { serde_json::json!([{"id":"old","author":{"login":"alice"},"body":"old"}]) }
                     else { serde_json::json!([{"id":"old","author":{"login":"alice"},"body":"old"},{"id":"new","author":{"login":"alice"},"body":"new"},{"id":"mine","author":{"login":"me"},"body":"mine"}]) };
                 let mut value: serde_json::Value = serde_json::from_str(&pr_json(comments, if current == 0 || current >= 3 { "pass" } else { "fail" }, if current < 2 { "a" } else { "b" })).unwrap();
                 if current >= 3 { value["mergeable"] = serde_json::Value::String("CONFLICTING".into()); }
-                return ok(serde_json::to_string(&value).unwrap());
+                return pr_reply(body, node_of(&value.to_string(), &body["variables"]["head"]));
             }
-            if args.starts_with(&["api"]) { return ok("[]".into()); }
-            None
-        };
+            serde_json::json!([])
+        });
         let caches = Caches::default();
-        let ctx = Ctx { gh: &gh, caches: &caches, prefs: repo.join("forge.json"), env: &[] };
+        let ctx = Ctx { forges: &api, caches: &caches, prefs: repo.join("forge.json"), env: &[] };
         let store = Store::open_in_memory().unwrap();
         store.upsert_pr_monitor(meowo_store::PrMonitorInput { key: "acme/repo#12", cwd: repo.to_str().unwrap(), session_id: 7, slug: "acme/repo", number: 12, enabled: true }, 1).unwrap();
         let monitor = store.pr_monitor("acme/repo#12").unwrap().unwrap();
@@ -391,23 +434,37 @@ mod tests {
     }
 
     #[test]
-    fn writes_use_injected_gh_and_line_comment_pins_current_head() {
+    fn writes_go_to_rest_and_line_comment_pins_current_head() {
         let repo = repo();
-        let calls = Mutex::new(Vec::<Vec<String>>::new());
-        let gh = |cwd: &str, args: &[&str]| {
-            calls.lock().unwrap().push(std::iter::once(cwd.to_string()).chain(args.iter().map(|arg| arg.to_string())).collect());
-            if args.starts_with(&["auth", "status"]) { return ok(String::new()); }
-            if args.starts_with(&["pr", "view"]) { return ok(r#"{"headRefOid":"current-head"}"#.into()); }
-            ok(String::new())
-        };
+        let api = FakeApi::new(|_method, url, _body| {
+            if url.ends_with("/graphql") {
+                return serde_json::json!({ "data": { "repository": { "pullRequest": { "meowoId": "PR_1", "headRefOid": "current-head" } } } });
+            }
+            serde_json::json!({ "html_url": "https://github.com/acme/repo/pull/12#x" })
+        });
         let caches = Caches::default();
-        let ctx = Ctx { gh: &gh, caches: &caches, prefs: repo.join("forge.json"), env: &[] };
+        let ctx = Ctx { forges: &api, caches: &caches, prefs: repo.join("forge.json"), env: &[] };
         comment_with(&ctx, repo.to_str().unwrap(), 12, "note", true).unwrap();
         line_comment_with(&ctx, repo.to_str().unwrap(), 12, "src/a.ts", 3, "NEW", "line note").unwrap();
-        let calls = calls.into_inner().unwrap();
-        assert!(calls.iter().any(|args| args.contains(&"--comment".into()) && args.contains(&"note".into())));
-        let line = calls.last().unwrap().join(" ");
-        assert!(line.contains("commit_id=current-head") && line.contains("path=src/a.ts") && line.contains("line=3") && line.contains("side=NEW"));
+        line_comment_with(&ctx, repo.to_str().unwrap(), 12, "src/a.ts", 2, "OLD", "old note").unwrap();
+        let posts: Vec<(String, serde_json::Value)> =
+            api.calls.lock().unwrap().iter().filter(|(m, u, _)| m == "POST" && !u.ends_with("/graphql")).map(|(_, u, b)| (u.clone(), b.clone())).collect();
+        assert_eq!(
+            posts,
+            vec![
+                // 以评审的形式发普通评论：COMMENT 评审。
+                ("https://api.github.com/repos/acme/repo/pulls/12/reviews".to_string(), serde_json::json!({ "body": "note", "event": "COMMENT" })),
+                // 行内评论钉在 PR 当前的头提交上；GitHub REST 的 side 只收 RIGHT / LEFT（面板传的是 NEW / OLD）。
+                (
+                    "https://api.github.com/repos/acme/repo/pulls/12/comments".to_string(),
+                    serde_json::json!({ "body": "line note", "commit_id": "current-head", "path": "src/a.ts", "line": 3, "side": "RIGHT" })
+                ),
+                (
+                    "https://api.github.com/repos/acme/repo/pulls/12/comments".to_string(),
+                    serde_json::json!({ "body": "old note", "commit_id": "current-head", "path": "src/a.ts", "line": 2, "side": "LEFT" })
+                ),
+            ]
+        );
     }
 
     #[test]

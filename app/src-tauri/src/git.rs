@@ -1268,10 +1268,9 @@ fn untracked_file_diff(dir: &str, path: &str) -> Result<GitFileDiffDto, String> 
     })
 }
 
-/// 当前分支的 Pull Request（对话页标题栏，对照 Kimi 的「打开 Pull Request」）。没装 gh、没登录、
-/// 不是 GitHub 仓库、分支没有 PR 都是 None（不报错，前端不显示）。
-/// forge 认得的 GitHub 仓库走 forge 的 PR 缓存（与侧栏徽标、「更改」面板共用，同仓库同分支 60 秒内合计一次 gh）；
-/// 认不出的远端（企业版等）照旧直查、按目录缓存 60 秒。见 forge::badge::title_pr_with。
+/// 当前分支的 Pull Request（对话页标题栏，对照 Kimi 的「打开 Pull Request」）。没有这台主机的账号、令牌失效、
+/// 认不出平台、分支没有 PR 都是 None（不报错，前端不显示）。走 forge 的 PR 缓存（与侧栏徽标、「更改」面板共用，
+/// 同仓库同分支 60 秒内合计查一次）。见 forge::badge::title_pr_with。
 #[tauri::command]
 pub(crate) async fn git_pull_request(cwd: String) -> Result<Option<PullRequestDto>, String> {
     tauri::async_runtime::spawn_blocking(move || Ok(crate::forge::badge::title_pull_request(&cwd)))
@@ -1288,7 +1287,7 @@ pub(crate) async fn git_pull_request_by_url(cwd: String, url: String) -> Result<
         .map_err(|e| e.to_string())?
 }
 
-/// `gh pr view --json number,state,isDraft,url,title` 的输出 → DTO。草稿是 OPEN + isDraft。
+/// `pr view --json number,state,isDraft,url,title` 形状的 JSON（内置实现照 gh 的字段输出）→ DTO。草稿是 OPEN + isDraft。
 pub(crate) fn parse_pull_request(json: &str) -> Option<PullRequestDto> {
     let value: serde_json::Value = serde_json::from_str(json).ok()?;
     let number = u32::try_from(value.get("number")?.as_u64()?).ok()?;

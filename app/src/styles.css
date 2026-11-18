@@ -1956,7 +1956,7 @@ button.stab {
 }
 .remote-copy:hover { background: var(--fill-selected-hover); }
 
-/* 设置 › GitHub（GithubSection）。一次性代码大号等宽、可整段选中；头像用首字母（CSP 不放行远程图片）。 */
+/* 设置 › 代码托管：设备码一次性代码大号等宽、可整段选中（ForgeAccountsSection）。 */
 .github-active { font-size: var(--text-sm); color: var(--cc-text-dim); text-align: right; overflow-wrap: anywhere; }
 .github-code {
   margin: var(--sp-8) 0 var(--sp-4);
@@ -1988,6 +1988,56 @@ button.stab {
   font-weight: 600;
 }
 .github-warn { color: var(--cc-warn-text); }
+
+/* 设置 › 代码托管账号（ForgeAccountsSection）。平台图标与 GitHub 账号的首字母头像同一尺寸、同一中性底。 */
+.forge-first-caption { margin-top: 0; }
+.forge-mark {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-md);
+  background: var(--fill-selected);
+  color: var(--cc-text);
+}
+/* 添加账号的表单：标签在上、输入框占满一行（主机名与令牌都长，左右排会把输入框挤到一两个字宽）。 */
+.forge-add .row.forge-field, .git-identity .row.forge-field { flex-direction: column; align-items: stretch; gap: var(--sp-6); }
+/* 列方向的 flex 里不能沿用 .ns-input 的 flex: 1（基准 0 会把高度压没），按内容高。 */
+.forge-field .ns-input { flex: none; width: 100%; }
+.forge-platforms { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-8); }
+.forge-platform {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-10);
+  min-width: 0;
+  padding: var(--sp-6) var(--sp-10) var(--sp-6) var(--sp-6);
+  border-radius: var(--radius-md);
+  border: var(--hairline) solid var(--cc-border);
+  background: transparent;
+  color: var(--cc-text-dim);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-in-out);
+}
+.forge-platform:hover { background: var(--fill-hover); color: var(--cc-text); }
+.forge-platform[aria-checked="true"] { background: var(--fill-selected); border-color: transparent; color: var(--cc-text); font-weight: 500; }
+.forge-platform .forge-mark { width: 28px; height: 28px; background: transparent; }
+.forge-platform-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.forge-field-note { -webkit-line-clamp: unset; }
+.forge-token-link { font-size: inherit; }
+.forge-add .row.forge-actions, .git-identity .row.forge-actions { gap: var(--sp-8); justify-content: flex-end; }
+/* 添加账号里「用浏览器登录」：说明在上、三个按钮在下靠右，窄窗（620）与英文的长按钮名放得下，不够再换行。 */
+.forge-add .row.forge-device-row { flex-direction: column; align-items: stretch; gap: var(--sp-10); }
+.forge-device-row .github-row-actions { justify-content: flex-end; flex-wrap: wrap; }
+.forge-device-row .row-text { flex: none; }
+.git-tool-mono { font-family: var(--cc-mono); overflow-wrap: anywhere; }
+.git-tool-saved { margin-right: auto; }
+.forge-actions .forge-alt { margin-right: auto; }
+.row.forge-add-row { justify-content: flex-end; }
 
 .settings-subtitle {
   margin: var(--sp-24) 0 var(--sp-4);

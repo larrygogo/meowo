@@ -1,0 +1,461 @@
+{
+ "values": [
+  {
+   "comment_count": 0,
+   "task_count": 0,
+   "type": "pullrequest",
+   "id": 604,
+   "title": "[Renovate] Update dependency prettier to v3.10.1",
+   "state": "OPEN",
+   "draft": false,
+   "merge_commit": null,
+   "close_source_branch": true,
+   "closed_by": null,
+   "author": {
+    "type": "app_user",
+    "links": {
+     "avatar": {
+      "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/712020:2dd8a271-7cdd-4b05-998f-e107ba034299/0e69300e-994f-4c34-962e-8c97897acea0/128"
+     }
+    },
+    "uuid": "{043857bd-bfc6-40b2-a003-0babe099f69c}",
+    "account_id": "712020:2dd8a271-7cdd-4b05-998f-e107ba034299",
+    "kind": "workspace_access_token",
+    "created_on": "2026-02-26T04:21:49.356810+00:00",
+    "display_name": "atlassian-renovate-bot",
+    "account_status": "active",
+    "nickname": "atlassian-renovate-bot"
+   },
+   "reason": "",
+   "created_on": "2026-11-15T07:22:17.189708+00:00",
+   "updated_on": "2026-11-15T20:51:27.617870+00:00",
+   "destination": {
+    "branch": {
+     "name": "master"
+    },
+    "commit": {
+     "hash": "9c5c85803bfb",
+     "links": {
+      "self": {
+       "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/commit/9c5c85803bfb"
+      },
+      "html": {
+       "href": "https://bitbucket.org/atlassian/atlassian-connect-express/commits/9c5c85803bfb"
+      }
+     },
+     "type": "commit"
+    },
+    "repository": {
+     "type": "repository",
+     "full_name": "atlassian/atlassian-connect-express",
+     "links": {
+      "self": {
+       "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express"
+      },
+      "html": {
+       "href": "https://bitbucket.org/atlassian/atlassian-connect-express"
+      },
+      "avatar": {
+       "href": "https://bytebucket.org/ravatar/%7B47b154f6-a82d-4e03-99ce-44fb75b4827c%7D?ts=138914"
+      }
+     },
+     "name": "atlassian-connect-express",
+     "uuid": "{47b154f6-a82d-4e03-99ce-44fb75b4827c}"
+    }
+   },
+   "source": {
+    "branch": {
+     "name": "renovate/prettier-3.x",
+     "links": {}
+    },
+    "commit": {
+     "hash": "e0949d3373fd",
+     "links": {
+      "self": {
+       "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/commit/e0949d3373fd"
+      },
+      "html": {
+       "href": "https://bitbucket.org/atlassian/atlassian-connect-express/commits/e0949d3373fd"
+      }
+     },
+     "type": "commit"
+    },
+    "repository": {
+     "type": "repository",
+     "full_name": "atlassian/atlassian-connect-express",
+     "links": {
+      "self": {
+       "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express"
+      },
+      "html": {
+       "href": "https://bitbucket.org/atlassian/atlassian-connect-express"
+      },
+      "avatar": {
+       "href": "https://bytebucket.org/ravatar/%7B47b154f6-a82d-4e03-99ce-44fb75b4827c%7D?ts=138914"
+      }
+     },
+     "name": "atlassian-connect-express",
+     "uuid": "{47b154f6-a82d-4e03-99ce-44fb75b4827c}"
+    }
+   },
+   "links": {
+    "self": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/604"
+    },
+    "html": {
+     "href": "https://bitbucket.org/atlassian/atlassian-connect-express/pull-requests/604"
+    },
+    "commits": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/604/commits"
+    },
+    "approve": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/604/approve"
+    },
+    "request-changes": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/604/request-changes"
+    },
+    "diff": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/diff/atlassian/atlassian-connect-express:e0949d3373fd%0D9c5c85803bfb?from_pullrequest_id=604&topic=true"
+    },
+    "diffstat": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/diffstat/atlassian/atlassian-connect-express:e0949d3373fd%0D9c5c85803bfb?from_pullrequest_id=604&topic=true"
+    },
+    "comments": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/604/comments"
+    },
+    "activity": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/604/activity"
+    },
+    "merge": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/604/merge"
+    },
+    "decline": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/604/decline"
+    },
+    "statuses": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/604/statuses"
+    },
+    "mergeability_checks": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/604/mergeability/checks"
+    }
+   },
+   "queued": false
+  },
+  {
+   "comment_count": 1,
+   "task_count": 0,
+   "type": "pullrequest",
+   "id": 585,
+   "title": "[Renovate] Update dependency prettier to v3.9.10",
+   "state": "DECLINED",
+   "draft": false,
+   "merge_commit": null,
+   "close_source_branch": false,
+   "closed_by": {
+    "display_name": "Ben Kelley",
+    "links": {
+     "self": {
+      "href": "https://api.bitbucket.org/2.0/users/%7B933f1401-8b87-43d9-81eb-c075ac70e2d7%7D"
+     },
+     "avatar": {
+      "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/557057:845513f1-5072-4be7-a153-0c6391790d01/15135aa1-9e62-4460-aa62-7b9bd3419ca9/128"
+     },
+     "html": {
+      "href": "https://bitbucket.org/%7B933f1401-8b87-43d9-81eb-c075ac70e2d7%7D/"
+     }
+    },
+    "type": "user",
+    "uuid": "{933f1401-8b87-43d9-81eb-c075ac70e2d7}",
+    "account_id": "557057:845513f1-5072-4be7-a153-0c6391790d01",
+    "nickname": "Ben Kelley"
+   },
+   "author": {
+    "type": "app_user",
+    "links": {
+     "avatar": {
+      "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/712020:2dd8a271-7cdd-4b05-998f-e107ba034299/0e69300e-994f-4c34-962e-8c97897acea0/128"
+     }
+    },
+    "uuid": "{043857bd-bfc6-40b2-a003-0babe099f69c}",
+    "account_id": "712020:2dd8a271-7cdd-4b05-998f-e107ba034299",
+    "kind": "workspace_access_token",
+    "created_on": "2026-02-26T04:21:49.356810+00:00",
+    "display_name": "atlassian-renovate-bot",
+    "account_status": "active",
+    "nickname": "atlassian-renovate-bot"
+   },
+   "reason": "Declining non-security version bumps, due to Connect end-of-support.",
+   "created_on": "2026-11-10T13:46:04.146354+00:00",
+   "updated_on": "2026-11-13T23:51:42.627256+00:00",
+   "destination": {
+    "branch": {
+     "name": "master"
+    },
+    "commit": {
+     "hash": "fec3bb2edab7",
+     "links": {
+      "self": {
+       "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/commit/fec3bb2edab7"
+      },
+      "html": {
+       "href": "https://bitbucket.org/atlassian/atlassian-connect-express/commits/fec3bb2edab7"
+      }
+     },
+     "type": "commit"
+    },
+    "repository": {
+     "type": "repository",
+     "full_name": "atlassian/atlassian-connect-express",
+     "links": {
+      "self": {
+       "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express"
+      },
+      "html": {
+       "href": "https://bitbucket.org/atlassian/atlassian-connect-express"
+      },
+      "avatar": {
+       "href": "https://bytebucket.org/ravatar/%7B47b154f6-a82d-4e03-99ce-44fb75b4827c%7D?ts=138914"
+      }
+     },
+     "name": "atlassian-connect-express",
+     "uuid": "{47b154f6-a82d-4e03-99ce-44fb75b4827c}"
+    }
+   },
+   "source": {
+    "branch": {
+     "name": "renovate/prettier-3.x",
+     "links": {}
+    },
+    "commit": {
+     "hash": "4571ba7a0b9f",
+     "links": {
+      "self": {
+       "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/commit/4571ba7a0b9f"
+      },
+      "html": {
+       "href": "https://bitbucket.org/atlassian/atlassian-connect-express/commits/4571ba7a0b9f"
+      }
+     },
+     "type": "commit"
+    },
+    "repository": {
+     "type": "repository",
+     "full_name": "atlassian/atlassian-connect-express",
+     "links": {
+      "self": {
+       "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express"
+      },
+      "html": {
+       "href": "https://bitbucket.org/atlassian/atlassian-connect-express"
+      },
+      "avatar": {
+       "href": "https://bytebucket.org/ravatar/%7B47b154f6-a82d-4e03-99ce-44fb75b4827c%7D?ts=138914"
+      }
+     },
+     "name": "atlassian-connect-express",
+     "uuid": "{47b154f6-a82d-4e03-99ce-44fb75b4827c}"
+    }
+   },
+   "links": {
+    "self": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/585"
+    },
+    "html": {
+     "href": "https://bitbucket.org/atlassian/atlassian-connect-express/pull-requests/585"
+    },
+    "commits": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/585/commits"
+    },
+    "approve": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/585/approve"
+    },
+    "request-changes": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/585/request-changes"
+    },
+    "diff": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/diff/atlassian/atlassian-connect-express:4571ba7a0b9f%0Dfec3bb2edab7?from_pullrequest_id=585&topic=true"
+    },
+    "diffstat": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/diffstat/atlassian/atlassian-connect-express:4571ba7a0b9f%0Dfec3bb2edab7?from_pullrequest_id=585&topic=true"
+    },
+    "comments": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/585/comments"
+    },
+    "activity": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/585/activity"
+    },
+    "merge": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/585/merge"
+    },
+    "decline": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/585/decline"
+    },
+    "statuses": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/585/statuses"
+    },
+    "mergeability_checks": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/585/mergeability/checks"
+    }
+   },
+   "queued": false
+  },
+  {
+   "comment_count": 0,
+   "task_count": 0,
+   "type": "pullrequest",
+   "id": 539,
+   "title": "[Renovate] Update dependency prettier to v3.8.1 - autoclosed",
+   "state": "DECLINED",
+   "draft": false,
+   "merge_commit": null,
+   "close_source_branch": false,
+   "closed_by": {
+    "type": "app_user",
+    "links": {
+     "avatar": {
+      "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/712020:2dd8a271-7cdd-4b05-998f-e107ba034299/0e69300e-994f-4c34-962e-8c97897acea0/128"
+     }
+    },
+    "uuid": "{043857bd-bfc6-40b2-a003-0babe099f69c}",
+    "account_id": "712020:2dd8a271-7cdd-4b05-998f-e107ba034299",
+    "kind": "workspace_access_token",
+    "created_on": "2026-02-26T04:21:49.356810+00:00",
+    "display_name": "atlassian-renovate-bot",
+    "account_status": "active",
+    "nickname": "atlassian-renovate-bot"
+   },
+   "author": {
+    "type": "app_user",
+    "links": {
+     "avatar": {
+      "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/712020:0c426ce4-6d52-4f4d-a4a9-bc73e6a17aac/9df40163-823d-49e2-a640-11647e29669f/128"
+     }
+    },
+    "uuid": "{005e40dd-97c3-459b-a718-4fd4af4aeda7}",
+    "account_id": "712020:0c426ce4-6d52-4f4d-a4a9-bc73e6a17aac",
+    "kind": "workspace_access_token",
+    "created_on": "2025-03-26T05:22:47.849475+00:00",
+    "display_name": "ITSD-405132 - atlassian-renovate-bot",
+    "account_status": "inactive",
+    "nickname": "ITSD-405132 - atlassian-renovate-bot"
+   },
+   "reason": "",
+   "created_on": "2025-06-28T05:44:12.962885+00:00",
+   "updated_on": "2026-04-02T06:20:07.092120+00:00",
+   "destination": {
+    "branch": {
+     "name": "master"
+    },
+    "commit": {
+     "hash": "0c729e48201d",
+     "links": {
+      "self": {
+       "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/commit/0c729e48201d"
+      },
+      "html": {
+       "href": "https://bitbucket.org/atlassian/atlassian-connect-express/commits/0c729e48201d"
+      }
+     },
+     "type": "commit"
+    },
+    "repository": {
+     "type": "repository",
+     "full_name": "atlassian/atlassian-connect-express",
+     "links": {
+      "self": {
+       "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express"
+      },
+      "html": {
+       "href": "https://bitbucket.org/atlassian/atlassian-connect-express"
+      },
+      "avatar": {
+       "href": "https://bytebucket.org/ravatar/%7B47b154f6-a82d-4e03-99ce-44fb75b4827c%7D?ts=138914"
+      }
+     },
+     "name": "atlassian-connect-express",
+     "uuid": "{47b154f6-a82d-4e03-99ce-44fb75b4827c}"
+    }
+   },
+   "source": {
+    "branch": {
+     "name": "renovate/prettier-3.x",
+     "links": {}
+    },
+    "commit": {
+     "hash": "5d562e8b0c9a",
+     "links": {
+      "self": {
+       "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/commit/5d562e8b0c9a"
+      },
+      "html": {
+       "href": "https://bitbucket.org/atlassian/atlassian-connect-express/commits/5d562e8b0c9a"
+      }
+     },
+     "type": "commit"
+    },
+    "repository": {
+     "type": "repository",
+     "full_name": "atlassian/atlassian-connect-express",
+     "links": {
+      "self": {
+       "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express"
+      },
+      "html": {
+       "href": "https://bitbucket.org/atlassian/atlassian-connect-express"
+      },
+      "avatar": {
+       "href": "https://bytebucket.org/ravatar/%7B47b154f6-a82d-4e03-99ce-44fb75b4827c%7D?ts=138914"
+      }
+     },
+     "name": "atlassian-connect-express",
+     "uuid": "{47b154f6-a82d-4e03-99ce-44fb75b4827c}"
+    }
+   },
+   "links": {
+    "self": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/539"
+    },
+    "html": {
+     "href": "https://bitbucket.org/atlassian/atlassian-connect-express/pull-requests/539"
+    },
+    "commits": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/539/commits"
+    },
+    "approve": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/539/approve"
+    },
+    "request-changes": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/539/request-changes"
+    },
+    "diff": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/diff/atlassian/atlassian-connect-express:5d562e8b0c9a%0D0c729e48201d?from_pullrequest_id=539&topic=true"
+    },
+    "diffstat": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/diffstat/atlassian/atlassian-connect-express:5d562e8b0c9a%0D0c729e48201d?from_pullrequest_id=539&topic=true"
+    },
+    "comments": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/539/comments"
+    },
+    "activity": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/539/activity"
+    },
+    "merge": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/539/merge"
+    },
+    "decline": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/539/decline"
+    },
+    "statuses": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/539/statuses"
+    },
+    "mergeability_checks": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/539/mergeability/checks"
+    }
+   },
+   "queued": false
+  }
+ ],
+ "pagelen": 10,
+ "size": 3,
+ "page": 1
+}

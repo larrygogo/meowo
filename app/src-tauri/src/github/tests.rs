@@ -1,4 +1,4 @@
-//! github.rs 的测试：设备码各分支、模式分派、令牌不进可序列化的结构。HTTP 全部是假的，不打真网络。
+//! github.rs 的测试：设备码各分支、令牌添加、令牌不进可序列化的结构。HTTP 全部是假的，不打真网络。
 
 use super::device::{poll_once, request_code, wait_for_token, DeviceCode, Outcome, Poll};
 use super::*;
@@ -183,22 +183,6 @@ fn 等待_连着断网三次才放弃_中间恢复不算() {
 }
 
 #[test]
-fn 模式分派_四种方式() {
-    let token = Token::new("gho_x");
-    assert_eq!(resolve(Mode::Off, token.clone()), Executor::Off);
-    assert_eq!(resolve(Mode::Gh, token.clone()), Executor::Gh);
-    assert_eq!(resolve(Mode::Meowo, token.clone()), Executor::Meowo(token.clone()));
-    assert_eq!(resolve(Mode::Meowo, None), Executor::Meowo(None));
-    assert_eq!(resolve(Mode::Auto, token.clone()), Executor::Auto(token.clone().unwrap()));
-    assert_eq!(Executor::Auto(token.unwrap()).label(), "meowo");
-    assert_eq!(resolve(Mode::Auto, None), Executor::Gh);
-    for text in ["auto", "meowo", "gh", "off"] {
-        assert_eq!(Mode::parse(text).unwrap().as_str(), text);
-    }
-    assert_eq!(Mode::parse("bogus"), None);
-}
-
-#[test]
 fn 令牌_debug_打码_字符集受限() {
     let token = Token::new("gho_SECRET123").unwrap();
     assert_eq!(format!("{token:?}"), "Token(<redacted>)");
@@ -276,10 +260,9 @@ fn 登录收尾_令牌只进凭据库_记录文件与状态里都没有() {
     assert!(slot.lock().unwrap().pending.is_none());
     let file = std::fs::read_to_string(&path).unwrap();
     assert!(file.contains("octocat") && !file.contains("TOPSECRET"));
-    let status = status_with(Mode::Auto, Some(token), &load_record(&path), true, true, None);
-    assert_eq!(status.active, "meowo");
-    assert_eq!(status.account.as_ref().unwrap().login, "octocat");
-    assert!(!serde_json::to_string(&status).unwrap().contains("TOPSECRET"));
+    let listed = crate::forge_accounts::listed(&load_record(&path), true, &[]);
+    assert_eq!((listed[0].host.as_str(), listed[0].login.as_str(), listed[0].oauth), ("github.com", "octocat", true));
+    assert!(!serde_json::to_string(&listed).unwrap().contains("TOPSECRET"));
     // 退出：凭据库与记录都删掉，代次作废，回调（清进程内令牌、作废缓存）跑了。
     let signed_out = AtomicUsize::new(0);
     logout_with(&slot, &vault, &path, &|| {
@@ -379,7 +362,7 @@ fn 开始登录_期间被顶替就作废() {
 #[test]
 fn 令牌被拒_只认当前令牌_成功后清掉() {
     let path = temp_file("relogin");
-    save_record(&path, &AccountRecord { account: Some(GithubAccountDto { login: "me".into(), ..Default::default() }), needs_relogin: false }).unwrap();
+    save_record(&path, &AccountRecord { account: Some(GithubAccountDto { login: "me".into(), ..Default::default() }), needs_relogin: false, via_token: false }).unwrap();
     let known = Mutex::new(None);
     let old = Token::new("gho_old").unwrap();
     let new = Token::new("gho_new").unwrap();
@@ -396,43 +379,42 @@ fn 令牌被拒_只认当前令牌_成功后清掉() {
 }
 
 #[test]
-fn 切方式_写设置与内存后作废缓存_写失败不动内存() {
-    let before = *MODE.lock().unwrap();
-    let changed = AtomicUsize::new(0);
-    let on_changed = || {
-        changed.fetch_add(1, Ordering::SeqCst);
-    };
-    let err = set_mode_with(Mode::Off, &|_| Err("settings/write_failed: x".into()), &on_changed).unwrap_err();
-    assert!(err.starts_with("settings/write_failed"));
-    assert_eq!(*MODE.lock().unwrap(), before);
-    assert_eq!(changed.load(Ordering::SeqCst), 0);
-    let written = Mutex::new(None);
-    set_mode_with(Mode::Gh, &|m| {
-        *written.lock().unwrap() = Some(m);
-        Ok(())
-    }, &on_changed)
-    .unwrap();
-    assert_eq!((*written.lock().unwrap(), *MODE.lock().unwrap()), (Some(Mode::Gh), Some(Mode::Gh)));
-    assert_eq!(changed.load(Ordering::SeqCst), 1);
-    *MODE.lock().unwrap() = before;
-}
-#[test]
 fn 状态_没令牌不显示旧账号_要重新登录只在有令牌时() {
-    let record = AccountRecord { account: Some(GithubAccountDto { login: "old".into(), ..Default::default() }), needs_relogin: true };
-    let signed_out = status_with(Mode::Meowo, None, &record, false, true, None);
-    assert!(signed_out.account.is_none() && !signed_out.needs_relogin);
-    assert_eq!(signed_out.active, "meowo");
-    let stale = status_with(Mode::Gh, Token::new("gho_x"), &record, true, true, None);
-    assert!(stale.needs_relogin);
-    assert_eq!(stale.active, "gh");
-    assert_eq!(status_with(Mode::Off, Token::new("gho_x"), &record, true, true, None).active, "off");
+    let record = AccountRecord { account: Some(GithubAccountDto { login: "old".into(), ..Default::default() }), needs_relogin: true, via_token: false };
+    assert!(crate::forge_accounts::listed(&record, false, &[]).is_empty(), "凭据库里没有令牌：不显示旧账号（视为没添加）");
+    let stale = crate::forge_accounts::listed(&record, true, &[]);
+    assert!(stale[0].needs_relogin);
 }
 
+/// github.com 也能用个人访问令牌添加（与其他平台同一个流程）：先问「我是谁」，令牌只进凭据库，记录标明是令牌。
 #[test]
-fn 设置_老设置文件默认自动() {
-    let settings: crate::settings::Settings = serde_json::from_str("{}").unwrap();
-    assert_eq!(settings.github_connection, "auto");
-    assert_eq!(crate::settings::Settings::default().github_connection, "auto");
+fn 令牌添加_先验令牌_只进凭据库_不认不落库() {
+    let path = temp_file("pat");
+    let vault = MemVault(Mutex::new(None));
+    let bad = Script::new(vec![reply(401, r#"{"message":"Bad credentials"}"#)]);
+    let token = Token::new("ghp_PERSONAL42").unwrap();
+    assert_eq!(add_token_with(&bad, &vault, &path, &token).unwrap_err(), "forge/token_rejected");
+    assert_eq!(vault.read().unwrap(), None);
+    assert!(!path.exists());
+    let good = Script::new(vec![reply(200, ACCOUNT_JSON)]);
+    let account = add_token_with(&good, &vault, &path, &token).unwrap();
+    assert_eq!(account.login, "octocat");
+    assert_eq!(good.calls()[0].1, "https://api.github.com/user");
+    assert_eq!(vault.read().unwrap(), Some(token));
+    let record = load_record(&path);
+    assert!(record.via_token && !record.needs_relogin);
+    let file = std::fs::read_to_string(&path).unwrap();
+    assert!(!file.contains("PERSONAL42"), "{file}");
+    assert!(!crate::forge_accounts::listed(&record, true, &[])[0].oauth);
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+/// 「取消gh」：旧的 github.json 记录（没有 viaToken）照常读，算设备码登录。
+#[test]
+fn 旧记录_没有_via_token_按设备码登录读() {
+    let record: AccountRecord = serde_json::from_str(r#"{"account":{"login":"octocat","name":null,"avatarUrl":null},"needsRelogin":false}"#).unwrap();
+    assert!(!record.via_token && record.account.is_some());
+    assert!(!serde_json::to_string(&record).unwrap().contains("viaToken"));
 }
 
 // ═══ 重定向（改名 / 转移过的仓库）═══

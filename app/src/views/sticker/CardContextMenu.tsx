@@ -38,7 +38,7 @@ export function CardContextMenu({
   onOpenDir: (() => void) | null;
   /** 结束会话（杀托管 PTY）；仅本 GUI 托管的会话可结束，其余传 null 隐藏该项。 */
   onEndSession: (() => void) | null;
-  /** 已完成会话的 id：菜单打开时查它的 worktree 能不能删（gh 要联网，约 1 秒）。进行中会话传 null。 */
+  /** 已完成会话的 id：菜单打开时查它的 worktree 能不能删（查 PR 要联网，约 1 秒）。进行中会话传 null。 */
   worktreeSessionId?: number | null;
   /** 删除流程结束（删完/失败/取消）。菜单那时已经关了，结果由宿主提示。 */
   onWorktreeDone?: (outcome: RemovalOutcome) => void;

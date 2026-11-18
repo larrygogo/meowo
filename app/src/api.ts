@@ -138,9 +138,12 @@ import type { GitDiffSummaryDto } from "./generated/contracts/GitDiffSummaryDto"
 import type { GitChangedFileDto } from "./generated/contracts/GitChangedFileDto";
 import type { PullRequestDto } from "./generated/contracts/PullRequestDto";
 import type { ForgeStatusDto } from "./generated/contracts/ForgeStatusDto";
-import type { GithubConnectionDto } from "./generated/contracts/GithubConnectionDto";
+import type { GitToolDto } from "./generated/contracts/GitToolDto";
 import type { GithubDeviceCodeDto } from "./generated/contracts/GithubDeviceCodeDto";
 import type { GithubAccountDto } from "./generated/contracts/GithubAccountDto";
+import type { ForgeAccountDto } from "./generated/contracts/ForgeAccountDto";
+import type { ForgeAccountsDto } from "./generated/contracts/ForgeAccountsDto";
+import type { ForgeDeviceCodeDto } from "./generated/contracts/ForgeDeviceCodeDto";
 import type { GitJobDto } from "./generated/contracts/GitJobDto";
 import type { MergeResultDto } from "./generated/contracts/MergeResultDto";
 import type { PushResultDto } from "./generated/contracts/PushResultDto";
@@ -874,7 +877,7 @@ export function openProjectDir(cwd: string): Promise<void> {
 }
 
 /** 工作目录的 git 改动摘要；`isRepo` 为 false 时前端不显示「Diff」入口。 */
-/** 当前分支的 Pull Request（gh pr view；没装 gh / 没有 PR 时 null）。后端按目录缓存 60s。桌面专用。 */
+/** 当前分支的 Pull Request（经设置里的账号查；没账号 / 没有 PR 时 null）。后端按目录缓存 60s。桌面专用。 */
 export function getPullRequest(cwd: string): Promise<PullRequestDto | null> {
   return invoke("git_pull_request", { cwd });
 }
@@ -1037,33 +1040,50 @@ export function forgeChooseRepo(cwd: string, remote: string, sessionCwd?: string
 }
 export type { ForgeStatusDto, GitJobDto, MergeResultDto, PullResultDto, PushResultDto };
 
-// ═══ GitHub 连接（设置 › GitHub，后端 github.rs）═══
-// 令牌只在后端的系统凭据库里，这里的类型都不含令牌。
+// ═══ 设置 › 代码托管 › Git（后端 git_tool.rs）═══
 
-/** 自动（Meowo 登录了用 Meowo，否则本机 gh）/ Meowo 登录 / 本机 gh / 关闭。 */
-export type GithubConnectionMode = "auto" | "meowo" | "gh" | "off";
-export type { GithubConnectionDto, GithubDeviceCodeDto, GithubAccountDto };
-/** 连接状态变了（切方式、登录、退出、令牌被拒）：PR 区块、侧栏角标、设置页各自重拉。 */
+export type { GitToolDto };
+/** Meowo 实际调用的 git（路径、版本）与全局提交身份。 */
+export function gitToolStatus(): Promise<GitToolDto> {
+  return invoke("git_tool_status");
+}
+/** 写全局 user.name / user.email（写前校验，git 拒了回 `git/config_failed: <原话>`）。 */
+export function gitIdentitySet(name: string, email: string): Promise<GitToolDto> {
+  return invoke("git_identity_set", { name, email });
+}
+
+export type { GithubDeviceCodeDto, GithubAccountDto };
+/** 账号变了（登录、添加、退出、令牌被拒）：PR 区块、侧栏角标、设置页各自重拉。事件名沿用改版前的写法。 */
 export const GITHUB_CHANGED_EVENT = "github-connection-changed";
-/** 一次设备码登录结束。取消不发。 */
-export const GITHUB_LOGIN_EVENT = "github-login-finished";
-export type GithubLoginFinished = { state: "ok" | "expired" | "denied" | "error"; error: string | null };
 
-export function githubStatus(): Promise<GithubConnectionDto> {
-  return invoke("github_status");
+// ═══ 代码托管账号（设置 › 代码托管 › 平台账号，后端 forge_accounts.rs）═══
+// github.com、GitHub 企业版、GitLab、Gitea / Forgejo、Bitbucket Cloud、Gitee 的账号：平台 + 主机 + 账号名。
+// 令牌只在后端的系统凭据库里。Meowo 不调用本机 gh。
+// 账号变了后端发 GITHUB_CHANGED_EVENT（PR 区块、侧栏角标与设置页一起重拉）。
+
+/** 平台：github（github.com 与企业版）/ gitlab / gitea（含 Forgejo、Codeberg）/ bitbucket / gitee。 */
+export type ForgePlatform = "github" | "gitlab" | "gitea" | "bitbucket" | "gitee";
+export type { ForgeAccountDto, ForgeAccountsDto, ForgeDeviceCodeDto };
+/** github.com 设备码登录结束。取消不发。 */
+export const FORGE_LOGIN_EVENT = "forge-login-finished";
+export type ForgeLoginFinished = { state: "ok" | "expired" | "denied" | "error"; error: string | null };
+
+export function forgeAccounts(): Promise<ForgeAccountsDto> {
+  return invoke("forge_accounts");
 }
-export function githubSetMode(mode: GithubConnectionMode): Promise<GithubConnectionDto> {
-  return invoke("github_set_mode", { mode });
+/** 用个人访问令牌添加（后端先用令牌问一次「我是谁」；github.com 也行）。user：Bitbucket 的 Atlassian 邮箱。 */
+export function forgeAccountAdd(platform: ForgePlatform, host: string, token: string, user?: string | null): Promise<ForgeAccountsDto> {
+  return invoke("forge_account_add", { platform, host, token, user: user ?? null });
 }
-/** 向 GitHub 要一次性代码。结果经 GITHUB_LOGIN_EVENT 推回来。 */
-export function githubLoginStart(): Promise<GithubDeviceCodeDto> {
-  return invoke("github_login_start");
+export function forgeAccountRemove(platform: string, host: string): Promise<ForgeAccountsDto> {
+  return invoke("forge_account_remove", { platform, host });
 }
-export function githubLoginCancel(): Promise<void> {
-  return invoke("github_login_cancel");
+/** github.com 设备码登录：要一次性代码，结果经 FORGE_LOGIN_EVENT 推回来。 */
+export function forgeLoginStart(): Promise<ForgeDeviceCodeDto> {
+  return invoke("forge_login_start");
 }
-export function githubLogout(): Promise<GithubConnectionDto> {
-  return invoke("github_logout");
+export function forgeLoginCancel(): Promise<void> {
+  return invoke("forge_login_cancel");
 }
 
 /** 「文件」页签：列出 cwd 下 rel 目录的直接子条目（目录在前，后端已排序并跳过 .git）。 */
@@ -1367,8 +1387,6 @@ export type Settings = {
   notification_sound: boolean;
   /** 回合结束后把最终回答之前的工作过程收成一行（对照 Kimi「消息自动折叠」）。 */
   chat_turn_folding: boolean;
-  /** PR 功能用谁的身份连 GitHub（设置 › GitHub）。只经 githubSetMode 改，set_settings 落盘前以磁盘值回填。 */
-  github_connection?: GithubConnectionMode;
   /** 贴纸主窗口几何（W-17）。设置窗不编辑它；后端 set_settings 落盘前以磁盘值回填。
    *  读写走 windowState.ts 的 get/set_sticker_window_state，这里仅为快照对齐。 */
   sticker_window?: {

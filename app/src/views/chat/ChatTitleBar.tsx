@@ -141,7 +141,7 @@ import { icStopCircle } from "../../icons/glyphs";
 
 /// 标题栏的 PR（对照 Kimi 标题栏）：会话里 agent 用 gh 建过、动过 PR 时看最近的那个（按链接查，
 /// 见 sessionPrs：agent 常在临时 worktree 里另切分支建 PR，按目录分支只能查到旧的）；一个都没有、
-/// 或按链接查不到时，看当前分支的 PR。换目录 / 换分支 / 换 PR 时查一次，之后 3 分钟一次——gh 要联网，
+/// 或按链接查不到时，看当前分支的 PR。换目录 / 换分支 / 换 PR 时查一次，之后 3 分钟一次——查 PR 要联网，
 /// 不跟改动摘要的轮询走（后端另按目录、按链接各缓存 60s）。手机不查：桌面专用命令，桥上不放行。
 function usePullRequest(cwd: string | null, branch: string | null, sessionPrUrl: string | null): PullRequestDto | null {
   const [pullRequest, setPullRequest] = useState<PullRequestDto | null>(null);
@@ -191,7 +191,7 @@ export function ChatTitleBar({
   panelWaiting?: boolean;
   /** 会话信息栏开关（面板收起时才有，同 Kimi Code 的「显示 / 隐藏会话信息」）。 */
   info?: { open: boolean; onToggle: () => void } | null;
-  /** 查到的 PR 报给对话窗：Ctrl+K 的「打开 PR」用同一份，不再多打一次 gh（UI 优化 #53）。 */
+  /** 查到的 PR 报给对话窗：Ctrl+K 的「打开 PR」用同一份，不再多查一次（UI 优化 #53）。 */
   onPullRequest?: (pr: PullRequestDto | null) => void;
   /** 会话里 agent 最近建过、动过的 PR 链接（见 sessionPrs）。有它就先看它，不看目录分支。 */
   sessionPrUrl?: string | null;

@@ -1,0 +1,407 @@
+{
+ "comment_count": 0,
+ "task_count": 0,
+ "type": "pullrequest",
+ "id": 604,
+ "title": "[Renovate] Update dependency prettier to v3.10.1",
+ "state": "OPEN",
+ "draft": false,
+ "merge_commit": null,
+ "close_source_branch": true,
+ "closed_by": null,
+ "author": {
+  "type": "app_user",
+  "links": {
+   "avatar": {
+    "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/712020:2dd8a271-7cdd-4b05-998f-e107ba034299/0e69300e-994f-4c34-962e-8c97897acea0/128"
+   }
+  },
+  "uuid": "{043857bd-bfc6-40b2-a003-0babe099f69c}",
+  "account_id": "712020:2dd8a271-7cdd-4b05-998f-e107ba034299",
+  "kind": "workspace_access_token",
+  "created_on": "2026-02-26T04:21:49.356810+00:00",
+  "display_name": "atlassian-renovate-bot",
+  "account_status": "active",
+  "nickname": "atlassian-renovate-bot"
+ },
+ "reason": "",
+ "created_on": "2026-11-15T07:22:17.189708+00:00",
+ "updated_on": "2026-11-15T20:51:27.617870+00:00",
+ "destination": {
+  "branch": {
+   "name": "master"
+  },
+  "commit": {
+   "hash": "9c5c85803bfb",
+   "links": {
+    "self": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/commit/9c5c85803bfb"
+    },
+    "html": {
+     "href": "https://bitbucket.org/atlassian/atlassian-connect-express/commits/9c5c85803bfb"
+    }
+   },
+   "type": "commit"
+  },
+  "repository": {
+   "type": "repository",
+   "full_name": "atlassian/atlassian-connect-express",
+   "links": {
+    "self": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express"
+    },
+    "html": {
+     "href": "https://bitbucket.org/atlassian/atlassian-connect-express"
+    },
+    "avatar": {
+     "href": "https://bytebucket.org/ravatar/%7B47b154f6-a82d-4e03-99ce-44fb75b4827c%7D?ts=138914"
+    }
+   },
+   "name": "atlassian-connect-express",
+   "uuid": "{47b154f6-a82d-4e03-99ce-44fb75b4827c}"
+  }
+ },
+ "source": {
+  "branch": {
+   "name": "renovate/prettier-3.x",
+   "links": {},
+   "sync_strategies": [
+    "merge_commit",
+    "rebase"
+   ]
+  },
+  "commit": {
+   "hash": "e0949d3373fd",
+   "links": {
+    "self": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/commit/e0949d3373fd"
+    },
+    "html": {
+     "href": "https://bitbucket.org/atlassian/atlassian-connect-express/commits/e0949d3373fd"
+    }
+   },
+   "type": "commit"
+  },
+  "repository": {
+   "type": "repository",
+   "full_name": "atlassian/atlassian-connect-express",
+   "links": {
+    "self": {
+     "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express"
+    },
+    "html": {
+     "href": "https://bitbucket.org/atlassian/atlassian-connect-express"
+    },
+    "avatar": {
+     "href": "https://bytebucket.org/ravatar/%7B47b154f6-a82d-4e03-99ce-44fb75b4827c%7D?ts=138914"
+    }
+   },
+   "name": "atlassian-connect-express",
+   "uuid": "{47b154f6-a82d-4e03-99ce-44fb75b4827c}"
+  }
+ },
+ "reviewers": [
+  {
+   "display_name": "Ben Kelley",
+   "links": {
+    "self": {
+     "href": "https://api.bitbucket.org/2.0/users/%7B933f1401-8b87-43d9-81eb-c075ac70e2d7%7D"
+    },
+    "avatar": {
+     "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/557057:845513f1-5072-4be7-a153-0c6391790d01/15135aa1-9e62-4460-aa62-7b9bd3419ca9/128"
+    },
+    "html": {
+     "href": "https://bitbucket.org/%7B933f1401-8b87-43d9-81eb-c075ac70e2d7%7D/"
+    }
+   },
+   "type": "user",
+   "uuid": "{933f1401-8b87-43d9-81eb-c075ac70e2d7}",
+   "account_id": "557057:845513f1-5072-4be7-a153-0c6391790d01",
+   "nickname": "Ben Kelley"
+  },
+  {
+   "display_name": "Serena Wang",
+   "links": {
+    "self": {
+     "href": "https://api.bitbucket.org/2.0/users/%7B382024ee-9961-4359-ae8f-b48b42f0432a%7D"
+    },
+    "avatar": {
+     "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/initials/SW-3.png"
+    },
+    "html": {
+     "href": "https://bitbucket.org/%7B382024ee-9961-4359-ae8f-b48b42f0432a%7D/"
+    }
+   },
+   "type": "user",
+   "uuid": "{382024ee-9961-4359-ae8f-b48b42f0432a}",
+   "account_id": "70121:6c925f87-43e6-45cd-be25-cfdf58b30ac0",
+   "nickname": "Serena Wang"
+  },
+  {
+   "display_name": "Vincent Nguyen",
+   "links": {
+    "self": {
+     "href": "https://api.bitbucket.org/2.0/users/%7B8921678d-cc20-474a-b7e3-8c6ff3b1a140%7D"
+    },
+    "avatar": {
+     "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/initials/VN-3.png"
+    },
+    "html": {
+     "href": "https://bitbucket.org/%7B8921678d-cc20-474a-b7e3-8c6ff3b1a140%7D/"
+    }
+   },
+   "type": "user",
+   "uuid": "{8921678d-cc20-474a-b7e3-8c6ff3b1a140}",
+   "account_id": "712020:cf50c3cb-714f-4214-be27-f5bace22a1f9",
+   "nickname": "Vincent Nguyen"
+  },
+  {
+   "display_name": "Thomas Wang",
+   "links": {
+    "self": {
+     "href": "https://api.bitbucket.org/2.0/users/%7Bf2ae8db4-d266-4a6a-9387-376221c50ca1%7D"
+    },
+    "avatar": {
+     "href": "https://secure.gravatar.com/avatar/545017bd1e2d8c1627d8fef701a701f7?d=https%3A%2F%2Favatar-management--avatars.us-west-2.prod.public.atl-paas.net%2Finitials%2FTW-5.png"
+    },
+    "html": {
+     "href": "https://bitbucket.org/%7Bf2ae8db4-d266-4a6a-9387-376221c50ca1%7D/"
+    }
+   },
+   "type": "user",
+   "uuid": "{f2ae8db4-d266-4a6a-9387-376221c50ca1}",
+   "account_id": "712020:6e2c0105-7407-4ec5-a892-d220cc354b3b",
+   "nickname": "Thomas Wang"
+  },
+  {
+   "display_name": "Mitchell Mc Cue",
+   "links": {
+    "self": {
+     "href": "https://api.bitbucket.org/2.0/users/%7B64d8d852-4dda-429a-bb5e-7fe9ae157223%7D"
+    },
+    "avatar": {
+     "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/initials/MC-2.png"
+    },
+    "html": {
+     "href": "https://bitbucket.org/%7B64d8d852-4dda-429a-bb5e-7fe9ae157223%7D/"
+    }
+   },
+   "type": "user",
+   "uuid": "{64d8d852-4dda-429a-bb5e-7fe9ae157223}",
+   "account_id": "712020:364151f0-be14-42ad-9e79-2abebf2272af",
+   "nickname": "Mitch McCue"
+  },
+  {
+   "display_name": "Chloe Zhang",
+   "links": {
+    "self": {
+     "href": "https://api.bitbucket.org/2.0/users/%7B46bf84d3-ca36-47b6-be47-11b5cc22c47f%7D"
+    },
+    "avatar": {
+     "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/initials/CZ-6.png"
+    },
+    "html": {
+     "href": "https://bitbucket.org/%7B46bf84d3-ca36-47b6-be47-11b5cc22c47f%7D/"
+    }
+   },
+   "type": "user",
+   "uuid": "{46bf84d3-ca36-47b6-be47-11b5cc22c47f}",
+   "account_id": "712020:463cbec2-636b-4ea3-9675-0d583efe75d3",
+   "nickname": "Chloe Zhang"
+  }
+ ],
+ "participants": [
+  {
+   "type": "participant",
+   "user": {
+    "display_name": "Chloe Zhang",
+    "links": {
+     "self": {
+      "href": "https://api.bitbucket.org/2.0/users/%7B46bf84d3-ca36-47b6-be47-11b5cc22c47f%7D"
+     },
+     "avatar": {
+      "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/initials/CZ-6.png"
+     },
+     "html": {
+      "href": "https://bitbucket.org/%7B46bf84d3-ca36-47b6-be47-11b5cc22c47f%7D/"
+     }
+    },
+    "type": "user",
+    "uuid": "{46bf84d3-ca36-47b6-be47-11b5cc22c47f}",
+    "account_id": "712020:463cbec2-636b-4ea3-9675-0d583efe75d3",
+    "nickname": "Chloe Zhang"
+   },
+   "role": "REVIEWER",
+   "approved": true,
+   "state": "approved",
+   "participated_on": "2026-11-15T20:51:27.617870+00:00"
+  },
+  {
+   "type": "participant",
+   "user": {
+    "display_name": "Thomas Wang",
+    "links": {
+     "self": {
+      "href": "https://api.bitbucket.org/2.0/users/%7Bf2ae8db4-d266-4a6a-9387-376221c50ca1%7D"
+     },
+     "avatar": {
+      "href": "https://secure.gravatar.com/avatar/545017bd1e2d8c1627d8fef701a701f7?d=https%3A%2F%2Favatar-management--avatars.us-west-2.prod.public.atl-paas.net%2Finitials%2FTW-5.png"
+     },
+     "html": {
+      "href": "https://bitbucket.org/%7Bf2ae8db4-d266-4a6a-9387-376221c50ca1%7D/"
+     }
+    },
+    "type": "user",
+    "uuid": "{f2ae8db4-d266-4a6a-9387-376221c50ca1}",
+    "account_id": "712020:6e2c0105-7407-4ec5-a892-d220cc354b3b",
+    "nickname": "Thomas Wang"
+   },
+   "role": "REVIEWER",
+   "approved": false,
+   "state": null,
+   "participated_on": null
+  },
+  {
+   "type": "participant",
+   "user": {
+    "display_name": "Vincent Nguyen",
+    "links": {
+     "self": {
+      "href": "https://api.bitbucket.org/2.0/users/%7B8921678d-cc20-474a-b7e3-8c6ff3b1a140%7D"
+     },
+     "avatar": {
+      "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/initials/VN-3.png"
+     },
+     "html": {
+      "href": "https://bitbucket.org/%7B8921678d-cc20-474a-b7e3-8c6ff3b1a140%7D/"
+     }
+    },
+    "type": "user",
+    "uuid": "{8921678d-cc20-474a-b7e3-8c6ff3b1a140}",
+    "account_id": "712020:cf50c3cb-714f-4214-be27-f5bace22a1f9",
+    "nickname": "Vincent Nguyen"
+   },
+   "role": "REVIEWER",
+   "approved": false,
+   "state": null,
+   "participated_on": null
+  },
+  {
+   "type": "participant",
+   "user": {
+    "display_name": "Mitchell Mc Cue",
+    "links": {
+     "self": {
+      "href": "https://api.bitbucket.org/2.0/users/%7B64d8d852-4dda-429a-bb5e-7fe9ae157223%7D"
+     },
+     "avatar": {
+      "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/initials/MC-2.png"
+     },
+     "html": {
+      "href": "https://bitbucket.org/%7B64d8d852-4dda-429a-bb5e-7fe9ae157223%7D/"
+     }
+    },
+    "type": "user",
+    "uuid": "{64d8d852-4dda-429a-bb5e-7fe9ae157223}",
+    "account_id": "712020:364151f0-be14-42ad-9e79-2abebf2272af",
+    "nickname": "Mitch McCue"
+   },
+   "role": "REVIEWER",
+   "approved": false,
+   "state": null,
+   "participated_on": null
+  },
+  {
+   "type": "participant",
+   "user": {
+    "display_name": "Serena Wang",
+    "links": {
+     "self": {
+      "href": "https://api.bitbucket.org/2.0/users/%7B382024ee-9961-4359-ae8f-b48b42f0432a%7D"
+     },
+     "avatar": {
+      "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/initials/SW-3.png"
+     },
+     "html": {
+      "href": "https://bitbucket.org/%7B382024ee-9961-4359-ae8f-b48b42f0432a%7D/"
+     }
+    },
+    "type": "user",
+    "uuid": "{382024ee-9961-4359-ae8f-b48b42f0432a}",
+    "account_id": "70121:6c925f87-43e6-45cd-be25-cfdf58b30ac0",
+    "nickname": "Serena Wang"
+   },
+   "role": "REVIEWER",
+   "approved": false,
+   "state": null,
+   "participated_on": null
+  },
+  {
+   "type": "participant",
+   "user": {
+    "display_name": "Ben Kelley",
+    "links": {
+     "self": {
+      "href": "https://api.bitbucket.org/2.0/users/%7B933f1401-8b87-43d9-81eb-c075ac70e2d7%7D"
+     },
+     "avatar": {
+      "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/557057:845513f1-5072-4be7-a153-0c6391790d01/15135aa1-9e62-4460-aa62-7b9bd3419ca9/128"
+     },
+     "html": {
+      "href": "https://bitbucket.org/%7B933f1401-8b87-43d9-81eb-c075ac70e2d7%7D/"
+     }
+    },
+    "type": "user",
+    "uuid": "{933f1401-8b87-43d9-81eb-c075ac70e2d7}",
+    "account_id": "557057:845513f1-5072-4be7-a153-0c6391790d01",
+    "nickname": "Ben Kelley"
+   },
+   "role": "REVIEWER",
+   "approved": false,
+   "state": null,
+   "participated_on": null
+  }
+ ],
+ "links": {
+  "self": {
+   "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/604"
+  },
+  "html": {
+   "href": "https://bitbucket.org/atlassian/atlassian-connect-express/pull-requests/604"
+  },
+  "commits": {
+   "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/604/commits"
+  },
+  "approve": {
+   "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/604/approve"
+  },
+  "request-changes": {
+   "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/604/request-changes"
+  },
+  "diff": {
+   "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/diff/atlassian/atlassian-connect-express:e0949d3373fd%0D9c5c85803bfb?from_pullrequest_id=604&topic=true"
+  },
+  "diffstat": {
+   "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/diffstat/atlassian/atlassian-connect-express:e0949d3373fd%0D9c5c85803bfb?from_pullrequest_id=604&topic=true"
+  },
+  "comments": {
+   "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/604/comments"
+  },
+  "activity": {
+   "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/604/activity"
+  },
+  "merge": {
+   "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/604/merge"
+  },
+  "decline": {
+   "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/604/decline"
+  },
+  "statuses": {
+   "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/604/statuses"
+  },
+  "mergeability_checks": {
+   "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/604/mergeability/checks"
+  }
+ },
+ "queued": false
+}

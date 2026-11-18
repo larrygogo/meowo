@@ -165,19 +165,6 @@ fn 被锁定或游离头不可清理() {
 }
 
 #[test]
-fn 解析_gh_输出() {
-    assert_eq!(
-        parse_pr_view(r#"{"number":12,"state":"MERGED","headRefOid":"deadbeef"}"#),
-        Some(PrLookup::Found {
-            number: 12,
-            state: "MERGED".into(),
-            head_oid: "deadbeef".into()
-        })
-    );
-    assert_eq!(parse_pr_view("not json"), None);
-}
-
-#[test]
 fn 目录包含关系不把同前缀的兄弟目录算进去() {
     assert!(is_under("c:/w/a", "c:/w/a"));
     assert!(is_under("c:/w/a/src", "c:/w/a"));
@@ -524,17 +511,17 @@ fn probe_real_worktree() {
         return;
     };
     let dir = PathBuf::from(dir);
-    let status = status_for_dir(&dir, &nobody, &gh_pr_lookup);
+    let status = status_for_dir(&dir, &nobody, &pr_lookup);
     println!("判定: {status:?}");
     assert!(status.eligible, "真实环境下应可清理");
     let first =
-        remove_dir_worktree(&dir, &top_of(&dir), &nobody, &gh_pr_lookup, &[]).expect("删除");
+        remove_dir_worktree(&dir, &top_of(&dir), &nobody, &pr_lookup, &[]).expect("删除");
     let pids: Vec<u32> = first.blockers.iter().map(|p| p.pid).collect();
     println!("占用: {:?}", first.blockers);
     let result = if first.removed {
         first
     } else {
-        remove_dir_worktree(&dir, &top_of(&dir), &nobody, &gh_pr_lookup, &pids).expect("删除")
+        remove_dir_worktree(&dir, &top_of(&dir), &nobody, &pr_lookup, &pids).expect("删除")
     };
     println!("结果: {result:?}");
     assert!(result.removed && !dir.exists());

@@ -7,18 +7,23 @@ import { diffLineAnchors, type DiffLineAnchor } from "./diffComments";
 import { diffLineClass } from "./gitDiff";
 import { useTauriEvent } from "../../hooks/useTauriEvent";
 import { busyProps } from "../../busyButton";
+import { forgeKind, forgeText } from "./forgeWords";
 
 type Tab = "discussion" | "files" | "monitor";
 type Submission = { kind: "comment" | "review" | "line"; anchor?: DiffLineAnchor };
 
-export function PrReviewPanel({ cwd, sessionCwd, sessionId, number, active }: {
+export function PrReviewPanel({ cwd, sessionCwd, sessionId, number, active, forge, forgeHost }: {
   cwd: string;
   sessionCwd: string | null;
   sessionId: number;
   number: number;
   active: boolean;
+  /** 平台（ForgeStatusDto.forge）与主机：按平台的叫法写「监控此 MR」「确认提交到 GitLab」。 */
+  forge?: string | null;
+  forgeHost?: string | null;
 }) {
   const t = useT();
+  const ft = forgeText(t, forgeKind(forge), forgeHost);
   const [data, setData] = useState<PrReviewDto | null>(null);
   const [tab, setTab] = useState<Tab>("discussion");
   const [path, setPath] = useState<string | null>(null);
@@ -80,7 +85,7 @@ export function PrReviewPanel({ cwd, sessionCwd, sessionId, number, active }: {
       <button type="button" role="tab" aria-selected={tab === "monitor"} onClick={() => setTab("monitor")}>{t.forge.reviewMonitor}</button>
     </div>
     {error && <div className="scm-notice is-error" role="alert">{error}</div>}
-    {!data ? <div className="scm-empty">{t.forge.reviewLoading}</div> : <>
+    {!data ? <div className="scm-empty">{ft.reviewLoading}</div> : <>
       {tab === "discussion" && <div className="pr-comments">
         {data.reviews.map((review) => <article key={review.id} className="pr-comment">
           <header>{review.author} · review {review.state ?? ""}</header><p>{review.body}</p>
@@ -107,7 +112,7 @@ export function PrReviewPanel({ cwd, sessionCwd, sessionId, number, active }: {
         <button type="button" className="scm-forge-btn is-ghost" {...busyProps(busy, () => {
           setBusy(true);
           prMonitorSet(cwd, sessionId, !monitor?.enabled, sessionCwd, monitor?.key).then(load).catch((cause) => setError(formatBackendError(cause, t.locale))).finally(() => setBusy(false));
-        })}>{monitor?.enabled ? t.forge.monitorStop : t.forge.monitorStart}</button>
+        })}>{monitor?.enabled ? t.forge.monitorStop : ft.monitorStart}</button>
         {monitor?.lastError && <div className="scm-notice is-error" role="alert">{monitor.lastError}</div>}
         {monitor?.events.map((event) => <article key={event.id} className="pr-event">
           <p>{event.summary}</p>
@@ -124,13 +129,13 @@ export function PrReviewPanel({ cwd, sessionCwd, sessionId, number, active }: {
         </div>
       </div>}
     </>}
-    {confirming && submission && <AppModal label={t.forge.commentConfirm} onClose={() => { if (!busy) setConfirming(false); }}>
-      <div className="chat-modal-title">{t.forge.commentConfirm}</div>
+    {confirming && submission && <AppModal label={ft.commentConfirm} onClose={() => { if (!busy) setConfirming(false); }}>
+      <div className="chat-modal-title">{ft.commentConfirm}</div>
       <p>{submission.kind === "line" ? `${path}:${submission.anchor?.line ?? ""}` : `#${number}`}</p>
       <p className="pr-confirm-body">{draft}</p>
       <div className="chat-modal-actions">
         <button type="button" className="ns-btn" {...busyProps(busy, () => setConfirming(false))}>{t.newSession.cancel}</button>
-        <button type="button" className="ns-btn btn-primary" {...busyProps(busy, () => void submit())}>{t.forge.commentConfirm}</button>
+        <button type="button" className="ns-btn btn-primary" {...busyProps(busy, () => void submit())}>{ft.commentConfirm}</button>
       </div>
     </AppModal>}
   </section>;

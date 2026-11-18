@@ -111,9 +111,6 @@ fn default_remote_port() -> u32 {
 }
 /// 远程桥默认绑定模式：all = 所有网卡（0.0.0.0）。缺省保持旧行为，不破坏已开启的用户；
 /// 收窄（loopback/tailscale）必须由用户显式选择。
-fn default_github_connection() -> String {
-    "auto".to_string()
-}
 fn default_remote_bind() -> String {
     "all".to_string()
 }
@@ -335,10 +332,6 @@ pub(crate) struct Settings {
     /// 全 None/false，前端启动时从 localStorage 旧键（及后端从 window-state 旧文件）一次性迁移。
     #[serde(default)]
     pub(crate) sticker_window: StickerWindowState,
-    /// PR 功能用谁的身份连 GitHub（github.rs）：auto（默认：Meowo 登录了用 Meowo，否则本机 gh）/ meowo /
-    /// gh / off。由 github_set_mode 单独维护（设置窗的旧快照不得盖掉，见 preserve_independently_managed_fields）。
-    #[serde(default = "default_github_connection")]
-    pub(crate) github_connection: String,
 }
 
 impl Default for Settings {
@@ -394,7 +387,6 @@ impl Default for Settings {
             notification_sound: true,
             chat_turn_folding: false,
             sticker_window: StickerWindowState::default(),
-            github_connection: default_github_connection(),
         }
     }
 }
@@ -809,11 +801,6 @@ pub(crate) async fn set_push_paused(app: tauri::AppHandle, paused: bool) -> Resu
 
 /// 只改设置里的个别字段（手机也调得到的那几个窄口子共用）：落盘后发 settings-changed，
 /// 桌面各窗立刻跟上，手机靠轮询 get_settings 跟上。
-/// 单独维护某个字段的命令落盘后，用同一出口（不含远程 token）通知各窗口。
-pub(crate) fn emit_settings_changed(app: &tauri::AppHandle, settings: Settings) {
-    let _ = app.emit("settings-changed", without_remote_token(settings));
-}
-
 async fn patch_settings(
     app: tauri::AppHandle,
     patch: impl FnOnce(&mut Settings) + Send + 'static,
@@ -904,8 +891,6 @@ fn preserve_independently_managed_fields(incoming: &mut Settings, current: &Sett
     incoming.hidden_workspaces = current.hidden_workspaces.clone();
     // setup 信任记录由 worktree_setup_trust 独立维护：设置窗打开期间刚点的信任不能被旧快照抹掉。
     incoming.worktree.trusted = current.worktree.trusted.clone();
-    // GitHub 连接方式由 github_set_mode 独立维护（切换时还要作废 forge 缓存），设置窗快照不得改它。
-    incoming.github_connection = current.github_connection.clone();
 }
 
 /// worktree 相关设置。
@@ -1407,13 +1392,8 @@ mod tests {
             island_monitor: None,
         };
 
-        // 窗口打开期间在 GitHub 分区切了连接方式（github_set_mode 独立维护）。
-        current.github_connection = "meowo".into();
-        incoming.github_connection = "auto".into();
-
         preserve_independently_managed_fields(&mut incoming, &current);
 
-        assert_eq!(incoming.github_connection, "meowo", "GitHub 连接方式不得被旧快照改回");
         assert!(incoming.onboarding_seen, "引导标记不得被旧快照写回 false");
         assert_eq!(
             incoming.remote_access_token, "freshly-generated",
@@ -1542,5 +1522,16 @@ mod tests {
         // 总开关关了，种类全开也不弹。
         let off: Settings = serde_json::from_str(r#"{"notifications_enabled":false}"#).unwrap();
         assert!(!notify_kind_enabled(&off, "error"));
+    }
+
+    /// 「取消gh」：旧设置「GitHub 连接方式」（auto / meowo / gh / off）不再有含义。四种值都照常读得进来（字段被忽略），
+    /// 下次保存时自然去掉；github.com 是否可用只看有没有 Meowo 的 GitHub 账号（github.rs），没有就视为未添加。
+    #[test]
+    fn 旧的_github_连接方式_读得进来且不再保存() {
+        for old in ["auto", "meowo", "gh", "off"] {
+            let s: Settings = serde_json::from_str(&format!(r#"{{"github_connection":"{old}","theme":"dark"}}"#)).unwrap();
+            assert_eq!(s.theme, "dark", "{old}：其余设置照常读");
+            assert!(!serde_json::to_string(&s).unwrap().contains("github_connection"), "{old}：保存时去掉旧字段");
+        }
     }
 }
