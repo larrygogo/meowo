@@ -199,10 +199,14 @@ describeNative("面板浏览器：Agent 控制与人工接管", () => {
     expect(wire).toContain("X-Meowo-Test");
     expect(wire).not.toContain("e2e");
 
-    // 跳转后仍保持。
+    // 跳转后仍保持：同源跳转，以及换渲染进程的跨域跳转（127.0.0.1 → localhost）。
     await agent("browser_navigate", { url: `${origin}emu?next=1` });
     expect(await size()).toEqual([390, 844]);
     expect(String(lastHeaders["user-agent"])).toContain("iPhone");
+    await agent("browser_navigate", { url: `${origin.replace("127.0.0.1", "localhost")}emu?cross=1` });
+    expect(await size()).toEqual([390, 844]);
+    expect(String(lastHeaders["user-agent"])).toContain("iPhone");
+    expect(lastHeaders["x-meowo-test"]).toBe("e2e");
 
     // 桌面模拟比面板大：缩到面板里。接管后按缩放后的屏幕位置人工点 #far，要点得中。
     await agent("browser_emulate", { device: "desktop" });
@@ -227,10 +231,19 @@ describeNative("面板浏览器：Agent 控制与人工接管", () => {
     const farClicks = await agentEvaluate<number>("window.__far || 0");
     if (farClicks !== 1) throw new Error(`缩放后人工点击没落到 #far（${farClicks}），轨迹：${trace}`);
 
-    // 拖窄面板、收起面板：视口仍是模拟值。
+    // 拖窄面板：视口仍是模拟值，缩放按新面板重算——用新比例算的屏幕位置人工点 #far 仍点得中。
     await invoke("browser_pane_set_bounds", { id: paneId, x: 40, y: 80, width: 600, height: 500, visible: true });
-    await browser.pause(300);
+    await browser.pause(400);
     expect(await size()).toEqual([1280, 800]);
+    const narrowScale = Math.min(600 / 1280, 500 / 800);
+    await invoke("browser_pane_set_agent_paused", { id: paneId, paused: true });
+    await browser.pause(300);
+    const narrowTrace = await nativeClick({ x: far.x * narrowScale, y: far.y * narrowScale });
+    await invoke("browser_pane_set_agent_paused", { id: paneId, paused: false });
+    const narrowClicks = await agentEvaluate<number>("window.__far || 0");
+    if (narrowClicks !== 2) throw new Error(`拖窄后人工点击没落到 #far（${narrowClicks}），轨迹：${narrowTrace}`);
+    // 收起面板：视口仍是模拟值。
+    await browser.switchToWindow(control);
     await invoke("browser_pane_set_bounds", { id: paneId, x: 0, y: 0, width: 0, height: 0, visible: false });
     await browser.pause(300);
     expect(await size()).toEqual([1280, 800]);

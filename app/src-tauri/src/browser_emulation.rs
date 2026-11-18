@@ -9,7 +9,7 @@
 //! `Network.setExtraHTTPHeaders`。WebView2 经 `CallDevToolsProtocolMethod` 调同一套协议；
 //! WKWebView 没有 CDP，macOS 上明确返回不支持，不假装成功。
 //!
-//! 每次调用整体替换之前的模拟（没给的项就是不改写），语义简单、可预期。
+//! 每次调用整体替换之前的模拟（没给的项回到默认、不模拟），语义简单、可预期。
 
 use serde::Serialize;
 use serde_json::{json, Map, Value};
@@ -30,6 +30,8 @@ struct Preset {
     dpr: f64,
     mobile: bool,
     ua: Option<&'static str>,
+    /// navigator.platform：只改 UA 不改它，按 platform 判断设备的脚本仍会认成 Windows。
+    platform: Option<&'static str>,
 }
 
 const PRESETS: &[Preset] = &[
@@ -40,6 +42,7 @@ const PRESETS: &[Preset] = &[
         dpr: 1.0,
         mobile: false,
         ua: None,
+        platform: None,
     },
     Preset {
         id: "tablet",
@@ -48,6 +51,7 @@ const PRESETS: &[Preset] = &[
         dpr: 2.0,
         mobile: true,
         ua: Some(IPAD_UA),
+        platform: Some("iPad"),
     },
     Preset {
         id: "mobile",
@@ -56,6 +60,7 @@ const PRESETS: &[Preset] = &[
         dpr: 3.0,
         mobile: true,
         ua: Some(IPHONE_UA),
+        platform: Some("iPhone"),
     },
 ];
 
@@ -85,6 +90,9 @@ pub(crate) struct Metrics {
 pub(crate) struct Emulation {
     pub(crate) metrics: Option<Metrics>,
     pub(crate) user_agent: Option<String>,
+    /// 跟预设 UA 一起改的 navigator.platform；自己给了 UA 就不改（不知道该配什么）。
+    #[serde(skip)]
+    pub(crate) platform: Option<String>,
     pub(crate) header_names: Vec<String>,
     #[serde(skip)]
     pub(crate) headers: Vec<(String, String)>,
@@ -169,6 +177,10 @@ pub(crate) fn parse(args: &Value) -> Result<Option<Emulation>, String> {
     } else {
         None
     };
+    let platform = match &user_agent {
+        Some(_) => None,
+        None => base.and_then(|p| p.platform).map(str::to_string),
+    };
     let user_agent = user_agent.or_else(|| base.and_then(|p| p.ua).map(str::to_string));
     if metrics.is_none() && user_agent.is_none() && headers.is_empty() {
         return Err("至少给一个参数：device、width/height、user_agent 或 headers；要还原用 device: \"reset\"".into());
@@ -176,6 +188,7 @@ pub(crate) fn parse(args: &Value) -> Result<Option<Emulation>, String> {
     Ok(Some(Emulation {
         metrics,
         user_agent,
+        platform,
         header_names: headers.iter().map(|(name, _)| name.clone()).collect(),
         headers,
     }))
@@ -195,8 +208,18 @@ fn parse_headers(map: &Map<String, Value>) -> Result<Vec<(String, String)>, Stri
         if !valid_name {
             return Err(format!("请求头名「{name}」无效：只能用字母、数字、- 和 _"));
         }
-        if FORBIDDEN_HEADERS.contains(&name.to_ascii_lowercase().as_str()) {
+        let lower = name.to_ascii_lowercase();
+        if FORBIDDEN_HEADERS.contains(&lower.as_str()) {
             return Err(format!("请求头「{name}」由浏览器自己管理，不能改"));
+        }
+        if lower == "user-agent" {
+            return Err("UA 用 user_agent 参数改，不放在 headers 里".into());
+        }
+        if out
+            .iter()
+            .any(|(seen, _): &(String, String)| seen.eq_ignore_ascii_case(name))
+        {
+            return Err(format!("请求头「{name}」重复了（名字不分大小写）"));
         }
         let value = value
             .as_str()
@@ -263,24 +286,38 @@ pub(crate) fn metrics_calls(
     }
 }
 
-/// 把模拟整体设成 `emulation`（None = 全部还原）要发的 CDP 调用，按顺序执行。
-pub(crate) fn calls(emulation: Option<&Emulation>, view: (f64, f64)) -> Vec<(&'static str, Value)> {
-    let mut out = metrics_calls(emulation.and_then(|e| e.metrics.as_ref()), view);
+/// 从 `before` 换到 `next`（None = 全部还原）要发的 CDP 调用，按顺序执行。
+pub(crate) fn calls(
+    before: Option<&Emulation>,
+    next: Option<&Emulation>,
+    view: (f64, f64),
+) -> Vec<(&'static str, Value)> {
+    let mut out = metrics_calls(next.and_then(|e| e.metrics.as_ref()), view);
     // 空字符串 = 撤掉 UA 覆盖，回到 WebView2 自己的 UA（DevTools 设备模式也这样清）。
-    let ua = emulation
-        .and_then(|e| e.user_agent.as_deref())
-        .unwrap_or("");
-    out.push(("Emulation.setUserAgentOverride", json!({ "userAgent": ua })));
-    let headers: Map<String, Value> = emulation
-        .map(|e| {
-            e.headers
-                .iter()
-                .map(|(k, v)| (k.clone(), Value::String(v.clone())))
-                .collect()
-        })
-        .unwrap_or_default();
-    out.push(("Network.enable", json!({})));
-    out.push(("Network.setExtraHTTPHeaders", json!({ "headers": headers })));
+    let ua = next.and_then(|e| e.user_agent.as_deref()).unwrap_or("");
+    let mut ua_params = json!({ "userAgent": ua });
+    if let Some(platform) = next.and_then(|e| e.platform.as_deref()) {
+        ua_params["platform"] = Value::String(platform.to_string());
+    }
+    out.push(("Emulation.setUserAgentOverride", ua_params));
+    // Network 域只在有附加请求头时开着：开着时 DevTools 会话会为页面缓存响应体，白占内存
+    // （独立审查提出）。缓冲上限设 0，开着也不攒。
+    let has_headers = |e: Option<&Emulation>| e.is_some_and(|e| !e.headers.is_empty());
+    if let Some(e) = next.filter(|e| !e.headers.is_empty()) {
+        let headers: Map<String, Value> = e
+            .headers
+            .iter()
+            .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+            .collect();
+        out.push((
+            "Network.enable",
+            json!({ "maxTotalBufferSize": 0, "maxResourceBufferSize": 0 }),
+        ));
+        out.push(("Network.setExtraHTTPHeaders", json!({ "headers": headers })));
+    } else if has_headers(before) {
+        out.push(("Network.setExtraHTTPHeaders", json!({ "headers": {} })));
+        out.push(("Network.disable", json!({})));
+    }
     out
 }
 
@@ -330,15 +367,18 @@ pub(crate) fn viewport_note(
 }
 
 /// 按顺序执行一组 CDP 调用，等每一步的结果；任何一步失败就停下报错。
-/// 回调在主线程，调用方必须在非主线程（broker 线程或 async command）上等。
+/// 回调在主线程，调用方必须在非主线程（broker 线程或 blocking 线程）上等。
+/// `check` 在每一步发出前调用：用户中途接管就立刻停下，已发出的部分由调用方回滚。
 #[cfg(windows)]
 pub(crate) fn run_calls(
     webview: &tauri::Webview,
     calls: Vec<(&'static str, Value)>,
+    check: &dyn Fn() -> Result<(), String>,
 ) -> Result<(), String> {
     use std::sync::mpsc;
     use std::time::Duration;
     for (method, params) in calls {
+        check()?;
         let (tx, rx) = mpsc::channel::<Result<(), String>>();
         let fail = tx.clone();
         let params = params.to_string();
@@ -374,32 +414,45 @@ pub(crate) fn run_calls(
 pub(crate) fn run_calls(
     _webview: &tauri::Webview,
     _calls: Vec<(&'static str, Value)>,
+    _check: &dyn Fn() -> Result<(), String>,
 ) -> Result<(), String> {
     Err(UNSUPPORTED.into())
 }
 
 /// 面板拖宽、收起时重算缩放：只发不等（在 set_bounds 里，不能为它卡住位置同步）。
+/// `current` 在主线程上**执行时**才读目标尺寸和视口，不在发出时捕获：和正在进行的
+/// set_emulation 交错时，排在后面的补发不会把刚换掉（或刚还原）的旧尺寸写回去（独立审查发现）。
+/// 调用方不能持有页签状态锁：`current` 要拿这把锁。
 #[cfg(windows)]
-pub(crate) fn refit(webview: &tauri::Webview, metrics: &Metrics, view: (f64, f64)) {
-    for (method, params) in metrics_calls(Some(metrics), view) {
-        let params = params.to_string();
-        let _ = webview.with_webview(move |platform| {
-            use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
-            use windows::core::HSTRING;
-            let Ok(core) = (unsafe { platform.controller().CoreWebView2() }) else {
-                return;
-            };
+pub(crate) fn refit(
+    webview: &tauri::Webview,
+    current: impl FnOnce() -> Option<(Metrics, (f64, f64))> + Send + 'static,
+) {
+    let _ = webview.with_webview(move |platform| {
+        use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
+        use windows::core::HSTRING;
+        let Some((metrics, view)) = current() else {
+            return;
+        };
+        let Ok(core) = (unsafe { platform.controller().CoreWebView2() }) else {
+            return;
+        };
+        for (method, params) in metrics_calls(Some(&metrics), view) {
             let handler =
                 CallDevToolsProtocolMethodCompletedHandler::create(Box::new(|_, _| Ok(())));
             let name = HSTRING::from(method);
-            let body = HSTRING::from(params.as_str());
+            let body = HSTRING::from(params.to_string().as_str());
             let _ = unsafe { core.CallDevToolsProtocolMethod(&name, &body, &handler) };
-        });
-    }
+        }
+    });
 }
 
 #[cfg(not(windows))]
-pub(crate) fn refit(_webview: &tauri::Webview, _metrics: &Metrics, _view: (f64, f64)) {}
+pub(crate) fn refit(
+    _webview: &tauri::Webview,
+    _current: impl FnOnce() -> Option<(Metrics, (f64, f64))> + Send + 'static,
+) {
+}
 
 #[cfg(test)]
 mod tests {
@@ -460,6 +513,8 @@ mod tests {
             (json!({ "headers": { "X-A": "1\r\nX-B: 2" } }), "不含换行"),
             (json!({ "headers": { "a b": "1" } }), "无效"),
             (json!({ "headers": "x" }), "要是对象"),
+            (json!({ "headers": { "X-A": "1", "x-a": "2" } }), "重复"),
+            (json!({ "headers": { "User-Agent": "x" } }), "user_agent 参数"),
         ] {
             let error = parse(&args).unwrap_err();
             assert!(error.contains(needle), "{args} → {error}");
@@ -501,18 +556,40 @@ mod tests {
 
     #[test]
     fn reset_clears_every_override() {
-        let calls = calls(None, (600.0, 800.0));
+        let before = parse(&json!({ "device": "mobile", "headers": { "X-Test": "1" } })).unwrap();
+        let calls = calls(before.as_ref(), None, (600.0, 800.0));
         let names: Vec<_> = calls.iter().map(|(m, _)| *m).collect();
         assert!(names.contains(&"Emulation.clearDeviceMetricsOverride"));
+        let ua = &calls
+            .iter()
+            .find(|(m, _)| *m == "Emulation.setUserAgentOverride")
+            .unwrap()
+            .1;
+        assert_eq!((ua["userAgent"].as_str(), ua.get("platform")), (Some(""), None));
+        // 之前有附加头：清空后关掉 Network 域。
         assert_eq!(
-            calls
-                .iter()
-                .find(|(m, _)| *m == "Emulation.setUserAgentOverride")
-                .unwrap()
-                .1["userAgent"],
-            ""
+            &names[names.len() - 2..],
+            &["Network.setExtraHTTPHeaders", "Network.disable"]
         );
-        assert_eq!(calls.last().unwrap().1["headers"], json!({}));
+    }
+
+    #[test]
+    fn network_domain_is_only_enabled_for_extra_headers() {
+        let mobile = parse(&json!({ "device": "mobile" })).unwrap();
+        let network = |c: Vec<(&'static str, Value)>| c.iter().any(|(m, _)| m.starts_with("Network."));
+        assert!(!network(calls(None, mobile.as_ref(), (600.0, 800.0))));
+        assert!(!network(calls(mobile.as_ref(), None, (600.0, 800.0))));
+        let set = calls(None, mobile.as_ref(), (600.0, 800.0));
+        let ua = &set
+            .iter()
+            .find(|(m, _)| *m == "Emulation.setUserAgentOverride")
+            .unwrap()
+            .1;
+        assert_eq!(ua["platform"], "iPhone", "预设 UA 带上 navigator.platform");
+        let custom = parse(&json!({ "device": "mobile", "user_agent": "X" }))
+            .unwrap()
+            .unwrap();
+        assert_eq!(custom.platform, None, "自己给的 UA 不配 platform");
     }
 
     #[test]

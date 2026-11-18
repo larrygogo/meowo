@@ -214,7 +214,7 @@ fn tools() -> Vec<Value> {
         tool("browser_screenshot", "截下面板浏览器当前的画面（图片）。要看排版、样式、颜色、图表这些快照文字表达不了的东西时用。", json!({}), &[]),
         tool(
             "browser_emulate",
-            "模拟设备：设视口尺寸、UA、附加请求头，跳转后仍保持，直到 reset 或关页签。面板窄时响应式网站会显示手机版，要测桌面版用 device: desktop。每次调用整体替换之前的设置，没给的项不改写。改了 UA 或请求头会自动刷新页面（SSR 才拿得到新的那一版），只改尺寸不刷新。返回新的页面快照。目前只有 Windows 支持。",
+            "模拟设备：设视口尺寸、UA、附加请求头，跳转后仍保持，直到 reset 或关页签。面板窄时响应式网站会显示手机版，要测桌面版用 device: desktop。每次调用整体替换之前的设置：没给的项回到默认（不模拟），要同时保持手机尺寸并加请求头就在一次调用里一起给。附加请求头会随这个页签发出的所有请求发送（包括第三方域名），别放不该外传的令牌。改了 UA 或请求头会自动刷新页面（SSR 才拿得到新的那一版），只改尺寸不刷新。返回新的页面快照。目前只有 Windows 支持。",
             json!({
                 "device": { "type": "string", "enum": ["desktop", "tablet", "mobile", "reset"], "description": "desktop=1280×800；tablet=820×1180 触屏、iPad UA；mobile=390×844 触屏、iPhone UA；reset=全部还原成面板实际大小和默认 UA" },
                 "width": { "type": "integer", "description": "视口宽（CSS 像素，200～4096），覆盖预设" },

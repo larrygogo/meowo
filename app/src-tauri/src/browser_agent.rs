@@ -510,8 +510,11 @@ fn run(
             };
             let panes = app.state::<BrowserPanes>();
             ensure_agent_control(&panes, id, generation)?;
-            let reload = browser_pane::set_emulation(app, &panes, id, next)?;
+            let check = || ensure_agent_control(&panes, id, generation);
+            let reload = browser_pane::set_emulation(app, &panes, id, next, &check)?;
             if reload {
+                // 刷新会丢掉用户刚接管后在页面上做的事：刷新前再确认一次控制权还在。
+                check()?;
                 browser_pane::webview(app, id)?
                     .reload()
                     .map_err(|e| e.to_string())?;

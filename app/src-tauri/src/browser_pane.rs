@@ -217,6 +217,10 @@ pub(crate) struct BrowserPaneInfo {
     /// 面板里实际显示的尺寸（不抬下限），设备模拟按它算缩放比例。
     #[serde(skip)]
     shown: (f64, f64),
+    /// 正在生效或正要生效的模拟尺寸。面板变化时的补发在主线程上现读它（见 `refit_later`），
+    /// set_emulation 一开始就改它、失败再改回，补发就不会把旧尺寸写回去。
+    #[serde(skip)]
+    emulation_target: Option<crate::browser_emulation::Metrics>,
     /// agent 用过这个页签：收起时挪到窗口外接着渲染，而不是藏起来。见 `Placement`。
     #[serde(skip)]
     keep_rendering: bool,
@@ -628,6 +632,7 @@ pub(crate) fn open_pane(
         placement: Placement::Hidden,
         viewport: DEFAULT_VIEWPORT,
         shown: DEFAULT_VIEWPORT,
+        emulation_target: None,
         keep_rendering: false,
         operation: Arc::new(Mutex::new(())),
     };
@@ -649,7 +654,7 @@ pub(crate) fn open_pane(
     let builder = WebviewBuilder::new(label_of(id), WebviewUrl::External(target))
         // 页内跳转同样过一遍白名单：页面自己把 location 改到 tauri.localhost 也拦得住。
         .on_navigation(move |url| allowed(url, nav_dev.as_ref()))
-        .on_page_load(move |_, payload| {
+        .on_page_load(move |page, payload| {
             // Started 对应 WebView2 的 ContentLoading：只有新文档开始加载才触发，点附件链接
             // 下载不会触发（wry 0.57.1 webview2/mod.rs）。
             let loading = matches!(payload.event(), PageLoadEvent::Started);
@@ -667,6 +672,11 @@ pub(crate) fn open_pane(
                     info.blocked = None;
                 }
             });
+            // 跨站跳转会换渲染进程：E2E 实测换进程后模拟的宽高还在，缩放比例却丢了，页面按
+            // 1280 原尺寸画在 600 宽的面板里，右半边看不到也点不到。每次加载完按目标补发一次。
+            if !loading {
+                refit_later(&load_app, &page, id);
+            }
         })
         // 接管下载：Windows 上 wry 随之 SetHandled，WebView2 自己的下载框不再出；macOS 上
         // 不接 WKWebView 根本不下（wry 只在有回调时才挂下载代理）。都存进系统「下载」文件夹，
@@ -759,10 +769,6 @@ fn conceal(webview: &tauri::Webview, info: &mut BrowserPaneInfo) -> Result<(), S
             .set_bounds(parked_rect(info.viewport))
             .map_err(|e| e.to_string())?;
         webview.show().map_err(|e| e.to_string())?;
-        // 收起后视口换成 parked 尺寸，模拟的缩放比例跟着重算。
-        if let Some(metrics) = info.emulation.as_ref().and_then(|e| e.metrics.as_ref()) {
-            crate::browser_emulation::refit(webview, metrics, info.viewport);
-        }
     } else {
         webview.hide().map_err(|e| e.to_string())?;
     }
@@ -785,7 +791,23 @@ pub(crate) fn keep_rendering(
     if info.placement == Placement::OnScreen {
         return Ok(());
     }
-    conceal(&webview, info)
+    conceal(&webview, info)?;
+    drop(map);
+    // 挪到窗口外后视口换成 parked 尺寸，模拟的缩放比例跟着重算。
+    refit_later(app, &webview, id);
+    Ok(())
+}
+
+/// 面板尺寸变了（拖宽、收起、展开）：按此刻的目标模拟和视口重算缩放。只发不等；尺寸和视口
+/// 在主线程上执行时才读（见 browser_emulation::refit）。调用时不能持有页签状态锁。
+fn refit_later(app: &tauri::AppHandle, webview: &tauri::Webview, id: u32) {
+    let app = app.clone();
+    crate::browser_emulation::refit(webview, move || {
+        let panes = app.state::<BrowserPanes>();
+        let map = panes.panes.lock().ok()?;
+        let info = map.get(&id)?;
+        Some((info.emulation_target.clone()?, view_size(info)))
+    });
 }
 
 /// 前端占位区域的位置（CSS 像素，相对窗口内容区左上角）。visible=false 时让开：
@@ -806,7 +828,14 @@ pub(crate) async fn browser_pane_set_bounds(
     let mut map = state.panes.lock().map_err(|e| e.to_string())?;
     let info = map.get_mut(&id).ok_or("browser_pane/not_found")?;
     if !visible || width < 1.0 || height < 1.0 {
-        return conceal(&webview, info);
+        let was = info.placement;
+        conceal(&webview, info)?;
+        let parked = was != Placement::Parked && info.placement == Placement::Parked;
+        drop(map);
+        if parked {
+            refit_later(&app, &webview, id);
+        }
+        return Ok(());
     }
     // 记下面板里的尺寸，收起后 agent 接着用时页面视口不变，排版不会跳。
     info.viewport = parked_viewport((width, height));
@@ -821,10 +850,9 @@ pub(crate) async fn browser_pane_set_bounds(
     let resized = info.shown != (width, height) || info.placement != Placement::OnScreen;
     info.shown = (width, height);
     info.placement = Placement::OnScreen;
+    drop(map);
     if resized {
-        if let Some(metrics) = info.emulation.as_ref().and_then(|e| e.metrics.as_ref()) {
-            crate::browser_emulation::refit(&webview, metrics, (width, height));
-        }
+        refit_later(&app, &webview, id);
     }
     Ok(())
 }
@@ -838,25 +866,41 @@ fn view_size(info: &BrowserPaneInfo) -> (f64, f64) {
     }
 }
 
-/// 把页签的设备模拟整体换成 `next`（None = 还原）。CDP 全部成功才记状态；返回是否需要刷新
-/// （UA 或请求头变了）。必须在非主线程调用：CDP 的回调在主线程。
+/// 把页签的设备模拟整体换成 `next`（None = 还原）。返回是否需要刷新（UA 或请求头变了）。
+/// 必须在非主线程调用：CDP 的回调在主线程。
+///
+/// `check` 在每一步 CDP 前和记状态前调用（Agent 传接管检查）：用户中途接管、或某一步失败，
+/// 尽力把已发出的部分撤回到原状态再报错，状态记录不动——不留「改了一半」的页签，也不在
+/// 报「被拒」的同时其实已经生效（独立审查发现）。
 pub(crate) fn set_emulation(
     app: &tauri::AppHandle,
     state: &BrowserPanes,
     id: u32,
     next: Option<crate::browser_emulation::Emulation>,
+    check: &dyn Fn() -> Result<(), String>,
 ) -> Result<bool, String> {
+    use crate::browser_emulation::{calls, needs_reload, run_calls};
     let (before, view) = {
-        let map = state.panes.lock().map_err(|e| e.to_string())?;
-        let info = map.get(&id).ok_or("browser_pane/not_found")?;
+        let mut map = state.panes.lock().map_err(|e| e.to_string())?;
+        let info = map.get_mut(&id).ok_or("browser_pane/not_found")?;
+        // 先改目标：此后排进主线程的面板补发按新尺寸算，不会把旧尺寸写回去。
+        info.emulation_target = next.as_ref().and_then(|e| e.metrics.clone());
         (info.emulation.clone(), view_size(info))
     };
     let webview = webview(app, id)?;
-    crate::browser_emulation::run_calls(
-        &webview,
-        crate::browser_emulation::calls(next.as_ref(), view),
-    )?;
-    let reload = crate::browser_emulation::needs_reload(before.as_ref(), next.as_ref());
+    let applied = run_calls(&webview, calls(before.as_ref(), next.as_ref(), view), check)
+        .and_then(|()| check());
+    if let Err(error) = applied {
+        if let Ok(mut map) = state.panes.lock() {
+            if let Some(info) = map.get_mut(&id) {
+                info.emulation_target = before.as_ref().and_then(|e| e.metrics.clone());
+            }
+        }
+        // 撤回不再看接管：它只是把页签恢复成用户接管前看到的样子。
+        let _ = run_calls(&webview, calls(next.as_ref(), before.as_ref(), view), &|| Ok(()));
+        return Err(error);
+    }
+    let reload = needs_reload(before.as_ref(), next.as_ref());
     update(app, &state.panes, id, |info| info.emulation = next);
     Ok(reload)
 }
@@ -871,10 +915,17 @@ pub(crate) async fn browser_pane_emulate(
 ) -> Result<(), String> {
     ensure_human_action_allowed(&state, id)?;
     let next = crate::browser_emulation::parse(&serde_json::json!({ "device": device }))?;
-    if set_emulation(&app, &state, id, next)? {
-        webview(&app, id)?.reload().map_err(|e| e.to_string())?;
-    }
-    Ok(())
+    // CDP 每一步要等主线程回调（最长数秒）：放到 blocking 线程上等，不占 async 运行时。
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<BrowserPanes>();
+        let check = || ensure_human_action_allowed(&state, id);
+        if set_emulation(&app, &state, id, next, &check)? {
+            webview(&app, id)?.reload().map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
