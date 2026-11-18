@@ -55,6 +55,7 @@ import type { GetChatHistoryArgs } from "./generated/contracts/bridge/GetChatHis
 import type { GetLiveSessionsPageArgs } from "./generated/contracts/bridge/GetLiveSessionsPageArgs";
 import type { GetSessionAdminPageArgs } from "./generated/contracts/bridge/GetSessionAdminPageArgs";
 import type { GetSubagentTranscriptArgs } from "./generated/contracts/bridge/GetSubagentTranscriptArgs";
+import type { ProbeSubagentStatesArgs } from "./generated/contracts/bridge/ProbeSubagentStatesArgs";
 import type { GhPrCreateArgs } from "./generated/contracts/bridge/GhPrCreateArgs";
 import type { GhPrMergeArgs } from "./generated/contracts/bridge/GhPrMergeArgs";
 import type { ForgeChooseRepoArgs } from "./generated/contracts/bridge/ForgeChooseRepoArgs";
@@ -329,7 +330,7 @@ export function probeSubagentStates(
   sessionId: number,
   toolUseIds: string[],
 ): Promise<Record<string, SubagentProbe>> {
-  return invoke("probe_subagent_states", { sessionId, toolUseIds });
+  return invoke("probe_subagent_states", { sessionId, toolUseIds } satisfies ProbeSubagentStatesArgs);
 }
 
 /**
