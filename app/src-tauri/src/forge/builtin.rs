@@ -586,6 +586,10 @@ impl Builtin<'_> {
             Some(Value::Object(fields))
         };
         let paginate = args.has(&["--paginate"]) && method == "GET";
+        // gh 分页时每页 100 条（没写 per_page 就补上）：--slurp 的分页边界与 gh 一致（G7 真机对照发现）。
+        if paginate && !url.contains("per_page=") {
+            url = format!("{url}{}per_page=100", if url.contains('?') { "&" } else { "?" });
+        }
         let mut pages: Vec<Value> = Vec::new();
         let mut next = Some(url);
         let mut first_body = String::new();

@@ -309,6 +309,8 @@ fn api_分页_slurp_与字段() {
     });
     let out = run(&api, &prefs, ".", &["api", "repos/acme/repo/pulls/3/files", "--paginate", "--slurp"]);
     assert_eq!(json_out(&out), json!([[{ "filename": "a.ts" }], [{ "filename": "b.ts" }]]));
+    // 与 gh 一样每页 100 条（G7 真机对照：不补的话 --slurp 的分页边界与 gh 不同）。
+    assert!(api.calls()[0].1.ends_with("/repos/acme/repo/pulls/3/files?per_page=100"), "{}", api.calls()[0].1);
     let out = run(&api, &prefs, ".", &["api", "repos/acme/repo/pulls/3/files", "--paginate"]);
     assert_eq!(json_out(&out), json!([{ "filename": "a.ts" }, { "filename": "b.ts" }]));
     let out = run(&api, &prefs, ".", &["api", "repos/acme/repo/pulls/3/comments", "-f", "body=hi there", "-f", "commit_id=abc", "-f", "path=src/a.ts", "-F", "line=3", "-f", "side=NEW"]);
@@ -552,4 +554,119 @@ fn 连接变了_forge_缓存全部作废() {
     assert!(!lock(&CACHES.methods).contains_key(&key));
     assert!(!lock(&CACHES.prs).contains_key(&key));
     assert!(!lock(&CACHES.queued).iter().any(|(k, _, _)| *k == key));
+}
+
+// ═══ 真机核对（G7，只读）═══
+//
+// 默认 #[ignore]。运行（PowerShell，令牌只进环境变量，不落文件、不打印）：
+//   $env:GH_TOKEN = (gh auth token); cargo test -p meowo-app --lib live_对照_gh -- --ignored --nocapture; Remove-Item Env:GH_TOKEN
+// 用内置执行器（真 HTTP）与本机 gh 对同一条只读命令各跑一次，逐字段对比。不做任何写操作。
+
+/// 两份 JSON 的差异路径（gh 有而我们没有的字段、值不同的字段；我们多出的字段也列出）。
+fn json_diff(path: &str, gh: &Value, ours: &Value, out: &mut Vec<String>) {
+    match (gh, ours) {
+        (Value::Object(a), Value::Object(b)) => {
+            for (k, v) in a {
+                match b.get(k) {
+                    Some(w) => json_diff(&format!("{path}.{k}"), v, w, out),
+                    None => out.push(format!("{path}.{k}: 只有 gh 有")),
+                }
+            }
+            for k in b.keys().filter(|k| !a.contains_key(*k)) {
+                out.push(format!("{path}.{k}: 只有内置有"));
+            }
+        }
+        (Value::Array(a), Value::Array(b)) => {
+            if a.len() != b.len() {
+                out.push(format!("{path}: 条数 gh {} / 内置 {}", a.len(), b.len()));
+            }
+            for (i, (v, w)) in a.iter().zip(b).enumerate() {
+                json_diff(&format!("{path}[{i}]"), v, w, out);
+            }
+        }
+        (Value::String(a), Value::String(b)) if a != b => {
+            let at = a.chars().zip(b.chars()).take_while(|(x, y)| x == y).count();
+            let around = |s: &str| s.chars().skip(at.saturating_sub(20)).take(50).collect::<String>().escape_debug().to_string();
+            out.push(format!("{path}: 长度 gh {} / 内置 {}，第 {at} 字起不同：gh「{}」/ 内置「{}」", a.chars().count(), b.chars().count(), around(a), around(b)));
+        }
+        _ if gh != ours => out.push(format!("{path}: gh {} / 内置 {}", short(gh), short(ours))),
+        _ => {}
+    }
+}
+
+fn short(v: &Value) -> String {
+    let text = v.to_string();
+    if text.chars().count() > 60 { format!("{}…", text.chars().take(60).collect::<String>()) } else { text }
+}
+
+/// 断网偶发（本机到 GitHub 的 TLS 握手常超时）：两边各重试几次。
+fn with_retry(run: impl Fn() -> Option<CmdOut>) -> CmdOut {
+    let mut last = CmdOut::default();
+    for _ in 0..6 {
+        let Some(out) = run() else { panic!("gh 不在") };
+        let flaky = out.both().contains("error connecting") || out.both().contains("TLS handshake") || out.both().contains("EOF") || out.timed_out;
+        if !flaky {
+            return out;
+        }
+        last = out;
+    }
+    panic!("连不上 GitHub：{}", tail(&last.both(), 3))
+}
+
+#[test]
+#[ignore]
+fn live_对照_gh() {
+    let token = Token::new(&std::env::var("GH_TOKEN").expect("设 GH_TOKEN")).expect("令牌格式");
+    let prefs = std::env::temp_dir().join("meowo-live-none.json");
+    let builtin = Builtin { http: &crate::github::RealHttp, token: Some(&token), on_auth: &|_| {}, prefs: &prefs };
+    let dir = std::env::temp_dir();
+    let dir = dir.to_string_lossy();
+    let cli_pr = with_retry(|| real_gh(&dir, &["pr", "list", "--repo", "cli/cli", "--state", "merged", "--limit", "1", "--json", "number"]));
+    let cli_pr = serde_json::from_str::<Value>(&cli_pr.stdout).unwrap()[0]["number"].to_string();
+    let fields_review = format!("{PR_FIELDS},comments,reviews");
+    let cases: Vec<Vec<&str>> = vec![
+        vec!["pr", "view", "192", "--repo", "larrygogo/meowo", "--json", PR_FIELDS],
+        vec!["pr", "view", "192", "--repo", "larrygogo/meowo", "--json", &fields_review],
+        vec!["pr", "view", "fix/scm-switch-flash", "--repo", "larrygogo/meowo", "--json", "number,state"],
+        vec!["pr", "view", "meowo/no-such-branch-for-g7", "--repo", "larrygogo/meowo", "--json", "number,state"],
+        vec!["repo", "view", "larrygogo/meowo", "--json", "mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed"],
+        vec!["api", "repos/larrygogo/meowo/pulls/192/files", "--paginate", "--slurp"],
+        vec!["api", "user"],
+        vec!["pr", "view", &cli_pr, "--repo", "cli/cli", "--json", PR_FIELDS],
+        vec!["auth", "status", "--hostname", "github.com"],
+    ];
+    let mut report = Vec::new();
+    for args in &cases {
+        let gh = with_retry(|| real_gh(&dir, args));
+        let ours = with_retry(|| Some(builtin.run(&dir, args)));
+        let line = args.join(" ");
+        if gh.code != ours.code {
+            report.push(format!("{line}\n  退出码 gh {:?} / 内置 {:?}\n  gh: {}\n  内置: {}", gh.code, ours.code, tail(&gh.both(), 2), tail(&ours.both(), 2)));
+            continue;
+        }
+        if gh.code != Some(0) {
+            report.push(format!("{line}\n  都失败（退出码 {:?}）\n  gh: {}\n  内置: {}", gh.code, tail(&gh.stderr, 1), tail(&ours.stderr, 1)));
+            continue;
+        }
+        if args[0] == "auth" {
+            report.push(format!("{line}\n  都成功"));
+            continue;
+        }
+        let a: Value = serde_json::from_str(&gh.stdout).unwrap_or(Value::Null);
+        let b: Value = serde_json::from_str(&ours.stdout).unwrap_or(Value::Null);
+        let mut diffs = Vec::new();
+        json_diff("", &a, &b, &mut diffs);
+        let checks = a.get("statusCheckRollup").and_then(|c| c.as_array()).map(|c| c.len());
+        let parsed_same = args[0] == "pr" && args.iter().any(|x| x.contains("statusCheckRollup")) && parse_pr_full(&gh.stdout) == parse_pr_full(&ours.stdout);
+        report.push(format!(
+            "{line}\n  逐字段差异 {} 处{}{}{}",
+            diffs.len(),
+            checks.map(|n| format!("；检查 {n} 项")).unwrap_or_default(),
+            if parsed_same { "；forge 解析结果相同" } else { "" },
+            diffs.iter().take(25).map(|d| format!("\n    {d}")).collect::<String>()
+        ));
+    }
+    println!("\n===== G7 真机对照 =====\n{}", report.join("\n"));
+    // 令牌不能出现在报告里。
+    assert!(!report.join("").contains(token.expose()));
 }
