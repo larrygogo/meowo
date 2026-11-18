@@ -102,6 +102,8 @@ struct ScreenProbe {
     /// VT 状态机、常驻一份 grid，产出全部丢弃——开销在 reader，不在 ticker。
     parser: Option<Mutex<vt100::Parser<ScreenTitle>>>,
     debounce: Mutex<crate::detect::ScreenDebounce>,
+    /// 最近一轮扫描认出的自动重试行（不防抖：它跟着屏幕走，消失即清）。
+    retry: Mutex<Option<crate::detect::ScreenRetry>>,
     /// 上次扫描时的 output_end。无新输出且无待确认降级时整轮跳过——空闲会话零开销。
     scanned_end: AtomicU64,
     started_at: std::time::Instant,
@@ -123,6 +125,7 @@ impl ScreenProbe {
         Self {
             parser,
             debounce: Mutex::new(crate::detect::ScreenDebounce::default()),
+            retry: Mutex::new(None),
             scanned_end: AtomicU64::new(0),
             started_at: std::time::Instant::now(),
             provider,
@@ -183,6 +186,9 @@ impl ScreenProbe {
         }
         let snapshot = self.snapshot()?;
         self.scanned_end.store(current_end, Ordering::Release);
+        if let Ok(mut retry) = self.retry.lock() {
+            *retry = crate::detect::retry_note(&self.provider, &snapshot);
+        }
         let eval = crate::detect::evaluate(&self.provider, &snapshot)?;
         self.debounce.lock().ok()?.observe(&eval, now)
     }
@@ -270,6 +276,8 @@ pub(crate) enum ExternalViewer {
 pub(crate) struct ScreenSight {
     pub(crate) state: &'static str,
     pub(crate) fallback: bool,
+    /// 屏幕上正挂着的自动重试（见 detect::retry_note）。与 state 同一轮扫描得出。
+    pub(crate) retry: Option<crate::detect::ScreenRetry>,
 }
 
 impl ScreenSight {
@@ -2381,11 +2389,13 @@ impl PtyBroker {
                     .filter_map(|(sid, managed)| {
                         let debounce = managed.probe.debounce.lock().ok()?;
                         let state = debounce.published()?;
+                        let retry = managed.probe.retry.lock().ok().and_then(|retry| *retry);
                         Some((
                             *sid,
                             ScreenSight {
                                 state: state.as_str(),
                                 fallback: debounce.published_is_fallback(),
+                                retry,
                             },
                         ))
                     })

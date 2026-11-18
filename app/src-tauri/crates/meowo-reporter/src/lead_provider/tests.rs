@@ -12,8 +12,9 @@ fn installed_skill_gate_example_is_read_and_answered_by_the_real_protocol() {
         .next()
         .unwrap()
         .trim();
+    lead::publication::initialize(&e.task).unwrap();
     fs::write(e.task.join("gate.json"), example).unwrap();
-    let gate = lead::read_gate(&e.task).expect("安装的 skill 示例必须符合 reporter 的真实关卡协议");
+    let gate = lead::publication::publish(&e.task, None).expect("安装的 skill 示例必须符合 reporter 的真实关卡协议");
     assert_eq!(gate.kind, "A");
     assert_eq!(gate.status, "pending");
     lead::answer_gate(
@@ -517,22 +518,22 @@ fn kimi_pre_tool_use_requires_a_waiter_before_writing_a_pending_gate() {
     let out = call(&e, "kimi", "gate", pre(pending));
     assert_eq!(out.exit, 2);
     let reason = out.stderr.unwrap();
-    assert!(reason.contains("lead wait --provider kimi --session session_k2`") && reason.contains("disable_timeout=true"), "{reason}");
+    assert!(reason.contains("lead wait --provider kimi --session session_k2 --gate 'Q-9'`") && reason.contains("disable_timeout=true"), "{reason}");
     // 消费关卡不拦。
     assert_eq!(call(&e, "kimi", "gate", pre(&pending.replace("pending", "consumed"))), Output::default());
     // 别的会话写这个任务的关卡不拦（任务已归 session_k2）。
     let mut other = pre(pending);
     other["session_id"] = json!("session_other");
     assert_eq!(call(&e, "kimi", "gate", other), Output::default());
-    // 等待器已在等（先启动、等下一个关卡）：放行。
+    // 等待器已明确登记本次目标，不能用旧的空目标登记替代。
     let record = crate::lead_waiter::WaiterRecord {
         pid: std::process::id(),
         started: crate::lead_waiter::process_started(std::process::id()).unwrap(),
-        gate: String::new(),
+        gate: "Q-9".into(),
         session: "session_k2".into(),
         provider: "kimi".into(),
-        cli_pid: None,
-        cli_started: None,
+        cli_pid: crate::proc::owner_pid("kimi"),
+        cli_started: crate::proc::owner_pid("kimi").and_then(crate::lead_waiter::process_started),
     };
     fs::write(crate::lead_waiter::waiter_path(&e.task), serde_json::to_string(&record).unwrap()).unwrap();
     assert_eq!(call(&e, "kimi", "gate", pre(pending)), Output::default());
@@ -725,4 +726,86 @@ fn gemini_hook_outputs_never_carry_a_system_role() {
         checked += 1;
     }
     assert!(checked >= 7, "覆盖到的输出太少：{checked}");
+}
+
+
+#[test]
+fn gemini_publication_waits_after_publish_not_draft_write() {
+    let e = env();
+    call(&e, "gemini", "session", prompt(&e, "gemini", "g-pub", "开始"));
+    call(&e, "gemini", "claim", claim(&e, "gemini", "g-pub"));
+    lead::publication::initialize(&e.task).unwrap();
+    fs::write(e.task.join("gate.json"), r#"{"id":"A-pub","type":"A","status":"pending"}"#).unwrap();
+    let write = json!({"hook_event_name":"AfterTool","session_id":"g-pub","cwd":e.root.path(),"tool_name":"write_file","tool_input":{"file_path":e.task.join("gate.json"),"content":"{}"},"tool_response":{"llmContent":"File written."}});
+    let before = call(&e, "gemini", "claim", write);
+    assert!(before.stdout.is_none_or(|text| !text.contains("tailToolCallRequest")));
+    assert!(lead::read_gate(&e.task).is_none());
+    lead::publication::publish(&e.task, None).unwrap();
+    let after = call(&e, "gemini", "stop", stop(&e, "gemini", "g-pub", "开始"));
+    assert!(after.stdout.unwrap().contains("is_background=true"));
+    let retry = call(&e, "gemini", "stop", stop(&e, "gemini", "g-pub", "开始"));
+    assert!(retry.stdout.is_none_or(|text| !text.contains("is_background=true")));
+}
+
+
+#[test]
+fn kimi_publication_guard_requires_publish_before_ending() {
+    let e = env();
+    call(&e, "kimi", "session", prompt(&e, "kimi", "session_pub", "开始"));
+    call(&e, "kimi", "claim", claim(&e, "kimi", "session_pub"));
+    lead::publication::initialize(&e.task).unwrap();
+    let pre = json!({"hook_event_name":"PreToolUse","session_id":"session_pub","cwd":e.root.path(),"client_type":"kimi_code_cli","tool_name":"Write","tool_input":{"path":e.task.join("gate.json"),"content":r#"{"id":"A-pub","type":"A","status":"pending"}"#}});
+    let out = call(&e, "kimi", "gate", pre);
+    assert_eq!(out.exit, 2);
+    let reason = out.stderr.unwrap();
+    assert!(reason.contains("publish") && reason.contains("status") && reason.contains("consume"));
+    assert!(reason.contains("已发布后才能结束"));
+    assert!(!reason.contains("然后结束本轮"));
+}
+
+#[test]
+fn kimi_reissue_requires_waiter_for_new_id_not_old_pending_card() {
+    let e = env();
+    call(&e, "kimi", "session", prompt(&e, "kimi", "session_target", "开始"));
+    call(&e, "kimi", "claim", claim(&e, "kimi", "session_target"));
+    let mut record = crate::lead_waiter::WaiterRecord {
+        pid: std::process::id(),
+        started: crate::lead_waiter::process_started(std::process::id()).unwrap(),
+        gate: "Q-old".into(),
+        session: "session_target".into(),
+        provider: "kimi".into(),
+        cli_pid: crate::proc::owner_pid("kimi"),
+        cli_started: crate::proc::owner_pid("kimi").and_then(crate::lead_waiter::process_started),
+    };
+    fs::write(crate::lead_waiter::waiter_path(&e.task), serde_json::to_string(&record).unwrap()).unwrap();
+    let pre = json!({"hook_event_name":"PreToolUse","session_id":"session_target","cwd":e.root.path(),"client_type":"kimi_code_cli","tool_name":"Write","tool_input":{"path":e.task.join("gate.json"),"content":r#"{"id":"Q-new","type":"Q","status":"pending"}"#}});
+    let out = call(&e, "kimi", "gate", pre.clone());
+    assert_eq!(out.exit, 2);
+    assert!(out.stderr.unwrap().contains("--gate 'Q-new'"));
+    for (gate, owner, provider) in [("", "session_target", "kimi"), ("Q-new", "other", "kimi"), ("Q-new", "session_target", "gemini")] {
+        record.gate = gate.into();
+        record.session = owner.into();
+        record.provider = provider.into();
+        fs::write(crate::lead_waiter::waiter_path(&e.task), serde_json::to_string(&record).unwrap()).unwrap();
+        let _ = fs::remove_file(e.task.join(".native-waiter-asked"));
+        let out = call(&e, "kimi", "gate", pre.clone());
+        assert_eq!(out.exit, 2);
+        assert!(out.stderr.unwrap().contains("--gate 'Q-new'"));
+    }
+    record.gate = "Q-new".into();
+    record.session = "session_target".into();
+    record.provider = "kimi".into();
+    fs::write(crate::lead_waiter::waiter_path(&e.task), serde_json::to_string(&record).unwrap()).unwrap();
+    assert_eq!(call(&e, "kimi", "gate", pre), Output::default());
+}
+
+#[test]
+fn kimi_invalid_waiter_target_is_explicitly_rejected() {
+    let e = env();
+    for id in ["", "--new", "Q-\nnew"] {
+        let raw = json!({"hook_event_name":"PreToolUse","session_id":"session_invalid","cwd":e.root.path(),"client_type":"kimi_code_cli","tool_name":"Write","tool_input":{"path":e.task.join("gate.json"),"content":json!({"id":id,"type":"Q","status":"pending"}).to_string()}});
+        let out = call(&e, "kimi", "gate", raw);
+        assert_eq!(out.exit, 2);
+        assert!(out.stderr.unwrap().contains("关卡 id 不能用于目标等待"));
+    }
 }

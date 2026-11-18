@@ -33,8 +33,9 @@ describe("Message 用户消息标注", () => {
     expect(screen.getByText("未确认送达")).toBeTruthy();
   });
 
-  // 未确认送达要给出口，手机上不能只剩「去终端页看看」：还停在输入框里给「提交」，否则重发 / 放回。
-  it("未确认送达：卡在输入框给提交，否则给重发与放回输入框", () => {
+  // 未确认送达要给出口，手机上不能只剩「去终端页看看」：还停在输入框里给「提交」，否则放回输入框。
+  // 不给「重发」：CLI 可能已经收下只是没轮到，retryOutgoing 对未确认的一律拒绝，列出来点了只会报错。
+  it("未确认送达：卡在输入框给提交，否则只给放回输入框", () => {
     const item: ChatItem = { type: "user_text", id: "echo-7", timestamp: null, text: "在吗" };
     const calls: string[] = [];
     const renderWith = (stuck: boolean) => {
@@ -53,7 +54,7 @@ describe("Message 用户消息标注", () => {
       );
     };
     renderWith(false);
-    fireEvent.click(screen.getByRole("button", { name: "重发" }));
+    expect(screen.queryByRole("button", { name: "重发" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "放回输入框" }));
     expect(screen.queryByRole("button", { name: "提交" })).toBeNull();
     cleanup();
@@ -61,7 +62,7 @@ describe("Message 用户消息标注", () => {
     expect(screen.getByText("停在终端输入框里")).toBeTruthy();
     expect(screen.queryByText("未确认送达")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "提交" }));
-    expect(calls).toEqual(["retry:7", "restore:7", "submit:7"]);
+    expect(calls).toEqual(["restore:7", "submit:7"]);
   });
 });
 

@@ -1,0 +1,33 @@
+{
+ "values": [
+  {
+   "type": "diffstat",
+   "lines_added": 1,
+   "lines_removed": 1,
+   "status": "modified",
+   "old": {
+    "path": "package.json",
+    "type": "commit_file",
+    "escaped_path": "package.json",
+    "links": {
+     "self": {
+      "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/src/9c5c85803bfbd3131f0606cdf3c99e16c4c26f88/package.json"
+     }
+    }
+   },
+   "new": {
+    "path": "package.json",
+    "type": "commit_file",
+    "escaped_path": "package.json",
+    "links": {
+     "self": {
+      "href": "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/src/e0949d3373fda3ded93aa313a43b53e919c91341/package.json"
+     }
+    }
+   }
+  }
+ ],
+ "pagelen": 500,
+ "size": 1,
+ "page": 1
+}

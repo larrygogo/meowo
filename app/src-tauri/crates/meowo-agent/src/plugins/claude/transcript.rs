@@ -60,6 +60,10 @@ fn task_notification_result(
     let anchor = tool_use_id.clone().or_else(|| task_id.clone())?;
     // status 缺省按 completed:通知本身就意味着「结束了」,分不清成败时宁可少报失败。
     let failed = tag_text(text, "status").is_some_and(|s| s.eq_ignore_ascii_case("failed"));
+    // killed / stopped：没跑完就停了（进程被结束、会话关闭后恢复时 Claude 补写 stopped，2026-11-17 实拍），
+    // 不是完成也不是失败，按「已中断」报（同 codex interrupt_agent 的口径：三个计数都是 0）。
+    let interrupted = tag_text(text, "status")
+        .is_some_and(|s| s.eq_ignore_ascii_case("killed") || s.eq_ignore_ascii_case("stopped"));
     let summary = tag_text(text, "summary").unwrap_or("task completed").to_string();
     // 「还在等自己的后台活儿」带 status=completed，结论已经交了，只是它派出的后台活儿还在跑：按完成算，
     // 另标 background_running 让徽标次行提示「后台仍在运行」。不按进行中算：本机实拍 9 次里 4 次之后
@@ -73,15 +77,15 @@ fn task_notification_result(
         is_error: failed,
         subagent: Some(SubagentOutcome {
             running: 0,
-            completed: u32::from(!failed),
+            completed: u32::from(!failed && !interrupted),
             failed: u32::from(failed),
-            background_running: waiting,
+            background_running: waiting && !interrupted,
             // 一律带上 task-id,前端按「同 task-id 首见者为委派本体」归回原委派。以前有 tool-use-id
             // 就不带:SendMessage 续上后那一段的完成通知,tool-use-id 指向的是 SendMessage 那次调用
             // (xbot 会话实拍两次),结局记到 SendMessage 名下,原委派被续上回执翻回运行中后一直挂着
             // (实拍 02:44 挂到 04:39)。常规委派的 tool-use-id 本来就是委派本体,带上 task-id 路由结果不变。
             task_id,
-            interrupted: false,
+            interrupted,
         }),
         patch: None,
         facts: ToolFacts::default(),
@@ -430,6 +434,19 @@ fn inline_image_ref(base_id: &str, index: usize, block: &serde_json::Value) -> O
 /// image-cache，历史图必坏（实测本机两处 image-cache 目录均已不存在，终端贴图在对话里
 /// 看不到的根因）。图片改由同 promptId 主行的内嵌 base64 落盘提供（实测 412 条伴随行
 /// 全部配对到带 image 块的主行），伴随行整条丢弃，否则同一张图出两次。
+/// MCP browser_screenshot 的 tool_result.content 同时带 text 与 image。沿用用户图片的
+/// 引用格式，ToolActivity 拆成截图缩略图；base64 不进聊天 DTO。
+fn tool_result_image_refs(base_id: &str, block: &serde_json::Value) -> Vec<String> {
+    block
+        .get("content")
+        .and_then(|content| content.as_array())
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .filter_map(|(index, part)| inline_image_ref(base_id, index, part))
+        .collect()
+}
+
 fn is_image_companion(v: &serde_json::Value, content: Option<&serde_json::Value>) -> bool {
     if v.get("isMeta").and_then(|x| x.as_bool()) != Some(true) {
         return false;
@@ -757,6 +774,11 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                                 && !answered_by_meowo
                                 && !unfinished_receipt(&text);
                             let facts = tool_facts(&v, &text, is_error);
+                            let mut result_text = compact_json(Some(&serde_json::Value::String(text)), 4000);
+                            for image_ref in tool_result_image_refs(&format!("{base_id}:{i}"), block) {
+                                if !result_text.is_empty() { result_text.push('\n'); }
+                                result_text.push_str(&image_ref);
+                            }
                             Some(TranscriptEvent::ToolResult {
                                 id: format!("{base_id}:{i}"),
                                 timestamp: timestamp.clone(),
@@ -764,7 +786,7 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                                     .get("tool_use_id")
                                     .and_then(|x| x.as_str())
                                     .map(str::to_string),
-                                text: compact_json(Some(&serde_json::Value::String(text)), 4000),
+                                text: result_text,
                                 is_error,
                                 subagent,
                                 patch: structured_patch(&v),
@@ -997,7 +1019,20 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                 return Vec::new();
             };
             let head = raw.trim_start();
-            if head.is_empty() || head.starts_with("<agent-message") || head.starts_with("<task-notification>") {
+            // 后台任务的结局通知：入队这一刻结局已定，与 user 行 / queued_command 送达行同款转译成
+            // 合成回执（后端运行数 fold_task_signals 早就把 enqueue 当结局）。不认的话，进程在送达前
+            // 被结束时（Meowo 重启、会话关闭）就只剩这一行：停靠栏的「后台 Bash」一直挂「运行中」，
+            // 直到会话恢复、Claude 补写 stopped 通知才消（2026-11-17 实拍，入队 killed 后挂了一分多钟）。
+            // 送达行之后还会再给一条同样的回执，前端按最后一条算，重复无害。
+            // 「被用户续上」不是结局，照旧不认（见 subagent_prompt::resumed_task_id）。
+            if head.starts_with("<task-notification>") {
+                if super::subagent_prompt::resumed_task_id(raw).is_some() {
+                    return Vec::new();
+                }
+                let id = format!("queued-notice:{}:{}", timestamp.as_deref().unwrap_or(""), raw.len());
+                return task_notification_result(raw, &id, timestamp).into_iter().collect();
+            }
+            if head.is_empty() || head.starts_with("<agent-message") {
                 return Vec::new();
             }
             let text = strip_pasted_content_tags(raw.trim()).trim().to_string();
@@ -1073,6 +1108,36 @@ pub(crate) fn classify_error(text: &str, synthetic: bool) -> Option<&'static str
     None
 }
 
+/// 这一行是不是用户新开的一句（会让回合往前走）：主会话的 user 行，正文是字符串或含
+/// text/image 块。斜杠命令的回显（`<command-name>` / `<local-command-…>`）和 isMeta 注入
+/// 不算——用户在报错后敲 `/cost` 之类本地命令，模型并没有接着干活，错误不能被它抹掉。
+fn is_user_prompt_line(v: &serde_json::Value) -> bool {
+    if v.get("type").and_then(|x| x.as_str()) != Some("user")
+        || v.get("isSidechain").and_then(|x| x.as_bool()) == Some(true)
+        || v.get("isMeta").and_then(|x| x.as_bool()) == Some(true)
+    {
+        return false;
+    }
+    let local = |text: &str| {
+        let text = text.trim_start();
+        text.starts_with("<command-") || text.starts_with("<local-command-")
+    };
+    match v.pointer("/message/content") {
+        Some(serde_json::Value::String(text)) => !text.trim().is_empty() && !local(text),
+        Some(serde_json::Value::Array(blocks)) => blocks.iter().any(|block| {
+            match block.get("type").and_then(|x| x.as_str()) {
+                Some("text") => block
+                    .get("text")
+                    .and_then(|x| x.as_str())
+                    .is_some_and(|text| !text.trim().is_empty() && !local(text)),
+                Some("image") => true,
+                _ => false,
+            }
+        }),
+        _ => false,
+    }
+}
+
 /// ScheduleWakeup 回执的两种开头（见 ParseState::fold_wakeup_receipt）。
 const WAKEUP_SCHEDULED_PREFIX: &str = "Next wakeup scheduled for";
 const LOOP_STOPPED_PREFIX: &str = "Loop stopped";
@@ -1085,6 +1150,13 @@ struct ParseState {
     custom: Option<String>,
     ai: Option<String>,
     last_text: Option<(String, bool)>, // (正文, model 是否 <synthetic>)
+    /// 最近一条正文之后会话又往前走了（用户发了新的一句、模型又出了 thinking/工具调用）。
+    /// 错误只认「停在末尾」的那一条：CC 把 API 错误写成一条 synthetic 正文就结束回合，
+    /// 用户回一句「继续」后，新回合要先 thinking、调工具，往往几分钟后才有下一段正文——
+    /// 只看 last_text 的话这几分钟里错误一直挂着，侧栏顶着红点、对话页却在正常干活
+    /// （实拍 2026-11-18：04:35:18 Connection lost，04:35:19 用户续上，之后全是工具调用）。
+    /// 预览仍取 last_text，不受它影响。
+    moved_on: bool,
     last_usage: Option<u64>,           // 最近一条 assistant 的上下文已用 token
     /// 已发启动回执、尚无结局信号的后台任务 id（Agent 委派的 agentId / 后台 Bash 的
     /// shell id）。结局信号有三形:
@@ -1104,6 +1176,12 @@ impl ParseState {
     fn fold_line(&mut self, line: &str) {
         let has_title = line.contains("-title");
         let has_assistant = line.contains("\"assistant\"");
+        // 用户新开口（不含工具回执行：回执之前必有一条工具调用，那条 assistant 行已经算过）。
+        // 只在挂着正文、还没被顶掉时才值得解析——不让每条用户行都付 JSON 解析的钱。
+        let user_prompt = !self.moved_on
+            && self.last_text.is_some()
+            && line.contains("\"type\":\"user\"")
+            && !line.contains("\"tool_result\"");
         // 后台任务的启动/结局信号:行形态各异(user 回执、排队通知、TaskOutput 回执),
         // 先做廉价子串门卫,命中才付 JSON 解析。
         let has_task_signal = line.contains("Async agent launched")
@@ -1114,7 +1192,7 @@ impl ParseState {
             || line.contains(WAKEUP_SCHEDULED_PREFIX)
             || line.contains(LOOP_STOPPED_PREFIX)
             || line.contains("resumedAgentId");
-        if !has_title && !has_assistant && !has_task_signal {
+        if !has_title && !has_assistant && !has_task_signal && !user_prompt {
             return;
         }
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
@@ -1122,6 +1200,9 @@ impl ParseState {
         };
         if has_task_signal {
             self.fold_task_signals(&v);
+        }
+        if user_prompt && is_user_prompt_line(&v) {
+            self.moved_on = true;
         }
         match v.get("type").and_then(|t| t.as_str()) {
             Some("custom-title") => {
@@ -1177,6 +1258,10 @@ impl ParseState {
                         .and_then(|m| m.as_str())
                         == Some("<synthetic>");
                     self.last_text = Some((text, synthetic));
+                    self.moved_on = false;
+                } else if v.get("isSidechain").and_then(|x| x.as_bool()) != Some(true) {
+                    // 纯 thinking / 工具调用：模型又在产出，上一条正文（哪怕是错误）已不是末尾。
+                    self.moved_on = true;
                 }
             }
             _ => {}
@@ -1276,6 +1361,13 @@ impl ParseState {
     /// 工具回执正文:启动回执入集,TaskOutput 拉取的终态回执出集(running/timeout 保持)。
     fn fold_tool_result_text(&mut self, text: &str) {
         if is_launch_receipt(text) {
+            // 后台 Bash 不入集：它跑着时模型并没有在干活，Claude 自己的画面也是空闲提示符加
+            // 「1 shell still running」。入集会让主回合停了的会话一直算「运行中」——实拍（2026-11-17）
+            // 盯 CI 的 shell 跑了 17 分钟，对话页一直「工作中…」、侧栏亮着运行点。它在停靠栏的
+            // 「后台 Bash」里照常显示；跑完的通知若让模型接着干，那一轮自有运行信号。
+            if text.trim_start().starts_with(BACKGROUND_SHELL_PREFIX) {
+                return;
+            }
             if let Some(id) = launch_agent_id(text) {
                 self.running_tasks.insert(id);
             }
@@ -1332,7 +1424,7 @@ impl ParseState {
 
     /// to_info 的可测版：唤醒是否还没到点取决于「此刻」，测试注入时间。
     fn to_info_at(&self, now_ms: i64) -> TranscriptInfo {
-        let error = self.last_text.as_ref().and_then(|(text, synthetic)| {
+        let error = self.last_text.as_ref().filter(|_| !self.moved_on).and_then(|(text, synthetic)| {
             classify_error(text, *synthetic).map(|label| TurnError {
                 label: label.to_string(),
                 raw: text.clone(),
@@ -2016,8 +2108,11 @@ impl SubagentSpec for ClaudeSubagents {
     fn locate_streams(&self, main_transcript: &Path, tool_use_id: &str) -> Vec<SubagentStream> {
         // 常规委派靠 meta 的 toolUseId 直连;连不上再试 forked skill(那条路没有外键,
         // 得回主链捞出 `/<skill> <args>` 去对 meta 的 description,见 locate_forked)。
+        // 最后按子代理 id 直接找 `agent-<id>.jsonl`：被 SendMessage 续上的子代理，最初那次
+        // 委派可能不在对话页已加载的窗口里，面板手里只有它的 agentId（task_id）。
         Self::locate_one(main_transcript, tool_use_id)
             .or_else(|| Self::locate_forked(main_transcript, tool_use_id))
+            .or_else(|| Self::locate_by_agent_id(main_transcript, tool_use_id))
             .map(|path| {
                 vec![SubagentStream {
                     label: None,
@@ -2032,6 +2127,24 @@ impl SubagentSpec for ClaudeSubagents {
 
     fn parse_stream_line(&self, line: &str) -> Vec<TranscriptEvent> {
         parse_events(line, true)
+    }
+
+    fn stream_tokens(&self, stream: &Path) -> Option<u64> {
+        stream_tokens_cached(stream)
+    }
+
+    /// `agent-<id>.jsonl` 旁的 `agent-<id>.meta.json`（实拍：`{"agentType":"general-purpose",
+    /// "description":"Implement GitHub connection feature","toolUseId":"toolu_…",…}`）。
+    fn stream_description(&self, stream: &Path) -> Option<String> {
+        let stem = stream.file_name()?.to_str()?.strip_suffix(".jsonl")?;
+        let meta = std::fs::read_to_string(stream.with_file_name(format!("{stem}.meta.json"))).ok()?;
+        serde_json::from_str::<serde_json::Value>(&meta)
+            .ok()?
+            .get("description")?
+            .as_str()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
     }
 
     /// 后台任务的**启动回执**:`Agent` 现版本默认异步,立即回一句
@@ -2125,6 +2238,66 @@ fn stopped_task_id(output: &str) -> Option<String> {
         .and_then(|x| x.as_str())
         .filter(|s| !s.is_empty())
         .map(str::to_string)
+}
+
+/// 一条侧车流的 token 用量（口径见 `SubagentProbeDto::tokens`）：最近一条 assistant 的输入
+/// （input + cache_creation + cache_read）+ 每条回复的 output 累加。CC 把一次回复按内容块拆成
+/// 几行落盘，每行带同一个 message.id 与同一份 usage，故 output 按 message.id 去重取最后一次。
+/// 没有任何 usage 返回 None。
+pub(crate) fn stream_tokens(content: &str) -> Option<u64> {
+    let mut latest_input: Option<u64> = None;
+    let mut outputs: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    let mut anonymous = 0u64;
+    for line in content.lines() {
+        if !line.contains("\"usage\"") || !line.contains("\"assistant\"") {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if v.get("type").and_then(|x| x.as_str()) != Some("assistant") {
+            continue;
+        }
+        let Some(usage) = v.pointer("/message/usage") else {
+            continue;
+        };
+        let g = |k: &str| usage.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+        latest_input =
+            Some(g("input_tokens") + g("cache_creation_input_tokens") + g("cache_read_input_tokens"));
+        match v.pointer("/message/id").and_then(|x| x.as_str()) {
+            Some(id) => {
+                outputs.insert(id.to_string(), g("output_tokens"));
+            }
+            None => anonymous += g("output_tokens"),
+        }
+    }
+    latest_input.map(|input| input + outputs.values().sum::<u64>() + anonymous)
+}
+
+/// [`stream_tokens`] 带缓存：面板开着时每几秒问一次，侧车可达数 MB——文件没变（长度与
+/// 修改时间都相同）就直接回上次的数。
+fn stream_tokens_cached(stream: &Path) -> Option<u64> {
+    use std::sync::{Mutex, OnceLock};
+    type Key = (u64, Option<std::time::SystemTime>);
+    type Cache = std::collections::HashMap<PathBuf, (Key, Option<u64>)>;
+    static CACHE: OnceLock<Mutex<Cache>> =
+        OnceLock::new();
+    let meta = std::fs::metadata(stream).ok()?;
+    let key: Key = (meta.len(), meta.modified().ok());
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some((seen, tokens)) = cache.lock().ok()?.get(stream) {
+        if *seen == key {
+            return *tokens;
+        }
+    }
+    let tokens = stream_tokens(&std::fs::read_to_string(stream).ok()?);
+    if let Ok(mut cache) = cache.lock() {
+        if cache.len() > 256 {
+            cache.clear();
+        }
+        cache.insert(stream.to_path_buf(), (key, tokens));
+    }
+    tokens
 }
 
 /// SendMessage 把一个**已结束**的子代理续上时的回执(CC 2.1.317 实拍):
@@ -2235,6 +2408,16 @@ fn launch_agent_id(output: &str) -> Option<String> {
 }
 
 impl ClaudeSubagents {
+    /// 按子代理 id（Agent 启动回执里的 agentId）找侧车：`subagents/agent-<id>.jsonl`。
+    /// id 只收字母数字，防止拼出目录外的路径。
+    fn locate_by_agent_id(main_transcript: &Path, agent_id: &str) -> Option<PathBuf> {
+        if agent_id.is_empty() || !agent_id.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return None;
+        }
+        let stream = Self::stream_dir(main_transcript)?.join(format!("agent-{agent_id}.jsonl"));
+        stream.is_file().then_some(stream)
+    }
+
     fn locate_one(main_transcript: &Path, tool_use_id: &str) -> Option<PathBuf> {
         let dir = Self::stream_dir(main_transcript)?;
         for entry in std::fs::read_dir(&dir).ok()?.flatten() {
@@ -2938,7 +3121,8 @@ mod tests {
         assert!(matches!(parse_chat_items(human).as_slice(), [ChatItem::UserText { text, .. }] if text == "继续"));
     }
 
-    /// CLI 正忙时用户的话先入队：enqueue 行解析成送达回执，子代理回报、后台通知与出队记账不算。
+    /// CLI 正忙时用户的话先入队：enqueue 行解析成送达回执，子代理回报与出队记账不算（后台通知另算，
+    /// 见 queued_task_notification_settles_background_shell）。
     #[test]
     fn chat_parser_turns_human_enqueue_into_prompt_queued() {
         let human = r#"{"type":"queue-operation","operation":"enqueue","timestamp":"2026-11-01T04:16:55.516Z","sessionId":"s","content":"<pasted_content id=\"7436\">\n为什么会重复\n</pasted_content id=\"7436\">"}"#;
@@ -2951,8 +3135,6 @@ mod tests {
         assert_eq!(timestamp.as_deref(), Some("2026-11-01T04:16:55.516Z"));
         assert!(id.starts_with("queued:2026-11-01T04:16:55.516Z:"));
         for skipped in [
-            r#"{"type":"queue-operation","operation":"enqueue","timestamp":"t","content":"<task-notification>
-<task-id>b1</task-id>"}"#,
             r#"{"type":"queue-operation","operation":"enqueue","timestamp":"t","content":"<agent-message from="a1">
 报告"}"#,
             r#"{"type":"queue-operation","operation":"remove","timestamp":"t","content":"继续"}"#,
@@ -2960,6 +3142,51 @@ mod tests {
         ] {
             assert!(parse_chat_items(skipped).is_empty(), "{skipped}");
         }
+    }
+
+    /// 2026-11-17 实拍：Claude 进程在后台命令跑着时被结束（Meowo 重启），只留下排队形态的 killed 通知，
+    /// 送达行要等会话恢复后才补写 stopped。修前对话解析不认排队行，停靠栏「后台 Bash」一直挂「运行中」。
+    /// 现在入队这一行就结算成「已中断」；被用户续上的通知不是结局，照旧不认。
+    #[test]
+    fn queued_task_notification_settles_background_shell() {
+        let queued = |ts: &str, content: &str| {
+            serde_json::json!({"type": "queue-operation", "operation": "enqueue", "timestamp": ts, "sessionId": "s", "content": content}).to_string()
+        };
+        let killed = queued(
+            "2026-11-17T08:51:06.884Z",
+            "<task-notification>\n<task-id>brg50q0lh</task-id>\n<tool-use-id>toolu_01EaoXpfHoEB1m79XA31MHdM</tool-use-id>\n<output-file>C:/tmp/brg50q0lh.output</output-file>\n<status>killed</status>\n<summary>Background command \"用最新代码重启测试版\" was stopped</summary>\n</task-notification>",
+        );
+        let items = parse_chat_items(&killed);
+        let [ChatItem::ToolResult { id, tool_use_id, subagent: Some(outcome), is_error, .. }] = items.as_slice() else {
+            panic!("排队的结局通知应转成合成回执：{items:?}");
+        };
+        assert!(id.starts_with("queued-notice:2026-11-17T08:51:06.884Z:"));
+        assert_eq!(tool_use_id.as_deref(), Some("toolu_01EaoXpfHoEB1m79XA31MHdM"));
+        assert!(!is_error);
+        assert_eq!((outcome.running, outcome.completed, outcome.failed, outcome.interrupted), (0, 0, 0, true));
+
+        // 恢复后补写的 stopped（user 行）同样是「已中断」。
+        let stopped = serde_json::json!({"type": "user", "uuid": "s1", "message": {"role": "user", "content": "<task-notification>\n<task-id>brg50q0lh</task-id>\n<tool-use-id>toolu_01EaoXpfHoEB1m79XA31MHdM</tool-use-id>\n<status>stopped</status>\n<summary>Background shell command didn't finish before the previous session ended</summary>\n</task-notification>"}}).to_string();
+        let stopped_items = parse_chat_items(&stopped);
+        let [ChatItem::ToolResult { subagent: Some(outcome), .. }] = stopped_items.as_slice() else {
+            panic!("stopped 通知应转成合成回执：{stopped_items:?}");
+        };
+        assert!(outcome.interrupted && outcome.completed == 0 && outcome.failed == 0);
+
+        // 正常完成的排队通知照旧是「完成」。
+        let done = queued("t", "<task-notification>\n<task-id>b1</task-id>\n<tool-use-id>toolu_b1</tool-use-id>\n<status>completed</status>\n<summary>done</summary>\n</task-notification>");
+        let done_items = parse_chat_items(&done);
+        let [ChatItem::ToolResult { subagent: Some(outcome), .. }] = done_items.as_slice() else {
+            panic!("完成通知应转成合成回执：{done_items:?}");
+        };
+        assert_eq!((outcome.completed, outcome.interrupted), (1, false));
+
+        // 被用户续上：又在跑，不是结局。
+        let resumed = queued(
+            "2026-11-11T04:38:44.145Z",
+            "<task-notification>\n<task-id>a0f1</task-id>\n<summary>Agent \"拆分导入任务\" was resumed by the user</summary>\n<note>The user resumed this agent from its transcript view; it is running again.</note>\n</task-notification>",
+        );
+        assert!(parse_chat_items(&resumed).is_empty());
     }
 
     /// 插话走 queued_command 送入，带 interjected 结构标记；普通 user 行（一轮的开头）不带。
@@ -3014,6 +3241,17 @@ mod tests {
 
         let skill = r#"{"type":"attachment","uuid":"s1","attachment":{"type":"skill_listing","content":"..."}}"#;
         assert!(parse_chat_items(skill).is_empty());
+    }
+
+    #[test]
+    fn browser_tool_result_image_becomes_receipt_reference() {
+        let line = r#"{"type":"user","uuid":"browser-shot","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_browser","content":[{"type":"text","text":"面板浏览器截图"},{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"/9j/4A=="}}]}]}}"#;
+        let items = parse_chat_items(line);
+        let ChatItem::ToolResult { text, .. } = &items[0] else { panic!("expected ToolResult") };
+        assert!(text.starts_with("面板浏览器截图\n[Image: source: "), "{text}");
+        let path = text.split("[Image: source: ").nth(1).and_then(|rest| rest.strip_suffix(']')).map(PathBuf::from).unwrap();
+        assert!(path.exists());
+        std::fs::remove_file(path).ok();
     }
 
     /// 终端 Ctrl-V 贴图的实拍形态：主行「text + 内嵌 base64 image 块」，紧跟一条 isMeta
@@ -3327,8 +3565,10 @@ mod tests {
         assert_eq!(info.error, None);
     }
 
+    /// 错误之后模型又出了工具调用 = 已经恢复在干活，错误不再挂着；预览仍是最后那条正文。
+    /// 此前这里断言「错误保留」：只认 last_text，于是恢复后的整段工具调用期间侧栏一直红点。
     #[test]
-    fn analyze_skips_tooluse_only_assistant() {
+    fn analyze_tool_use_after_error_clears_error() {
         let content = concat!(
             r#"{"type":"assistant","uuid":"u-err","message":{"role":"assistant","content":[{"type":"text","text":"Please run /login · API Error: 403 Request not allowed"}]}}"#,
             "\n",
@@ -3338,10 +3578,89 @@ mod tests {
         let p = write_tmp("toolonly", content);
         let info = analyze_transcript(p.to_str().unwrap());
         std::fs::remove_file(&p).ok();
+        assert_eq!(info.error, None);
         assert_eq!(
-            info.error.map(|e| e.label),
-            Some("需要重新登录".to_string())
+            info.preview.as_deref(),
+            Some("Please run /login · API Error: 403 Request not allowed")
         );
+    }
+
+    /// 实拍形态（2026-11-18 本机 transcript，脱敏）：synthetic 的 Connection lost 结束回合，
+    /// 一秒后用户发了新消息（文字 + 图片），随后只有 thinking 与工具调用。用户一开口错误就该
+    /// 消失（新回合起跑到出第一条 thinking 可能隔几分钟），新回合里再出错照样标红。
+    /// 子代理用量对齐 Claude Code 终端的「↓ N tokens」：最近一条的输入（含缓存）+ 各条输出
+    /// 累加；同一回复拆成多行落盘时按 message.id 只算一次（样本照本机侧车行形态，脱敏）。
+    /// 被续上的子代理在面板上只剩 agentId（最初委派不在已载入窗口里）：按 id 找到侧车，带回用量与
+    /// meta.json 里最初委派的说明（目录与 meta 形状照本机实拍，脱敏）。
+    #[test]
+    fn probe_by_agent_id_returns_tokens_and_description() {
+        let root = std::env::temp_dir().join(format!("meowo-probe-agent-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let main = root.join("0ebbc4dc.jsonl");
+        let subs = root.join("0ebbc4dc").join("subagents");
+        std::fs::create_dir_all(&subs).unwrap();
+        std::fs::write(&main, "").unwrap();
+        std::fs::write(
+            subs.join("agent-acb4b19.jsonl"),
+            r#"{"isSidechain":true,"type":"assistant","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"x"}],"usage":{"input_tokens":2,"cache_creation_input_tokens":100,"cache_read_input_tokens":800,"output_tokens":50}}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            subs.join("agent-acb4b19.meta.json"),
+            r#"{"agentType":"general-purpose","isBuiltIn":true,"description":"Implement GitHub connection feature","toolUseId":"toolu_01Vio","spawnDepth":1,"finished":true}"#,
+        )
+        .unwrap();
+        let probe = crate::transcript::probe_subagent_state(&CLAUDE_TRANSCRIPT, &main, "acb4b19")
+            .expect("按 agentId 应找到侧车");
+        assert_eq!(probe.tokens, Some(952));
+        assert_eq!(probe.description.as_deref(), Some("Implement GitHub connection feature"));
+        // 拼路径的 id 只收字母数字。
+        assert!(crate::transcript::probe_subagent_state(&CLAUDE_TRANSCRIPT, &main, "../x").is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn stream_tokens_matches_tui_formula() {
+        let line = |id: &str, input: u64, cache_read: u64, cache_write: u64, output: u64| format!(
+            r#"{{"isSidechain":true,"type":"assistant","message":{{"id":"{id}","role":"assistant","content":[{{"type":"text","text":"x"}}],"usage":{{"input_tokens":{input},"cache_creation_input_tokens":{cache_write},"cache_read_input_tokens":{cache_read},"output_tokens":{output}}}}}}}"#
+        );
+        let content = [
+            r#"{"isSidechain":true,"type":"user","message":{"role":"user","content":"去查一下"}}"#.to_string(),
+            line("msg_1", 3, 0, 12_000, 400),
+            // 同一回复的第二个内容块：同 id，不重复计 output。
+            line("msg_1", 3, 0, 12_000, 400),
+            line("msg_2", 1, 12_000, 2_000, 900),
+        ]
+        .join("\n");
+        // 最近输入 1 + 12000 + 2000 = 14001；输出 400 + 900 = 1300。
+        assert_eq!(super::stream_tokens(&content), Some(15_301));
+        assert_eq!(super::stream_tokens("{\"type\":\"user\"}"), None);
+    }
+
+    #[test]
+    fn analyze_new_prompt_after_error_clears_error_until_next_error() {
+        let error = r#"{"type":"assistant","isSidechain":false,"timestamp":"2026-11-18T04:35:18.645Z","message":{"model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"API Error: Connection lost mid-response. The response above may be incomplete."}]}}"#;
+        let prompt = r#"{"type":"user","isSidechain":false,"timestamp":"2026-11-18T04:35:19.063Z","message":{"role":"user","content":[{"type":"text","text":"看下这两张图"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}]}}"#;
+        let thinking = r#"{"type":"assistant","isSidechain":false,"timestamp":"2026-11-18T04:35:29.936Z","message":{"model":"claude-opus-5-5","role":"assistant","content":[{"type":"thinking","thinking":"","signature":"x"}]}}"#;
+        let mut st = ParseState::default();
+        st.fold_line(error);
+        assert_eq!(
+            st.to_info().error.map(|e| e.label).as_deref(),
+            Some("API 请求出错")
+        );
+        st.fold_line(prompt);
+        assert_eq!(st.to_info().error, None, "用户续上一句，错误就不该再挂着");
+        st.fold_line(thinking);
+        assert_eq!(st.to_info().error, None);
+        st.fold_line(error);
+        assert!(st.to_info().error.is_some(), "新回合里再出错照样标红");
+
+        // 报错后敲本地斜杠命令、isMeta 注入：模型没接着干活，错误保留。
+        let mut st = ParseState::default();
+        st.fold_line(error);
+        st.fold_line(r#"{"type":"user","message":{"role":"user","content":"<command-name>/cost</command-name>"}}"#);
+        st.fold_line(r#"{"type":"user","isMeta":true,"message":{"role":"user","content":"Caveat: local command"}}"#);
+        assert!(st.to_info().error.is_some());
     }
 
     #[test]
@@ -4175,11 +4494,12 @@ mod tests {
         std::fs::remove_file(&p).ok();
     }
 
-    /// 后台 Bash(`run_in_background`)与 Agent 委派共用同一条后台任务通道:启动回执入集、
-    /// `<task-notification>` 出集。2026-08-27 实拍的漏判——主回合停了、`gh run watch` 还在
-    /// 后台跑,会话却报「等你输入」、子任务面板空白——根因就是启动侧只认 Agent 那一句。
+    /// 后台 Bash(`run_in_background`)不计入后台运行数。08-27 曾为「主回合停了、`gh run watch` 还在
+    /// 后台跑,子任务面板空白」把它入集;面板如今由停靠栏「后台 Bash」单独显示(不看这个数),
+    /// 入集只剩副作用:2026-11-17 实拍盯 CI 的 shell 跑 17 分钟,模型早停在提示符上,对话页一直
+    /// 「工作中…」、侧栏亮运行点。Claude 自己的画面同样是空闲提示符加「1 shell still running」。
     #[test]
-    fn analyzer_tracks_background_shell() {
+    fn analyzer_ignores_background_shell() {
         // 真机回执原文(id 后紧跟句点,不是空格)。
         let mut content = String::from(
             r#"{"type":"user","uuid":"l1","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"Command running in background with ID: b78nfkj1v. Output is being written to: C:\tmp\tasks\b78nfkj1v.output. You will be notified when it completes."}]}}"#,
@@ -4190,9 +4510,9 @@ mod tests {
         content.push_str(r#"{"type":"user","uuid":"srcread","message":{"content":[{"type":"tool_result","tool_use_id":"t9","content":"1296  /// Command running in background with ID: ghost1. …"}]}}"#);
         content.push('\n');
         let p = write_tmp("busy_bg_shell", &content);
-        assert_eq!(analyze_transcript(p.to_str().unwrap()).busy_subagents, 1);
+        assert_eq!(analyze_transcript(p.to_str().unwrap()).busy_subagents, 0);
 
-        // 完成通知的 <task-id> 就是 shell id——结局侧无需改动即可了结。
+        // 完成通知出集一个不在集里的 id:无事发生。
         content.push_str(r#"{"type":"user","uuid":"n1","message":{"content":"<task-notification>\n<task-id>b78nfkj1v</task-id>\n<tool-use-id>t1</tool-use-id>\n<status>completed</status>\n<summary>Background command \"gh run watch\" completed (exit code 0)</summary>\n</task-notification>"}}"#);
         content.push('\n');
         std::fs::write(&p, &content).unwrap();
@@ -4261,8 +4581,9 @@ mod tests {
             .detect_result(r#"12  /// {"message":"Successfully stopped task: x","task_id":"x"}"#)
             .is_none());
 
+        // 后台 Bash 不入集(见 analyzer_ignores_background_shell),停成功出集的路径用后台 Agent 验。
         let mut content = String::from(
-            r#"{"type":"user","uuid":"l1","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"Command running in background with ID: bvokc4arn. Output is being written to: C:\tmp\bvokc4arn.output."}]}}"#,
+            r#"{"type":"user","uuid":"l1","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"Async agent launched successfully.\nagentId: bvokc4arn (internal ID - do not mention to user.)"}]}}"#,
         );
         content.push('\n');
         let p = write_tmp("busy_bg_stopped", &content);

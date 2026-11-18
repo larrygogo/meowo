@@ -1,6 +1,7 @@
 // 视觉回归 harness 共用的假数据：在演示用的那段假会话（src/demo/chatData.ts）上加长内容、
 // 补「更改」面板要的 git 接口。只给 app/visual/ 下的截图页用，不进产品构建。
 import { CHAT_SESSION_ID } from "../src/demo/chatData";
+import { makeSession } from "../src/demo/data";
 
 /// 与 src/demo/*Embed.tsx 同一个冻结时刻，时间戳在两次拍摄间不漂。
 export const FIXED_NOW = 1_780_000_000_000;
@@ -147,7 +148,7 @@ export function flowStateItems(lang: "zh" | "en", ts: string): unknown[] {
     { type: "user_text", id: "fs-u1", timestamp: ts, text: longAsk },
     { type: "reasoning", id: "fs-th", timestamp: ts, text: zh ? "先确认三个组件里各自的规则有没有冲突，再决定 schema 的字段。" : "First check whether the three components disagree, then decide the schema fields." },
     { type: "assistant_text", id: "fs-a1", timestamp: ts, text: zh ? "我先改 `LoginForm.tsx`，再跑一遍测试。" : "I'll edit `LoginForm.tsx` first, then run the tests." },
-    { type: "tool_use", id: "fs-t1", timestamp: ts, name: "Edit", summary: "src/components/LoginForm.tsx",
+    { type: "tool_use", id: "fs-t1", timestamp: ts, name: "Edit", kind: "edit", summary: "src/components/LoginForm.tsx",
       detail: { kind: "edit", path: "src/components/LoginForm.tsx", old: "const next: Errors = {};", new: "const result = validateLogin(values);", replace_all: false, truncated: false } },
     { type: "tool_result", id: "fs-r1", timestamp: ts, tool_use_id: "fs-t1", text: "ok", is_error: false,
       patch: [{ old_start: 5, new_start: 5, lines: [
@@ -159,10 +160,10 @@ export function flowStateItems(lang: "zh" | "en", ts: string): unknown[] {
         "   onSubmit(result.data);",
         " };",
       ] }] },
-    { type: "tool_use", id: "fs-t2", timestamp: ts, name: "Bash", summary: "FORCE_COLOR=0 npx vitest run src/components --reporter=dot | tee \"out.log\"",
+    { type: "tool_use", id: "fs-t2", timestamp: ts, name: "Bash", kind: "run", summary: "FORCE_COLOR=0 npx vitest run src/components --reporter=dot | tee \"out.log\"",
       detail: { kind: "command", command: "FORCE_COLOR=0 npx vitest run src/components --reporter=dot | tee \"out.log\"", description: zh ? "跑组件测试" : "Run component tests" } },
     { type: "tool_result", id: "fs-r2", timestamp: ts, tool_use_id: "fs-t2", text: " ✓ LoginForm.test.tsx (12)\n ✓ schema.test.ts (8)\n\n Test Files  2 passed (2)\n      Tests  20 passed (20)\nwarning: 1 deprecated API", is_error: false },
-    { type: "tool_use", id: "fs-t3", timestamp: ts, name: "Agent", summary: zh ? "复核 schema 的边界情况" : "Review schema edge cases",
+    { type: "tool_use", id: "fs-t3", timestamp: ts, name: "Agent", kind: "agent", summary: zh ? "复核 schema 的边界情况" : "Review schema edge cases",
       subagent: { description: zh ? "复核 schema 的边界情况" : "Review schema edge cases", agent_type: "Explore", count: 1 } },
     { type: "tool_result", id: "fs-r3", timestamp: ts, tool_use_id: "fs-t3", text: "done", is_error: false, subagent: { running: 0, completed: 1, failed: 0 } },
     { type: "assistant_text", id: "fs-a2", timestamp: ts, text: md },
@@ -170,7 +171,7 @@ export function flowStateItems(lang: "zh" | "en", ts: string): unknown[] {
     { type: "user_text", id: "fs-u2b", timestamp: ts, text: agentMsg },
     { type: "meta", id: "fs-m1", timestamp: ts, kind: "compact", compaction: { trigger: "auto", pre_tokens: 182000, summary: null } },
     { type: "user_text", id: "fs-u3", timestamp: ts, text: zh ? "顺手把文档也更新了。" : "Update the docs while you're at it." },
-    { type: "tool_use", id: "fs-t4", timestamp: ts, name: "Agent", summary: zh ? "更新 README 与迁移说明" : "Update README and migration notes",
+    { type: "tool_use", id: "fs-t4", timestamp: ts, name: "Agent", kind: "agent", summary: zh ? "更新 README 与迁移说明" : "Update README and migration notes",
       subagent: { description: zh ? "更新 README 与迁移说明" : "Update README and migration notes", agent_type: "general-purpose", count: 2 } },
     { type: "turn_error", id: "fs-e1", timestamp: ts, label: zh ? "服务过载" : "Overloaded", text: "API Error: 529 {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}" },
     { type: "prompt_queued", id: "fs-q1", timestamp: ts, text: zh ? "跑完之后再开一个 PR。" : "Open a PR after that finishes." },
@@ -245,3 +246,25 @@ export const MODE_MARKERS = [
   { marker: "plan mode on", value: "plan" },
   { marker: "bypass permissions on", value: "bypassPermissions" },
 ];
+
+/// 目录已删除的会话打开后的历史（只读回看）：已结束、进程不在、推得出原项目（门卡给「在 web-app 新开会话」）。
+export const DIR_GONE_HISTORY = { status: "ended", connected: false, ptyManaged: false, endable: false, pendingReview: null, archived: true, cwdMissing: true, originRoot: "C:/dev/web-app" };
+
+/// 「已完成」列表里混着目录已删除的会话（worktree 合并后被清理）：卡片第三行多一枚虚线标签。
+/// 条数要多过一屏——列表是定高的 flex 列，卡片被压缩时标签会溢出到下一张卡上（2026-11-18 手机实拍）。
+export function goneSessions(lang: "zh" | "en"): unknown[] {
+  const zh = lang === "zh";
+  const rows = zh
+    ? [["重构登录页表单校验", "web-app", false], ["worktree 里修好的支付回调重复扣款，PR 已合并", "billing-fix-callback", true], ["补齐导出接口的单测", "api", false],
+      ["升级依赖", "web-app", false], ["把夜间构建的缓存目录挪到工作区外", "infra-nightly", true], ["排查夜间构建失败", "infra", false],
+      ["写发布说明", "docs", false], ["清理旧的特性开关", "web-app", false], ["统一错误码", "api", false]]
+    : [["Refactor login form validation", "web-app", false], ["Fix the duplicate charge in the payment callback (worktree, PR merged)", "billing-fix-callback", true], ["Add tests for the export API", "api", false],
+      ["Upgrade dependencies", "web-app", false], ["Move the nightly build cache out of the workspace", "infra-nightly", true], ["Investigate the nightly build failure", "infra", false],
+      ["Write the release notes", "docs", false], ["Remove old feature flags", "web-app", false], ["Unify error codes", "api", false]];
+  return rows.map(([title, project, gone], i) => {
+    const one = makeSession({ title: title as string, project: project as string, status: "ended", connected: false, archived: true, agoMin: 30 + i * 90, provider: (["claude", "codex", "kimi"] as const)[i % 3] });
+    one.session.id = 300 + i;
+    one.archived_at = FIXED_NOW - i * 3_600_000;
+    return gone ? { ...one, cwd_missing: true } : one;
+  });
+}

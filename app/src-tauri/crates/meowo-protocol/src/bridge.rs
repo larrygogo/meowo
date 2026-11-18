@@ -107,7 +107,9 @@ bridged_args!(AnswerLeadGateArgs {
     cwd: String,
     gate_id: String,
     choice: String,
-    note: String
+    note: String,
+    #[serde(default)]
+    version: Option<String>
 });
 
 bridged_args!(RetryLeadGateDeliveryArgs {
@@ -415,6 +417,12 @@ bridged_args!(GetSubagentTranscriptArgs {
     #[cfg_attr(test, ts(type = "number"))]
     session_id: i64,
     tool_use_id: String
+});
+
+bridged_args!(ProbeSubagentStatesArgs {
+    #[cfg_attr(test, ts(type = "number"))]
+    session_id: i64,
+    tool_use_ids: Vec<String>
 });
 
 bridged_args!(ManagedTerminalSnapshotArgs {

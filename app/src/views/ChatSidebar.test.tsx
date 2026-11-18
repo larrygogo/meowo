@@ -119,7 +119,26 @@ describe("ChatSidebar", () => {
     expect(await screen.findByRole("button", { name: /在跑的/ })).toBeTruthy();
   });
 
-  /// 组头汇总点：未读压过等待/运行（组折起来时行上的未读点看不见），但让位于出错。
+  /// 组展开时组头点和行上的点同一个优先级（2026-11-18 用户截图：行上琥珀「等待」、组头青柠「未读」不一致）。
+  it("组展开时组头点跟行一致：有等待就显示等待，不显示未读", async () => {
+    localStorage.setItem("meowo-chat-sidebar-grouped", "1");
+    localStorage.removeItem("meowo-chat-sidebar-folded-dirs");
+    const rows = [
+      session(2, "错过回复的", { connected: true, unread: true, session: { id: 2, cc_session_id: "cc-2", status: "waiting" } } as Partial<LiveSession>),
+    ];
+    invoke.mockImplementation((command: string) =>
+      Promise.resolve(command === "get_live_sessions_page" ? rows : undefined));
+    const { container } = render(<ChatSidebar activeId={1} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
+    await screen.findByRole("button", { name: /错过回复的/ });
+    const head = container.querySelector(".chat-sidebar-group-head")!;
+    expect(head.querySelector(".chat-sidebar-dot.is-unread")).toBeNull();
+    expect(head.querySelector(".chat-sidebar-dot.is-waiting")).toBeTruthy();
+    // 折起来以后行看不见，组头改报未读。
+    fireEvent.click(head);
+    await waitFor(() => expect(container.querySelector(".chat-sidebar-group-head .chat-sidebar-dot.is-unread")).toBeTruthy());
+  });
+
+  /// 组折起来时：未读压过等待/运行（行上的未读点看不见），但让位于出错。
   it("组头汇总未读，出错时让位给出错", async () => {
     localStorage.setItem("meowo-chat-sidebar-grouped", "1");
     let rows = [
@@ -130,7 +149,8 @@ describe("ChatSidebar", () => {
       Promise.resolve(command === "get_live_sessions_page" ? rows : undefined));
     const { container, unmount } = render(<ChatSidebar activeId={1} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
     await screen.findByRole("button", { name: /错过回复的/ });
-    expect(container.querySelector(".chat-sidebar-dot.is-unread")).toBeTruthy();
+    fireEvent.click(container.querySelector(".chat-sidebar-group-head")!);
+    await waitFor(() => expect(container.querySelector(".chat-sidebar-dot.is-unread")).toBeTruthy());
     unmount();
 
     rows = [...rows, session(3, "出错的", { connected: true, errored: true, session: { id: 3, cc_session_id: "cc-3", status: "waiting" } } as Partial<LiveSession>)];
@@ -360,6 +380,29 @@ describe("ChatSidebar", () => {
     expect((await dotOf(/在等/))?.className).toContain("is-waiting");
     // 断开/已结束:图标置灰已表达不活跃,不再叠点。
     expect(await dotOf(/已断开/)).toBeNull();
+  });
+
+  // 实拍 2026-11-18：TUI 红字「Waiting for API response · will retry in 1m 9s · check your
+  // network」，侧栏只是普通的运行绿点。屏幕上挂着自动重试时，点换警示色、提示说清在等重试。
+  it("回合在跑但屏幕挂着自动重试：状态点换警示色，提示说 API 无响应", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_live_sessions_page") {
+        return Promise.resolve([
+          session(1, "卡网络", { connected: true, screen_state: "working", screen_retry: { kind: "stalled" }, session: { id: 1, cc_session_id: "cc-1", status: "running" } } as Partial<LiveSession>),
+          session(2, "重试中", { connected: true, screen_state: "working", screen_retry: { kind: "attempt", attempt: 2, max: 10 }, session: { id: 2, cc_session_id: "cc-2", status: "running" } } as Partial<LiveSession>),
+          session(3, "正常跑", { connected: true, screen_state: "working", session: { id: 3, cc_session_id: "cc-3", status: "running" } } as Partial<LiveSession>),
+        ]);
+      }
+      return Promise.resolve();
+    });
+    render(<ChatSidebar activeId={1} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
+    const dotOf = async (name: RegExp) =>
+      (await screen.findByRole("button", { name })).querySelector(".chat-sidebar-dot");
+    const stalled = await dotOf(/卡网络/);
+    expect(stalled?.className).toContain("is-retrying");
+    expect(stalled?.getAttribute("data-tip")).toBe("API 无响应，等待重试，检查网络");
+    expect((await dotOf(/重试中/))?.getAttribute("data-tip")).toBe("请求失败，正在重试（第 2/10 次）");
+    expect((await dotOf(/正常跑/))?.className).not.toContain("is-retrying");
   });
 
   it("待授权会话亮琥珀徽标并压过状态点,授权清掉后回落", async () => {

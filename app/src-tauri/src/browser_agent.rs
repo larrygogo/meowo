@@ -15,7 +15,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tauri::Manager;
 
 use crate::browser_pane::{self, BrowserPaneInfo, BrowserPanes};
@@ -32,11 +32,47 @@ const EVAL_TIMEOUT: Duration = Duration::from_secs(15);
 const LOAD_TIMEOUT: Duration = Duration::from_secs(20);
 /// 「agent 正在操作」的提示在最后一次操作后保留多久。
 const ACTIVE_LINGER: Duration = Duration::from_secs(6);
+const TAKEOVER_ERROR: &str =
+    "browser/user_takeover：用户已接管面板浏览器，本次自动化已停止。等用户点「交还」后再试。";
+
+fn control_is_current(
+    agent_paused: bool,
+    current_generation: u64,
+    expected_generation: u64,
+) -> bool {
+    !agent_paused && current_generation == expected_generation
+}
+
+fn ensure_agent_control(panes: &BrowserPanes, id: u32, generation: u64) -> Result<(), String> {
+    let map = panes.panes.lock().map_err(|e| e.to_string())?;
+    let info = map.get(&id).ok_or("browser_pane/not_found")?;
+    if !control_is_current(info.agent_paused, info.agent_generation, generation) {
+        Err(TAKEOVER_ERROR.into())
+    } else {
+        Ok(())
+    }
+}
 
 /// 每会话 agent 正在用的那个浏览器页签（会话 id → 页签编号）。
 fn agent_panes() -> &'static Mutex<std::collections::HashMap<i64, u32>> {
     static MAP: OnceLock<Mutex<std::collections::HashMap<i64, u32>>> = OnceLock::new();
     MAP.get_or_init(Default::default)
+}
+
+/// 首次并发 browser_open 的「选中现有页签 → 没有则创建 → remember」必须整体互斥，
+/// 否则两个调用会各建一个页签，再各拿不同的页签锁并行操作。
+fn session_selection_locks() -> &'static Mutex<std::collections::HashMap<i64, Arc<Mutex<()>>>> {
+    static MAP: OnceLock<Mutex<std::collections::HashMap<i64, Arc<Mutex<()>>>>> = OnceLock::new();
+    MAP.get_or_init(Default::default)
+}
+
+fn session_selection_lock(session_id: i64) -> Arc<Mutex<()>> {
+    session_selection_locks()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .entry(session_id)
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
 }
 
 /// broker 收到 `BrokerRequest::Browser` 后调这里。返回给 agent 的文字；出错返回原因。
@@ -52,15 +88,16 @@ pub(crate) fn handle(session_id: i64, tool: &str, args: &Value) -> Result<Value,
     let app = APP.get().ok_or("Meowo 还没启动完")?;
     let panes = app.state::<BrowserPanes>();
     let id = pane_for(app, &panes, session_id, tool == "browser_open")?;
-    let paused = panes
+    // 同一页签一次只跑一个动作：两个工具并行时，旧动作不能在用户接管后越过新动作继续写页面。
+    let (operation, generation) = panes
         .panes
         .lock()
-        .ok()
-        .and_then(|map| map.get(&id).map(|info| info.agent_paused))
-        .unwrap_or(false);
-    if paused {
-        return Err("用户接管了面板浏览器，暂时不能操作。等用户在页签上点「交还」后再试。".into());
-    }
+        .map_err(|e| e.to_string())?
+        .get(&id)
+        .map(|info| (info.operation.clone(), info.agent_generation))
+        .ok_or("browser_pane/not_found")?;
+    let _operation = operation.lock().map_err(|e| e.to_string())?;
+    ensure_agent_control(&panes, id, generation)?;
     // 面板收起时页签是藏着的：页面进 document.hidden、视口可能只有 2×2，滚动检测、
     // IntersectionObserver、截图全不工作（2026-11-09 Discord 授权页实测）。先让它接着渲染。
     // 放在接管检查之后：被拒的调用不该改动页签。挪不动也照常执行，快照、点击这些不靠可见。
@@ -71,10 +108,29 @@ pub(crate) fn handle(session_id: i64, tool: &str, args: &Value) -> Result<Value,
     let result = if tool == "browser_screenshot" {
         screenshot(app, id)
     } else {
-        run(app, id, tool, args).map(|text| json!({ "text": text }))
+        run(app, id, tool, args, generation).map(|text| json!({ "text": text }))
+    };
+    // 等待、截图或脚本执行期间用户可能刚接管：已开始的 JS 没法撤回，但结果不能冒充本轮仍归 Agent。
+    let result = match ensure_agent_control(&panes, id, generation) {
+        Ok(()) => result,
+        Err(error) => Err(error),
     };
     schedule_idle(app, id);
     result
+}
+
+/// E2E 专用入口：真实走 broker 同一份 handle，但放进 blocking 线程，测试才能在等待中点接管。
+/// 命令注册也用 cfg(feature="e2e") 门控，生产二进制没有这条能力。
+#[cfg(feature = "e2e")]
+#[tauri::command]
+pub(crate) async fn browser_agent_e2e(
+    session_id: i64,
+    tool: String,
+    args: Value,
+) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || handle(session_id, &tool, &args))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// 截下面板浏览器当前的画面（JPEG）。agent 读快照只拿得到文字，看排版、样式、图表得靠它。
@@ -240,6 +296,8 @@ fn pane_for(
     session_id: i64,
     open: bool,
 ) -> Result<u32, String> {
+    let selection = session_selection_lock(session_id);
+    let _selection = selection.lock().map_err(|e| e.to_string())?;
     let alive = |id: u32| {
         panes
             .panes
@@ -318,6 +376,7 @@ fn chat_window(app: &tauri::AppHandle, session_id: i64) -> Result<tauri::Window,
 
 fn mark_active(app: &tauri::AppHandle, panes: &BrowserPanes, id: u32) {
     browser_pane::update(app, &panes.panes, id, |info| info.agent_active = true);
+    browser_pane::set_agent_input_locked(app, id, true);
     if let Ok(mut last) = last_used().lock() {
         last.insert(id, Instant::now());
     }
@@ -333,14 +392,25 @@ fn schedule_idle(app: &tauri::AppHandle, id: u32) {
     let app = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(ACTIVE_LINGER);
+        let panes = app.state::<BrowserPanes>();
+        let operation = panes
+            .panes
+            .lock()
+            .ok()
+            .and_then(|map| map.get(&id).map(|info| info.operation.clone()));
+        let Some(operation) = operation else { return };
+        // 长操作可能超过 6 秒；空闲清理与工具调用同锁，绝不能在做了一半时解开人工输入。
+        let Ok(_operation) = operation.lock() else {
+            return;
+        };
         let idle = last_used()
             .lock()
             .ok()
             .and_then(|map| map.get(&id).copied())
             .is_none_or(|at| at.elapsed() >= ACTIVE_LINGER);
         if idle {
-            let panes = app.state::<BrowserPanes>();
             browser_pane::update(&app, &panes.panes, id, |info| info.agent_active = false);
+            browser_pane::set_agent_input_locked(&app, id, false);
             // agent 停手了，页面上的 agent 鼠标也淡出。
             let _ = eval(&app, id, "H.hideCursor()");
         }
@@ -379,7 +449,13 @@ fn point(app: &tauri::AppHandle, id: u32, r: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn run(app: &tauri::AppHandle, id: u32, tool: &str, args: &Value) -> Result<String, String> {
+fn run(
+    app: &tauri::AppHandle,
+    id: u32,
+    tool: &str,
+    args: &Value,
+    generation: u64,
+) -> Result<String, String> {
     let str_arg = |key: &str| args.get(key).and_then(Value::as_str).map(str::to_string);
     match tool {
         "browser_open" | "browser_navigate" => {
@@ -397,7 +473,7 @@ fn run(app: &tauri::AppHandle, id: u32, tool: &str, args: &Value) -> Result<Stri
             browser_pane::webview(app, id)?
                 .navigate(target)
                 .map_err(|e| e.to_string())?;
-            wait_loaded(app, id);
+            wait_loaded(app, id, generation)?;
             snapshot(app, id)
         }
         "browser_back" | "browser_forward" => {
@@ -410,7 +486,7 @@ fn run(app: &tauri::AppHandle, id: u32, tool: &str, args: &Value) -> Result<Stri
                 .eval(js)
                 .map_err(|e| e.to_string())?;
             std::thread::sleep(Duration::from_millis(400));
-            wait_loaded(app, id);
+            wait_loaded(app, id, generation)?;
             snapshot(app, id)
         }
         "browser_reload" => {
@@ -418,14 +494,50 @@ fn run(app: &tauri::AppHandle, id: u32, tool: &str, args: &Value) -> Result<Stri
                 .reload()
                 .map_err(|e| e.to_string())?;
             std::thread::sleep(Duration::from_millis(400));
-            wait_loaded(app, id);
+            wait_loaded(app, id, generation)?;
             snapshot(app, id)
         }
         "browser_snapshot" => snapshot(app, id),
+        "browser_emulate" => {
+            // 参数先校验完再动页签：不对就原样报错，模拟状态不变。
+            let next = crate::browser_emulation::parse(args)?;
+            let summary = match &next {
+                Some(_) => format!(
+                    "已设置：{}",
+                    crate::browser_emulation::describe(next.as_ref())
+                ),
+                None => "已还原为面板实际大小和默认 UA".to_string(),
+            };
+            let panes = app.state::<BrowserPanes>();
+            ensure_agent_control(&panes, id, generation)?;
+            let check = || ensure_agent_control(&panes, id, generation);
+            let reload = browser_pane::set_emulation(app, &panes, id, next, &check)?;
+            if reload {
+                // 刷新会丢掉用户刚接管后在页面上做的事：刷新前再确认一次控制权还在。
+                check()?;
+                browser_pane::webview(app, id)?
+                    .reload()
+                    .map_err(|e| e.to_string())?;
+                std::thread::sleep(Duration::from_millis(400));
+            } else {
+                // 只改尺寸：给响应式布局一帧重排。
+                std::thread::sleep(Duration::from_millis(300));
+            }
+            wait_loaded(app, id, generation)?;
+            let reloaded = if reload {
+                "，已刷新页面让服务端按新请求重新渲染"
+            } else {
+                ""
+            };
+            Ok(format!(
+                "{summary}{reloaded}。\n\n{}",
+                snapshot(app, id)?
+            ))
+        }
         "browser_click" => {
             let r = ref_arg(args)?;
             point(app, id, &r)?;
-            act(app, id, &format!("H.click({})", js_str(&r)))
+            act(app, id, &format!("H.click({})", js_str(&r)), generation)
         }
         "browser_type" => {
             let r = ref_arg(args)?;
@@ -436,6 +548,7 @@ fn run(app: &tauri::AppHandle, id: u32, tool: &str, args: &Value) -> Result<Stri
                 app,
                 id,
                 &format!("H.type({}, {}, {})", js_str(&r), js_str(&text), submit),
+                generation,
             )
         }
         "browser_select" => {
@@ -446,11 +559,12 @@ fn run(app: &tauri::AppHandle, id: u32, tool: &str, args: &Value) -> Result<Stri
                 app,
                 id,
                 &format!("H.select({}, {})", js_str(&r), js_str(&value)),
+                generation,
             )
         }
         "browser_press" => {
             let key = str_arg("key").ok_or("缺少 key")?;
-            act(app, id, &format!("H.press({})", js_str(&key)))
+            act(app, id, &format!("H.press({})", js_str(&key)), generation)
         }
         "browser_scroll" => {
             let dy = args.get("dy").and_then(Value::as_f64).unwrap_or(600.0);
@@ -465,7 +579,7 @@ fn run(app: &tauri::AppHandle, id: u32, tool: &str, args: &Value) -> Result<Stri
                 }
                 None => format!("(window.scrollBy(0, {dy}), 'scrolled')"),
             };
-            act(app, id, &expr)
+            act(app, id, &expr, generation)
         }
         "browser_wait_for" => {
             let text = str_arg("text");
@@ -476,11 +590,16 @@ fn run(app: &tauri::AppHandle, id: u32, tool: &str, args: &Value) -> Result<Stri
                 .clamp(0.1, 60.0);
             let deadline = Instant::now() + Duration::from_secs_f64(seconds);
             match text {
-                None => {
-                    std::thread::sleep(Duration::from_secs_f64(seconds));
-                    snapshot(app, id)
-                }
+                None => loop {
+                    ensure_agent_control(&app.state::<BrowserPanes>(), id, generation)?;
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        return snapshot(app, id);
+                    }
+                    std::thread::sleep(remaining.min(Duration::from_millis(100)));
+                },
                 Some(text) => loop {
+                    ensure_agent_control(&app.state::<BrowserPanes>(), id, generation)?;
                     let found = eval(
                         app,
                         id,
@@ -522,7 +641,14 @@ fn run(app: &tauri::AppHandle, id: u32, tool: &str, args: &Value) -> Result<Stri
             )?;
             let deadline = Instant::now() + EVAL_TIMEOUT;
             let value = loop {
-                let got = eval(app, id, &format!("(() => {{ const box = window.__meowoEval || {{}}; const r = box['{slot}']; if (r) delete box['{slot}']; return r || null; }})()"))?;
+                ensure_agent_control(&app.state::<BrowserPanes>(), id, generation)?;
+                let got = eval(
+                    app,
+                    id,
+                    &format!(
+                        "(() => {{ const box = window.__meowoEval || {{}}; const r = box['{slot}']; if (r) delete box['{slot}']; return r || null; }})()"
+                    ),
+                )?;
                 if !got.is_null() {
                     if got.get("ok").and_then(Value::as_bool) == Some(true) {
                         break got.get("value").cloned().unwrap_or(Value::Null);
@@ -559,14 +685,16 @@ fn ref_arg(args: &Value) -> Result<String, String> {
 }
 
 /// 动作做完等页面稳一下，回一份新快照（动作本身的提示放在最前面）。
-fn act(app: &tauri::AppHandle, id: u32, expr: &str) -> Result<String, String> {
+fn act(app: &tauri::AppHandle, id: u32, expr: &str, generation: u64) -> Result<String, String> {
+    // point() 的鼠标动画和排队等待期间可能已经接管；真正写页面前再查一次。
+    ensure_agent_control(&app.state::<BrowserPanes>(), id, generation)?;
     let value = eval(app, id, expr)?;
     let note = match value {
         Value::String(s) => s,
         other => other.to_string(),
     };
     std::thread::sleep(Duration::from_millis(500));
-    wait_loaded(app, id);
+    wait_loaded(app, id, generation)?;
     Ok(format!("{note}\n\n{}", snapshot(app, id)?))
 }
 
@@ -575,19 +703,42 @@ fn snapshot(app: &tauri::AppHandle, id: u32) -> Result<String, String> {
         Value::String(s) => s,
         other => other.to_string(),
     };
-    let (waiting, blocked) = app
+    let (waiting, blocked, emulation) = app
         .state::<BrowserPanes>()
         .panes
         .lock()
         .ok()
         .and_then(|map| {
-            map.get(&id)
-                .map(|info| (info.permission.clone(), info.blocked.clone()))
+            map.get(&id).map(|info| {
+                (
+                    info.permission.clone(),
+                    info.blocked.clone(),
+                    info.emulation.clone(),
+                )
+            })
         })
-        .unwrap_or((None, None));
+        .unwrap_or((None, None, None));
+    // 视口写在页面内容前面：Agent 先知道看到的是哪一版布局，再决定要不要 browser_emulate。
+    // 乘上 visualViewport.scale：手机模拟下内容超宽时页面会像真手机一样缩小装下，innerWidth
+    // 量的是缩小后的可见区域（E2E 实测 390 宽的手机报成 1240），媒体查询看到的仍是 390。
+    let inner = eval(
+        app,
+        id,
+        "(() => { const s = (window.visualViewport && visualViewport.scale) || 1; return [Math.round(innerWidth * s), Math.round(innerHeight * s)]; })()",
+    )
+        .ok()
+        .and_then(|v| {
+            let pair = v.as_array()?;
+            Some((
+                pair.first()?.as_u64()? as u32,
+                pair.get(1)?.as_u64()? as u32,
+            ))
+        })
+        .unwrap_or((0, 0));
     Ok(format!(
-        "{}{page}",
-        permission_note(waiting.as_ref(), blocked.as_ref())
+        "{}{}{page}",
+        permission_note(waiting.as_ref(), blocked.as_ref()),
+        crate::browser_emulation::viewport_note(emulation.as_ref(), inner)
     ))
 }
 
@@ -613,12 +764,13 @@ fn permission_note(
 }
 
 /// 等页面加载完（readyState complete），最多 LOAD_TIMEOUT。等不到也不报错：页面可能一直在
-/// 长连接，照样能读能点。
-fn wait_loaded(app: &tauri::AppHandle, id: u32) {
+/// 长连接，照样能读能点。等待期间持续响应用户接管，不能卡满 20 秒才停。
+fn wait_loaded(app: &tauri::AppHandle, id: u32, generation: u64) -> Result<(), String> {
     let deadline = Instant::now() + LOAD_TIMEOUT;
     while Instant::now() < deadline {
-        let loading = app
-            .state::<BrowserPanes>()
+        let panes = app.state::<BrowserPanes>();
+        ensure_agent_control(&panes, id, generation)?;
+        let loading = panes
             .panes
             .lock()
             .ok()
@@ -630,10 +782,11 @@ fn wait_loaded(app: &tauri::AppHandle, id: u32) {
                 .and_then(|v| v.as_str().map(|s| s == "complete"))
                 .unwrap_or(false);
         if ready {
-            return;
+            return Ok(());
         }
         std::thread::sleep(Duration::from_millis(200));
     }
+    Ok(())
 }
 
 /// 在页面里执行一段表达式，取回它的 JSON 值。辅助脚本每次都带上（页面跳转后就没了），
@@ -696,6 +849,9 @@ pub(crate) fn close_session_panels(app: &tauri::AppHandle, session_id: i64) {
     if let Ok(mut map) = agent_panes().lock() {
         map.remove(&session_id);
     }
+    if let Ok(mut map) = session_selection_locks().lock() {
+        map.remove(&session_id);
+    }
     let _ = app.emit_to(
         tauri::EventTarget::webview("chat"),
         "panel-session-closed",
@@ -720,6 +876,11 @@ pub(crate) fn reassign_panels(from: i64, to: i64) {
     if let Ok(mut map) = agent_panes().lock() {
         if let Some(id) = map.remove(&from) {
             map.insert(to, id);
+        }
+    }
+    if let Ok(mut map) = session_selection_locks().lock() {
+        if let Some(lock) = map.remove(&from) {
+            map.insert(to, lock);
         }
     }
     let _ = app.emit_to(
@@ -751,6 +912,7 @@ const AUTO_ALLOWED: &[&str] = &[
     "browser_forward",
     "browser_reload",
     "browser_screenshot",
+    "browser_emulate",
 ];
 
 /// 托管会话启动时追加的参数（pty.rs 的 start_spawned，外部终端启动不走这里）。各 agent 怎么接
@@ -1276,9 +1438,63 @@ mod tests {
     }
 
     #[test]
+    fn first_open_selection_lock_is_shared_per_session() {
+        let first = session_selection_lock(i64::MAX);
+        let same = session_selection_lock(i64::MAX);
+        let other = session_selection_lock(i64::MAX - 1);
+        assert!(Arc::ptr_eq(&first, &same));
+        assert!(!Arc::ptr_eq(&first, &other));
+        let held = first.lock().unwrap();
+        assert!(same.try_lock().is_err());
+        drop(held);
+        assert!(same.try_lock().is_ok());
+    }
+
+    #[test]
+    fn old_control_lease_stays_invalid_after_takeover_and_handback() {
+        assert!(control_is_current(false, 7, 7));
+        assert!(!control_is_current(true, 8, 7));
+        // 快速「接管 → 交还」后 paused 又是 false，但代际已变，旧排队调用仍须停止。
+        assert!(!control_is_current(false, 9, 7));
+        assert!(control_is_current(false, 9, 9));
+    }
+
+    #[test]
     fn evaluate_is_not_auto_allowed() {
         assert!(!AUTO_ALLOWED.contains(&"browser_evaluate"));
         assert!(AUTO_ALLOWED.contains(&"browser_click"));
+    }
+
+    /// meowo-reporter 的 MCP 工具清单在可执行文件里（不在库里），这里读它的源码核对：
+    /// 除 browser_evaluate 外每个工具都在免审批清单里，免审批清单也没有清单外的名字。
+    /// 加工具只改一边时，claude 会对新工具逐次弹审批（或放行一个不存在的名字）。
+    #[test]
+    fn auto_allowed_matches_the_mcp_tool_list() {
+        let source = include_str!("../crates/meowo-reporter/src/mcp.rs");
+        let body = &source[source.find("fn tools()").expect("mcp.rs 里找不到 tools()")..];
+        let body = &body[..body.find("#[cfg(test)]").unwrap_or(body.len())];
+        let mut listed: Vec<&str> = Vec::new();
+        for (at, _) in body.match_indices("\"browser_") {
+            let name = &body[at + 1..];
+            let name = &name[..name.find('"').unwrap()];
+            if !listed.contains(&name) {
+                listed.push(name);
+            }
+        }
+        assert!(listed.contains(&"browser_emulate"), "{listed:?}");
+        for name in &listed {
+            assert_eq!(
+                AUTO_ALLOWED.contains(name),
+                *name != "browser_evaluate",
+                "{name}"
+            );
+        }
+        for name in AUTO_ALLOWED {
+            assert!(
+                listed.contains(name),
+                "免审批清单里的 {name} 不在 MCP 工具清单中"
+            );
+        }
     }
 
     #[test]

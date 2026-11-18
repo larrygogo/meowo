@@ -1,0 +1,146 @@
+[
+ {
+  "id": 18132438818,
+  "name": "review-docs-cleanup",
+  "stage": "review",
+  "status": "manual",
+  "web_url": "https://gitlab.com/gitlab-org/cli/-/jobs/18132438818",
+  "allow_failure": true
+ },
+ {
+  "id": 18132438817,
+  "name": "review-docs-deploy",
+  "stage": "review",
+  "status": "manual",
+  "web_url": "https://gitlab.com/gitlab-org/cli/-/jobs/18132438817",
+  "allow_failure": true
+ },
+ {
+  "id": 18132438816,
+  "name": "tests:coverage",
+  "stage": "test",
+  "status": "success",
+  "web_url": "https://gitlab.com/gitlab-org/cli/-/jobs/18132438816",
+  "allow_failure": false
+ },
+ {
+  "id": 18132438815,
+  "name": "tests:integration",
+  "stage": "test",
+  "status": "success",
+  "web_url": "https://gitlab.com/gitlab-org/cli/-/jobs/18132438815",
+  "allow_failure": false
+ },
+ {
+  "id": 18132438814,
+  "name": "tests:unit",
+  "stage": "test",
+  "status": "success",
+  "web_url": "https://gitlab.com/gitlab-org/cli/-/jobs/18132438814",
+  "allow_failure": false
+ },
+ {
+  "id": 18132438813,
+  "name": "lint",
+  "stage": "test",
+  "status": "success",
+  "web_url": "https://gitlab.com/gitlab-org/cli/-/jobs/18132438813",
+  "allow_failure": false
+ },
+ {
+  "id": 18132438812,
+  "name": "lint:comments",
+  "stage": "test",
+  "status": "success",
+  "web_url": "https://gitlab.com/gitlab-org/cli/-/jobs/18132438812",
+  "allow_failure": false
+ },
+ {
+  "id": 18132438811,
+  "name": "docs hugo_build",
+  "stage": "documentation",
+  "status": "success",
+  "web_url": "https://gitlab.com/gitlab-org/cli/-/jobs/18132438811",
+  "allow_failure": false
+ },
+ {
+  "id": 18132438810,
+  "name": "check_docs_markdown",
+  "stage": "documentation",
+  "status": "success",
+  "web_url": "https://gitlab.com/gitlab-org/cli/-/jobs/18132438810",
+  "allow_failure": false
+ },
+ {
+  "id": 18132438809,
+  "name": "check_docs_update",
+  "stage": "documentation",
+  "status": "success",
+  "web_url": "https://gitlab.com/gitlab-org/cli/-/jobs/18132438809",
+  "allow_failure": false
+ },
+ {
+  "id": 18132438808,
+  "name": "check_args",
+  "stage": "checks",
+  "status": "success",
+  "web_url": "https://gitlab.com/gitlab-org/cli/-/jobs/18132438808",
+  "allow_failure": false
+ },
+ {
+  "id": 18132438807,
+  "name": "check_embed",
+  "stage": "checks",
+  "status": "success",
+  "web_url": "https://gitlab.com/gitlab-org/cli/-/jobs/18132438807",
+  "allow_failure": false
+ },
+ {
+  "id": 18132438806,
+  "name": "lint_commit",
+  "stage": "checks",
+  "status": "success",
+  "web_url": "https://gitlab.com/gitlab-org/cli/-/jobs/18132438806",
+  "allow_failure": false
+ },
+ {
+  "id": 18132438805,
+  "name": "check_go_generated_code",
+  "stage": "checks",
+  "status": "success",
+  "web_url": "https://gitlab.com/gitlab-org/cli/-/jobs/18132438805",
+  "allow_failure": false
+ },
+ {
+  "id": 18132438804,
+  "name": "dependency-scanning-profile-0",
+  "stage": "application-security-testing",
+  "status": "success",
+  "web_url": "https://gitlab.com/gitlab-org/cli/-/jobs/18132438804",
+  "allow_failure": true
+ },
+ {
+  "id": 18132438803,
+  "name": "govulncheck",
+  "stage": "application-security-testing",
+  "status": "manual",
+  "web_url": "https://gitlab.com/gitlab-org/cli/-/jobs/18132438803",
+  "allow_failure": true
+ },
+ {
+  "id": 18132438802,
+  "name": "secret_detection",
+  "stage": "application-security-testing",
+  "status": "success",
+  "web_url": "https://gitlab.com/gitlab-org/cli/-/jobs/18132438802",
+  "allow_failure": true
+ },
+ {
+  "id": 18132438801,
+  "name": "gitlab-advanced-sast",
+  "stage": "application-security-testing",
+  "status": "success",
+  "web_url": "https://gitlab.com/gitlab-org/cli/-/jobs/18132438801",
+  "allow_failure": true
+ }
+]

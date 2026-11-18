@@ -1,0 +1,37 @@
+{
+ "id": 565101172,
+ "iid": 4365,
+ "project_id": 34675721,
+ "title": "feat(auth): make --token logins work with remotes like ssh.gitlab.gnome.org",
+ "description": "## Description\n\nOn `main`, after `glab auth login --hostname gitlab.gnome.org --stdin` in a clone whose remote is on `ssh.gitlab.gnome.org`, repository commands fail with \"none of the git remotes configured for this repository point to a known GitLab host\", because the login saved no `ssh_host`. This MR does item 2 from https://gitlab.com/gitlab-org/cli/-/work_items/8707#note_4138099527: detect and save `ssh_host` during a non-interactive login inside a clone.\n\n- `--token` and `--stdin` logins ignored `--ssh-hostname`. They now save it, as other logins already do.\n- Without the flag, non-interactive logins to a self-managed instance look up each SSH remote's project on that instance, and save the remote's host only if the project's SSH clone URL (`ssh_url_to_repo`) uses it. A remote of another instance is therefore skipped, because its project is missing on this instance or has a different SSH host. These read-only lookups send the paths of all SSH remotes in the clone to the instance being logged in to, including remotes on other hosts.\n- Passing `--ssh-hostname` skips these lookups, and `glab auth login --help` now says so. With `GLAB_DEBUG=1`, login logs why each lookup failed.\n- An existing `ssh_host` is kept. Interactive logins are unchanged.\n\nWhen it saves a detected host, login says so:\n\n```plaintext\n✓ Set the SSH host of gitlab.gnome.org to ssh.gitlab.gnome.org, taken from this repository's remotes.\n✓ Logged in as johan.walles\n```\n\nFor a login done before cloning, the error from !4271 says how to set `ssh_host`.\n\n## Related Issues\n\nCloses #8707.\n\n## How has this been tested?\n\nNew table test `Test_tokenLogin_savesSSHHost` covers the flag, a confirmed remote, a lookup that uses `--api-protocol`, and nothing saved for an HTTPS remote, an unconfirmed or missing project, or an existing `ssh_host`. The three cases that save fail against `main`. `Test_deviceLogin_savesSSHHost` covers `--ssh-hostname` and the detection in a `--device` login, and fails if that flow's `saveSSHHost` call is removed.\n\nAlso:\n\n- In a clone of `GNOME/gnome-settings-daemon` with an empty config, `glab auth login --hostname gitlab.gnome.org --stdin` saved no `ssh_host` on `main`, and `glab issue list` failed. With this change it saves `ssh.gitlab.gnome.org`, and `glab issue list` lists the issues.\n- `glab auth login --hostname gitlab.example.invalid --token <fake> --ssh-hostname ssh.gitlab.example.invalid` saved no `ssh_host` on glab 1.128.0, and saves it with this change.\n- `make test-changed`, `golangci-lint` and `comment-overlap` pass.\n\nNon-interactive `--web` logins go through the same code as `--device`, but no test covers them.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+ "state": "opened",
+ "created_at": "2026-11-10T09:24:34.423Z",
+ "updated_at": "2026-11-18T06:10:56.195Z",
+ "merge_status": "can_be_merged",
+ "approved": false,
+ "approvals_required": 2,
+ "approvals_left": 2,
+ "require_password_to_approve": false,
+ "approved_by": [],
+ "suggested_approvers": [],
+ "approvers": [],
+ "approver_groups": [],
+ "user_has_approved": false,
+ "user_can_approve": false,
+ "approval_rules_left": [
+  {
+   "id": 404917833,
+   "name": "/internal/",
+   "rule_type": "code_owner"
+  },
+  {
+   "id": 408894571,
+   "name": "/docs/",
+   "rule_type": "code_owner"
+  }
+ ],
+ "has_approval_rules": true,
+ "merge_request_approvers_available": true,
+ "multiple_approval_rules_available": true,
+ "invalid_approvers_rules": []
+}

@@ -9,6 +9,10 @@ const SETTINGS = [620, 460];
 // 已结束回合的过程块默认收起：点开才看得到里面的工具行。
 const OPEN_FOLDS = ["eval", "document.querySelectorAll('.turn-fold:not(.is-open) > .turn-fold-head').forEach((b) => b.click())"];
 const MODEL_BTN = ".chat-compose .chat-model-select .chat-model-button";
+// 设置窗里把「其他平台」那张卡 / 添加表单滚进视口。
+const FORGE_SCROLL = "document.querySelector('[data-testid=forge-accounts]')?.scrollIntoView({ block: 'start' })";
+const FORGE_ACTIONS_SCROLL = "document.querySelector('[data-testid=forge-device-start]')?.scrollIntoView({ block: 'end' })";
+const FORGE_ADD_SCROLL = "document.querySelector('[data-testid=forge-add]')?.scrollIntoView({ block: 'start' })";
 
 export const QA_SHOTS = [
   // ── 输入框：斜杠菜单、@ 补全 ──
@@ -44,6 +48,8 @@ export const QA_SHOTS = [
   // 子代理发回来的话（<agent-message>）：改前整段当用户气泡摊开（leader 2026-11-12 截图），改后是「子代理消息」块。
   // 它在 flow-states 的中段偏下，滚到它露出来再拍。
   { name: "qa-agent-msg", scene: "flow-states", sel: ".chat-crossmsg", langs: ["zh", "en"], steps: [["eval", "(() => { const t0 = performance.now(); const id = setInterval(() => { const el = [...document.querySelectorAll('.chat-crossmsg')].pop(); el && el.scrollIntoView({ block: 'center' }); if (performance.now() - t0 > 1200) clearInterval(id); }, 100); })()"], ["tick", 1500]] },
+  // Lead hook 与用户正文同条落盘：正文仍是气泡，hook 收成下面的系统记录（实拍 IMG_2252）。
+  { name: "qa-mixed-user", scene: "flow-mixed-user", size: W620, sel: ".chat-user-bubble" },
   { name: "qa-lead", scene: "flow-lead", sel: ".lead-gate-card", langs: ["zh", "en"] },
   { name: "qa-lead-open", scene: "flow-lead", sel: ".lead-gate-card", steps: [["click", ".lead-gate-more"], ["click", ".lead-gate-option >> nth=1"]] },
   { name: "qa-lead-620", scene: "flow-lead", sel: ".lead-gate-card", size: W620 },
@@ -54,6 +60,12 @@ export const QA_SHOTS = [
   { name: "qa-lead-c-620", scene: "flow-lead-c", sel: ".lead-gate-card", size: W620 },
   { name: "qa-lead-c-panel", scene: "flow-lead-c", sel: ".panel-lead", steps: [["click", ".dock-workbar .ui-pill"]], langs: ["zh", "en"] },
   { name: "qa-queued", scene: "flow-queued", sel: ".chat-queued-turn" },
+  // 会话状态（2026-11-18）：只剩后台子代理在跑时运行条位置的说明与可发送的输入框；子代理面板的
+  // 实时时长与 token（含 SendMessage 续上的那个）；API 卡住等重试时的运行条与侧栏状态点。
+  { name: "qa-bg-only", scene: "flow-bg-only", sel: ".chat-running.is-background" },
+  { name: "qa-subagents-live", scene: "flow-subagents-live", sel: ".panel-tasks .chat-task-time", steps: [["click", ".dock-workbar .ui-pill >> nth=1"], ["tick", 600]] },
+  // 重试行从终端画面里认：先切到终端页让画面落进来，再切回对话页（3 秒内都算新鲜）。
+  { name: "qa-api-stalled", scene: "flow-api-stalled", sel: ".chat-running-verb.is-retry", steps: [["tick", 600], ["key", "Control+2"], ["tick", 900], ["key", "Control+1"], ["tick", 300]] },
   { name: "qa-queued-edit", scene: "flow-queued", sel: ".chat-queue-edit", steps: [["click", ".chat-prompt-queue .chat-queue-tool[aria-label=\"编辑\"] >> nth=0"]] },
   { name: "qa-m-queued", page: "mobile", scene: "mobile-queued", size: PHONE, sel: ".chat-queued-turn" },
   // 悬停第二条：拖拽手柄、发送钮、编辑与取消图标一起亮出来。
@@ -132,6 +144,7 @@ export const QA_SHOTS = [
   { name: "qa-tools-codex-agents-running", scene: "flow-tools-codex-agents-running", size: W620, sel: ".chat-subagent-status.is-running" },
   { name: "qa-m-tools-codex-agents-running", page: "mobile", scene: "mobile-tools-codex-agents-running", size: PHONE, sel: ".chat-subagent-status.is-running" },
   { name: "qa-image", scene: "flow-image", sel: ".chat-image-thumb-btn" },
+  { name: "qa-browser-receipt", scene: "flow-browser-receipt", sel: ".chat-tool-browser-images img", steps: [["click", ".chat-tool > summary"]] },
   { name: "qa-lightbox", scene: "flow-image", sel: ".chat-lightbox", steps: [["click", ".chat-image-thumb-btn"]] },
   { name: "qa-drop", scene: "flow-drop", sel: ".chat-drop-overlay" },
   { name: "qa-search", scene: "flow-states", sel: ".chat-search-host", steps: [["key", "Control+f"], ["type", ".chat-search-input", "schema"]] },
@@ -154,6 +167,8 @@ export const QA_SHOTS = [
   { name: "qa-side-rename", scene: "pop-idle", sel: ".chat-sidebar-edit", steps: [["rclick", ".chat-sidebar-item >> nth=1"], ["click", ".ctx-menu .ctx-item:has-text('重命名')"]] },
   { name: "qa-side-search", scene: "pop-idle", sel: ".chat-sidebar-deep-hit", steps: [["type", ".chat-sidebar-search input", "schema"], ["tick", 500], ["click", ".chat-sidebar-deep .chat-sidebar-more"]] },
   { name: "qa-side-empty", scene: "flow-side-empty", sel: ".chat-sidebar-empty" },
+  { name: "qa-side-gone", scene: "flow-side-gone", sel: ".chat-sidebar-gone", steps: [["click", ".chat-sidebar-tabs button >> nth=1"]], langs: ["zh", "en"] },
+  { name: "qa-dir-gone", scene: "flow-dir-gone", sel: "[data-testid=compose-dir-gone]", langs: ["zh", "en"] },
   { name: "qa-side-error", scene: "flow-side-error", sel: ".chat-sidebar-empty.is-error" },
   { name: "qa-side-done", scene: "pop-idle", sel: ".chat-sidebar-cleanbar", steps: [["click", ".chat-sidebar-tabs button >> nth=1"], ["click", ".chat-sidebar-cleanbar button"]] },
   { name: "qa-side-ws", scene: "flow-plain", sel: ".chat-sidebar-tabs", steps: [["click", ".chat-sidebar-tabs button >> nth=2"]] },
@@ -166,7 +181,12 @@ export const QA_SHOTS = [
   // ── 右侧面板 ──
   { name: "qa-md", scene: "flow-md", sel: ".chat-diff-mdview", steps: [["click", ".chat-diff-tree-file:has-text('README.md')"]] },
   { name: "qa-browser", scene: "flow-browser", sel: ".browser-pane", langs: ["zh", "en"] },
+  { name: "qa-browser-paused", scene: "flow-browser-paused", sel: ".browser-pane" },
+  { name: "qa-browser-idle", scene: "flow-browser-idle", sel: ".browser-pane" },
   { name: "qa-browser-blank", scene: "flow-browser-blank", sel: ".browser-pane" },
+  { name: "qa-browser-emu", scene: "flow-browser-emu", sel: ".browser-pane-emu", langs: ["zh", "en"] },
+  { name: "qa-browser-emu-menu", scene: "flow-browser-emu", sel: ".browser-pane-emu", steps: [["click", ".browser-pane-bar button[aria-haspopup='menu']"]] },
+  { name: "qa-browser-emu-tip", scene: "flow-browser-emu", sel: ".browser-pane-emu", steps: [["hover", ".browser-pane-emu"], ["tick", 900]] },
   { name: "qa-shell", scene: "flow-shell", sel: ".shell-term" },
   // ── 托管终端页签 ──
   // 浅色那张和深色那张除 DEV 角标外逐像素相同，这是产品定的：终端页签整窗恒为深色（styles.css
@@ -183,6 +203,37 @@ export const QA_SHOTS = [
   // ── 设置窗：更新状态、下拉展开、输入框聚焦、保存失败 ──
   ...["checking", "error", "available", "downloading", "ready"].map((u) => ({ name: "qa-set-update-" + u, scene: "settingswin-about", params: "upd=" + u, size: SETTINGS, sel: ".settings", steps: [["tick", 11000]] })),
   { name: "qa-set-dropdown", scene: "settingswin-general", size: SETTINGS, sel: ".dd-menu", steps: [["click", ".dd > .dd-btn"]] },
+  // 代码托管：分区全貌（Git 组 + 平台账号）、找不到 git、账号列表（github.com 与其他平台同列、一个令牌失效）、
+  // 添加（默认 GitHub · github.com 浏览器登录、改用令牌、GitLab 只有令牌、Bitbucket）、github.com 设备码进行中。
+  // 设置窗只有 460 高，先把那张卡滚进视口。
+  { name: "qa-set-hosting", scene: "settingswin-github", size: SETTINGS, sel: "[data-testid=git-tool]", langs: ["zh", "en"] },
+  { name: "qa-set-hosting-tall", scene: "settingswin-github", params: "fa=list", size: [900, 1100], sel: "[data-testid=forge-accounts] .forge-mark", langs: ["zh", "en"] },
+  { name: "qa-set-git-missing", scene: "settingswin-github", params: "git=missing", size: SETTINGS, sel: "[data-testid=git-tool-missing]", langs: ["zh", "en"] },
+  { name: "qa-set-forge-list", scene: "settingswin-github", params: "fa=list", size: SETTINGS, sel: "[data-testid=forge-accounts] .forge-mark", steps: [["eval", FORGE_SCROLL]], langs: ["zh", "en"] },
+  { name: "qa-set-forge-add-github", scene: "settingswin-github", size: SETTINGS, sel: "[data-testid=forge-device-start]", steps: [["eval", FORGE_SCROLL], ["click", "[data-testid=forge-empty] button"], ["eval", FORGE_ACTIONS_SCROLL]], langs: ["zh", "en"] },
+  { name: "qa-set-forge-add-github-token", scene: "settingswin-github", size: SETTINGS, sel: "[data-testid=forge-token]", steps: [["eval", FORGE_SCROLL], ["click", "[data-testid=forge-empty] button"], ["click", "[data-testid=forge-use-token]"], ["eval", FORGE_ADD_SCROLL]], langs: ["zh", "en"] },
+  // 900 宽：设置窗拉宽后的同三种状态（浏览器登录、改用令牌、设备码进行中）。
+  { name: "qa-set-forge-add-github-900", scene: "settingswin-github", size: [900, 700], sel: "[data-testid=forge-device-start]", steps: [["eval", FORGE_SCROLL], ["click", "[data-testid=forge-empty] button"], ["eval", FORGE_ACTIONS_SCROLL]], langs: ["zh", "en"] },
+  { name: "qa-set-forge-add-github-token-900", scene: "settingswin-github", size: [900, 700], sel: "[data-testid=forge-token]", steps: [["eval", FORGE_SCROLL], ["click", "[data-testid=forge-empty] button"], ["click", "[data-testid=forge-use-token]"], ["eval", FORGE_ADD_SCROLL]], langs: ["zh", "en"] },
+  { name: "qa-set-forge-device-900", scene: "settingswin-github", params: "fa=device", size: [900, 700], sel: "[data-testid=forge-code]", steps: [["eval", FORGE_SCROLL]], langs: ["zh", "en"] },
+  { name: "qa-set-forge-add", scene: "settingswin-github", size: SETTINGS, sel: "[data-testid=forge-add]", steps: [["eval", FORGE_SCROLL], ["click", "[data-testid=forge-empty] button"], ["click", "[data-testid=forge-add] [role=radio] >> nth=1"], ["eval", FORGE_ADD_SCROLL]], langs: ["zh", "en"] },
+  { name: "qa-set-forge-add-bitbucket", scene: "settingswin-github", size: SETTINGS, sel: "[data-testid=forge-add]", steps: [["eval", FORGE_SCROLL], ["click", "[data-testid=forge-empty] button"], ["click", "[data-testid=forge-add] [role=radio] >> nth=3"], ["eval", FORGE_ADD_SCROLL]] },
+  { name: "qa-set-forge-device", scene: "settingswin-github", params: "fa=device", size: SETTINGS, sel: "[data-testid=forge-code]", steps: [["eval", FORGE_SCROLL]], langs: ["zh", "en"] },
+  // 仓库在 gitlab.com：MR !42、流水线一项失败；没加账号时引导去设置添加。
+  { name: "qa-panel-gitlab", scene: "panel-changes", params: "forge=gitlab", size: W620, sel: "[data-testid=scm-pr]", langs: ["zh", "en"] },
+  { name: "qa-panel-github-noaccount", scene: "panel-changes", params: "forge=ghnoaccount", size: W620, sel: "[data-testid=forge-connection-notice]", langs: ["zh", "en"] },
+  { name: "qa-panel-gitlab-noaccount", scene: "panel-changes", params: "forge=noaccount", size: W620, sel: "[data-testid=forge-connection-notice]", langs: ["zh", "en"] },
+  // Codeberg（Gitea / Forgejo）、Bitbucket、Gitee：PR 区块、侧栏角标、标题栏用各自的叫法（宽窗，侧栏与标题栏都在）。
+  { name: "qa-panel-codeberg", scene: "panel-changes", params: "forge=codeberg", sel: ".tb-pr" },
+  { name: "qa-panel-bitbucket", scene: "panel-changes", params: "forge=bitbucket", sel: ".tb-pr" },
+  { name: "qa-panel-gitee", scene: "panel-changes", params: "forge=gitee", sel: ".tb-pr", langs: ["zh", "en"] },
+  { name: "qa-panel-gitlab-wide", scene: "panel-changes", params: "forge=gitlab", sel: ".tb-pr" },
+  // 标题栏的 PR 胶囊与侧栏角标（面板开着时窄窗会把胶囊收进溢出菜单，用超宽窗拍；chat 场景在这个分支的基线上本来就报错）。
+  { name: "qa-title-gitlab", scene: "panel-changes", params: "forge=gitlab", size: [2560, 1440], sel: ".tb-pr" },
+  { name: "qa-title-codeberg", scene: "panel-changes", params: "forge=codeberg", size: [2560, 1440], sel: ".tb-pr" },
+  { name: "qa-title-bitbucket", scene: "panel-changes", params: "forge=bitbucket", size: [2560, 1440], sel: ".tb-pr" },
+  { name: "qa-title-gitee", scene: "panel-changes", params: "forge=gitee", size: [2560, 1440], sel: ".tb-pr" },
+  { name: "qa-set-forge-add-gitee", scene: "settingswin-github", size: SETTINGS, sel: "[data-testid=forge-add]", steps: [["eval", FORGE_SCROLL], ["click", "[data-testid=forge-empty] button"], ["click", "[data-testid=forge-add] [role=radio] >> nth=4"], ["eval", FORGE_ADD_SCROLL]] },
   // 查看非 active 账号只换用量视图：账号名、按下态和非 active 用量都要入镜。
   { name: "qa-set-profile-usage", scene: "settingswin-account", size: SETTINGS, sel: ".usage-card-title", steps: [["click", '[data-testid="profile-usage-claude-work"]']], langs: ["zh", "en"] },
   { name: "qa-set-dropdown-sessions", scene: "settingswin-sessions", size: SETTINGS, sel: ".dd-menu", steps: [["click", ".dd > .dd-btn >> nth=1"]] },
@@ -245,6 +296,9 @@ export const QA_SHOTS = [
   { name: "qa-m-mode", page: "mobile", scene: "mobile-idle", size: PHONE, sel: ".chat-sheet", steps: [["click", ".chat-compose .chat-mode-button"]] },
   { name: "qa-m-lead-kbd", page: "mobile", scene: "mobile-lead", size: [375, 476], sel: ".lead-gate-card", steps: [["click", ".lead-gate-add-note"]] },
   { name: "qa-m-list-hover", page: "mobile", scene: "mobile-list", size: PHONE, sel: ".remote-session-list", langs: ["en"] },
+  // 目录已删除的会话：「已完成」列表多过一屏时卡片不许被压扁、标签不许压到下一张卡上（2026-11-18 手机实拍）；点开是只读门卡。
+  { name: "qa-m-list-gone", page: "mobile", scene: "mobile-list-gone", size: PHONE, sel: ".chat-sidebar-gone", steps: [["click", ".chat-sidebar-tabs button >> nth=1"]], langs: ["zh", "en"] },
+  { name: "qa-m-dir-gone", page: "mobile", scene: "mobile-dir-gone", size: PHONE, sel: "[data-testid=compose-dir-gone]", langs: ["zh", "en"] },
   { name: "qa-m-slash", page: "mobile", scene: "mobile-idle", size: PHONE, steps: [["type", TA, "/"]], sel: ".chat-sheet" },
   { name: "qa-m-at", page: "mobile", scene: "mobile-idle", size: PHONE, steps: [["type", TA, "@src"], ["tick", 400]], sel: "#chat-at-listbox" },
   { name: "qa-m-add", page: "mobile", scene: "mobile-idle", size: PHONE, steps: [["click", ".chat-attach-button"]], sel: ".chat-sheet" },

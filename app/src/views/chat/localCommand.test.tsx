@@ -301,6 +301,15 @@ describe("Message 渲染本地命令", () => {
     expect(document.querySelector(".chat-message.is-command")).toBeTruthy();
   });
 
+  /// 实拍 IMG_2252：用户正文后拼着 Lead hook，整条进入 local 分支后正文也不能丢气泡。
+  it("用户正文附带系统记录时，正文仍走气泡，记录保持折叠", () => {
+    render(<Message item={userText('<hook_result hook_event="UserPromptSubmit">[lead] 这个项目有进行中的任务</hook_result>\n为什么本会话一直有一个 Lead 面板？')} />);
+    expect(document.querySelector(".chat-user-bubble")?.textContent).toBe("为什么本会话一直有一个 Lead 面板？");
+    const details = screen.getByText("系统记录").closest("details");
+    expect(details?.hasAttribute("open")).toBe(false);
+    expect(details?.querySelector(".chat-tool-summary")?.textContent).toBe("[lead] 这个项目有进行中的任务");
+  });
+
   /// 实拍 IMG_2093：原文是「空壳通知 + system-reminder」一对，曾渲染成反序的两行，原因藏在第二行。
   it("Stop hook 拦截只渲染一行「Hook 反馈」，摘要直接是原因", () => {
     render(<Message item={userText(STOP_HOOK)} />);

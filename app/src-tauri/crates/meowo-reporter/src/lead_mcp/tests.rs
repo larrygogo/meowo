@@ -287,3 +287,95 @@ fn matching_cancellation_only_and_invalid_json_can_recover() {
     assert_eq!(replies[0]["error"]["code"], -32700);
     assert_eq!(replies[1]["id"], 3);
 }
+
+
+#[test]
+fn published_wait_ignores_drafts_and_consumes_only_through_protocol() {
+    let f = Fixture::new();
+    fs::write(f.task.join("gate.json"), json!({"id":"published","type":"A","status":"pending"}).to_string()).unwrap();
+    let published = lead::publication::publish(&f.task, None).unwrap();
+    let auth = |t: Option<&str>, c| f.authenticate(t, c);
+    let mut server = Server::default();
+    assert!(server.request(f.call(1), &auth).is_none());
+    f.gate("draft-only", "answered");
+    assert!(server.tick().is_none());
+    lead::answer_gate_checked(&f.task, "published", &meowo_protocol::ipc::LeadGateAnswerDto {choice:"confirm".into(),note:"frozen answer".into()}, published.version.as_deref()).unwrap();
+    let response = server.tick().unwrap();
+    assert_eq!(response["result"]["isError"], false);
+    let text = response["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("publication-1") && text.contains("consume") && text.contains("frozen answer"));
+    assert!(!text.contains("status 改成 consumed"));
+    lead::publication::consume(&f.task, "published", published.version.as_deref().unwrap()).unwrap();
+    assert!(server.request(f.call(2), &auth).unwrap().to_string().contains("lead/gate_consumed"));
+}
+
+#[test]
+fn wait_rejects_same_id_changed_content_and_reports_invalid_publication() {
+    let f = Fixture::new();
+    let auth = |t: Option<&str>, c| f.authenticate(t, c);
+    let mut server = Server::default();
+    assert!(server.request(f.call(1), &auth).is_none());
+    fs::write(f.task.join("gate.json"), json!({"id":"g1","type":"Q","status":"answered","title":"changed","answer":{"choice":"yes","note":"different"}}).to_string()).unwrap();
+    assert!(server.tick().unwrap().to_string().contains("lead/gate_changed"));
+    fs::write(f.task.join("gate.json"), json!({"id":"published","type":"A","status":"pending"}).to_string()).unwrap();
+    lead::publication::publish(&f.task, None).unwrap();
+    assert!(server.request(f.call(2), &auth).is_none());
+    fs::write(f.task.join(".gate-publications.json"), "broken").unwrap();
+    assert!(server.tick().unwrap().to_string().contains("lead/publication_invalid"));
+    assert!(server.request(f.call(3), &auth).unwrap().to_string().contains("lead/publication_invalid"));
+}
+
+
+#[test]
+fn unrelated_broken_task_does_not_block_gate_id_lookup() {
+    let f = Fixture::new();
+    let other = f.task.parent().unwrap().join("broken");
+    fs::create_dir_all(&other).unwrap();
+    fs::write(other.join(".owner"), &f.ctx.session_id).unwrap();
+    fs::write(other.join(".gate-publications.json"), "broken").unwrap();
+    let auth = |t: Option<&str>, c| f.authenticate(t, c);
+    let mut server = Server::default();
+    let mut request = f.call(1);
+    request["params"]["arguments"] = json!({"gateId":"g1"});
+    assert!(server.request(request, &auth).is_none());
+    f.gate("g1", "answered");
+    assert_eq!(server.tick().unwrap()["result"]["isError"], false);
+    let mut request = f.call(2);
+    request["params"]["arguments"] = json!({"taskSlug":"broken"});
+    assert!(server.request(request, &auth).unwrap().to_string().contains("lead/publication_invalid"));
+}
+
+
+#[test]
+fn worktree_wait_uses_main_checkout_and_rejects_ambiguous_explicit_task() {
+    let mut f = Fixture::new();
+    let root = PathBuf::from(&f.ctx.cwd);
+    let worktree = root.join("worktree");
+    let gitdir = root.join(".git/worktrees/w1");
+    fs::create_dir_all(&gitdir).unwrap();
+    fs::create_dir_all(&worktree).unwrap();
+    fs::write(worktree.join(".git"), format!("gitdir: {}", gitdir.display())).unwrap();
+    fs::write(gitdir.join("commondir"), "../..").unwrap();
+    f.ctx.cwd = worktree.to_string_lossy().into_owned();
+    fs::write(f.task.join("gate.json"), json!({"id":"main-gate","type":"A","status":"pending"}).to_string()).unwrap();
+    let published = lead::publication::publish(&f.task, None).unwrap();
+    let auth = |t: Option<&str>, c| f.authenticate(t, c);
+    let mut server = Server::default();
+    assert!(server.request(f.call(1), &auth).is_none());
+    lead::answer_gate_checked(&f.task, "main-gate", &meowo_protocol::ipc::LeadGateAnswerDto {choice:"confirm".into(),note:"from main".into()}, published.version.as_deref()).unwrap();
+    assert!(server.tick().unwrap().to_string().contains("from main"));
+    let local = worktree.join(".lead/demo");
+    fs::create_dir_all(&local).unwrap();
+    fs::write(local.join(".owner"), &f.ctx.session_id).unwrap();
+    fs::write(local.join("gate.json"), json!({"id":"main-gate","type":"A","status":"pending"}).to_string()).unwrap();
+    let mut request = f.call(2);
+    request["params"]["arguments"] = json!({"taskSlug":"demo"});
+    assert!(server.request(request, &auth).unwrap().to_string().contains("lead/gate_ambiguous"));
+    let mut request = f.call(3);
+    request["params"]["arguments"] = json!({"gateId":"main-gate"});
+    assert!(server.request(request, &auth).unwrap().to_string().contains("lead/gate_ambiguous"));
+    fs::write(local.join(".owner"), "other-session").unwrap();
+    let mut request = f.call(4);
+    request["params"]["arguments"] = json!({"gateId":"main-gate"});
+    assert!(server.request(request, &auth).unwrap().to_string().contains("from main"));
+}

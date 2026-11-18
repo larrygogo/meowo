@@ -74,6 +74,37 @@ impl Evaluation {
     }
 }
 
+/// 屏幕上正挂着的「自动重试」行（插件的 `retry_line_pattern`，与对话页运行条同一串正则）。
+/// 侧栏据此把「其实卡在网络/接口上」和「正常在干活」分开说。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum ScreenRetry {
+    /// 请求出错，按次数重试：第 attempt 次，共 max 次。
+    Attempt { attempt: u32, max: u32 },
+    /// 请求发出后迟迟没有回应，倒计时到了再重发（没有次数上限）。
+    Stalled,
+}
+
+/// 只看屏幕底部这么多行：重试行画在输入框上方的 spinner 区，正文里引用的同款文字在更上面
+/// （与前端 cliStatus.ts 的 RETRY_SCAN_LINES 同值）。
+const RETRY_SCAN_LINES: usize = 12;
+
+/// 从末屏认出正在进行的自动重试。provider 没声明重试行正则、或屏幕上没有，返回 None。
+pub(crate) fn retry_note(provider: &str, snap: &ScreenSnapshot) -> Option<ScreenRetry> {
+    let pattern = meowo_agent::resolve(Some(provider))?.retry_line_pattern()?;
+    let re = compiled_regex(pattern)?;
+    let start = snap.lines.len().saturating_sub(RETRY_SCAN_LINES);
+    snap.lines[start..].iter().rev().find_map(|line| {
+        let caps = re.captures(line)?;
+        if caps.get(3).is_some() {
+            return Some(ScreenRetry::Stalled);
+        }
+        let attempt = caps.get(1)?.as_str().parse().ok()?;
+        let max = caps.get(2)?.as_str().parse().ok()?;
+        (max > 0).then_some(ScreenRetry::Attempt { attempt, max })
+    })
+}
+
 /// 无规则命中时的回退标签（对齐 herdr 的 default_known_agent_idle_fallback 语义）。
 pub(crate) const FALLBACK_RULE_ID: &str = "fallback_idle";
 
@@ -308,6 +339,10 @@ fn region_contains(region: &[String], needle: &str) -> bool {
 ///
 /// 编译失败返回 None（该条规则不命中），**绝不 panic**：规则是数据，写坏一条不该让
 /// 整个状态检测停摆；下面有测试保证内置规则全部可编译。
+/// 测试用：正则实际编译了几次（缓存命中不计）。性能测试据此断言缓存生效，不靠墙钟时间。
+#[cfg(test)]
+static REGEX_COMPILES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 fn compiled_regex(pattern: &'static str) -> Option<regex::Regex> {
     use std::sync::{Mutex, OnceLock};
     // 键收 `&'static str`（规则声明本就是静态的）：此前键是 String，缓存**命中**也要为
@@ -320,6 +355,8 @@ fn compiled_regex(pattern: &'static str) -> Option<regex::Regex> {
     cache
         .entry(pattern)
         .or_insert_with(|| {
+            #[cfg(test)]
+            REGEX_COMPILES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             // 统一大小写不敏感：规则声明侧写小写字面量，与其它谓词的约定一致。
             regex::RegexBuilder::new(pattern)
                 .case_insensitive(true)
@@ -539,6 +576,55 @@ mod tests {
             state_of(evaluate("claude", &s)),
             Some((ScreenState::Working, "osc_title_working"))
         );
+    }
+
+    /// 用户实拍（2026-11-18）：回合中请求卡住，spinner 行换成红字的等待重试行，输入框照画 ❯。
+    /// 没有标题证据时也要判 working（回合还在），且认出是「API 无响应、等待重试」。
+    #[test]
+    fn api_stalled_retry_line_is_working_and_noted() {
+        let s = snap(&[
+            "  \u{23BF}  Running\u{2026}",
+            "",
+            "\u{273B} Waiting for API response \u{00B7} will retry in 1m 9s \u{00B7} check your network",
+            "────────────────────────",
+            " \u{276F} ",
+            "────────────────────────",
+            "  Opus 5.5 · 41% ctx",
+        ]);
+        assert_eq!(
+            state_of(evaluate("claude", &s)),
+            Some((ScreenState::Working, "api_retry_working"))
+        );
+        assert_eq!(super::retry_note("claude", &s), Some(super::ScreenRetry::Stalled));
+
+        let s = snap(&[
+            "\u{2717} API Error (529 Overloaded) \u{00B7} Retrying in 5s \u{00B7} attempt 2/10",
+            "────────────────────────",
+            " \u{276F} ",
+            "────────────────────────",
+        ]);
+        assert_eq!(
+            state_of(evaluate("claude", &s)),
+            Some((ScreenState::Working, "api_retry_working"))
+        );
+        assert_eq!(
+            super::retry_note("claude", &s),
+            Some(super::ScreenRetry::Attempt { attempt: 2, max: 10 })
+        );
+
+        // 正文里引用这句（不在行尾）不算；没有重试行时为 None。
+        let quoted = snap(&[
+            "日志里出现过 Waiting for API response · will retry in 5s · check your network，后来恢复了",
+            "────────────────────────",
+            " \u{276F} ",
+            "────────────────────────",
+        ]);
+        assert_eq!(super::retry_note("claude", &quoted), None);
+        assert_eq!(
+            state_of(evaluate("claude", &quoted)),
+            Some((ScreenState::Idle, "live_prompt_box"))
+        );
+        assert_eq!(super::retry_note("codex", &s), None);
     }
 
     #[test]
@@ -1462,8 +1548,11 @@ mod tests {
             .collect();
         let snap = snap_titled(&lines, "codex - building");
 
-        // 先跑一次让正则进缓存（首次编译不计入——线上也只付一次）。
-        let _ = evaluate("codex", &snap);
+        // 先把三家各跑一次让正则进缓存（首次编译不计入——线上也只付一次）。
+        for agent in ["claude", "codex", "kimi"] {
+            let _ = evaluate(agent, &snap);
+        }
+        let compiles_before = REGEX_COMPILES.load(std::sync::atomic::Ordering::Relaxed);
 
         // 分批计时取最快一批：整体平均会被 CI 共享机器的一次抢占拉高（macOS CI 实测
         // 1.09ms 误报）。缓存失效时每一批都慢，最快那批照样超标，拦截能力不变。
@@ -1480,11 +1569,20 @@ mod tests {
             })
             .min()
             .unwrap();
-        // 阈值取 1ms：实测在开发机上是微秒级，留足 CI 慢机器的余量，只拦「缓存失效」
-        // 这种量级的退化（重编译正则会让单次跳到几十微秒以上并随规则数线性增长）。
+        // 缓存是否生效直接数编译次数：预热后再求值不得重编译任何正则。此前只用 1ms 墙钟阈值兜，
+        // Windows CI 共享机实测 1.07～1.13ms 连续误报（2026-11-18，三个 PR 上与改动无关地失败）。
+        // 别的测试并行时也可能编译它们自己的正则，所以只认「本测试的规则」：同一批规则重复求值，
+        // 计数若涨了，必是缓存失效（并行测试编的是别的模式串，预热后不会在本批循环里反复涨）。
+        let compiles_after = REGEX_COMPILES.load(std::sync::atomic::Ordering::Relaxed);
         assert!(
-            per_eval < std::time::Duration::from_millis(1),
-            "单次求值 {per_eval:?} 过慢——正则缓存可能失效了"
+            compiles_after - compiles_before < (batches * rounds) as usize,
+            "预热后重复求值又编译了 {} 次正则——缓存失效",
+            compiles_after - compiles_before
+        );
+        // 墙钟只兜数量级的退化（例如每轮扫描变成平方级），阈值放到 10ms，不再拿它判断缓存。
+        assert!(
+            per_eval < std::time::Duration::from_millis(10),
+            "单次求值 {per_eval:?} 过慢"
         );
     }
 

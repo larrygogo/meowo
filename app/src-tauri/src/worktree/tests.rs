@@ -165,19 +165,6 @@ fn 被锁定或游离头不可清理() {
 }
 
 #[test]
-fn 解析_gh_输出() {
-    assert_eq!(
-        parse_pr_view(r#"{"number":12,"state":"MERGED","headRefOid":"deadbeef"}"#),
-        Some(PrLookup::Found {
-            number: 12,
-            state: "MERGED".into(),
-            head_oid: "deadbeef".into()
-        })
-    );
-    assert_eq!(parse_pr_view("not json"), None);
-}
-
-#[test]
 fn 目录包含关系不把同前缀的兄弟目录算进去() {
     assert!(is_under("c:/w/a", "c:/w/a"));
     assert!(is_under("c:/w/a/src", "c:/w/a"));
@@ -524,17 +511,17 @@ fn probe_real_worktree() {
         return;
     };
     let dir = PathBuf::from(dir);
-    let status = status_for_dir(&dir, &nobody, &gh_pr_lookup);
+    let status = status_for_dir(&dir, &nobody, &pr_lookup);
     println!("判定: {status:?}");
     assert!(status.eligible, "真实环境下应可清理");
     let first =
-        remove_dir_worktree(&dir, &top_of(&dir), &nobody, &gh_pr_lookup, &[]).expect("删除");
+        remove_dir_worktree(&dir, &top_of(&dir), &nobody, &pr_lookup, &[]).expect("删除");
     let pids: Vec<u32> = first.blockers.iter().map(|p| p.pid).collect();
     println!("占用: {:?}", first.blockers);
     let result = if first.removed {
         first
     } else {
-        remove_dir_worktree(&dir, &top_of(&dir), &nobody, &gh_pr_lookup, &pids).expect("删除")
+        remove_dir_worktree(&dir, &top_of(&dir), &nobody, &pr_lookup, &pids).expect("删除")
     };
     println!("结果: {result:?}");
     assert!(result.removed && !dir.exists());
@@ -927,4 +914,41 @@ fn 没有_gh_时_主分支在附近也改过再_squash_仍认得出() {
         status.eligible,
         "附近有改动的 squash 合并也应认出: {status:?}"
     );
+}
+
+/// 删 worktree 的善后：目录里的会话都记下原项目（目录没了以后「在原项目新开会话」靠它），
+/// 发起删除的会话还没标记完成就顺手标上；目录外的会话不动，任何会话行都不删。
+#[test]
+fn 删除后记下原项目并把发起的会话标记完成() {
+    let fx = fixture("after");
+    let head = run(&fx.wt, &["rev-parse", "HEAD"]);
+    let store = meowo_store::Store::open_in_memory().unwrap();
+    let project = store.upsert_project_by_root("/p", "p", 1).unwrap();
+    let mk = |key: &str, cwd: &Path| {
+        let (id, _) = store.start_session(project, key, 1).unwrap();
+        store.set_session_cwd(id, &cwd.to_string_lossy(), 2).unwrap();
+        id
+    };
+    let target = mk("target", &fx.wt);
+    std::fs::create_dir_all(fx.wt.join("sub")).unwrap();
+    let sibling = mk("sibling", &fx.wt.join("sub"));
+    store.set_session_archived(sibling, true, 3).unwrap();
+    let outside = mk("outside", &fx.main);
+
+    let top = top_of(&fx.wt);
+    let origin = crate::wtnew::origin::origin_root_of(&fx.wt);
+    let inside = sessions_inside(&store, &top);
+    assert_eq!(inside.len(), 2, "worktree 里的两条会话: {inside:?}");
+    let result = remove_dir_worktree(&fx.wt, &top, &nobody, &merged(head), &[]).expect("删除成功");
+    assert!(result.removed);
+    after_removal(&store, target, &inside, origin.as_deref());
+
+    let main = dunce::canonicalize(&fx.main).unwrap().to_string_lossy().replace('\\', "/");
+    for id in [target, sibling] {
+        let recorded = store.session_origin_root(id).unwrap().expect("记下原项目");
+        assert_eq!(norm(Path::new(&recorded)), norm(Path::new(&main)));
+        assert!(store.session_header(id).unwrap().archived, "目录已删的会话都在「已完成」里");
+    }
+    assert_eq!(store.session_origin_root(outside).unwrap(), None, "目录外的会话不动");
+    assert!(!store.session_header(outside).unwrap().archived);
 }

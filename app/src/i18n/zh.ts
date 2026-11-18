@@ -7,6 +7,41 @@ import statusVocab from "./statusVocab.json";
 // 下文凡是状态词都引用 vocab，不再写字面量（statusVocab.test.ts 扫描）。
 const vocab = statusVocab.zh;
 
+/** 一个代码托管平台的叫法（「更改」面板、侧栏、标题栏按平台换词）。 */
+export type ForgeWord = {
+  /** 平台名（GitHub、GitLab、Gitea、Bitbucket；codeberg.org 显示 Codeberg）。 */
+  name: string;
+  /** 短叫法：PR / MR。 */
+  pr: string;
+  /** 「打开 …」后面的长叫法，前后空格按语言写好（中文：「 Pull Request 」「合并请求 」）。 */
+  openLead: string;
+  /** 编号前缀：GitHub「#」，GitLab「!」。 */
+  num: string;
+  /** 「…有失败」「…还在跑」前面的检查叫法（中文：「CI 」「流水线」）。 */
+  ciLead: string;
+  /** 没有任何检查时的说明。 */
+  noCi: string;
+  /** 一项检查叫什么（GitHub「检查」、GitLab「作业」、Bitbucket「构建」）。 */
+  unit: string;
+  /** 检查汇总行的前缀（GitLab「流水线 」，与「流水线有失败」同一套叫法）。 */
+  checksLead: string;
+};
+
+/** CLI 倒计时「1m 9s」「45s」「1h 3m」→「1 分 09 秒」「45 秒」「1 小时 3 分」；认不出照原样。 */
+function zhCountdown(text: string): string {
+  const parts = text.trim().split(/\s+/);
+  const got: Record<string, number> = {};
+  for (const part of parts) {
+    const match = /^(\d+)([hms])$/.exec(part);
+    if (!match) return `${text} `;
+    got[match[2]] = Number(match[1]);
+  }
+  const { h, m, s } = got;
+  if (h !== undefined) return `${h} 小时${m !== undefined ? ` ${m} 分` : ""}`;
+  if (m !== undefined) return `${m} 分${s !== undefined ? ` ${String(s).padStart(2, "0")} 秒` : ""}`;
+  return s !== undefined ? `${s} 秒` : `${text} `;
+}
+
 export const zh = {
   // BCP-47 locale：日期/时刻格式化走 Intl（12/24 小时制、月日顺序随语言），不再手拼。
   locale: "zh-CN",
@@ -382,7 +417,9 @@ export const zh = {
     removed: "worktree 已删除",
     removedKeepBranch: "worktree 已删除，本地分支没能删掉",
     dirMissing: "目录已删除",
-    dirMissingTip: "这个会话的目录已经删掉了，没法再打开或恢复",
+    // 手机列表卡上接在标签后面（桌面侧栏太窄，只在悬停提示里说）。
+    dirMissingMore: " · 只能查看",
+    dirMissingTip: "目录已删除：可以查看历史，不能继续对话",
     confirmTitle: "删除 worktree",
     confirmMessage: (path: string, branch: string) =>
       `将删除目录 ${path}，并删除本地分支 ${branch}。远端分支不动。\n\n这一步不能撤销。`,
@@ -403,9 +440,9 @@ export const zh = {
       failed > 0 ? `删除了 ${ok} 个，${failed} 个失败` : `删除了 ${ok} 个 worktree`,
     batchFailedItem: (path: string, reason: string) => `${path}：${reason}`,
     reason: {
-      gh_unavailable: "没装 gh 或没登录，判断不了 PR 有没有合并",
+      gh_unavailable: "没有这个平台的账号或令牌已失效，判断不了 PR 有没有合并",
       no_pr: "这个分支没有 PR",
-      not_merged_local: "没装 gh，本地看分支还没合进主分支",
+      not_merged_local: "查不了 PR，本地看分支还没合进主分支",
       pr_open: "PR 还没合并",
       pr_closed: "PR 已关闭，没有合并",
       dirty: (n: number) => `还有 ${n} 个文件改动没提交`,
@@ -525,6 +562,8 @@ export const zh = {
     batchDoneToast: (n: number) => `已标记完成 ${n} 个会话`,
     batchReopenedToast: (n: number) => `已将 ${n} 个会话恢复为进行中`,
     batchFailedSuffix: (n: number) => `，${n} 个失败`,
+    // 批量恢复进行中时跳过目录已删的会话（放回去也续不上，后端同样会拒绝）。
+    batchSkippedGone: (n: number) => `，${n} 个目录已删除的会话留在已完成`,
     undo: "撤销",
     open: "打开会话",
   },
@@ -543,15 +582,17 @@ export const zh = {
     emptyStarting: "会话正在启动…",
     // 切模型 / 模式（任务 20261114-tui-model-switch）：运行中或有待批审批时不写终端、不重启，排到这一轮之后。
     // 队列存在 Meowo 进程里：Meowo 重启会清空，界面写明（复核 M3）。
-    settingsDeferred: (name: string) => `这一轮结束后切换到「${name}」（关闭应用会取消）`,
+    settingsDeferredTip: "排在 Meowo 里，关闭 Meowo 会取消这次切换",
+    settingsDeferredCancel: "撤销",
+    settingsDeferred: (name: string) => `这一轮结束后切换到「${name}」`,
     // Lead 关卡等待中：带参重启会杀掉会话内的关卡等待器，接回后没有回合、没人再起等待器，答复后不会自动
     // 继续（做空 N3；B7 真机探针 Kimi/Gemini 均证实，evidence/round3-n3），排到续跑那一轮跑完之后。
-    settingsDeferredLead: (name: string) => `关卡答复后那一轮跑完再切换到「${name}」（关闭应用会取消）`,
+    settingsDeferredLead: (name: string) => `关卡答复后那一轮跑完再切换到「${name}」`,
     // 会话没在运行：Codex/OpenCode 恢复时不回放模型，打开后由宿主经会话服务补设（做空 N6）。
-    settingsDeferredOpen: (name: string) => `打开会话后切换到「${name}」（关闭应用会取消）`,
+    settingsDeferredOpen: (name: string) => `打开会话后切换到「${name}」`,
     // 排了 30 分钟这一轮还没结束（或宿主一直没等到空闲）：出队，告诉用户（做空 N5）。
     // 对话页执行时会话服务 / TUI 还没就绪：交给宿主等就绪再切（做空 R5）。
-    settingsDeferredReady: (name: string) => `会话就绪后切换到「${name}」（关闭应用会取消）`,
+    settingsDeferredReady: (name: string) => `会话就绪后切换到「${name}」`,
     // Codex 会话内首次切进要沙箱的档（必要时询问 / 自动审查）：带沙箱参数重开了会话（第五轮 P3），≤20 字。
     settingsSandboxReopen: (name: string) => `已带沙箱重开会话，切到「${name}」`,
     settingsQueueExpired: "等太久没切成，已取消，请重新选择",
@@ -702,6 +743,14 @@ export const zh = {
     turnChangedFiles: (count: number) => `${count} 个文件已修改`,
     turnChangedMore: (count: number) => `还有 ${count} 个文件`,
     turnChangedLess: "收起",
+    turnChangeHistory: "本回合的修改记录，按发生顺序显示",
+    turnChangeStep: (index: number, total: number) => `第 ${index}/${total} 次修改`,
+    turnChangePending: "回执尚未到达，以下是请求的修改内容",
+    turnChangeMissing: "这条记录未包含修改详情",
+    revealInChanges: "在「更改」中查看",
+    revealNoChange: "这个文件现在没有未提交的改动",
+    revealNoChangeOutside: "这个文件不在面板列出的 git 仓库里，没有可看的改动",
+    revealOpenInFiles: "在「文件」中打开",
     toolFailures: (count: number) => `${count} 个失败`,
     reasoning: "思考过程",
     turnErrorContinue: "继续",
@@ -746,6 +795,8 @@ export const zh = {
     liveWorking: "工作中",
     liveReplyDone: "回复完成",
     steerWaiting: "等这一步完成后插入你的插话",
+    // 主回合停了、只剩后台子代理在跑（对话窗运行条位置）：说清后台在干活，也说清发消息不受影响。
+    backgroundOnlyRunning: "后台子任务还在运行，发消息不受影响",
     steerInjected: "已插入，正在继续处理",
     // 手机上的底部面板（斜杠命令）
     slashSheetTitle: "命令",
@@ -753,6 +804,10 @@ export const zh = {
     slashSheetEmpty: "没有匹配的命令",
     // 自动重试优先于一切说法：此刻「没动静」的真正原因（重试不落对话记录，只在终端画面上）
     workingRetry: (attempt: number, max: number) => `请求失败，正在重试（第 ${attempt}/${max} 次）`,
+    // 请求发出后迟迟没回应、等倒计时重发（CLI 原文「Waiting for API response · will retry in 1m 9s ·
+    // check your network」）。倒计时照 CLI 的「1m 9s」换成「1 分 09 秒」，认不出就原样放。
+    sidebarRetryStalled: "API 无响应，等待重试，检查网络",
+    workingStalled: (retryIn: string) => `API 无响应，${zhCountdown(String(retryIn))}后重试，检查网络`,
     inputLabel: "发送消息给 Agent",
     // 回合在跑时发消息会怎样，按后端声明的能力分三种去向（chat/sendCopy.ts）。同一种去向的占位
     //（发之前的许诺）与回执（发之后的说法）写在一起、共用一个动词：此前 Kimi 没声明送达时机，
@@ -999,9 +1054,18 @@ export const zh = {
     planEmpty: "计划模式已开启，写出的计划会显示在这里",
     // Lead 工作流（停靠栏 Lead 入口 + 关卡卡片）
     leadEntry: "Lead",
+    leadOpenInPanel: "在侧边面板打开",
+    leadInPanelTip: "已在侧边面板打开，点击查看",
+    leadGateInPanel: "Lead 关卡待作答，已在侧边面板打开",
+    leadGateInPanelGo: "去作答",
+    leadTabEmpty: "这个会话目前没有 Lead 任务",
     leadPhase: (phase: string) => ({ interview: "访谈中", spec: "写规格", design: "出方案", implement: "实施中", verify: "验证中", done: "已完成", blocked: "卡住了" } as Record<string, string>)[phase] ?? phase,
     leadChecksProgress: (passed: number, total: number) => `验收 ${passed}/${total}`,
     leadChecksEmpty: "还没有验收清单",
+    leadRemaining: "待推进",
+    leadSettled: "已通过与豁免",
+    leadSettledCount: (count: number) => `已通过与豁免 · ${count}`,
+    leadEvidenceCount: (count: number) => `${count} 条验证证据`,
     leadCheckPass: "已通过",
     leadCheckPending: "未通过",
     leadCheckWaived: "已豁免",
@@ -1015,6 +1079,13 @@ export const zh = {
     leadSectionEmpty: "暂无内容",
     leadGateWaiting: vocab.request.gate,
     leadGateAnswered: "已答复·等 agent 接手",
+    leadReviewRevision: (revision: string) => `验收版本：${revision}`,
+    leadReviewScope: "本次签署的验收项",
+    leadDataIssue: "数据待更新",
+    leadEvidenceCommand: "验证命令",
+    leadEvidenceResult: "结果",
+    leadEvidenceReference: "证据位置",
+    leadEvidenceLimitations: "未覆盖边界",
     leadDeliveryHandled: "Agent 已接手关卡",
     leadDeliveryRetry: "继续送达",
     leadDeliveryState: (state: string) => ({ saved: "回答已保存，等待送达", queued: "回答已排队", waiting: "回答已保存，打开会话后会自动送达", sending: "正在送达回答", accepted: "原生会话已接收，等待模型确认", consumed: "模型已收到回答，等待接手关卡", failed: "回答未送达", uncertain: "送达结果不确定，请在会话中核对后处理", native_manual: "回答已保存，在会话里发一句话即可继续", native_offline: "回答已保存，打开会话后说一句继续", native_on_open: "回答已保存，打开会话后会自动送达", native_owner_unknown: "回答已保存，回到主会话说一句继续", queued_stalled: "回答在队列里，会话已停下，在会话里发一句话即可继续" }[state] ?? state),
@@ -1106,10 +1177,12 @@ export const zh = {
     tabCloseOthers: "关闭其他",
     tabCloseRight: "关闭右侧",
     tabCloseAll: "关闭所有",
-    browserAgentActive: "Agent 正在操作",
-    browserAgentPaused: "你已接管，Agent 暂时不能操作",
-    browserAgentTakeOver: "接管",
-    browserAgentResume: "交还",
+    browserAgentActive: "Agent 正在控制此页面",
+    browserAgentActiveDetail: "你的点击和输入暂不生效",
+    browserAgentPaused: "你已接管",
+    browserAgentPausedDetail: "Agent 暂停操作",
+    browserAgentTakeOver: "我来接管",
+    browserAgentResume: "交还 Agent",
     browserAgentBusyTip: "Agent 正在操作浏览器",
     browserMore: "更多",
     browserZoomIn: "放大",
@@ -1117,6 +1190,25 @@ export const zh = {
     browserZoomReset: "重置缩放",
     browserPrint: "打印",
     browserCopyUrl: "复制网址",
+    browserEmuDesktop: "模拟桌面 1280×800",
+    browserEmuTablet: "模拟平板 820×1180",
+    browserEmuMobile: "模拟手机 390×844",
+    browserEmuReset: "还原为面板尺寸",
+    browserEmuCustom: "自定义尺寸…",
+    browserEmuRecent: (w: number, h: number, touch?: boolean) => `模拟 ${w}×${h}${touch ? "（触屏）" : ""}`,
+    browserEmuCustomTitle: "自定义模拟尺寸",
+    browserEmuWidth: "宽（CSS 像素）",
+    browserEmuHeight: "高（CSS 像素）",
+    browserEmuRange: (min: number, max: number) => `宽和高要在 ${min}～${max} 之间`,
+    browserEmuTouch: "按触屏手机模拟（移动端 UA、触摸事件）",
+    browserEmuUaLabel: "UA（可选）",
+    browserEmuUaPlaceholder: "留空用默认 UA",
+    browserEmuApply: "应用",
+    browserEmuCurrent: "当前",
+    browserEmuDevice: (device: string) => ({ desktop: "桌面", tablet: "平板", mobile: "手机" } as Record<string, string>)[device] ?? "自定义",
+    browserEmuUa: "UA 已改",
+    browserEmuHeaders: (names: string) => `附加请求头：${names}`,
+    browserEmuTip: (detail: string) => `正在模拟：${detail}。点击还原为面板尺寸`,
     // 网页的权限请求（browser_permission.rs）：「httpbin.org 想要下载多个文件」。
     browserPermissionAsk: (host: string, what: string) => `${host} 想要${what}`,
     browserPermissionKinds: {
@@ -1253,6 +1345,8 @@ export const zh = {
     // 子代理交了结论、它派出的后台活儿还在跑（徽标次行小字）。
     subagentBackgroundRunning: "后台仍在运行",
     subagentDurationSec: (s: number) => `${s} 秒`,
+    // 子任务行的用量，照终端子代理行的写法（↓ 387.8k tokens）。
+    taskTokens: (count: string) => `↓ ${count} tokens`,
     subagentDurationMin: (m: number, s: number) => `${m} 分 ${s} 秒`,
     subagentDurationHour: (h: number, m: number) => `${h} 小时 ${m} 分`,
     subagentLoading: "正在读取子任务记录…",
@@ -1266,6 +1360,12 @@ export const zh = {
     // 一句说清现状与代价（用户实拍：两句长文把按钮挤到第二行）。点按钮后的确认框再写细节。
     sendNeedsTakeover: "会话在外部终端运行，接管会结束它",
     composerGateEnded: "会话已结束。恢复后即可继续对话。",
+    // 目录已删除的会话（worktree 被清理、目录被手动删了）：只读回看，不给恢复——agent 按目录找会话记录，换目录续不上。
+    dirGoneBanner: "这个会话的目录已经删掉了，可以查看历史，不能继续对话。",
+    dirGoneNewIn: (name: string) => `在 ${name} 新开会话`,
+    dirGoneNewInTip: (path: string) => `在原项目 ${path} 里新开一个会话`,
+    dirGoneNew: "新建会话",
+    dirGoneNoReopen: "目录已删除，放回进行中也没法继续",
     // 已删除的「Meowo 托管」会话在旧库里只读保留（对话依托官方 CLI，leader 2026-11-13）。
     managedRetired: "这种会话已停用，对话改用官方 CLI",
     managedRetiredOpenCli: "用官方 CLI 打开",
@@ -1284,7 +1384,7 @@ export const zh = {
     // 送达状态词（发送中、已排队、未确认送达、发送失败…）在词表 t.vocab.delivery，这里只留动作与说明。
     echoRetry: "重发",
     echoRestore: "放回输入框",
-    echoUncertainTip: "对话记录里还没出现这条，可以重发或放回输入框",
+    echoUncertainTip: "对话记录里还没出现这条，Agent 可能还没轮到处理。为免重复不直接重发，确认没收到可以放回输入框再发",
     // 读终端画面确认这段话还停在 CLI 输入框里（没按下回车）。
     echoStuck: "停在终端输入框里",
     echoStuckTip: "这段话还在 CLI 的输入框里，没有提交",
@@ -1326,6 +1426,7 @@ export const zh = {
     interrupting: "正在中断…",
     attentionDismiss: "仅收起",
     attentionDismissTip: "仅收起卡片，不发送按键",
+    shortcutTip: (key: string) => `快捷键：${key}`,
     attentionCollapsedRestore: "已收起提示，点击展开",
     questionCollapsedRestore: "已收起提问，点击展开",
     questionFoldedInTerminal: "终端里有待答的提问，点此展开卡片",
@@ -1514,6 +1615,7 @@ export const zh = {
     toolExitCode: (code: number, first: string) => (first ? `退出码 ${code}：${first}` : `退出码 ${code}`),
     // 一次调用带了几个地址或查询时，摘要只列第一个。
     toolMoreTargets: (count: number) => `另有 ${count} 个`,
+    toolBrowserShots: (count: number) => `${count} 张截图`,
     model: "模型",
     switchModel: "切换模型",
     mode: "模式",
@@ -1780,9 +1882,9 @@ export const zh = {
   settings: {
     // account 分区实际内容是账号/配额/登录/安装/中转——曾叫「Agent」，想「看额度还剩多少」
     // 「退出登录」的用户猜不到该点它（key 名 account 与显示名分裂也是自证）。
-    nav: { general: "通用", sessions: "会话", appearance: "外观", shortcuts: "快捷键", remote: "手机远程", network: "网络", account: "账号与用量", extensions: "扩展", about: "关于" },
+    nav: { general: "通用", sessions: "会话", appearance: "外观", shortcuts: "快捷键", remote: "手机远程", network: "网络", github: "代码托管", account: "账号与用量", extensions: "扩展", about: "关于" },
     // 设置搜索额外匹配的词（不显示）：导航名为排版改短后，旧名里的词仍要能搜到对应分区。
-    navSearchExtra: { shortcuts: "键盘", account: "账号 用量" },
+    navSearchExtra: { shortcuts: "键盘", account: "账号 用量", github: "Git 提交身份 user.name user.email GitHub PR 登录 GitLab MR Gitea Forgejo Codeberg Bitbucket Gitee 企业版 令牌 账号" },
     searchPlaceholder: "搜索设置…",
     searchNoResults: "没有匹配的设置项",
     searchClear: "清除搜索",
@@ -2018,6 +2120,124 @@ export const zh = {
     boundMismatch: (configured: number, actual: number) =>
       `端口 ${configured} 未生效，实际监听 ${actual}，二维码按实际生成`,
   },
+  // 代码托管平台的叫法（forgeWords.ts 按平台取）。GitLab 是合并请求（MR），编号写 !12，检查叫流水线。
+  forgeWords: {
+    github: { name: "GitHub", pr: "PR", openLead: " Pull Request ", num: "#", ciLead: "CI ", noCi: "这个仓库没配 CI", unit: "检查", checksLead: "" },
+    gitlab: { name: "GitLab", pr: "MR", openLead: "合并请求 ", num: "!", ciLead: "流水线", noCi: "这个项目没有流水线", unit: "作业", checksLead: "流水线 " },
+    gitea: { name: "Gitea", pr: "PR", openLead: " Pull Request ", num: "#", ciLead: "CI ", noCi: "这个仓库没配 CI", unit: "检查", checksLead: "" },
+    bitbucket: { name: "Bitbucket", pr: "PR", openLead: " Pull Request ", num: "#", ciLead: "构建", noCi: "这个仓库没配构建", unit: "构建", checksLead: "" },
+    // Gitee 网页上 PR 编号写 !号，叫法沿用 Pull Request；检查是 Gitee 的「检查项」（check-runs）。
+    gitee: { name: "Gitee", pr: "PR", openLead: " Pull Request ", num: "!", ciLead: "检查", noCi: "这个仓库没有接入检查", unit: "检查", checksLead: "" },
+  } as Record<"github" | "gitlab" | "gitea" | "bitbucket" | "gitee", ForgeWord>,
+  // 按平台换词的文案（GitHub 仍用 forge.* 的原句，两边一致由 forgeWords.test 核对）。
+  forgeP: {
+    sessionPrs: (w: ForgeWord) => `本会话的 ${w.pr}`,
+    branchPr: (w: ForgeWord) => `当前分支的 ${w.pr}`,
+    dismissPrTip: (w: ForgeWord) => `不再列出这个 ${w.pr}`,
+    openPr: (w: ForgeWord) => `开 ${w.pr}`,
+    openOnSite: (w: ForgeWord) => `在 ${w.name} 打开`,
+    prFormTitle: (w: ForgeWord, base: string) => `开 ${w.pr} 到 ${base}`,
+    prCreate: (w: ForgeWord) => `创建 ${w.pr}`,
+    prCreated: (w: ForgeWord, n: number) => `已创建 ${w.pr} ${w.num}${n}`,
+    mergeTitle: (w: ForgeWord, n: number) => `合并 ${w.pr} ${w.num}${n}`,
+    checksPass: (w: ForgeWord, n: number) => `${w.checksLead}${n} 项${w.unit}全部通过`,
+    checksFail: (w: ForgeWord, n: number) => `${w.checksLead}${n} 项${w.unit}失败`,
+    checksPending: (w: ForgeWord, n: number) => `${w.checksLead}${n} 项${w.unit}还在跑`,
+    mergeBlockedFail: (w: ForgeWord) => `${w.ciLead}有失败，不能合并`,
+    mergeBlockedPending: (w: ForgeWord) => `${w.ciLead}还在跑，跑完再合并`,
+    mergeBlockedDraft: (w: ForgeWord) => `草稿 ${w.pr}，标为就绪后才能合并`,
+    merged: (w: ForgeWord) => `${w.pr} 已合并`,
+    repoNeedsChoice: (w: ForgeWord) => `有多个 ${w.name} 远端，先选仓库`,
+    repoAt: (w: ForgeWord, slug: string) => `${w.pr} 开在 ${slug}`,
+    repoPickTitle: (w: ForgeWord) => `${w.pr} 开在哪个仓库`,
+    commentConfirm: (w: ForgeWord) => `确认提交到 ${w.name}`,
+    monitorStart: (w: ForgeWord) => `监控此 ${w.pr}`,
+    reviewLoading: (w: ForgeWord) => `正在读取 ${w.pr}…`,
+    prOpenTip: (w: ForgeWord, n: number, title: string) => `打开${w.openLead}${w.num}${n}${title ? `：${title}` : ""}`,
+    sidebarPr: (w: ForgeWord, n: number, state: string) => `${w.pr} ${w.num}${n} ${state}`,
+    // 认得出平台、但设置里还没有这台主机的账号（不发请求）。
+    noAccount: (w: ForgeWord) => `添加 ${w.name} 账号后，可以在这里看 ${w.pr} 和检查`,
+    addAccount: (w: ForgeWord) => `去设置添加 ${w.name} 账号`,
+    // 账号的令牌被拒（撤销、过期、权限收回）。
+    relogin: (w: ForgeWord) => `${w.name} 账号的令牌已失效，看不到检查`,
+    reloginAction: "去设置重新添加",
+    // GitLab 的合并方式由项目设置决定，API 只能选要不要压缩。
+    gitlabMethods: { merge: "按项目设置合并", squash: "压缩成一个提交后合并" } as Record<string, string>,
+  },
+  // 设置 › 代码托管 › 平台账号（ForgeAccountsSection）：github.com 与其他平台在同一个列表、同一个添加流程里。
+  forgeAccounts: {
+    empty: "还没有平台账号",
+    emptyDesc: "仓库在 GitHub、GitLab、Gitea、Forgejo、Bitbucket 或 Gitee 上时，添加对应主机的账号，就能在 Meowo 里看 PR / MR 和检查、合并、评论。没有账号的主机不显示这些，也不发任何请求。",
+    add: "添加账号",
+    addTitle: "添加代码托管账号",
+    platform: "平台",
+    platformNames: { github: "GitHub", gitlab: "GitLab", gitea: "Gitea / Forgejo", bitbucket: "Bitbucket", gitee: "Gitee" } as Record<string, string>,
+    host: "主机",
+    hostPlaceholder: { github: "github.com 或企业版的域名", gitlab: "gitlab.com 或自管实例的域名", gitea: "codeberg.org 或自建实例的域名", bitbucket: "bitbucket.org", gitee: "gitee.com" } as Record<string, string>,
+    hostFixed: { github: "GitHub 企业版填自己的域名，只能用访问令牌", bitbucket: "只支持 Bitbucket Cloud", gitee: "只支持 gitee.com，Gitee 企业版与私有部署暂不支持" } as Record<string, string>,
+    deviceTitle: "用浏览器登录",
+    deviceDesc: "在 github.com 上授权 Meowo，不用自己生成令牌。权限：repo、read:org。",
+    deviceStart: "登录 GitHub",
+    signingIn: "正在请求代码…",
+    useToken: "改用访问令牌",
+    useDevice: "改用浏览器登录",
+    token: "访问令牌",
+    tokenPlaceholder: "粘贴令牌",
+    email: "Atlassian 账号邮箱",
+    emailPlaceholder: "you@example.com",
+    scopes: {
+      github: "经典令牌勾选 repo 与 read:org。细粒度令牌给 Pull requests 与 Contents 读写。",
+      gitlab: "个人访问令牌勾选 api 权限。",
+      gitea: "访问令牌给 repository、issue 读写与 user 读权限。",
+      bitbucket: "创建带权限的 API token，应用选 Bitbucket，勾选 read:user、read:repository、read:pullrequest、write:pullrequest。App password 已停用。",
+      gitee: "私人令牌勾选 user_info、projects、pull_requests、notes 权限。",
+    } as Record<string, string>,
+    createToken: "去生成令牌",
+    verify: "验证并添加",
+    verifying: "正在验证…",
+    cancel: "取消",
+    viaDevice: "浏览器登录",
+    viaToken: "访问令牌",
+    vaultWindows: " Windows 凭据管理器",
+    vaultMac: "系统钥匙串",
+    tokenDesc: (vault: string) => `令牌保存在${vault}。`,
+    reloginDesc: "令牌已失效或被撤销，请重新添加。",
+    readd: "重新添加",
+    signOut: "退出",
+    signOutConfirm: (platform: string, host: string) => `退出后，Meowo 会删掉保存在本机的 ${host} 令牌。令牌在 ${platform} 上仍然有效，不再使用时请到 ${platform} 撤销。`,
+    signOutConfirmDevice: "退出后，Meowo 会删掉保存在本机的令牌。如需在 GitHub 上收回授权，请到 GitHub 设置的 Applications 页面撤销 Meowo。",
+    codeLabel: "在 GitHub 上输入这个代码",
+    codeHint: (minutes: number) => `打开 github.com/login/device 输入代码并授权，代码 ${minutes} 分钟内有效。`,
+    copyAndOpen: "复制代码并打开 GitHub",
+    copyCode: "复制",
+    copied: "已复制",
+    waiting: "等待在 GitHub 上授权…",
+    expired: "代码已过期，请重新登录。",
+    denied: "已在 GitHub 上拒绝授权。",
+    loginFailed: (e: string) => `登录没有完成：${e}`,
+    unsupported: "这个系统没有可用的凭据库，不能保存令牌。",
+    note: "Meowo 按仓库远端的主机选用账号。",
+  },
+  // 设置 › 代码托管（分区标题、两组的小标题与 Git 组，GitToolCard）。
+  codeHosting: {
+    gitCaption: "Git",
+    accountsCaption: "平台账号",
+    program: "Git 程序",
+    checking: "正在检测…",
+    version: (v: string) => `git ${v}`,
+    versionUnknown: "版本未知",
+    missing: "找不到 git。提交、推送、改动列表和 PR 功能都用不了，安装后点「重新检测」。",
+    download: "下载 Git",
+    recheck: "重新检测",
+    userName: "提交用的名字（user.name）",
+    userNamePlaceholder: "你的名字",
+    userEmail: "提交用的邮箱（user.email）",
+    userEmailPlaceholder: "you@example.com",
+    identityNote: "写在全局配置里（git config --global），所有仓库的新提交都用它。仓库自己设过的优先。",
+    save: "保存",
+    saving: "正在保存…",
+    saved: "已保存",
+  },
   relay: {
     title: "API 中转",
     accessMode: "接入方式",
@@ -2233,6 +2453,8 @@ export const zh = {
     // 「更改」面板里这个会话建过、动过的 PR（常在临时 worktree 里另切分支建），与当前分支的 PR 分开列。
     sessionPrs: "本会话的 PR",
     branchPr: "当前分支的 PR",
+    dismissPr: (n: number) => `收起 #${n}`,
+    dismissPrTip: "不再列出这个 PR",
     reviewOpen: "评论与监控",
     reviewClose: "收起评论",
     reviewDiscussion: "讨论",
@@ -2281,7 +2503,8 @@ export const zh = {
     identitySaving: "正在保存…",
     identitySaved: "已设置 git 身份",
     prPushFirst: (n: number) => `会先推送 ${n} 个提交`,
-    prState: { open: "进行中", draft: "草稿", merged: "已合并", closed: "已关闭" } as Record<string, string>,
+    // 与标题栏、侧栏（chat.prState）同一说法：开着的 PR 叫「已打开」。
+    prState: { open: "已打开", draft: "草稿", merged: "已合并", closed: "已关闭" } as Record<string, string>,
     checks: "检查",
     checksNone: "这个仓库没配 CI",
     checksPass: (n: number) => `${n} 项检查全部通过`,
@@ -2301,14 +2524,11 @@ export const zh = {
     mergeBlockedPending: "CI 还在跑，跑完再合并",
     mergeBlockedDraft: "草稿 PR，标为就绪后才能合并",
     mergeConflict: "有冲突，去网页处理",
-    mergeTooOld: "gh 版本太旧，不能合并",
     mergeNoMethods: "读不到仓库允许的合并方式",
     merging: "正在合并…",
     merged: "PR 已合并",
     queued: "已加入合并队列",
     cleanupHint: "这个 worktree 可以清理了",
-    ghMissing: "没装 gh，看不到 CI",
-    ghUnauthed: "gh 没登录，看不到 CI",
     repoNeedsChoice: "有多个 GitHub 远端，先选仓库",
     repoPick: "选择仓库",
     repoAt: (slug: string) => `PR 开在 ${slug}`,

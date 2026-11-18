@@ -22,13 +22,14 @@ import { ExtensionsSection } from "./settings/ExtensionsSection";
 import { loadStoredOpts, saveStoredOpts } from "./useNewSessionForm";
 import { NetworkSection } from "./settings/NetworkSection";
 import { RemoteAccessCard } from "./settings/RemoteAccessCard";
+import { CodeHostingSection } from "./settings/ForgeAccountsSection";
 import { applySettingsFilter, firstHitControl } from "./settings/searchFilter";
 import { useEscClose } from "../hooks/useEscClose";
 import { displayKeys, KeyCombos, shortcutGroups } from "./chat/WindowModals";
 import { SETTINGS_SECTION_KEY } from "../settingsNav";
 import { Icon } from "../icons/Icon";
 import { icClose, icContrast, icGlobe, icSearch, icSettings } from "../icons/glyphs";
-import { icBot, icCards, icInfo, icKeyboard, icPuzzle, icSmartphone } from "../icons/glyphs.settings";
+import { icBot, icCards, icGitPr, icInfo, icKeyboard, icPuzzle, icSmartphone } from "../icons/glyphs.settings";
 import { busyProps } from "../busyButton";
 
 const REPO = "github.com/larrygogo/meowo";
@@ -39,8 +40,8 @@ const openExt = (url: string) => invoke("open_url", { url }).catch((e) => consol
 
 // 「手机远程」单独成区（用户要求从「网络」里拆出来，对照 Kimi 设置的「远程控制」独立一栏）：
 // 它是一项功能（扫码、配对、推送），不是网络参数；「网络」只留代理。
-type Section = "general" | "sessions" | "appearance" | "shortcuts" | "remote" | "network" | "account" | "extensions" | "about";
-const SECTION_ORDER: Section[] = ["general", "sessions", "appearance", "shortcuts", "remote", "network", "account", "extensions", "about"];
+type Section = "general" | "sessions" | "appearance" | "shortcuts" | "remote" | "network" | "github" | "account" | "extensions" | "about";
+const SECTION_ORDER: Section[] = ["general", "sessions", "appearance", "shortcuts", "remote", "network", "github", "account", "extensions", "about"];
 
 
 // 打开未连接会话用的终端：按平台给不同选项。WKWebView 的 UA 含 "Mac"/"Win"，与 main.tsx 同步判定一致。
@@ -109,6 +110,13 @@ function IconPhone() {
 function IconPuzzle() {
   return (
     <Icon glyph={icPuzzle} size={16} />
+  );
+}
+
+// 拉取请求：代码托管分区（导航键沿用 github）放 Git 程序与提交身份、各平台账号（github.com 与其他平台在同一个列表）。
+function IconGithub() {
+  return (
+    <Icon glyph={icGitPr} size={16} />
   );
 }
 
@@ -634,7 +642,7 @@ const ARCHIVED_PAGE = 30;
 
 /** 已归档会话管理。看板不再有「已归档」tab（归档 = 从看板彻底收纳走），这里是唯一入口：
  *  游标分页动态加载，唯一操作是放回看板。 */
-function ArchivedSessions() {
+export function ArchivedSessions() {
   const t = useT();
   // null = 尚未加载完成，与「真空」区分。
   const [items, setItems] = useState<LiveSession[] | null>(null);
@@ -644,7 +652,8 @@ function ArchivedSessions() {
   // 用户分不清「没有归档」和「没加载出来」。
   const [loadFailed, setLoadFailed] = useState(false);
   // 放回看板失败标记：乐观移除后重取首页会把该项拉回，但失败本身也要有一行提示。
-  const [actionFailed, setActionFailed] = useState(false);
+  // 值是给用户看的原因（formatBackendError 映射过的后端错误；映射不出时用通用句）。
+  const [actionFailed, setActionFailed] = useState<string | null>(null);
   const loadPage = useCallback((after: PageCursor | null) => {
     setLoadingMore(true);
     getLiveSessionsPage("archived", null, after, ARCHIVED_PAGE)
@@ -667,10 +676,10 @@ function ArchivedSessions() {
   useEffect(() => loadPage(null), [loadPage]);
   const unarchive = (id: number) => {
     // 乐观移除；失败重取首页拉回（与看板同款语义）。看板经 board-changed 自行刷新。
-    setActionFailed(false);
+    setActionFailed(null);
     setItems((prev) => prev?.filter((s) => s.session.id !== id) ?? prev);
-    void setArchived(id, false).catch(() => {
-      setActionFailed(true);
+    void setArchived(id, false).catch((error) => {
+      setActionFailed(formatBackendError(error, t.locale) || t.settings.unarchiveFailed);
       loadPage(null);
     });
   };
@@ -699,9 +708,11 @@ function ArchivedSessions() {
                 <div className="row-desc">
                   {[folderName(item.cwd), fmtAgo(item.session.last_event_at, t)].filter(Boolean).join(" · ")}
                 </div>
+                {/* 目录已删：放回进行中也续不上（后端同样会拒绝），按钮置灰，原因写在行里——不发注定失败的请求。 */}
+                {item.cwd_missing && <div className="row-desc" data-testid="archived-dir-gone">{t.chat.dirGoneNoReopen}</div>}
               </div>
               <div className="archived-actions">
-                <button type="button" className="sbtn" onClick={() => unarchive(item.session.id)}>
+                <button type="button" className="sbtn" disabled={item.cwd_missing === true} title={item.cwd_missing ? t.chat.dirGoneNoReopen : undefined} onClick={() => unarchive(item.session.id)}>
                   {t.sticker.unarchive}
                 </button>
               </div>
@@ -716,7 +727,7 @@ function ArchivedSessions() {
           )}
         </div>
       </div>
-      {actionFailed && <div className="sec-hint proxy-err" role="alert">{t.settings.unarchiveFailed}</div>}
+      {actionFailed && <div className="sec-hint proxy-err" role="alert">{actionFailed}</div>}
     </>
   );
 }
@@ -1138,7 +1149,7 @@ export function AboutSection({
 }
 
 function asSection(s: string | null): Section | null {
-  return s === "general" || s === "sessions" || s === "appearance" || s === "shortcuts" || s === "remote" || s === "network" || s === "account" || s === "extensions" || s === "about"
+  return s === "general" || s === "sessions" || s === "appearance" || s === "shortcuts" || s === "remote" || s === "network" || s === "github" || s === "account" || s === "extensions" || s === "about"
     ? s
     : null;
 }
@@ -1209,6 +1220,7 @@ export function About() {
       shortcuts: `${t.settings.nav.shortcuts} ${t.settings.navSearchExtra.shortcuts}`,
       remote: t.settings.nav.remote,
       network: t.settings.nav.network,
+      github: `${t.settings.nav.github} ${t.settings.navSearchExtra.github}`,
       account: `${t.settings.nav.account} ${t.settings.navSearchExtra.account}`,
       extensions: t.settings.nav.extensions,
       about: t.settings.nav.about,
@@ -1298,6 +1310,10 @@ export function About() {
             <IconGlobe />
             <span>{t.settings.nav.network}</span>
           </button>
+          <button className={"nav-item" + (navOn("github") ? " on" : "")} aria-current={navOn("github") ? "page" : undefined} onClick={() => { setQuery(""); pickSec("github"); }}>
+            <IconGithub />
+            <span>{t.settings.nav.github}</span>
+          </button>
           <button className={"nav-item" + (navOn("account") ? " on" : "")} aria-current={navOn("account") ? "page" : undefined} onClick={() => { setQuery(""); pickSec("account"); }}>
             <IconAgent />
             <span>{t.settings.nav.account}</span>
@@ -1356,6 +1372,8 @@ export function About() {
                 <RemoteAccessCard />
               ) : s === "network" ? (
                 <NetworkSection />
+              ) : s === "github" ? (
+                <CodeHostingSection />
               ) : s === "account" ? (
                 <AccountSection />
               ) : s === "extensions" ? (

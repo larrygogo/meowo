@@ -7,7 +7,7 @@ import type { AgentDescriptor, ChatUi, LaunchChoice, LaunchOption, SlashCommand 
 export const CLAUDE_STATUS_LINE_PATTERN = String.raw`^\s*[✻✽✶✳✢·*✺✷✸✹]\s+([A-Z][A-Za-z'-]*(?: [A-Za-z'-]+){0,2}…)\s*(?:\((\d[^()]{0,160})\))?\s*$`;
 
 /** 与 plugins/claude 的 retry_line_pattern 同一串（改一边必须同步另一边）。 */
-export const CLAUDE_RETRY_LINE_PATTERN = String.raw`· (?:Retrying in|retrying, waiting up to|next try in) [^·]{1,60}· attempt (\d+)/(\d+)(?: · [^·]{0,40})?\s*$`;
+export const CLAUDE_RETRY_LINE_PATTERN = String.raw`· (?:Retrying in|retrying, waiting up to|next try in) [^·]{1,60}· attempt (\d+)/(\d+)(?: · [^·]{0,40})?\s*$|Waiting for API response · will retry in ([^·]{1,20}?) · check your network\s*$`;
 
 /** 测试里已知的五家产品名。真实值由后端 `list_agents()` 下发（须与注册表的 display_name 同值）。 */
 const NAMES: Record<string, string> = {
@@ -190,7 +190,9 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     // 与后端插件声明同源：claude 边干边读，kimi 未取证，其余排到回合结束。
     queue_delivery: provider === "claude" ? "next_step" : provider === "kimi" ? null : "turn_end",
     // 与后端插件声明同源：kimi 的排队区提示行（2026-11-16 实拍）。
-    queued_hint: provider === "kimi" ? "ctrl-s to steer immediately" : null,
+    queued_hint: provider === "kimi" ? "↑ to edit" : null,
+    // 与后端插件声明同源：kimi 对话区用户消息的行首（2026-11-17 实拍）。
+    user_line_marker: provider === "kimi" ? "❯ " : null,
     // 只有 claude 的 `/model` 接受内联参数；其余几家是交互式菜单，靠这条命令打开。
     // opencode 的命令是 /models(复数)——与后端插件声明同源。
     model_menu_command: (MODEL_PRESETS[provider] ?? []).length > 0 ? null : provider === "opencode" ? "/models" : "/model",

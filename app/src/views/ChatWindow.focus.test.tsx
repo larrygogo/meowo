@@ -72,6 +72,25 @@ describe("ChatWindow 焦点规则", () => {
     expect(document.activeElement).toBe(document.body);
   });
 
+  it("手机远程：结构化审批晚到时，不先闪终端按键兜底卡", async () => {
+    markRemoteUi();
+    window.history.replaceState({}, "", "/?sessionId=41");
+    respondWithHistory(history, approval);
+    const immediate = invoke.getMockImplementation()!;
+    invoke.mockImplementation((command, args) => {
+      if (command !== "pending_interaction") return immediate(command, args);
+      return new Promise((resolve, reject) => {
+        setTimeout(() => { Promise.resolve(immediate(command, args)).then(resolve, reject); }, 500);
+      });
+    });
+    render(<ChatWindow />);
+    await screen.findByText("要跑测试");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 150)); });
+    expect(screen.queryByText("没认出选项，可直接操作终端")).toBeNull();
+    expect(await screen.findByRole("button", { name: "允许一次" }, { timeout: 2_000 })).toBeTruthy();
+    expect(screen.queryByText("没认出选项，可直接操作终端")).toBeNull();
+  });
+
   it("键盘 Tab 进审批卡时首个落点是「拒绝」，不是「说明并拒绝」", async () => {
     window.history.replaceState({}, "", "/?sessionId=41");
     respondWithHistory(history, approval);

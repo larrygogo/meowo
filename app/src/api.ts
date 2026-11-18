@@ -55,6 +55,7 @@ import type { GetChatHistoryArgs } from "./generated/contracts/bridge/GetChatHis
 import type { GetLiveSessionsPageArgs } from "./generated/contracts/bridge/GetLiveSessionsPageArgs";
 import type { GetSessionAdminPageArgs } from "./generated/contracts/bridge/GetSessionAdminPageArgs";
 import type { GetSubagentTranscriptArgs } from "./generated/contracts/bridge/GetSubagentTranscriptArgs";
+import type { ProbeSubagentStatesArgs } from "./generated/contracts/bridge/ProbeSubagentStatesArgs";
 import type { GhPrCreateArgs } from "./generated/contracts/bridge/GhPrCreateArgs";
 import type { GhPrMergeArgs } from "./generated/contracts/bridge/GhPrMergeArgs";
 import type { ForgeChooseRepoArgs } from "./generated/contracts/bridge/ForgeChooseRepoArgs";
@@ -138,6 +139,12 @@ import type { GitDiffSummaryDto } from "./generated/contracts/GitDiffSummaryDto"
 import type { GitChangedFileDto } from "./generated/contracts/GitChangedFileDto";
 import type { PullRequestDto } from "./generated/contracts/PullRequestDto";
 import type { ForgeStatusDto } from "./generated/contracts/ForgeStatusDto";
+import type { GitToolDto } from "./generated/contracts/GitToolDto";
+import type { GithubDeviceCodeDto } from "./generated/contracts/GithubDeviceCodeDto";
+import type { GithubAccountDto } from "./generated/contracts/GithubAccountDto";
+import type { ForgeAccountDto } from "./generated/contracts/ForgeAccountDto";
+import type { ForgeAccountsDto } from "./generated/contracts/ForgeAccountsDto";
+import type { ForgeDeviceCodeDto } from "./generated/contracts/ForgeDeviceCodeDto";
 import type { GitJobDto } from "./generated/contracts/GitJobDto";
 import type { MergeResultDto } from "./generated/contracts/MergeResultDto";
 import type { PushResultDto } from "./generated/contracts/PushResultDto";
@@ -252,6 +259,12 @@ export type LiveSession = Omit<LiveSessionDto, "session" | "todos" | "column" | 
    * 但它非零时，卡片环与分组都按「运行中」处理——后台委派还在独立干活，不该催人。
    */
   busy_subagents: number;
+  /**
+   * 屏幕上正挂着的自动重试（后端 detect.rs retry_note，与对话页运行条同一串正则）：
+   * attempt = 请求出错按次数重试；stalled = 请求发出后迟迟没回应，等倒计时重发。
+   * 缺省/null = 没有在重试，或非托管会话（读不到屏幕）。
+   */
+  screen_retry?: { kind: "attempt"; attempt: number; max: number } | { kind: "stalled" } | null;
   /** 回合结束时用户没在看这个会话（后端 watch 标记，打开即清）。可选：旧后端不带。 */
   unread?: boolean;
   /** 最近一条 AI 正文的轻推预览（清洗+截断），hover 卡片时速览；无正文回合为 null。 */
@@ -317,7 +330,7 @@ export function probeSubagentStates(
   sessionId: number,
   toolUseIds: string[],
 ): Promise<Record<string, SubagentProbe>> {
-  return invoke("probe_subagent_states", { sessionId, toolUseIds });
+  return invoke("probe_subagent_states", { sessionId, toolUseIds } satisfies ProbeSubagentStatesArgs);
 }
 
 /**
@@ -501,6 +514,18 @@ export function historyTone(history: Pick<ChatHistory, "connected" | "status" | 
   return sessionTone(history?.connected ?? false, history?.status, history?.pendingReview, history?.errored, history?.busySubagents, history?.screenState, history?.screenAssumed);
 }
 
+/// 主回合此刻的状态：与 historyTone 同一批事实，只是后台子任务不算「在跑」。
+///
+/// 对话窗的**交互**（发送走排队还是直接提交、能不能撤销/改模型、要不要显示插话去向）只看主回合：
+/// 主回合停了、后台子代理还在跑时，Claude Code 的输入框照常可用，Enter 直接提交（终端底部是
+/// 「✻ Waiting for 1 background agent to finish」加空闲提示符）。此前发送也按 historyTone 判，
+/// 后台在跑就算运行中，消息被扣在「当前任务结束后发送」的队列里，运行条挂着「等这一步完成后
+/// 插入你的插话」（实拍 2026-11-18）。**展示**（侧栏状态点、灵动岛、窗口标题记号、标记完成要不要
+/// 确认）仍按 historyTone 算「运行中」：后台还在干活，不该催人，也不该被一下勾掉。
+export function historyTurnTone(history: Pick<ChatHistory, "connected" | "status" | "pendingReview" | "errored" | "busySubagents" | "screenState" | "screenAssumed"> | null | undefined): SessionTone {
+  return sessionTone(history?.connected ?? false, history?.status, history?.pendingReview, history?.errored, 0, history?.screenState, history?.screenAssumed);
+}
+
 export function liveSessionTone(row: Pick<LiveSession, "connected" | "session" | "pending_review" | "errored" | "busy_subagents" | "screen_state" | "screen_assumed">): SessionTone {
   return sessionTone(row.connected, row.session.status, row.pending_review, row.errored, row.busy_subagents, row.screen_state, row.screen_assumed);
 }
@@ -637,7 +662,19 @@ export type BrowserPaneInfo = {
   permission: BrowserPermission | null;
   /** 用户刚阻止的请求：同一页面不会再问，被拦的下载也没有事件，留一条提示（刷新后可重试）。 */
   blocked: BrowserPermission | null;
+  /** 设备模拟（视口、UA、附加请求头），没模拟是 null。请求头只给名字，不给值。见 browser_emulation.rs。 */
+  emulation?: BrowserEmulation | null;
 };
+export type BrowserEmulation = {
+  metrics: { device: "desktop" | "tablet" | "mobile" | "custom"; width: number; height: number } | null;
+  userAgent: string | null;
+  headerNames: string[];
+};
+/** 用户在「…」菜单里选设备或还原（自定义尺寸、请求头只给 Agent 的工具用）。 */
+export type EmulateSpec = { device?: "desktop" | "tablet" | "mobile" | "reset"; width?: number; height?: number; userAgent?: string };
+export function emulateBrowserPane(id: number, spec: EmulateSpec): Promise<void> {
+  return invoke("browser_pane_emulate", { id, device: spec.device ?? null, width: spec.width ?? null, height: spec.height ?? null, userAgent: spec.userAgent ?? null });
+}
 /** id 每条请求不同：前端据此判断答复是否已送达（见 BrowserPane 的防连点）。 */
 export type BrowserPermission = { id: number; kind: string; host: string };
 export type BrowserDownload = { id: number; fileName: string; state: "progress" | "done" | "failed" };
@@ -841,7 +878,7 @@ export function openProjectDir(cwd: string): Promise<void> {
 }
 
 /** 工作目录的 git 改动摘要；`isRepo` 为 false 时前端不显示「Diff」入口。 */
-/** 当前分支的 Pull Request（gh pr view；没装 gh / 没有 PR 时 null）。后端按目录缓存 60s。桌面专用。 */
+/** 当前分支的 Pull Request（经设置里的账号查；没账号 / 没有 PR 时 null）。后端按目录缓存 60s。桌面专用。 */
 export function getPullRequest(cwd: string): Promise<PullRequestDto | null> {
   return invoke("git_pull_request", { cwd });
 }
@@ -1004,6 +1041,52 @@ export function forgeChooseRepo(cwd: string, remote: string, sessionCwd?: string
 }
 export type { ForgeStatusDto, GitJobDto, MergeResultDto, PullResultDto, PushResultDto };
 
+// ═══ 设置 › 代码托管 › Git（后端 git_tool.rs）═══
+
+export type { GitToolDto };
+/** Meowo 实际调用的 git（路径、版本）与全局提交身份。 */
+export function gitToolStatus(): Promise<GitToolDto> {
+  return invoke("git_tool_status");
+}
+/** 写全局 user.name / user.email（写前校验，git 拒了回 `git/config_failed: <原话>`）。 */
+export function gitIdentitySet(name: string, email: string): Promise<GitToolDto> {
+  return invoke("git_identity_set", { name, email });
+}
+
+export type { GithubDeviceCodeDto, GithubAccountDto };
+/** 账号变了（登录、添加、退出、令牌被拒）：PR 区块、侧栏角标、设置页各自重拉。事件名沿用改版前的写法。 */
+export const GITHUB_CHANGED_EVENT = "github-connection-changed";
+
+// ═══ 代码托管账号（设置 › 代码托管 › 平台账号，后端 forge_accounts.rs）═══
+// github.com、GitHub 企业版、GitLab、Gitea / Forgejo、Bitbucket Cloud、Gitee 的账号：平台 + 主机 + 账号名。
+// 令牌只在后端的系统凭据库里。Meowo 不调用本机 gh。
+// 账号变了后端发 GITHUB_CHANGED_EVENT（PR 区块、侧栏角标与设置页一起重拉）。
+
+/** 平台：github（github.com 与企业版）/ gitlab / gitea（含 Forgejo、Codeberg）/ bitbucket / gitee。 */
+export type ForgePlatform = "github" | "gitlab" | "gitea" | "bitbucket" | "gitee";
+export type { ForgeAccountDto, ForgeAccountsDto, ForgeDeviceCodeDto };
+/** github.com 设备码登录结束。取消不发。 */
+export const FORGE_LOGIN_EVENT = "forge-login-finished";
+export type ForgeLoginFinished = { state: "ok" | "expired" | "denied" | "error"; error: string | null };
+
+export function forgeAccounts(): Promise<ForgeAccountsDto> {
+  return invoke("forge_accounts");
+}
+/** 用个人访问令牌添加（后端先用令牌问一次「我是谁」；github.com 也行）。user：Bitbucket 的 Atlassian 邮箱。 */
+export function forgeAccountAdd(platform: ForgePlatform, host: string, token: string, user?: string | null): Promise<ForgeAccountsDto> {
+  return invoke("forge_account_add", { platform, host, token, user: user ?? null });
+}
+export function forgeAccountRemove(platform: string, host: string): Promise<ForgeAccountsDto> {
+  return invoke("forge_account_remove", { platform, host });
+}
+/** github.com 设备码登录：要一次性代码，结果经 FORGE_LOGIN_EVENT 推回来。 */
+export function forgeLoginStart(): Promise<ForgeDeviceCodeDto> {
+  return invoke("forge_login_start");
+}
+export function forgeLoginCancel(): Promise<void> {
+  return invoke("forge_login_cancel");
+}
+
 /** 「文件」页签：列出 cwd 下 rel 目录的直接子条目（目录在前，后端已排序并跳过 .git）。 */
 export function listDirEntries(cwd: string, rel: string): Promise<DirEntryDto[]> {
   return invoke("list_dir_entries", { cwd, rel });
@@ -1059,8 +1142,8 @@ export function setLeadWorkflow(enabled: boolean): Promise<void> {
 }
 
 /// 回答关卡：A 用 confirm/revise，C 用 accept/reject，B 用方案 id；note 为附加意见。
-export function answerLeadGate(cwd: string, gateId: string, choice: string, note: string): Promise<void> {
-  return invoke("answer_lead_gate", { cwd, gateId, choice, note } satisfies AnswerLeadGateArgs);
+export function answerLeadGate(cwd: string, gateId: string, choice: string, note: string, version?: string): Promise<void> {
+  return invoke("answer_lead_gate", { cwd, gateId, choice, note, ...(version ? { version } : {}) } satisfies AnswerLeadGateArgs);
 }
 
 export function retryLeadGateDelivery(cwd: string, gateId: string): Promise<void> {
@@ -1498,6 +1581,11 @@ export function queuedSessionSettings(sessionId: number): Promise<unknown> {
 
 export function takeQueuedSessionSettings(sessionId: number): Promise<unknown> {
   return invoke<unknown>("take_queued_session_settings", { sessionId } satisfies SessionArg);
+}
+
+/** 撤掉排着的切换（不管等待条件）；返回是否真的撤掉了（已经执行了就是 false）。 */
+export function cancelQueuedSessionSettings(sessionId: number): Promise<boolean> {
+  return invoke<boolean>("cancel_queued_session_settings", { sessionId } satisfies SessionArg);
 }
 
 /** 会话此刻的模型与模式（后端 session_settings::LiveSettings）：会话服务机制读 rollout 最新段，

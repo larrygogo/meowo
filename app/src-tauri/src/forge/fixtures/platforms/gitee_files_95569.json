@@ -1,0 +1,42 @@
+[
+ {
+  "sha": "5f61c05b90b4e321e83b77bb15a104ad74dad63b",
+  "filename": "zh-cn/application-dev/reference/apis-arkui/_ark_u_i___native_module.md",
+  "status": null,
+  "additions": "2",
+  "deletions": "2",
+  "blob_url": "https://gitee.com/openharmony/docs/blob/5f61c05b90b4e321e83b77bb15a104ad74dad63b/zh-cn/application-dev/reference/apis-arkui/_ark_u_i___native_module.md",
+  "raw_url": "https://gitee.com/openharmony/docs/raw/5f61c05b90b4e321e83b77bb15a104ad74dad63b/zh-cn/application-dev/reference/apis-arkui/_ark_u_i___native_module.md",
+  "patch": {
+   "diff": "@@ -17996,7 +17996,7 @@ ArkUI_ErrorCode OH_ArkUI_InitModuleForArkTSEnv(napi_env env)\n ```\n **描述：**\n \n-初始化指定虚拟机环境下的ArkUI相关接口。本函数不允许在非UI线程中调用。如果检测到在非UI线程中调用，程序将主动终止。每个虚拟机环境的创建和初始化都会带来一定的内存开销，且其内存占用还会随着加载页面内容的复杂度而增加。因此，多虚拟机环境更适合用于加载结构简单、内容不复杂的UI场景，不建议在指定虚拟机环境中加载过于复杂的UI内容，以避免不必要的资源消耗。\n+初始化指定上下文环境的ArkUI相关接口。本函数不允许在非UI线程中调用。如果检测到在非UI线程中调用，程序将主动终止。每个上下文环境都会带来一定的内存开销，当消耗的内存超过虚拟机的上限时则会发生内存溢出，关于ArkTS内存管理详情参考[文档](../../arkts-utils/gc-introduction.md)。\n \n **起始版本：** 20\n \n@@ -18020,7 +18020,7 @@ void OH_ArkUI_NotifyArkTSEnvDestroy(napi_env env)\n ```\n **描述：**\n \n-通知指定的虚拟机环境已销毁。本函数不允许在非UI线程中调用。如果检测到在非UI线程中调用，程序将主动终止。\n+通知指定的上下文环境已销毁。本函数不允许在非UI线程中调用。如果检测到在非UI线程中调用，程序将主动终止。\n \n **起始版本：** 20\n \n",
+   "new_path": "zh-cn/application-dev/reference/apis-arkui/_ark_u_i___native_module.md",
+   "old_path": "zh-cn/application-dev/reference/apis-arkui/_ark_u_i___native_module.md",
+   "a_mode": "100644",
+   "b_mode": "100644",
+   "new_file": false,
+   "renamed_file": false,
+   "deleted_file": false,
+   "too_large": false
+  }
+ },
+ {
+  "sha": "5f61c05b90b4e321e83b77bb15a104ad74dad63b",
+  "filename": "zh-cn/application-dev/reference/apis-arkui/native__node__napi_8h.md",
+  "status": null,
+  "additions": "2",
+  "deletions": "2",
+  "blob_url": "https://gitee.com/openharmony/docs/blob/5f61c05b90b4e321e83b77bb15a104ad74dad63b/zh-cn/application-dev/reference/apis-arkui/native__node__napi_8h.md",
+  "raw_url": "https://gitee.com/openharmony/docs/raw/5f61c05b90b4e321e83b77bb15a104ad74dad63b/zh-cn/application-dev/reference/apis-arkui/native__node__napi_8h.md",
+  "patch": {
+   "diff": "@@ -43,5 +43,5 @@\n | [ArkUI_ErrorCode](_ark_u_i___native_module.md#arkui_errorcode) [OH_ArkUI_GetRouterPageId](_ark_u_i___native_module.md#oh_arkui_getrouterpageid) ([ArkUI_NodeHandle](_ark_u_i___native_module.md#arkui_nodehandle) node, char \\*buffer, int32_t bufferSize, int32_t \\*writeLength) | 获取当前节点所在页面的Page组件的ID。  | \r\n | int32_t [OH_ArkUI_PostFrameCallback](_ark_u_i___native_module.md#oh_arkui_postframecallback)([ArkUI_ContextHandle](_ark_u_i___native_module.md#arkui_contexthandle-12) uiContext, void\\* userData, void (\\*callback)(uint64_t nanoTimestamp, uint32_t frameCount, void\\* userData))| 注册一个回调函数，以便在下一帧渲染时执行。不允许在非UI线程调用，检查到非UI线程调用程序会主动abort。</br >**起始版本：** 18 |\r\n | int32_t [OH_ArkUI_PostIdleCallback](_ark_u_i___native_module.md#oh_arkui_postidlecallback)([ArkUI_ContextHandle](_ark_u_i___native_module.md#arkui_contexthandle-12) uiContext, void\\* userData, void (\\*callback)(uint64_t nanoTimeLeft, uint32_t frameCount, void\\* userData))| 注册一个回调函数，以便在下一帧渲染完成时执行。如果当前没有下一帧，将自动请求下一帧。</br >**起始版本：** 20 |\r\n-| [ArkUI_ErrorCode](_ark_u_i___native_module.md#arkui_errorcode) [OH_ArkUI_InitModuleForArkTSEnv](_ark_u_i___native_module.md#oh_arkui_initmoduleforarktsenv)(napi_env env) | 初始化指定虚拟机环境下的ArkUI相关接口。本函数不允许在非UI线程中调用。如果检测到在非UI线程中调用，程序将主动终止。每个虚拟机环境的创建和初始化都会带来一定的内存开销，且其内存占用还会随着加载页面内容的复杂度而增加。因此，多虚拟机环境更适合用于加载结构简单、内容不复杂的UI场景，不建议在指定虚拟机环境中加载过于复杂的UI内容，以避免不必要的资源消耗。</br >**起始版本：** 20 |\r\n-| void [OH_ArkUI_NotifyArkTSEnvDestroy](_ark_u_i___native_module.md#oh_arkui_notifyarktsenvdestroy)(napi_env env) | 通知指定的虚拟机环境已销毁。本函数不允许在非UI线程中调用。如果检测到在非UI线程中调用，程序将主动终止。</br >**起始版本：** 20 |\r\n+| [ArkUI_ErrorCode](_ark_u_i___native_module.md#arkui_errorcode) [OH_ArkUI_InitModuleForArkTSEnv](_ark_u_i___native_module.md#oh_arkui_initmoduleforarktsenv)(napi_env env) | 每个上下文环境都会带来一定的内存开销，当消耗的内存超过虚拟机的上限时则会发生内存溢出，关于ArkTS内存管理详情参考[文档](../../arkts-utils/gc-introduction.md)。</br >**起始版本：** 20 |\r\n+| void [OH_ArkUI_NotifyArkTSEnvDestroy](_ark_u_i___native_module.md#oh_arkui_notifyarktsenvdestroy)(napi_env env) | 通知指定的上下文环境已销毁。本函数不允许在非UI线程中调用。如果检测到在非UI线程中调用，程序将主动终止。</br >**起始版本：** 20 |\r\n",
+   "new_path": "zh-cn/application-dev/reference/apis-arkui/native__node__napi_8h.md",
+   "old_path": "zh-cn/application-dev/reference/apis-arkui/native__node__napi_8h.md",
+   "a_mode": "100644",
+   "b_mode": "100644",
+   "new_file": false,
+   "renamed_file": false,
+   "deleted_file": false,
+   "too_large": false
+  }
+ }
+]

@@ -1,0 +1,242 @@
+[
+ {
+  "url": "https://gitee.com/api/v5/repos/openharmony/docs/pulls/comments/43636468",
+  "id": 43636468,
+  "path": null,
+  "position": null,
+  "original_position": null,
+  "new_line": null,
+  "commit_id": null,
+  "original_commit_id": null,
+  "user": {
+   "id": 7387629,
+   "login": "openharmony_ci",
+   "name": "openharmony_ci",
+   "avatar_url": "https://foruda.gitee.com/avatar/1677075395966509043/7387629_openharmony_ci_1656582662.png",
+   "url": "https://gitee.com/api/v5/users/openharmony_ci",
+   "html_url": "https://gitee.com/openharmony_ci",
+   "remark": "",
+   "followers_url": "https://gitee.com/api/v5/users/openharmony_ci/followers",
+   "following_url": "https://gitee.com/api/v5/users/openharmony_ci/following_url{/other_user}",
+   "gists_url": "https://gitee.com/api/v5/users/openharmony_ci/gists{/gist_id}",
+   "starred_url": "https://gitee.com/api/v5/users/openharmony_ci/starred{/owner}{/repo}",
+   "subscriptions_url": "https://gitee.com/api/v5/users/openharmony_ci/subscriptions",
+   "organizations_url": "https://gitee.com/api/v5/users/openharmony_ci/orgs",
+   "repos_url": "https://gitee.com/api/v5/users/openharmony_ci/repos",
+   "events_url": "https://gitee.com/api/v5/users/openharmony_ci/events{/privacy}",
+   "received_events_url": "https://gitee.com/api/v5/users/openharmony_ci/received_events",
+   "type": "User"
+  },
+  "created_at": "2025-07-04T21:42:57+08:00",
+  "updated_at": "2025-07-04T21:42:57+08:00",
+  "body": "<p>感谢提交 Pull Requests！如果您提交的PR已经开发完毕，请评论 \"start build\" 触发门禁，更多交互操作，请访问<a href=\"https://gitee.com/openharmony/community/blob/master/zh/infrastructure/build_command.md\">OpenHarmony社区支持命令清单</a>。如果需要调整订阅PR、Issue的变更状态，请访问<a href=\"http://ci.openharmony.cn/setting\">订阅链接</a>。<br></br><br>Thanks for submitting the pull request. If your Pull Request has already been developed, you can leave a \"start build\" comment to trigger the gated system. For more commands, please visit <a href=\"https://gitee.com/openharmony/community/blob/master/zh/infrastructure/build_command.md\">OpenHarmony Command List</a>. If you need to change the subscription of a Pull Request or Issue, please visit the <a href=\"http://ci.openharmony.cn/setting\">link</a>.</br>",
+  "html_url": "https://gitee.com/openharmony/docs/pulls/95569#note_43636468",
+  "pull_request_url": "https://gitee.com/api/v5/repos/openharmony/docs/pulls/95569",
+  "_links": {
+   "self": {
+    "href": "https://gitee.com/api/v5/repos/openharmony/docs/pulls/comments/43636468"
+   },
+   "html": {
+    "href": "https://gitee.com/openharmony/docs/pulls/95569#note_43636468_conversation_158973507"
+   },
+   "pull_request": {
+    "href": "https://gitee.com/api/v5/repos/openharmony/docs/pulls/95569"
+   }
+  },
+  "comment_type": "pr_comment",
+  "diff_position_id": null,
+  "resolved": null
+ },
+ {
+  "url": "https://gitee.com/api/v5/repos/openharmony/docs/pulls/comments/43636686",
+  "id": 43636686,
+  "path": null,
+  "position": null,
+  "original_position": null,
+  "new_line": null,
+  "commit_id": null,
+  "original_commit_id": null,
+  "user": {
+   "id": 15560965,
+   "login": "liuyongkai2",
+   "name": "刘永凯",
+   "avatar_url": "https://gitee.com/assets/no_portrait.png",
+   "url": "https://gitee.com/api/v5/users/liuyongkai2",
+   "html_url": "https://gitee.com/liuyongkai2",
+   "remark": "",
+   "followers_url": "https://gitee.com/api/v5/users/liuyongkai2/followers",
+   "following_url": "https://gitee.com/api/v5/users/liuyongkai2/following_url{/other_user}",
+   "gists_url": "https://gitee.com/api/v5/users/liuyongkai2/gists{/gist_id}",
+   "starred_url": "https://gitee.com/api/v5/users/liuyongkai2/starred{/owner}{/repo}",
+   "subscriptions_url": "https://gitee.com/api/v5/users/liuyongkai2/subscriptions",
+   "organizations_url": "https://gitee.com/api/v5/users/liuyongkai2/orgs",
+   "repos_url": "https://gitee.com/api/v5/users/liuyongkai2/repos",
+   "events_url": "https://gitee.com/api/v5/users/liuyongkai2/events{/privacy}",
+   "received_events_url": "https://gitee.com/api/v5/users/liuyongkai2/received_events",
+   "type": "User"
+  },
+  "created_at": "2025-07-04T21:51:12+08:00",
+  "updated_at": "2025-07-04T21:51:12+08:00",
+  "body": "start build",
+  "html_url": "https://gitee.com/openharmony/docs/pulls/95569#note_43636686",
+  "pull_request_url": "https://gitee.com/api/v5/repos/openharmony/docs/pulls/95569",
+  "_links": {
+   "self": {
+    "href": "https://gitee.com/api/v5/repos/openharmony/docs/pulls/comments/43636686"
+   },
+   "html": {
+    "href": "https://gitee.com/openharmony/docs/pulls/95569#note_43636686_conversation_158973963"
+   },
+   "pull_request": {
+    "href": "https://gitee.com/api/v5/repos/openharmony/docs/pulls/95569"
+   }
+  },
+  "comment_type": "pr_comment",
+  "diff_position_id": null,
+  "resolved": null
+ },
+ {
+  "url": "https://gitee.com/api/v5/repos/openharmony/docs/pulls/comments/43636696",
+  "id": 43636696,
+  "path": null,
+  "position": null,
+  "original_position": null,
+  "new_line": null,
+  "commit_id": null,
+  "original_commit_id": null,
+  "user": {
+   "id": 7387629,
+   "login": "openharmony_ci",
+   "name": "openharmony_ci",
+   "avatar_url": "https://foruda.gitee.com/avatar/1677075395966509043/7387629_openharmony_ci_1656582662.png",
+   "url": "https://gitee.com/api/v5/users/openharmony_ci",
+   "html_url": "https://gitee.com/openharmony_ci",
+   "remark": "",
+   "followers_url": "https://gitee.com/api/v5/users/openharmony_ci/followers",
+   "following_url": "https://gitee.com/api/v5/users/openharmony_ci/following_url{/other_user}",
+   "gists_url": "https://gitee.com/api/v5/users/openharmony_ci/gists{/gist_id}",
+   "starred_url": "https://gitee.com/api/v5/users/openharmony_ci/starred{/owner}{/repo}",
+   "subscriptions_url": "https://gitee.com/api/v5/users/openharmony_ci/subscriptions",
+   "organizations_url": "https://gitee.com/api/v5/users/openharmony_ci/orgs",
+   "repos_url": "https://gitee.com/api/v5/users/openharmony_ci/repos",
+   "events_url": "https://gitee.com/api/v5/users/openharmony_ci/events{/privacy}",
+   "received_events_url": "https://gitee.com/api/v5/users/openharmony_ci/received_events",
+   "type": "User"
+  },
+  "created_at": "2025-07-04T21:51:39+08:00",
+  "updated_at": "2025-07-04T21:51:39+08:00",
+  "body": "首次触发\n门禁构建开始,包含静态检查【格式化检查】,预计在60分钟内完成,门禁结果会同步发送到注册邮箱。您可以通过如下链接跟踪门禁进展:<a href=\"http://ci.openharmony.cn/workbench/cicd/detail/6867dc6864650f998be73ecc/runlist\">http://ci.openharmony.cn/workbench/cicd/detail/6867dc6864650f998be73ecc/runlist</a>",
+  "html_url": "https://gitee.com/openharmony/docs/pulls/95569#note_43636696",
+  "pull_request_url": "https://gitee.com/api/v5/repos/openharmony/docs/pulls/95569",
+  "_links": {
+   "self": {
+    "href": "https://gitee.com/api/v5/repos/openharmony/docs/pulls/comments/43636696"
+   },
+   "html": {
+    "href": "https://gitee.com/openharmony/docs/pulls/95569#note_43636696_conversation_158973979"
+   },
+   "pull_request": {
+    "href": "https://gitee.com/api/v5/repos/openharmony/docs/pulls/95569"
+   }
+  },
+  "comment_type": "pr_comment",
+  "diff_position_id": null,
+  "resolved": null
+ },
+ {
+  "url": "https://gitee.com/api/v5/repos/openharmony/docs/pulls/comments/43636791",
+  "id": 43636791,
+  "path": "zh-cn/application-dev/reference/apis-arkui/_ark_u_i___native_module.md",
+  "position": null,
+  "original_position": null,
+  "new_line": 17999,
+  "commit_id": null,
+  "original_commit_id": null,
+  "user": {
+   "id": 9209846,
+   "login": "lushi1202",
+   "name": "lushi1202",
+   "avatar_url": "https://gitee.com/assets/no_portrait.png",
+   "url": "https://gitee.com/api/v5/users/lushi1202",
+   "html_url": "https://gitee.com/lushi1202",
+   "remark": "",
+   "followers_url": "https://gitee.com/api/v5/users/lushi1202/followers",
+   "following_url": "https://gitee.com/api/v5/users/lushi1202/following_url{/other_user}",
+   "gists_url": "https://gitee.com/api/v5/users/lushi1202/gists{/gist_id}",
+   "starred_url": "https://gitee.com/api/v5/users/lushi1202/starred{/owner}{/repo}",
+   "subscriptions_url": "https://gitee.com/api/v5/users/lushi1202/subscriptions",
+   "organizations_url": "https://gitee.com/api/v5/users/lushi1202/orgs",
+   "repos_url": "https://gitee.com/api/v5/users/lushi1202/repos",
+   "events_url": "https://gitee.com/api/v5/users/lushi1202/events{/privacy}",
+   "received_events_url": "https://gitee.com/api/v5/users/lushi1202/received_events",
+   "type": "User"
+  },
+  "created_at": "2025-07-04T21:54:58+08:00",
+  "updated_at": "2025-07-04T21:54:58+08:00",
+  "body": "```suggestion\n初始化指定上下文环境的ArkUI相关接口。本函数不允许在非UI线程中调用。如果检测到在非UI线程中调用，程序将主动终止。每个上下文环境都会带来一定的内存开销，当消耗的内存超过虚拟机的上限时则会发生内存溢出，关于ArkTS内存管理详情参考[文档](../../arkts-utils/gc-introduction.md)\n```",
+  "html_url": "https://gitee.com/openharmony/docs/pulls/95569#note_43636791",
+  "pull_request_url": "https://gitee.com/api/v5/repos/openharmony/docs/pulls/95569",
+  "_links": {
+   "self": {
+    "href": "https://gitee.com/api/v5/repos/openharmony/docs/pulls/comments/43636791"
+   },
+   "html": {
+    "href": "https://gitee.com/openharmony/docs/pulls/95569#note_43636791_conversation_158974088"
+   },
+   "pull_request": {
+    "href": "https://gitee.com/api/v5/repos/openharmony/docs/pulls/95569"
+   }
+  },
+  "comment_type": "diff_comment",
+  "diff_position_id": 1443436,
+  "resolved": false
+ },
+ {
+  "url": "https://gitee.com/api/v5/repos/openharmony/docs/pulls/comments/43636868",
+  "id": 43636868,
+  "path": null,
+  "position": null,
+  "original_position": null,
+  "new_line": null,
+  "commit_id": null,
+  "original_commit_id": null,
+  "user": {
+   "id": 15560965,
+   "login": "liuyongkai2",
+   "name": "刘永凯",
+   "avatar_url": "https://gitee.com/assets/no_portrait.png",
+   "url": "https://gitee.com/api/v5/users/liuyongkai2",
+   "html_url": "https://gitee.com/liuyongkai2",
+   "remark": "",
+   "followers_url": "https://gitee.com/api/v5/users/liuyongkai2/followers",
+   "following_url": "https://gitee.com/api/v5/users/liuyongkai2/following_url{/other_user}",
+   "gists_url": "https://gitee.com/api/v5/users/liuyongkai2/gists{/gist_id}",
+   "starred_url": "https://gitee.com/api/v5/users/liuyongkai2/starred{/owner}{/repo}",
+   "subscriptions_url": "https://gitee.com/api/v5/users/liuyongkai2/subscriptions",
+   "organizations_url": "https://gitee.com/api/v5/users/liuyongkai2/orgs",
+   "repos_url": "https://gitee.com/api/v5/users/liuyongkai2/repos",
+   "events_url": "https://gitee.com/api/v5/users/liuyongkai2/events{/privacy}",
+   "received_events_url": "https://gitee.com/api/v5/users/liuyongkai2/received_events",
+   "type": "User"
+  },
+  "created_at": "2025-07-04T21:58:31+08:00",
+  "updated_at": "2025-07-04T21:58:31+08:00",
+  "body": "start build",
+  "html_url": "https://gitee.com/openharmony/docs/pulls/95569#note_43636868",
+  "pull_request_url": "https://gitee.com/api/v5/repos/openharmony/docs/pulls/95569",
+  "_links": {
+   "self": {
+    "href": "https://gitee.com/api/v5/repos/openharmony/docs/pulls/comments/43636868"
+   },
+   "html": {
+    "href": "https://gitee.com/openharmony/docs/pulls/95569#note_43636868_conversation_158974240"
+   },
+   "pull_request": {
+    "href": "https://gitee.com/api/v5/repos/openharmony/docs/pulls/95569"
+   }
+  },
+  "comment_type": "pr_comment",
+  "diff_position_id": null,
+  "resolved": null
+ }
+]

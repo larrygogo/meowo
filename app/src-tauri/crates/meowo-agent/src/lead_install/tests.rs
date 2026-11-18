@@ -36,6 +36,24 @@ fn providers() -> Vec<(&'static dyn AgentPlugin, &'static str)> {
 }
 
 #[test]
+fn shared_workflow_keeps_risk_permission_and_review_contracts() {
+    for rule in [
+        "本文不授予额外权限",
+        "不能仅靠改动行数判定风险",
+        "可逆的普通设计取舍不发 B",
+        "默认将任务放主检出",
+        "不得在实施时补该字段绕过验证",
+        "角色不可用时必须报告",
+        "重复看到同一答复不得重复执行业务",
+    ] {
+        assert!(SKILL.contains(rule), "{rule}");
+    }
+    for rule in ["不继承实施者推理", "leader 点名具体条目", "静态判断必须标注未实测", "验证版本和证据对应关系"] {
+        assert!(REVIEW.contains(rule), "{rule}");
+    }
+}
+
+#[test]
 fn native_install_refresh_and_uninstall_preserve_user_assets() {
     let fixture = Fixture::new();
     for (plugin, version) in providers() {
@@ -61,6 +79,8 @@ fn native_install_refresh_and_uninstall_preserve_user_assets() {
         )
         .unwrap();
         assert!(state.installed, "{} {:?}", plugin.id(), state);
+        assert_eq!(fs::read_to_string(inst.data_dir.join(spec.skill_rel)).unwrap(), skill_body("C:/Program Files/meowo-reporter.exe").unwrap());
+        assert_eq!(fs::read_to_string(inst.data_dir.join(spec.reviewer_rel)).unwrap(), cap.reviewer());
         assert!(!state.limitations.is_empty());
         // 离线续跑已删（leader 2026-11-13「不需要离线」），限制声明里不能再留它的死数据（做空 R9）。
         assert!(
@@ -528,5 +548,23 @@ fn waiter_requirement_uses_the_same_version_gate_as_the_host() {
     for provider in ["codex", "opencode", "nope"] {
         assert!(!continue_needs_version(provider), "{provider}");
         assert_eq!(waiter_shell_for(provider, Some("9.9.9")), None);
+    }
+}
+
+
+#[test]
+fn skill_command_adapter_is_shared_and_quotes_each_shell() {
+    let body = skill_body("C:\\Users\\O'Brien\\Meowo App\\meowo-reporter.exe").unwrap();
+    assert!(body.starts_with(SKILL));
+    if cfg!(windows) {
+        assert!(body.contains("'C:/Users/O'\\''Brien/Meowo App/meowo-reporter.exe' lead"));
+    } else {
+        assert!(body.contains("'C:\\Users\\O'\\''Brien\\Meowo App\\meowo-reporter.exe' lead"));
+        assert!(skill_body("/Applications/Meowo\\Test/reporter").unwrap().contains("'/Applications/Meowo\\Test/reporter' lead"));
+    }
+    assert!(body.contains("& 'C:\\Users\\O''Brien\\Meowo App\\meowo-reporter.exe' lead"));
+    assert!(body.contains("snapshotAvailable") && body.contains("consume --id"));
+    for path in ["", "bad\npath", "bad`path", "bad\"path", "bad$path", "bad%path"] {
+        assert_eq!(skill_body(path).unwrap_err(), "lead/reporter_path_invalid");
     }
 }

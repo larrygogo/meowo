@@ -3,7 +3,7 @@ import type { PrCheckDto } from "./PrCheckDto";
 
 /**
  * 当前分支的 Pull Request（对话页标题栏，对照 Kimi 的「打开 Pull Request」与状态标记）。
- * 由 `gh pr view` 取得；没装 gh / 没登录 / 分支没有 PR 时命令返回 None，前端不显示。
+ * 经设置里的账号向平台查；没账号 / 令牌失效 / 分支没有 PR 时命令返回 None，前端不显示。
  */
 export type PullRequestDto = { number: number, 
 /**
@@ -40,4 +40,9 @@ checksSummary?: string,
 /**
  * 已加入合并队列（本机发起合并时 GitHub 回的是入队而不是合并）。这时不能提示「已合并」。
  */
-queued?: boolean, };
+queued?: boolean, 
+/**
+ * 代码托管平台：`gitlab` / `gitea` / `bitbucket`；GitHub（含企业版）不填。界面按它用平台的叫法
+ * （GitLab 是合并请求 MR、编号写 `!12`，检查叫流水线）。
+ */
+forge?: string, };

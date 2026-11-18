@@ -1066,12 +1066,24 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     // (is-off)已表达「不活跃」,再叠一个灰点是噪声。
     const tone = liveSessionTone(item);
     const showDot = tone === "running" || tone === "pending" || tone === "waiting" || tone === "error";
+    // 回合在跑、屏幕上却挂着自动重试（请求出错 / API 无响应）：与对话页运行条同一句话，
+    // 点换成警示色——不是在正常干活（实拍 2026-11-18：TUI 红字等待重试，侧栏只是普通绿点）。
+    const retry = tone === "running" ? item.screen_retry : null;
+    const retryLabel = retry ? (retry.kind === "stalled" ? t.chat.sidebarRetryStalled : t.chat.workingRetry(retry.attempt, retry.max)) : null;
     // 待授权徽标优先于状态点：授权在等用户决策，比「在跑/待处理」都紧急；
     // 且不依附 connected——离线会话恢复的 agent 同样可能来要权限。
     const awaitingApproval = approvalAwaitingIds.has(item.session.id);
     const editing = editingId === item.session.id;
     // 目录已删的会话不挂（点进去也恢复不了，下面另有「目录已删除」）。
     const badgeCwd = item.cwd && !item.cwd_missing ? item.cwd : null;
+    // 目录已删除（worktree 清理掉了、目录被手动删了）：不管按不按目录分组都要显示——点进去只能看历史。
+    // 跟在目录名后面同一行（对照 Kimi / Linear：状态标签与次要信息同排），不单开第三行：
+    // 第三行让这张卡比别的卡高一截，手机列表里还曾被压扁的卡片挤到下一张卡上（2026-11-18 实拍）。
+    const goneTag = item.cwd_missing ? (
+      <span className="chat-sidebar-gone" data-tip={t.worktree.dirMissingTip} data-testid="sidebar-dir-missing">
+        {t.worktree.dirMissing}<span className="chat-sidebar-gone-more">{t.worktree.dirMissingMore}</span>
+      </span>
+    ) : null;
     // 条目从 <button> 改成 role=button 的 <div>：里面要放「⋯」按钮，button 套 button 是
     // 非法 HTML（浏览器会把内层拆出去）。键盘可达性靠 tabIndex + Enter/Space 补齐；
     // tabIndex 是 roving 的——只有 tabbableId 那条进 Tab 序，其余靠列表的 ↑↓ 到达（C-17）。
@@ -1212,7 +1224,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           {awaitingApproval
             ? <i className="chat-sidebar-dot is-approval" role="img" aria-label={t.vocab.request.approval} data-tip={t.vocab.request.approval} />
             : showDot
-              ? <i className={`chat-sidebar-dot is-${tone}`} role="img" aria-label={sessionStatusLabel(t, tone)} data-tip={sessionStatusLabel(t, tone)} />
+              ? <i className={`chat-sidebar-dot is-${tone}` + (retryLabel ? " is-retrying" : "")} role="img" aria-label={retryLabel ?? sessionStatusLabel(t, tone)} data-tip={retryLabel ?? sessionStatusLabel(t, tone)} />
               // 未读点（对照 Kimi 的 unread-dot）：回合结束时你没在看；当前会话不显示（正在看就是已读）。
               : item.unread && item.session.id !== activeId && (
                 <i className="chat-sidebar-unread" role="img" aria-label={t.chat.unread} data-tip={t.chat.unread} />
@@ -1257,18 +1269,16 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
             <span className="chat-sidebar-metaline">
               <span className="chat-sidebar-meta" data-tip={item.cwd ?? undefined}>{dir}</span>
               {badgeCwd && <SidebarGitBadgeSlot store={gitBadges} cwd={badgeCwd} />}
+              {goneTag}
             </span>
           ) : groupMode === "dir" && worktreeNameOf(item) ? (
             /* 包 5：按工作区分组时 worktree 会话归在原项目的组里，组内标出它开在哪个 worktree。 */
             <span className="chat-sidebar-metaline">
               <span className="chat-sidebar-wt" data-testid="sidebar-worktree-tag" data-tip={t.wtnew.tagTip(worktreeNameOf(item)!)}>{worktreeNameOf(item)}</span>
               {badgeCwd && <SidebarGitBadgeSlot store={gitBadges} cwd={badgeCwd} />}
+              {goneTag}
             </span>
-          ) : null)}
-          {/* 目录已删除（worktree 清理掉了）：不管按不按目录分组都要显示——点进去恢复不了，得先说。 */}
-          {item.cwd_missing && (
-            <span className="chat-sidebar-gone" data-tip={t.worktree.dirMissingTip} data-testid="sidebar-dir-missing">{t.worktree.dirMissing}</span>
-          )}
+          ) : goneTag && <span className="chat-sidebar-metaline">{goneTag}</span>)}
         </span>
         {/* 右侧：时间（对照 Kimi 的紧凑「3d」），等待中换成「已等待 X」警示色；悬停时让位给「⋯」。
             旧库/合成数据可能缺 last_event_at：NaN 会让 Intl 直接抛错炸掉整棵侧栏，缺失时不显示。 */}
@@ -1539,7 +1549,10 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
               // 未读排在出错之后、等待/运行之前（对照 Kimi 分组汇总：审批 > 提问 > 失败 > 未读）：
               // 组折起来时行上的未读点看不见，组头只剩一个黄/绿点，「跑完了你还没看」就丢了。
               // 当前会话不算（正在看就是已读，与行上的未读点同口径）。
-              const unread = (!tone || TONE_RANK[tone] < TONE_RANK.error)
+              // 组展开时会话行就在下面，组头点要和行上的点同一个优先级（待授权 > 状态 > 未读），否则同一个会话
+              // 行上是琥珀色「等待」、组头却是青柠色「未读」（2026-11-18 用户截图：「这里颜色不一致」）。
+              // 折起来时行看不见，才让未读压过等待/运行。
+              const unread = (isFolded ? (!tone || TONE_RANK[tone] < TONE_RANK.error) : !showDot)
                 && group.items.some((item) => item.unread && item.session.id !== activeId);
               const groupDot = approval
                 ? <i className="chat-sidebar-dot is-approval" role="img" aria-label={t.vocab.request.approval} data-tip={t.vocab.request.approval} />
@@ -1675,6 +1688,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           onStar={() => toggleStar(ctxItem.session.cc_session_id)}
           onRename={() => startRename(ctxItem)}
           onArchive={() => void toggleArchived(ctxItem)}
+          archiveDisabledReason={ctxItem.archived && ctxItem.cwd_missing ? t.chat.dirGoneNoReopen : null}
           // 多选入口:Ctrl+点击对鼠标用户不可发现,菜单里给一个显式的起点。
           onSelectMode={() => {
             selectAnchorRef.current = ctxItem.session.id;

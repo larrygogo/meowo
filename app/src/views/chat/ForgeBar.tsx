@@ -1,17 +1,20 @@
 /// 「更改」面板的推送 / PR / CI / 合并区块（二期包 5，后端 forge.rs）。挂在提交框下面，只对选中的仓库。
 ///
 /// - 推送：显示还有几个提交没推（RepoChangesDto.summary.unpushed，本地计数），没上游时后端自动设上游。
-/// - 装了 gh：显示 PR 与每一项检查，能开 PR、能合并。没装或没登录：开 PR 改成打开 GitHub 的 compare 网页，
-///   不显示 CI、不能在应用里合并（leader 关卡 Q-no-gh 选 1）。
+/// - 有这台主机的账号：显示 PR 与每一项检查，能开 PR、能合并。没账号或令牌失效：开 PR 改成打开网页，
+///   不显示 CI、不能在应用里合并，引导去设置添加账号（github.com 也一样，Meowo 不调用本机 gh）。
 /// - 轮询只在面板可见、窗口可见时进行，每 60 秒一次；后端按仓库缓存 60 秒，桌面和手机共用（规格「每仓库
 ///   ≥60s 一次、隐藏时 0 次」）。
 /// - 合并确认框写明合进哪、用什么方式（只列仓库允许的，默认上次用的），CI 有失败或在跑时不能点，有冲突时
 ///   引导去网页。手机上多一道「确认合并」。合并后会话所在 worktree 可以清理就提示，不自动删。
-/// - 多个 GitHub 远端、gh 没定默认仓库时（做空第二轮）：在这里列出远端让用户选 PR 开在哪个仓库，后端按仓库
-///   记住；没选之前开 PR / 合并不可用。不让用户去终端跑 gh repo set-default（产品标准：别让用户去终端收拾）。
+/// - 多个认得出平台的远端时（做空第二轮）：在这里列出远端让用户选 PR 开在哪个仓库，后端按仓库记住；没选之前
+///   开 PR / 合并不可用（产品标准：别让用户去终端收拾）。
 
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { openSettingsAt } from "../../settingsNav";
 import {
+  GITHUB_CHANGED_EVENT,
   forgeChooseRepo,
   getForgeStatus,
   getPullRequestByUrl,
@@ -27,7 +30,7 @@ import {
   type WorktreeStatusDto,
 } from "../../api";
 import { useT } from "../../i18n";
-import { SessionPrsContext, sessionPrsInRepo } from "./sessionPrs";
+import { dismissPr, loadDismissedPrs, SessionPrsContext, sessionPrsInRepo } from "./sessionPrs";
 import { formatBackendError } from "../../i18n/errors";
 import { remoteUi } from "../../remoteMode";
 import { runWorktreeRemoval } from "../../worktreeCleanup";
@@ -41,6 +44,7 @@ import { icArrowUp, icClock, icMinus } from "../../icons/glyphs.chat";
 import { icCheck, icClose, icRefresh } from "../../icons/glyphs";
 import { busyProps } from "../../busyButton";
 import { PrReviewPanel } from "./PrReviewPanel";
+import { forgeKind, forgeText, prPathSegment } from "./forgeWords";
 
 /// 轮询间隔：每个仓库最多 60 秒查一次 GitHub。
 export const FORGE_POLL_MS = 60_000;
@@ -48,27 +52,54 @@ export const FORGE_POLL_MS = 60_000;
 const sameRoot = (a: string, b: string) => normPath(a).toLowerCase() === normPath(b).toLowerCase();
 
 /// 拉 forge 状态：挂载时一次，之后可见时每 60 秒一次；窗口隐藏时不拉，回到可见或重新聚焦时距上次满 60 秒才补一次
-///（聚焦时带 force，顺手让后端重查 gh 登录状态）。active=false（面板收起）时整个停掉。
+///（聚焦时带 force，让后端跳过 PR 缓存重查）。active=false（面板收起）时整个停掉。
 /// 这个会话在本仓库里建过、动过的 PR（链接来自时间线，见 sessionPrs），按链接问现状。最多 3 个，最新在前；
-/// 面板已经按分支显示的那个不重复。面板收起、手机上都不查（按链接查是桌面专用命令）。
-function useSessionPrs(root: string, repoUrl: string | null | undefined, shown: string | null | undefined, active: boolean): PullRequestDto[] {
+/// 面板已经按分支显示的那个、用户收起的不列（收起后空出的位置由更早的补上）。面板收起、手机上都不查
+///（按链接查是桌面专用命令）。
+/// 切换会话时 ForgeBar 会按仓库重建，状态从空开始：合并按钮、PR 卡片要等后端查回来才出现，每次切换都闪一下
+///（2026-11-18 用户：「更改面板还是会闪，主要是合并的按钮、PR 卡片等」）。按仓库记住上一次的结果，重建时先显示它，
+/// 后台照常刷新。只在本窗口进程内存里，最多留 FORGE_CACHE_MAX 个仓库。
+const FORGE_CACHE_MAX = 30;
+const forgeCache = new Map<string, ForgeStatusDto>();
+const sessionPrsCache = new Map<string, PullRequestDto[]>();
+/** 测试之间清掉模块级缓存（同一进程里各条测试不该看到上一条的仓库状态）。 */
+export function clearForgeCaches() {
+  forgeCache.clear();
+  sessionPrsCache.clear();
+}
+function remember<T>(cache: Map<string, T>, key: string, value: T) {
+  cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > FORGE_CACHE_MAX) cache.delete(cache.keys().next().value as string);
+}
+
+function useSessionPrs(root: string, repoUrl: string | null | undefined, shown: string | null | undefined, dismissed: readonly string[], active: boolean, segment: string): PullRequestDto[] {
   const urls = useContext(SessionPrsContext);
   // 链接里没有空格，用空格拼成一个键：数组每次渲染都是新的，拿它当依赖会每次重查。
-  const key = sessionPrsInRepo(urls, repoUrl, shown).join(" ");
-  const [prs, setPrs] = useState<PullRequestDto[]>([]);
+  const key = sessionPrsInRepo(urls, repoUrl, shown, dismissed, 3, segment).join(" ");
+  const cacheKey = `${root}\u0000${key}`;
+  const [prs, setPrs] = useState<PullRequestDto[]>(() => sessionPrsCache.get(cacheKey) ?? []);
   useEffect(() => {
-    setPrs([]);
+    // 还在列表里的先留着，等新结果回来再换：收起一条时其余几条不闪一下。换仓库重建时先用上次记住的。
+    const keep = new Set(key ? key.split(" ") : []);
+    const cached = sessionPrsCache.get(cacheKey);
+    setPrs((prev) => (cached ?? prev).filter((item) => keep.has(item.url)));
     if (!key || !active || remoteUi()) return;
     let alive = true;
     void Promise.all(key.split(" ").map((url) => getPullRequestByUrl(root, url).catch(() => null)))
-      .then((list) => { if (alive) setPrs(list.filter((item): item is PullRequestDto => !!item)); });
+      .then((list) => {
+        const found = list.filter((item): item is PullRequestDto => !!item);
+        remember(sessionPrsCache, cacheKey, found);
+        if (alive) setPrs((prev) => (JSON.stringify(prev) === JSON.stringify(found) ? prev : found));
+      });
     return () => { alive = false; };
-  }, [root, key, active]);
+  }, [root, key, cacheKey, active]);
   return prs;
 }
 
 export function useForgeStatus(root: string, sessionCwd: string | null, active: boolean) {
-  const [forge, setForge] = useState<ForgeStatusDto | null>(null);
+  const cacheKey = `${root}\u0000${sessionCwd ?? ""}`;
+  const [forge, setForge] = useState<ForgeStatusDto | null>(() => forgeCache.get(cacheKey) ?? null);
   const lastRef = useRef(0);
   const reqRef = useRef(0);
   const load = useCallback((force: boolean) => {
@@ -76,11 +107,16 @@ export function useForgeStatus(root: string, sessionCwd: string | null, active: 
     lastRef.current = Date.now();
     const req = ++reqRef.current;
     getForgeStatus(root, force, sessionCwd)
-      .then((dto) => { if (req === reqRef.current) setForge(dto); })
+      .then((dto) => {
+        remember(forgeCache, cacheKey, dto);
+        // 内容没变不换对象：免得每轮轮询都让整条 ForgeBar 重画。
+        if (req === reqRef.current) setForge((prev) => (JSON.stringify(prev) === JSON.stringify(dto) ? prev : dto));
+      })
       .catch(() => {});
-  }, [root, sessionCwd]);
+  }, [root, sessionCwd, cacheKey]);
   useEffect(() => {
-    setForge(null);
+    // 换仓库：先显示这个仓库上次的结果（没有才清空），不先空一下再画回来。
+    setForge(forgeCache.get(cacheKey) ?? null);
     if (!active) return;
     load(false);
     const timer = window.setInterval(() => load(false), FORGE_POLL_MS);
@@ -89,13 +125,25 @@ export function useForgeStatus(root: string, sessionCwd: string | null, active: 
     const onFocus = () => { if (stale()) load(true); };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onFocus);
+    // 设置里切了 GitHub 连接方式、登录或退出：后端缓存已作废，马上按新的连接重拉。
+    let offChanged: (() => void) | undefined;
+    let disposed = false;
+    if (!remoteUi()) {
+      try {
+        void listen(GITHUB_CHANGED_EVENT, () => load(true))
+          .then((off) => { if (disposed) off(); else offChanged = off; })
+          .catch(() => {});
+      } catch { /* 非 Tauri 环境 */ }
+    }
     return () => {
+      disposed = true;
+      offChanged?.();
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onFocus);
       reqRef.current += 1;
     };
-  }, [active, load]);
+  }, [active, load, cacheKey]);
   return { forge, refresh: load };
 }
 
@@ -106,15 +154,37 @@ type ForgeNotice = { text: string; link?: string };
 
 /// 合并按钮能不能点、不能点时说什么。
 export function mergeBlock(t: ReturnType<typeof useT>, forge: ForgeStatusDto, pr: PullRequestDto): string | null {
+  const ft = forgeText(t, forgeKind(forge.forge), forge.forgeHost);
   // 草稿 PR GitHub 不让合并：按钮灰着要说清楚为什么（做空审查：以前只是灰着，没有原因）。
-  if (pr.state === "draft") return t.forge.mergeBlockedDraft;
-  if (forge.repoNeedsChoice) return t.forge.repoNeedsChoice;
-  if (forge.ghTooOld) return t.forge.mergeTooOld;
+  if (pr.state === "draft") return ft.mergeBlockedDraft;
+  if (forge.repoNeedsChoice) return ft.repoNeedsChoice;
   if (forge.mergeMethods.length === 0) return t.forge.mergeNoMethods;
-  if (pr.checksSummary === "fail") return t.forge.mergeBlockedFail;
-  // GitHub 还在算能不能合（UNKNOWN）同「检查在跑」：等一轮再合（定案设计）。
-  if (pr.checksSummary === "pending" || pr.mergeable === "UNKNOWN") return t.forge.mergeBlockedPending;
+  if (pr.checksSummary === "fail") return ft.mergeBlockedFail;
+  // GitHub 还在算能不能合（UNKNOWN）同「检查在跑」：等一轮再合（定案设计）。Gitea / Gitee 的 UNKNOWN 只是平台不给原因，
+  // 不挡，交给服务器判（与后端 unknown_blocks_merge 同一规则）。
+  if (pr.checksSummary === "pending") return ft.mergeBlockedPending;
+  if (pr.mergeable === "UNKNOWN" && pr.forge !== "gitea" && pr.forge !== "gitee") return ft.mergeBlockedPending;
   return null;
+}
+
+/// 看不到 CI 时说为什么、给出路（github.com 与其他平台一样）：还没有这台主机的账号时引导去设置添加（不报错、
+/// 后端不发请求）；账号的令牌被拒时引导去重新添加。手机远程不放行添加账号，只说原因。Meowo 不调用本机 gh。
+export function ConnectionNotice({ forge }: { forge: ForgeStatusDto }) {
+  const t = useT();
+  const offerSignIn = !remoteUi();
+  const kind = forgeKind(forge.forge);
+  const w = t.forgeWords[kind];
+  const host = forge.forgeHost;
+  const word = host === "codeberg.org" ? { ...w, name: "Codeberg" } : kind === "github" && host && host !== "github.com" ? { ...w, name: host } : w;
+  const missing = forge.gh === "no_account";
+  return (
+    <div className="scm-notice scm-cleanup" data-testid="forge-connection-notice">
+      <span>{missing ? t.forgeP.noAccount(word) : t.forgeP.relogin(word)}</span>
+      {offerSignIn && (
+        <button type="button" className="scm-link-btn" onClick={() => openSettingsAt("github")}>{missing ? t.forgeP.addAccount(word) : t.forgeP.reloginAction}</button>
+      )}
+    </div>
+  );
 }
 
 const isConflict = (pr: PullRequestDto) => pr.mergeable === "CONFLICTING" || pr.mergeState === "DIRTY";
@@ -132,7 +202,11 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
   const t = useT();
   const root = repo.root;
   const { forge, refresh } = useForgeStatus(root, sessionCwd, active);
-  const sessionPrs = useSessionPrs(root, forge?.gh === "ok" ? forge.repoUrl : null, forge?.pr?.url, active);
+  // 平台的叫法：GitLab 是合并请求（MR）、编号 !12、检查叫流水线（forgeWords.ts）。
+  const kind = forgeKind(forge?.forge);
+  const ft = forgeText(t, kind, forge?.forgeHost);
+  const [dismissedPrs, setDismissedPrs] = useState(loadDismissedPrs);
+  const sessionPrs = useSessionPrs(root, forge?.gh === "ok" ? forge.repoUrl : null, forge?.pr?.url, dismissedPrs, active, prPathSegment(kind));
   const [busy, setBusyState] = useState<Busy>(null);
   // 进行中拦重复点击用 ref，按钮不 disabled（disabled 会把正拿着焦点的按钮的焦点踢到 body，第三轮设计准则）。
   const busyRef = useRef<Busy>(null);
@@ -163,8 +237,9 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
 
   const fail = (e: unknown, retry?: () => void) => {
     const raw = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
-    // 冲突带着网页链接：给一个「在 GitHub 打开」去处理。
-    const link = raw.startsWith("gh/merge_conflict: ") ? raw.slice("gh/merge_conflict: ".length).trim() : "";
+    // 冲突、平台判定暂时不能合并都带着网页链接：给一个「在 <平台> 打开」去处理。
+    const linked = ["gh/merge_conflict: ", "forge/not_mergeable: "].find((prefix) => raw.startsWith(prefix));
+    const link = linked ? raw.slice(linked.length).trim() : "";
     setError({ text: formatBackendError(e, t.locale), code: errorCode(e), link: link.startsWith("https://") ? link : null, retry });
   };
   const begin = (what: Busy) => {
@@ -212,7 +287,7 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
     if (unpushed === 0) setError((prev) => (prev && (prev.code.startsWith("git/push") || prev.code.startsWith("git/pull")) ? null : prev));
   }, [unpushed]);
 
-  // 没装 gh：有没推的提交先推，不然 compare 网页上看不到这些提交。
+  // 没账号（开网页）：有没推的提交先推，不然 compare 网页上看不到这些提交。
   const openCompare = async (url: string) => {
     if (busyRef.current) return;
     if (unpushed > 0) {
@@ -239,7 +314,7 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
       setPrForm(null);
       setPrOpen(false);
       // 成功要有回音（P-8：以前只关表单，什么都不说）。
-      if (created?.number != null) setNotice({ text: t.forge.prCreated(created.number), link: created.url });
+      if (created?.number != null) setNotice({ text: ft.prCreated(created.number), link: created.url });
     } catch (e) {
       // 已经有 PR：关掉表单，刷新就能看到它。
       if (String(e).startsWith("gh/pr_exists")) {
@@ -268,7 +343,7 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
     begin("merge");
     try {
       const result = await ghPrMerge(root, pr.number, method, pr.headOid ?? "", sessionCwd);
-      const text = result.merged ? t.forge.merged : result.queued ? t.forge.queued : null;
+      const text = result.merged ? ft.merged : result.queued ? t.forge.queued : null;
       setNotice(text ? { text } : null);
       if (result.merged && sessionId != null) {
         // 合并后提示清理，不自动删（规格）。只提示本会话自己的 worktree，且必须正是刚合并的这个仓库。
@@ -323,7 +398,8 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
 
   const pr = forge?.gh === "ok" ? forge.pr ?? null : null;
   const ghOk = forge?.gh === "ok";
-  const offGh = forge?.gh === "missing" || forge?.gh === "unauthenticated";
+  // 看不到 PR 与检查、但能给出路的两种：令牌失效，或认得出平台但还没加账号。
+  const offGh = forge?.gh === "unauthenticated" || forge?.gh === "no_account";
   const showPush = !!branch && unpushed > 0;
   const showPr = !!forge && !!branch && (forge.gh === "ok" || offGh);
   if (!showPush && !showPr && !error && !notice && !cleanup && !identityFor && sessionPrs.length === 0) return null;
@@ -349,7 +425,7 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
     if ((err.code === "git/locked" || err.code === "git/push_network" || err.code === "git/pull_network" || err.code === "git/push_timeout" || err.code === "git/pull_timeout") && err.retry) {
       out.push({ label: t.chat.scmRetry, onClick: err.retry });
     }
-    if (err.link) out.push({ label: t.forge.openOnGithub, onClick: () => void openLink(err.link!).catch(() => {}) });
+    if (err.link) out.push({ label: ft.openOnSite, onClick: () => void openLink(err.link!).catch(() => {}) });
     return out;
   };
 
@@ -361,10 +437,10 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
   const checksLine = (p: PullRequestDto) => {
     const n = checkCounts(p);
     switch (p.checksSummary) {
-      case "none": return t.forge.checksNone;
-      case "fail": return t.forge.checksFail(n.fail);
-      case "pending": return t.forge.checksPending(n.pending);
-      case "pass": return t.forge.checksPass(n.total);
+      case "none": return ft.checksNone;
+      case "fail": return ft.checksFail(n.fail);
+      case "pending": return ft.checksPending(n.pending);
+      case "pass": return ft.checksPass(n.total);
       default: return "";
     }
   };
@@ -389,21 +465,28 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
       {/* 这个会话在本仓库建过、动过的其他 PR（常在临时 worktree 里另切分支建，不是当前分支的那个）。 */}
       {sessionPrs.length > 0 && (
         <div className="scm-pr" data-testid="scm-session-prs">
-          <span className="scm-pr-label">{t.forge.sessionPrs}</span>
+          <span className="scm-pr-label">{ft.sessionPrs}</span>
           {sessionPrs.map((item) => (
-            <button key={item.url} type="button" className={`scm-pr-head is-${item.state}`} data-tip={item.url} onClick={() => void openLink(item.url).catch(() => {})}>
-              <span className="scm-pr-state">{t.forge.prState[item.state] ?? item.state}</span>
-              <span className="scm-pr-title">#{item.number} {item.title}</span>
-            </button>
+            <div key={item.url} className="scm-pr-row">
+              <button type="button" className={`scm-pr-head is-${item.state}`} data-tip={item.url} onClick={() => void openLink(item.url).catch(() => {})}>
+                <span className="scm-pr-state">{t.forge.prState[item.state] ?? item.state}</span>
+                <span className="scm-pr-title">{ft.num(item.number)} {item.title}</span>
+              </button>
+              {/* 已了结的可以收起；还开着的不给，免得把要合的那条藏起来。 */}
+              {(item.state === "merged" || item.state === "closed") && (
+                <button type="button" className="scm-icon-btn" aria-label={t.forge.dismissPr(item.number)} data-tip={ft.dismissPrTip}
+                  onClick={() => setDismissedPrs(dismissPr(item.url))}><Icon glyph={icClose} size={12} /></button>
+              )}
+            </div>
           ))}
         </div>
       )}
       {showPr && pr && (
         <div className="scm-pr" data-testid="scm-pr">
-          {sessionPrs.length > 0 && <span className="scm-pr-label">{t.forge.branchPr}</span>}
+          {sessionPrs.length > 0 && <span className="scm-pr-label">{ft.branchPr}</span>}
           <button type="button" className={`scm-pr-head is-${pr.state}`} data-tip={pr.url} onClick={() => void openLink(pr.url).catch(() => {})}>
             <span className="scm-pr-state">{t.forge.prState[pr.state] ?? pr.state}</span>
-            <span className="scm-pr-title">#{pr.number} {pr.title}</span>
+            <span className="scm-pr-title">{ft.num(pr.number)} {pr.title}</span>
           </button>
           {pr.state !== "merged" && pr.state !== "closed" && (
             <>
@@ -440,19 +523,19 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
           )}
         </div>
       )}
-      {showPr && pr && reviewOpen && sessionId != null && <PrReviewPanel cwd={root} sessionCwd={sessionCwd} sessionId={sessionId} number={pr.number} active />}
+      {showPr && pr && reviewOpen && sessionId != null && <PrReviewPanel cwd={root} sessionCwd={sessionCwd} sessionId={sessionId} number={pr.number} forge={forge?.forge} forgeHost={forge?.forgeHost} active />}
 
       {showPr && forge && forge.repoChoices.length > 0 && (
         forge.repoNeedsChoice
           ? (
             <div className="scm-notice scm-cleanup" data-testid="scm-repo-choice">
-              <span>{t.forge.repoNeedsChoice}</span>
+              <span>{ft.repoNeedsChoice}</span>
               <button type="button" className="scm-link-btn" aria-disabled={busyAttr} onClick={() => { if (!busyRef.current) openRepoPicker(); }}>{t.forge.repoPick}</button>
             </div>
           )
           : (
             <div className="scm-notice scm-cleanup" data-testid="scm-repo-choice">
-              <span>{t.forge.repoAt(forge.repoChoices.find((c) => c.remote === forge.repoRemote)?.slug ?? forge.repoRemote ?? "")}</span>
+              <span>{ft.repoAt(forge.repoChoices.find((c) => c.remote === forge.repoRemote)?.slug ?? forge.repoRemote ?? "")}</span>
               <button type="button" className="scm-link-btn" aria-disabled={busyAttr} onClick={() => { if (!busyRef.current) openRepoPicker(); }}>{t.forge.repoChange}</button>
             </div>
           )
@@ -462,22 +545,22 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
         ghOk
           ? (
             <button type="button" className="scm-forge-btn is-ghost" aria-disabled={busyAttr} data-testid="forge-open-pr" onClick={openPrForm}>
-              {busy === "pr" ? t.forge.prCreating : t.forge.openPr}
+              {busy === "pr" ? t.forge.prCreating : ft.openPr}
             </button>
           )
           : forge.compareUrl && (
             <button type="button" className="scm-forge-btn is-ghost" aria-disabled={busyAttr} data-tip={forge.compareUrl}
               onClick={() => void openCompare(forge.compareUrl!)}>
-              {t.forge.openOnGithub}
+              {ft.openOnSite}
             </button>
           )
       )}
-      {showPr && offGh && <div className="scm-notice">{forge?.gh === "missing" ? t.forge.ghMissing : t.forge.ghUnauthed}</div>}
+      {showPr && offGh && forge && <ConnectionNotice forge={forge} />}
 
       {error && <PanelMessage tone="error" text={error.text} actions={errorActions(error)} onDismiss={() => setError(null)} testId="forge-error" />}
       {notice && (
         <PanelMessage tone="notice" text={notice.text} testId="forge-notice"
-          actions={notice.link ? [{ label: t.forge.openOnGithub, onClick: () => void openLink(notice.link!).catch(() => {}) }] : []}
+          actions={notice.link ? [{ label: ft.openOnSite, onClick: () => void openLink(notice.link!).catch(() => {}) }] : []}
           onDismiss={notice.link ? () => setNotice(null) : undefined} />
       )}
       {cleanup && sessionId != null && (
@@ -500,8 +583,8 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
 
       {prOpen && prForm && forge?.prDefaults && (
         // 创建中不许关（P-8：以前创建中 Esc 也能关，关掉后成没成都看不到）。
-        <AppModal label={t.forge.prFormTitle(forge.prDefaults.base)} onClose={() => { if (busyRef.current !== "pr") setPrOpen(false); }}>
-          <div className="chat-modal-title">{t.forge.prFormTitle(forge.prDefaults.base)}</div>
+        <AppModal label={ft.prFormTitle(forge.prDefaults.base)} onClose={() => { if (busyRef.current !== "pr") setPrOpen(false); }}>
+          <div className="chat-modal-title">{ft.prFormTitle(forge.prDefaults.base)}</div>
           <label className="ns-field">
             <span className="ns-label">{t.forge.prTitle}</span>
             <input className="ns-input" value={prForm.title} autoFocus onChange={(e) => setPrForm({ ...prForm, title: e.target.value })} />
@@ -519,16 +602,16 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
             <button type="button" className="ns-btn" aria-disabled={busy === "pr" || undefined}
               onClick={() => { if (busyRef.current === "pr") return; setPrOpen(false); setPrForm(null); }}>{t.newSession.cancel}</button>
             <button type="button" className="ns-btn btn-primary" data-testid="pr-create" aria-disabled={busy !== null || !prForm.title.trim() || undefined} onClick={() => void createPr()}>
-              {busy === "pr" ? t.forge.prCreating : t.forge.prCreate}
+              {busy === "pr" ? t.forge.prCreating : ft.prCreate}
             </button>
           </div>
         </AppModal>
       )}
 
       {repoDlg && forge && (
-        <AppModal label={t.forge.repoPickTitle} onClose={() => setRepoDlg(null)}>
-          <div className="chat-modal-title">{t.forge.repoPickTitle}</div>
-          <div className="ns-field" role="radiogroup" aria-label={t.forge.repoPickTitle}>
+        <AppModal label={ft.repoPickTitle} onClose={() => setRepoDlg(null)}>
+          <div className="chat-modal-title">{ft.repoPickTitle}</div>
+          <div className="ns-field" role="radiogroup" aria-label={ft.repoPickTitle}>
             {forge.repoChoices.map((choice) => (
               <label key={choice.remote} className="scm-merge-method">
                 <input type="radio" name="forge-repo" value={choice.remote} checked={repoDlg === choice.remote}
@@ -546,8 +629,8 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
       )}
 
       {mergeDlg && forge && (
-        <AppModal label={t.forge.mergeTitle(mergeDlg.pr.number)} onClose={() => setMergeDlg(null)}>
-          <div className="chat-modal-title">{t.forge.mergeTitle(mergeDlg.pr.number)}</div>
+        <AppModal label={ft.mergeTitle(mergeDlg.pr.number)} onClose={() => setMergeDlg(null)}>
+          <div className="chat-modal-title">{ft.mergeTitle(mergeDlg.pr.number)}</div>
           <div className="scm-merge-into" data-testid="merge-into">{t.forge.mergeInto(mergeDlg.pr.headRef ?? branch ?? "", mergeDlg.pr.baseRef ?? forge.prDefaults?.base ?? "main")}</div>
           <div className="ns-field" role="radiogroup" aria-label={t.forge.mergeMethod}>
             <span className="ns-label">{t.forge.mergeMethod}</span>
@@ -555,7 +638,7 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
               <label key={method} className="scm-merge-method">
                 <input type="radio" name="merge-method" value={method} checked={mergeDlg.method === method}
                   onChange={() => setMergeDlg({ ...mergeDlg, method, step: 1 })} />
-                {t.forge.methods[method] ?? method}
+                {ft.methods[method] ?? method}
               </label>
             ))}
           </div>

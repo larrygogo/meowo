@@ -173,9 +173,8 @@ export function editOutcome(item: import("./shared").ToolUseItem, result?: impor
   return { detail, path, patch, delta, files };
 }
 
-/// 会话工作目录：工具行里落在它下面的路径显示成相对路径（终端里就是这样），
-/// 绝对路径的长前缀会把真正有用的文件名挤出可视区（2026-10 用户实拍）。
-export const ChatCwdContext = createContext<string | null>(null);
+import { ChatCwdContext } from "./chatCwd";
+export { ChatCwdContext };
 
 /// 去掉 cwd 前缀。Windows 路径大小写不敏感、正反斜杠混用，比较前统一归一化。
 export function relativize(text: string, cwd: string | null): string {
@@ -242,9 +241,31 @@ export function toolSummary(item: import("./shared").ToolUseItem, cwd: string | 
       if (typeof command === "string") return command;
       if (typeof pattern === "string") return [pattern, typeof path === "string" ? relativize(path, cwd) : ""].filter(Boolean).join(" ");
       if (typeof path === "string") return relativize(path, cwd);
-    } catch { /* 不是 JSON 就按原文摘要 */ }
+      return argsSummary(parsed);
+    } catch { /* 不是 JSON（或被截断）就按原文摘要 */ }
   }
   return raw;
+}
+
+/// 未归类工具最能说明这次在做什么的那个参数，按先后取第一个有值的。
+/// 2026-11-18 手机实拍的 Kimi 会话：后台任务（WaitFor / TaskOutput / TaskStop）、技能、浏览器、
+/// 抓网页这几类在行上都是整包 JSON，「{"task_id":"bash-h6nni6nr","timeout":90}」。
+const ARG_KEYS = ["url", "skill", "expression", "selector", "text", "task_id", "taskId", "id", "name", "description", "reason", "title", "message", "prompt"];
+
+/// 参数里挑一个说明性的值；一个都不认得时把各个短的标量值用 · 连起来，没有就空着，
+/// 不再把 JSON 摊在行上（展开后的详情里仍有完整参数）。
+function argsSummary(args: Record<string, unknown>): string {
+  for (const key of ARG_KEYS) {
+    const value = args[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  // 提问类工具（如 AskUserQuestion）的参数是 questions 数组：显示第一个问题。
+  const first = Array.isArray(args.questions) ? (args.questions[0] as Record<string, unknown> | undefined) : undefined;
+  if (first && typeof first.question === "string" && first.question.trim()) return first.question.trim();
+  return Object.values(args)
+    .filter((value): value is string | number | boolean => ["string", "number", "boolean"].includes(typeof value) && String(value).trim() !== "")
+    .map(String)
+    .join(" · ");
 }
 
 /// 统一 diff（claude 回执的 structuredPatch）：终端同款「行号 + -/+ + 代码」，增删交错、

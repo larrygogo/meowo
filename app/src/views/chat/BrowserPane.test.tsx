@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn((_cmd: string, _args?: unknown) => Promise.resolve(null as unknown)) }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("../../platform", () => ({ isWindows: () => true }));
 import type { BrowserPaneInfo } from "../../api";
 import { BrowserPane, browserTabTitle, localUrlsIn, occluded } from "./BrowserPane";
 import { isLocalDevUrl, openInPanel, setPanelLinkHandler } from "./panelLinks";
@@ -64,14 +65,29 @@ describe("面板浏览器", () => {
 
   it("agent 操作时显示提示，可以接管；接管后可以交还", () => {
     const { rerender } = render(<BrowserPane info={pane({ agentActive: true })} visible suggestions={[]} />);
-    expect(screen.getByRole("status").textContent).toContain("Agent 正在操作");
-    fireEvent.click(screen.getByRole("button", { name: "接管" }));
+    expect(screen.getByRole("status").textContent).toContain("Agent 正在控制此页面");
+    expect(document.querySelector(".browser-pane-view")?.classList.contains("is-agent")).toBe(true);
+    expect(screen.getByRole("textbox", { name: "搜索或输入网址" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "后退" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "我来接管" }).hasAttribute("disabled")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "我来接管" }));
     expect(invoke).toHaveBeenCalledWith("browser_pane_set_agent_paused", { id: 5, paused: true });
     rerender(<BrowserPane info={pane({ agentPaused: true })} visible suggestions={[]} />);
-    fireEvent.click(screen.getByRole("button", { name: "交还" }));
+    expect(screen.getByRole("textbox", { name: "搜索或输入网址" }).hasAttribute("disabled")).toBe(false);
+    expect(screen.getByRole("button", { name: "后退" }).hasAttribute("disabled")).toBe(false);
+    // 接管后：不再画绿框，提示条显示已接管多久。
+    expect(document.querySelector(".browser-pane-view")?.classList.contains("is-agent")).toBe(false);
+    expect(screen.getByRole("status").textContent).toContain("你已接管0:00");
+    fireEvent.click(screen.getByRole("button", { name: "交还 Agent" }));
     expect(invoke).toHaveBeenCalledWith("browser_pane_set_agent_paused", { id: 5, paused: false });
     rerender(<BrowserPane info={pane()} visible suggestions={[]} />);
     expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("agent 控制时网页权限仍由用户答复，不随人工导航一起锁住", () => {
+    render(<BrowserPane info={pane({ agentActive: true, permission: { id: 1, kind: "camera", host: "a.test" } })} visible suggestions={[]} />);
+    fireEvent.click(screen.getByRole("button", { name: "允许" }));
+    expect(invoke).toHaveBeenCalledWith("browser_pane_answer_permission", { id: 5, permission: 1, allow: true });
   });
 
   it("「…」菜单：显示当前缩放，能放大、打印", () => {
@@ -83,6 +99,54 @@ describe("面板浏览器", () => {
     fireEvent.click(screen.getByRole("button", { name: "更多" }));
     fireEvent.click(screen.getByRole("menuitem", { name: /打印/ }));
     expect(invoke).toHaveBeenCalledWith("browser_pane_action", { id: 5, action: "print" });
+  });
+
+  it("设备模拟：「…」菜单能选设备，当前设备标「当前」；没模拟时不给还原项", () => {
+    const { rerender } = render(<BrowserPane info={pane()} visible suggestions={[]} />);
+    fireEvent.click(screen.getByRole("button", { name: "更多" }));
+    expect(screen.queryByRole("menuitem", { name: /还原为面板尺寸/ })).toBeNull();
+    fireEvent.click(screen.getByRole("menuitem", { name: /模拟桌面/ }));
+    expect(invoke).toHaveBeenCalledWith("browser_pane_emulate", expect.objectContaining({ id: 5, device: "desktop" }));
+    rerender(<BrowserPane info={pane({ emulation: { metrics: { device: "mobile", width: 390, height: 844 }, userAgent: "iPhone", headerNames: [] } })} visible suggestions={[]} />);
+    fireEvent.click(screen.getByRole("button", { name: "更多" }));
+    expect(screen.getByRole("menuitem", { name: /模拟手机/ }).textContent).toContain("当前");
+    fireEvent.click(screen.getByRole("menuitem", { name: /还原为面板尺寸/ }));
+    expect(invoke).toHaveBeenCalledWith("browser_pane_emulate", expect.objectContaining({ id: 5, device: "reset" }));
+  });
+
+  it("设备模拟：可自定义尺寸，记住最近用过的并出现在菜单里", () => {
+    localStorage.removeItem("meowo-browser-emu-recent");
+    render(<BrowserPane info={pane()} visible suggestions={[]} />);
+    fireEvent.click(screen.getByRole("button", { name: "更多" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /自定义尺寸/ }));
+    const dialog = screen.getByRole("dialog", { name: "自定义模拟尺寸" });
+    fireEvent.change(screen.getByRole("textbox", { name: /宽/ }), { target: { value: "50" } });
+    expect(dialog.textContent).toContain("200～4096");
+    fireEvent.click(screen.getByRole("button", { name: "应用" }));
+    expect(invoke).not.toHaveBeenCalledWith("browser_pane_emulate", expect.anything());
+    fireEvent.change(screen.getByRole("textbox", { name: /宽/ }), { target: { value: "412" } });
+    fireEvent.change(screen.getByRole("textbox", { name: /高/ }), { target: { value: "915" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: /触屏手机/ }));
+    fireEvent.click(screen.getByRole("button", { name: "应用" }));
+    expect(invoke).toHaveBeenCalledWith("browser_pane_emulate", { id: 5, device: "mobile", width: 412, height: 915, userAgent: null });
+    fireEvent.click(screen.getByRole("button", { name: "更多" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /模拟 412×915（触屏）/ }));
+    expect(invoke).toHaveBeenLastCalledWith("browser_pane_emulate", { id: 5, device: "mobile", width: 412, height: 915, userAgent: null });
+  });
+
+  it("设备模拟：地址栏旁标出设备和尺寸，悬停说明改了 UA 和哪些请求头，点一下还原；Agent 控制时不能点", () => {
+    const emulation = { metrics: { device: "custom" as const, width: 1440, height: 900 }, userAgent: "Bot", headerNames: ["X-Test", "Accept-Language"] };
+    const { rerender } = render(<BrowserPane info={pane({ emulation })} visible suggestions={[]} />);
+    const chip = screen.getByRole("button", { name: /正在模拟/ });
+    expect(chip.textContent).toBe("自定义 1440×900");
+    expect(chip.getAttribute("data-tip")).toContain("UA 已改");
+    expect(chip.getAttribute("data-tip")).toContain("X-Test, Accept-Language");
+    fireEvent.click(chip);
+    expect(invoke).toHaveBeenCalledWith("browser_pane_emulate", expect.objectContaining({ id: 5, device: "reset" }));
+    rerender(<BrowserPane info={pane({ emulation, agentActive: true })} visible suggestions={[]} />);
+    expect(screen.getByRole("button", { name: /正在模拟/ }).hasAttribute("disabled")).toBe(true);
+    rerender(<BrowserPane info={pane()} visible suggestions={[]} />);
+    expect(screen.queryByRole("button", { name: /正在模拟/ })).toBeNull();
   });
 
   it("网页的权限请求在面板里答：允许 / 阻止，答复送达前按钮锁住防连点", () => {

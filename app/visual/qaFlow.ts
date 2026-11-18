@@ -1,7 +1,7 @@
 // 补看场景（scene=flow-<名字>，见 qa-scenes.mjs）：对话窗里要靠特定后端返回才出现的状态。
 // 都挂真实 ChatWindow，这里只决定各条 IPC 返回什么、挂载前往本地状态里放什么。
 // 出现条件逐条对过源码（ChatWindow.tsx / LeadPanel.tsx / WorktreeSetupBar.tsx / terminalAttention.ts）。
-import { CHAT_SESSION_ID, FIXED_NOW, leadTask, MENTION_CANDIDATES, MODE_MARKERS } from "./fixtures";
+import { CHAT_SESSION_ID, DIR_GONE_HISTORY, FIXED_NOW, goneSessions, leadTask, MENTION_CANDIDATES, MODE_MARKERS } from "./fixtures";
 import { cardSceneMock } from "./cardScenes";
 import { toolSceneMock } from "./toolScenes";
 import { demoChatUi } from "../src/demo/mock";
@@ -86,7 +86,10 @@ export function qaFlowBoot(scene: string, lang: Lang): void {
   const panelTabs: Record<string, unknown[]> = {
     "flow-md": [{ key: "files", type: "files" }],
     "flow-browser": [{ key: "b1", type: "browser", paneId: 7, url: "http://localhost:5173/", title: "Vite" }],
+    "flow-browser-paused": [{ key: "b1", type: "browser", paneId: 7, url: "http://localhost:5173/", title: "Vite" }],
+    "flow-browser-idle": [{ key: "b1", type: "browser", paneId: 7, url: "http://localhost:5173/", title: "Vite" }],
     "flow-browser-blank": [{ key: "b1", type: "browser", paneId: 7, url: "about:blank", title: "" }],
+    "flow-browser-emu": [{ key: "b1", type: "browser", paneId: 7, url: "http://localhost:5173/", title: "Vite" }],
     "flow-shell": [{ key: "t1", type: "term", shellId: 5, cwd: "C:/dev/web-app" }],
   };
   if (panelTabs[scene]) {
@@ -163,6 +166,13 @@ export function qaFlowMock(scene: string, lang: Lang, chat: (cmd: string) => unk
     // 侧栏：空态、首载失败、全文搜索命中、清理 worktree、工作区页签。
     if (cmd === "get_live_sessions_page" && kind === "side-empty") return [];
     if (cmd === "get_live_sessions_page" && kind === "side-error") throw new Error("offline");
+    // 「已完成」页混着目录已删除的会话（卡片第三行的虚线标签）。
+    if (cmd === "get_live_sessions_page" && kind === "side-gone") return goneSessions(lang);
+    // 目录已删的那条在侧栏里与后端同口径：进程不在、已结束、标着目录已删（没有运行圆点）。
+    if (cmd === "get_live_sessions_page" && kind === "dir-gone") {
+      const rows = chat(cmd) as Array<Record<string, unknown> & { session: { id: number } }>;
+      return rows.map((row) => row.session.id === CHAT_SESSION_ID ? { ...row, connected: false, pending_review: null, cwd_missing: true, session: { ...row.session, status: "ended" } } : row);
+    }
     if (cmd === "search_chat_transcripts") return [
       { sessionId: 2, title: zh ? "修支付回调的重复扣款" : "Fix duplicate charge in payment callback", projectName: "billing", excerpt: zh ? "…回调重试时没带幂等键，同一笔订单被扣了两次，schema 里要加唯一约束…" : "…the retry carried no idempotency key, so the order was charged twice; the schema needs a unique constraint…" },
       { sessionId: 3, title: zh ? "补齐导出接口的单测" : "Add tests for the export API", projectName: "api", excerpt: zh ? "…导出 schema 的字段顺序要固定…" : "…the export schema must keep a stable field order…" },
@@ -183,8 +193,10 @@ export function qaFlowMock(scene: string, lang: Lang, chat: (cmd: string) => unk
     if (cmd === "read_file_text") return { relPath: "README.md", truncated: false, binary: false, text: zh
       ? "# web-app\n\n登录、注册与找回密码的前端。\n\n## 开发\n\n```bash\nbun install\nbun run dev\n```\n\n- 校验规则在 `src/schemas/`\n- 组件在 `src/components/`\n\n> 改校验规则前先看 [迁移说明](docs/migration.md)。\n\n| 命令 | 作用 |\n|---|---|\n| `bun run test` | 跑单测 |\n| `bun run build` | 打包 |\n"
       : "# web-app\n\nFront end for sign-in, sign-up and password reset.\n\n## Development\n\n```bash\nbun install\nbun run dev\n```\n\n- Validation rules live in `src/schemas/`\n- Components live in `src/components/`\n\n> Read the [migration notes](docs/migration.md) before changing a rule.\n\n| Command | What it does |\n|---|---|\n| `bun run test` | Unit tests |\n| `bun run build` | Bundle |\n" };
-    if (cmd === "browser_pane_list") return [{ id: 7, owner: CHAT_SESSION_ID, url: kind === "browser-blank" ? "about:blank" : "http://localhost:5173/", title: "Vite", loading: false, agentActive: kind === "browser", agentPaused: false, zoom: 1,
-      downloads: kind === "browser" ? [{ id: 1, fileName: "report-2026-11.pdf", state: "done" }] : [], permission: kind === "browser" ? { id: 3, kind: "camera", host: "localhost:5173" } : null, blocked: null }];
+    if (cmd === "browser_pane_list") return [{ id: 7, owner: CHAT_SESSION_ID, url: kind === "browser-blank" ? "about:blank" : "http://localhost:5173/", title: "Vite", loading: false, agentActive: kind === "browser" || kind === "browser-paused", agentPaused: kind === "browser-paused", zoom: 1,
+      downloads: kind === "browser" ? [{ id: 1, fileName: "report-2026-11.pdf", state: "done" }] : [], permission: kind === "browser" ? { id: 3, kind: "camera", host: "localhost:5173" } : null, blocked: null,
+      // Agent 用 browser_emulate 切到手机并加了一个请求头：地址栏旁出现模拟标记。
+      emulation: kind === "browser-emu" ? { metrics: { device: "mobile", width: 390, height: 844 }, userAgent: "Mozilla/5.0 (iPhone)", headerNames: ["Accept-Language"] } : null }];
     if (cmd === "shell_terminal_list") return [{ id: 5, owner: CHAT_SESSION_ID, title: "pwsh", exited: false }];
     if (cmd === "shell_terminal_attach") {
       const id = (args as { onEvent?: { id?: number } })?.onEvent?.id;
@@ -203,6 +215,8 @@ export function qaFlowMock(scene: string, lang: Lang, chat: (cmd: string) => unk
     // 排队场景按真实 Claude 的声明（插件 queue_input = 回车、queue_delivery = next_step）：队首钮说「立即插入当前回合」。
     if (cmd === "agent_chat_ui" && (args as { provider?: string })?.provider === "claude") {
       const ui = patchChatUi(demoChatUi()) as Record<string, unknown>;
+      // 运行条认重试行靠插件声明的正则（与 src/test/agents.ts 的 CLAUDE_RETRY_LINE_PATTERN 同一串）。
+      if (kind === "api-stalled") return { ...ui, retry_line_pattern: String.raw`· (?:Retrying in|retrying, waiting up to|next try in) [^·]{1,60}· attempt (\d+)/(\d+)(?: · [^·]{0,40})?\s*$|Waiting for API response · will retry in ([^·]{1,20}?) · check your network\s*$` };
       return kind === "queued" ? { ...ui, queue_input: "\r", queue_delivery: "next_step" } : ui;
     }
     if (cmd === "lead_task_snapshot" && (kind === "lead" || kind === "lead-panel")) return leadTask(lang);
@@ -220,6 +234,34 @@ export function qaFlowMock(scene: string, lang: Lang, chat: (cmd: string) => unk
         } };
       }
       return { approval: null, question: null };
+    }
+    // 会话状态（2026-11-18）：只剩后台子代理在跑（主回合空闲，可以直接发）、子代理面板的时长与 token
+    // （含被 SendMessage 续上、最初委派不在窗口里的那个）、API 卡住等重试（运行条与侧栏状态点）。
+    if (kind === "bg-only" || kind === "subagents-live" || kind === "api-stalled") {
+      const at = (minutes: number) => new Date(FIXED_NOW - minutes * 60_000).toISOString();
+      const items = [
+        { type: "user_text", id: "bg-u1", timestamp: at(12), text: zh ? "派两个子代理分别复核后端和 SourceControl，结果回来再汇总。" : "Send two subagents to review the backend and SourceControl, then summarize." },
+        { type: "tool_use", id: "bg-a1", timestamp: at(11), name: "Agent", kind: "agent", summary: zh ? "跑 meowo-agent 后端测试" : "Run meowo-agent backend tests",
+          subagent: { description: zh ? "跑 meowo-agent 后端测试" : "Run meowo-agent backend tests", agent_type: "general-purpose", count: 1 } },
+        { type: "tool_result", id: "bg-r1", timestamp: at(11), tool_use_id: "bg-a1", text: "Async agent launched successfully.", is_error: false, subagent: { running: 1, completed: 0, failed: 0, task_id: "a9441de" } },
+        { type: "tool_use", id: "bg-a2", timestamp: at(10), name: "Agent", kind: "agent", summary: zh ? "独立审查设备模拟" : "Review device emulation",
+          subagent: { description: zh ? "独立审查设备模拟" : "Review device emulation", agent_type: "lead-redteam", count: 1 } },
+        { type: "tool_result", id: "bg-r2", timestamp: at(10), tool_use_id: "bg-a2", text: "Async agent launched successfully.", is_error: false, subagent: { running: 1, completed: 0, failed: 0, task_id: "a68568d" } },
+        { type: "tool_result", id: "bg-r2b", timestamp: at(6), tool_use_id: "bg-a2", text: zh ? "Agent「独立审查设备模拟」完成" : "Agent finished", is_error: false, subagent: { running: 0, completed: 1, failed: 0, task_id: "a68568d" } },
+        { type: "tool_use", id: "bg-s1", timestamp: at(3.5), name: "SendMessage", kind: "other", summary: JSON.stringify({ to: "acb4b19", message: zh ? "核对 SourceControl.tsx 的暂存逻辑" : "Check the staging logic in SourceControl.tsx" }) },
+        { type: "tool_result", id: "bg-s1r", timestamp: at(3.47), tool_use_id: "bg-s1", text: "{\"success\":true,\"message\":\"Resuming agent acb4b19\"}", is_error: false, subagent: { running: 1, completed: 0, failed: 0, task_id: "acb4b19" } },
+        { type: "assistant_text", id: "bg-t1", timestamp: at(3), text: zh ? "两个子代理都在后台跑，结果回来我再汇总。" : "Both subagents are running in the background; I'll summarize when they report back." },
+      ];
+      if (cmd === "probe_subagent_states") return { "bg-a1": { status: "unknown", branches: [], tokens: 341_712 }, "bg-a2": { status: "unknown", branches: [], tokens: 26_548 }, acb4b19: { status: "unknown", branches: [], tokens: 540_812, description: zh ? "复核 SourceControl 的暂存逻辑" : "Review the staging logic in SourceControl" } };
+      if (cmd === "get_chat_history") {
+        if (kind === "api-stalled") return { ...base(), items: items.slice(0, 3), pendingReview: null, status: "running", screenState: "working", busySubagents: 0 };
+        return { ...base(), items, pendingReview: null, status: "waiting", screenState: "idle", busySubagents: 2 };
+      }
+      if (cmd === "managed_terminal_snapshot" && kind === "api-stalled") return { ...termText(["● 我先跑一遍后端测试。", "", "✻ Waiting for API response · will retry in 1m 9s · check your network", "", "────────────────────────", " ❯ ", "────────────────────────"]), active: true, exited: false, exitCode: null };
+      if (cmd === "get_live_sessions_page" && kind === "api-stalled") {
+        const rows = chat(cmd) as Array<Record<string, unknown> & { session: { id: number } }>;
+        return rows.map((row) => row.session.id === CHAT_SESSION_ID ? { ...row, connected: true, screen_state: "working", screen_retry: { kind: "stalled" }, session: { ...row.session, status: "running" } } : row);
+      }
     }
     if (cmd === "managed_terminal_snapshot" && screenKind && SCREENS[screenKind]) {
       const text = SCREENS[screenKind].join("\r\n");
@@ -239,6 +281,21 @@ export function qaFlowMock(scene: string, lang: Lang, chat: (cmd: string) => unk
       if (kind === "unsupported") return { ...h, ...calm, supported: false, items: [] };
       if (kind === "earlier") return { ...h, ...calm, hasMore: true, earliest: 12 };
       if (kind === "handoff") return { ...h, ...calm, predecessorId: 99 };
+      // 目录已删除：只读回看，输入区换成说明与「在原项目新开会话」。
+      if (kind === "dir-gone") return { ...h, ...DIR_GONE_HISTORY };
+      if (kind === "mixed-user") {
+        const text = `<hook_result hook_event="UserPromptSubmit">[lead] ${zh ? "这个项目有进行中的任务" : "This project has an active task"}</hook_result>\n${zh ? "为什么本会话一直有一个 Lead 面板？" : "Why does this session keep showing a Lead panel?"}`;
+        return { ...h, ...calm, items: [{ type: "user_text", id: "qa-mixed-user", timestamp: ts, text }] };
+      }
+      if (kind === "browser-receipt") {
+        const items = [
+          { type: "user_text", id: "qa-browser-user", timestamp: ts, text: zh ? "看看登录页现在的样子" : "Show me the current login page" },
+          { type: "tool_use", id: "qa-browser-shot", timestamp: ts, name: "mcp__meowo__browser_screenshot", kind: "other", summary: "" },
+          { type: "tool_result", id: "qa-browser-shot-r", timestamp: ts, tool_use_id: "qa-browser-shot", text: (zh ? "面板浏览器截图（18 KB）" : "Panel browser screenshot (18 KB)") + "\n[Image: source: C:\\tmp\\shot.png]", is_error: false },
+          { type: "assistant_text", id: "qa-browser-reply", timestamp: ts, text: zh ? "页面已经打开，截图里能看到登录表单。" : "The page is open and the login form is visible in the screenshot." },
+        ];
+        return { ...h, ...calm, items };
+      }
       if (kind === "image") {
         const items = [...h.items];
         items.splice(1, 0, { type: "user_text", id: "qa-img", timestamp: ts, text: (zh ? "这个报错是什么意思？" : "What does this error mean?") + "\n[Image #1: source: C:\\Users\\demo\\shot.png]" });

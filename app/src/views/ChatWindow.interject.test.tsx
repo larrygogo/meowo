@@ -518,6 +518,34 @@ describe("ChatWindow", () => {
     await waitFor(() => expect(setTitleMock).toHaveBeenCalledWith("▶ 跑着的会话 · Meowo"));
   });
 
+  /** 运行条次行是此刻真正在跑的那一步。hook 的 current_activity 只在工具**跑完**（PostToolUse）
+   *  时写，长命令跑着的整段时间里它停在上一条早已完成的命令上（实拍 2026-11-18：终端里在跑
+   *  「Install Rust binary…」，运行条还是前一条 Select-String）。transcript 里还没有回执的调用
+   *  才是正在跑的那一步。 */
+  it("运行条次行:显示还没回执的那条调用,不显示 hook 记的上一条已完成命令", async () => {
+    window.history.replaceState({}, "", "/?sessionId=97");
+    respondWithHistory({
+      sessionId: 97, title: "装二进制", status: "running", provider: "claude", cwd: "C:/repo",
+      supported: true, offset: 1, reset: false, pendingReview: null, connected: true,
+      currentActivity: "› Select-String -Path \"$env:LOCALAPPDATA\\pr-autoreview\\autoreview.log\" -Pattern 'reqgenie'",
+      items: [
+        { type: "user_text", id: "u1", timestamp: null, text: "装上去" },
+        { type: "tool_use", id: "t1", timestamp: null, name: "PowerShell", kind: "run", summary: "Select-String", detail: { kind: "command", command: "Select-String -Path \"$env:LOCALAPPDATA\\pr-autoreview\\autoreview.log\" -Pattern 'reqgenie'", description: null } },
+        { type: "tool_result", id: "r1", timestamp: null, tool_use_id: "t1", text: "", is_error: false },
+        { type: "tool_use", id: "t2", timestamp: null, name: "PowerShell", kind: "run", summary: "$dir = Join-Path", detail: { kind: "command", command: "$dir = Join-Path $env:LOCALAPPDATA 'Programs\\pr-autoreview'\nNew-Item -ItemType Directory -Force $dir", description: "Install Rust binary, migrate old deployment, install service" } },
+      ],
+    });
+    render(<ChatWindow />);
+    const activity = await waitFor(() => {
+      const el = document.querySelector(".chat-running-activity");
+      expect(el).toBeTruthy();
+      return el!;
+    });
+    expect(activity.textContent).toBe("Install Rust binary, migrate old deployment, install service");
+    expect(activity.getAttribute("data-tip")).toContain("$dir = Join-Path");
+    expect(document.querySelector(".chat-running")!.textContent).not.toContain("Select-String");
+  });
+
   /** 压缩（/compact）进行期间后端把 current_activity 写成哨兵 __meowo_compacting__:
    *  运行条显示本地化「正在压缩上下文…」,哨兵原值不上屏、不进 tooltip(data-tip)。 */
   it("压缩哨兵:运行条映射为本地化文案,原值不进 tooltip", async () => {

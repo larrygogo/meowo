@@ -150,6 +150,8 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     // 对话流
     "get_chat_history",
     "get_subagent_transcript",
+    // 子任务面板的 token 与最初委派的说明（只读侧车）：不放行时手机上续上的子代理名字退回消息正文。
+    "probe_subagent_states",
     "refresh_session_model",
     "refresh_session_todos",
     // 托管 PTY（发送/打断/答题都经 write_managed_terminal 的按键序列）
@@ -211,6 +213,7 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "queue_session_settings",
     "queued_session_settings",
     "take_queued_session_settings",
+    "cancel_queued_session_settings",
     "new_session",
     // 分叉会话（2026-11-04 用户决定放行）：与 new_session 同级——在原会话目录起一个新的托管
     // 会话，参数只有会话 id 和终端尺寸，不给路径、不给 argv。
@@ -252,6 +255,9 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "forge_choose_repo",
     // 侧栏会话行的 PR / CI 与改动数（UI 优化 #54）：只读，每个目录逐一过会话目录收口，不是的直接丢掉。
     "sidebar_git_badges",
+    // 代码托管账号清单（只读：平台、主机、账号名、要不要重新登录；含 github.com；不含令牌与进行中的登录代码）。
+    // 添加、退出、设备码登录只在桌面设置页做，见拒绝名单测试。
+    "forge_accounts",
     // 输入框 `@` 补全（2026-11-04 用户决定放行）：只回文件/目录名，不读内容；目录收口同改动列表。
     "file_mention_candidates",
     // Lead 工作流（模块头「例外（2026-11-09）」）
@@ -1052,7 +1058,7 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                 return reply::<()>(Err(e));
             }
             reply(
-                crate::lead::answer_lead_gate(app.clone(), a.cwd, a.gate_id, a.choice, a.note)
+                crate::lead::answer_lead_gate(app.clone(), a.cwd, a.gate_id, a.choice, a.note, a.version)
                     .await,
             )
         }
@@ -1376,6 +1382,10 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             let a = args!(GetSubagentTranscriptArgs);
             reply(crate::chat::get_subagent_transcript(state, a.session_id, a.tool_use_id).await)
         }
+        "probe_subagent_states" => {
+            let a = args!(ProbeSubagentStatesArgs);
+            reply(crate::chat::probe_subagent_states(state, a.session_id, a.tool_use_ids).await)
+        }
         "refresh_session_model" => {
             let a = args!(SessionArg);
             reply(crate::chat::refresh_session_model(state, a.session_id).await)
@@ -1640,6 +1650,10 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             let a = args!(SessionArg);
             reply_ok(crate::session_settings::take_queued_session_settings(a.session_id))
         }
+        "cancel_queued_session_settings" => {
+            let a = args!(SessionArg);
+            reply_ok(crate::session_settings::cancel_queued_session_settings(a.session_id))
+        }
         "session_live_settings" => {
             let a = args!(SessionArg);
             reply(crate::session_settings::session_live_settings(app.clone(), state, a.session_id).await)
@@ -1700,6 +1714,7 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             let a = args!(ListSubdirectoriesArgs);
             reply(list_subdirectories(a.path).await)
         }
+        "forge_accounts" => reply(crate::forge_accounts::forge_accounts_remote().await),
         "get_settings" => reply(
             crate::settings::get_settings()
                 .await
@@ -2087,6 +2102,15 @@ mod tests {
             "api_key_login",
             // 账号管理里需要交互式终端或不可逆的部分仍只在电脑上做（2026-11-15 只放行看与切换）。
             "logout_agent",
+            // 代码托管账号（含 github.com）：令牌进的是这台电脑的凭据库，添加、退出、登录只在桌面做。
+            "forge_account_add",
+            "forge_account_remove",
+            "forge_login_start",
+            "forge_login_cancel",
+            // 设置 › 代码托管 › Git 的改身份命令：手机上没有设置窗，用不到它。手机端改提交身份照旧走白名单里的
+            // git_set_identity（提交报 git/identity 时的就地对话框），两者写的都是这台电脑的全局 user.name / user.email，
+            // 用同一套校验（git_tool::validate），所以不开第二个入口。
+            "git_identity_set",
             "create_profile",
             "rename_profile",
             "delete_profile",
@@ -2727,6 +2751,11 @@ mod tests {
                 parse::<GetSubagentTranscriptArgs>(br#"{"sessionId":7,"toolUseId":"tu-1"}"#)
                     .map(|_| ())
             }
+            // api.ts probeSubagentStates
+            "probe_subagent_states" => {
+                parse::<ProbeSubagentStatesArgs>(br#"{"sessionId":7,"toolUseIds":["tu-1"]}"#)
+                    .map(|_| ())
+            }
             // api.ts:362（since 可选）
             "managed_terminal_snapshot" => {
                 parse::<ManagedTerminalSnapshotArgs>(br#"{"sessionId":7,"since":12}"#).map(|_| ())
@@ -2821,7 +2850,7 @@ mod tests {
             "session_live_settings" => parse::<SessionArg>(br#"{"sessionId":42}"#).map(|_| ()),
             "record_session_settings" => parse::<RecordSessionSettingsArgs>(br#"{"sessionId":42,"model":"kimi-code/k3","modes":{"permission":"manual"}}"#).map(|_| ()),
             "queue_session_settings" => parse::<QueueSessionSettingsArgs>(br#"{"sessionId":42,"request":{"modes":{"work":"plan"},"label":"x"}}"#).map(|_| ()),
-            "queued_session_settings" | "take_queued_session_settings" => parse::<SessionArg>(br#"{"sessionId":42}"#).map(|_| ()),
+            "queued_session_settings" | "take_queued_session_settings" | "cancel_queued_session_settings" => parse::<SessionArg>(br#"{"sessionId":42}"#).map(|_| ()),
             "agent_launch_defaults" => {
                 parse::<AgentLaunchDefaultsArgs>(br#"{"provider":"kimi","cwd":null}"#).map(|_| ())
             }
@@ -2838,7 +2867,10 @@ mod tests {
             // api.ts fileMentionCandidates
             "file_mention_candidates" => parse::<FileMentionCandidatesArgs>(br#"{"cwd":"C:/repo","query":"src/ma"}"#).map(|_| ()),
             "lead_task_snapshot" => parse::<LeadTaskSnapshotArgs>(br#"{"cwd":"C:/repo","session":"cc-abc"}"#).map(|_| ()),
-            "answer_lead_gate" => parse::<AnswerLeadGateArgs>(br#"{"cwd":"C:/repo","gateId":"B-1","choice":"1","note":""}"#).map(|_| ()),
+            "answer_lead_gate" => parse::<AnswerLeadGateArgs>(br#"{"cwd":"C:/repo","gateId":"B-1","choice":"1","note":"","version":"frozen-v1"}"#)
+                .and_then(|_| parse::<AnswerLeadGateArgs>(br#"{"cwd":"C:/repo","gateId":"B-1","choice":"1","note":"","version":null}"#))
+                .and_then(|_| parse::<AnswerLeadGateArgs>(br#"{"cwd":"C:/repo","gateId":"B-1","choice":"1","note":""}"#))
+                .map(|_| ()),
             "retry_lead_gate_delivery" => parse::<RetryLeadGateDeliveryArgs>(br#"{"cwd":"C:/repo","gateId":"B-1"}"#).map(|_| ()),
             "new_session" => parse::<NewSessionArgs>(
                 br#"{"cwd":"C:/repo","provider":"claude","options":{"permissionMode":"default"},"extraDirs":["C:/other"]}"#,
@@ -2901,6 +2933,7 @@ mod tests {
             | "host_os"
             | "file_access_token"
             | "get_accounts"
+            | "forge_accounts"
             | "list_cleanable_worktrees" => parse::<serde::de::IgnoredAny>(br#"{}"#).map(|_| ()),
             // 白名单新增项必须补样例——落到此臂是样例漏写，不是命令坏了。
             _ => Err(format!("{cmd} 在 sample_payload_parse_check 缺 payload 样例")),

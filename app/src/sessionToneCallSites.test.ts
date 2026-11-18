@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(() => Promise.resolve(() => {})) }));
 
-import { historyTone, liveSessionTone, type ChatHistory, type LiveSession } from "./api";
+import { historyTone, historyTurnTone, liveSessionTone, type ChatHistory, type LiveSession } from "./api";
 
 /// 会话状态同源（验收 15、做空 ⑩）。
 ///
@@ -42,6 +42,11 @@ describe("会话状态的调用点", () => {
     expect(historyTone(history({ status: "running", screenState: "idle", screenAssumed: true }))).toBe("running");
     expect(historyTone(history({ status: "running", screenState: "idle", screenAssumed: false }))).toBe("waiting");
     expect(historyTone(null)).toBe("offline");
+    // 主回合口径（对话窗发送、排队用）：后台子任务不算在跑，其余事实照算。
+    expect(historyTurnTone(history({ busySubagents: 2 }))).toBe("waiting");
+    expect(historyTurnTone(history({ busySubagents: 2, screenState: "idle" }))).toBe("waiting");
+    expect(historyTurnTone(history({ busySubagents: 2, screenState: "working" }))).toBe("running");
+    expect(historyTurnTone(history({ busySubagents: 2, pendingReview: "approval" }))).toBe("pending");
 
     const row = (extra: Partial<LiveSession>, status = "waiting") => ({ connected: true, session: { status }, pending_review: null, errored: false, busy_subagents: 0, screen_state: null, screen_assumed: false, ...extra }) as unknown as LiveSession;
     expect(liveSessionTone(row({ busy_subagents: 1 }))).toBe("running");

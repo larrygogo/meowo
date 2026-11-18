@@ -6,13 +6,27 @@ import { ToolResultLine } from "../ToolResultLine";
 import { ChatCwdContext, todoSummary, toolSummary } from "../ToolActivity";
 import { outputLines, type ToolResultItem, type ToolUseItem } from "../shared";
 import { ToolBodyText } from "./ToolBodyText";
+import { ImageRef } from "../Message";
 import { languageForPath } from "../highlight";
+
+const TOOL_IMAGE_REF = /\[Image(?: #\d+)?: source: ([^\]]+?)\]/g;
+
+function receiptMedia(result: ToolResultItem | undefined) {
+  if (!result) return { result, images: [] as string[] };
+  const images = [...result.text.matchAll(TOOL_IMAGE_REF)].map((match) => match[1]);
+  if (images.length === 0) return { result, images };
+  return {
+    result: { ...result, text: result.text.replace(TOOL_IMAGE_REF, "").replace(/\n{3,}/g, "\n\n").trim() },
+    images,
+  };
+}
 
 /// 其他工具（对照 Kimi 的 GenericTool）：搜索/网络/待办/子任务/未识别工具的统一形态。
 export const GenericTool = memo(function GenericTool({ item, result }: { item: ToolUseItem; result?: ToolResultItem }) {
   const t = useT();
   const cwd = useContext(ChatCwdContext);
   const kind = item.kind;
+  const media = receiptMedia(result);
   const summary = toolSummary(item, cwd);
   // 命中条数优先用后端给的真实数字：回执可能被截断，或整包是一行 JSON（数正文恒为 1）。
   const count = kind === "search" && result && !result.is_error && !result.interrupted
@@ -32,6 +46,7 @@ export const GenericTool = memo(function GenericTool({ item, result }: { item: T
           <span className="chat-tool-verb" data-kind={kind}>{toolShortName(item.name, kind, t)}</span>
           <span className="chat-tool-summary">{summary}</span>
           {more > 0 && <span className="chat-tool-count">{t.chat.toolMoreTargets(more)}</span>}
+          {media.images.length > 0 && <span className="chat-tool-count">{t.chat.toolBrowserShots(media.images.length)}</span>}
           {count !== null && <span className="chat-tool-count">{t.chat.toolFoundLines(count)}</span>}
           {todo && <span className="chat-tool-count">{todo.done}/{todo.total}</span>}
         </>
@@ -40,9 +55,14 @@ export const GenericTool = memo(function GenericTool({ item, result }: { item: T
         <>
           <div className="chat-tool-result">
             <span className="chat-tool-elbow" aria-hidden="true">⎿</span>
-            <ToolResultLine item={item} result={result} kind={kind} detail={item.detail ?? null} patch={null} />
+            <ToolResultLine item={item} result={media.result} kind={kind} detail={item.detail ?? null} patch={null} />
           </div>
-          <ToolBodyText result={result} lang={lang} />
+          {media.images.length > 0 && (
+            <div className="chat-image-row chat-tool-browser-images">
+              {media.images.map((path, index) => <ImageRef path={path} key={`${index}:${path}`} />)}
+            </div>
+          )}
+          <ToolBodyText result={media.result} lang={lang} />
         </>
       }
     />

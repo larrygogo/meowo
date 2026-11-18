@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { answerBrowserPanePermission, browserPaneAction, navigateBrowserPane, openLink, revealBrowserPaneDownload, setBrowserPaneAgentPaused, setBrowserPaneBounds, type BrowserDownload, type BrowserPaneInfo } from "../../api";
+import { answerBrowserPanePermission, browserPaneAction, emulateBrowserPane, type EmulateSpec, navigateBrowserPane, openLink, revealBrowserPaneDownload, setBrowserPaneAgentPaused, setBrowserPaneBounds, type BrowserDownload, type BrowserPaneInfo } from "../../api";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import { PathMenu, type PathMenuItem } from "./pathMenu";
@@ -7,7 +7,9 @@ import { Icon } from "../../icons/Icon";
 import { icDownload, icMore, icRefresh } from "../../icons/glyphs";
 import { icArrowLeft, icArrowRight, icBan, icExternal } from "../../icons/glyphs.scm";
 import { icShield } from "../../icons/glyphs.chat";
+import { isWindows } from "../../platform";
 import { busyProps } from "../../busyButton";
+import { AppModal } from "../AppModal";
 // 老调用方（测试）从这里拿；ChatWindow 直接引 localUrls，免得把面板浏览器拖进主 chunk。
 export { localUrlsIn } from "./localUrls";
 
@@ -30,6 +32,88 @@ export function occluded(area: DOMRect, root: ParentNode = document): boolean {
   return false;
 }
 
+export type CustomEmu = { width: number; height: number; touch?: boolean; userAgent?: string };
+const RECENT_EMU_KEY = "meowo-browser-emu-recent";
+const RECENT_EMU_MAX = 3;
+const EMU_MIN = 200;
+const EMU_MAX = 4096;
+
+/** 最近用过的自定义尺寸（新的在前）。只是本机的使用习惯，存 localStorage；读写失败当没有。 */
+export function loadRecentEmu(): CustomEmu[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(RECENT_EMU_KEY) ?? "[]");
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((entry): entry is CustomEmu => !!entry && Number.isInteger(entry.width) && Number.isInteger(entry.height)).slice(0, RECENT_EMU_MAX);
+  } catch {
+    return [];
+  }
+}
+
+export function rememberRecentEmu(size: CustomEmu): CustomEmu[] {
+  const same = (a: CustomEmu) => a.width === size.width && a.height === size.height && !!a.touch === !!size.touch && (a.userAgent ?? "") === (size.userAgent ?? "");
+  const next = [size, ...loadRecentEmu().filter((entry) => !same(entry))].slice(0, RECENT_EMU_MAX);
+  try { localStorage.setItem(RECENT_EMU_KEY, JSON.stringify(next)); } catch { /* 存不下就只在这次用 */ }
+  return next;
+}
+
+/// 「自定义尺寸…」：宽、高（CSS 像素）、是否按触屏手机模拟、可选 UA。范围与后端校验一致，越界当场说明。
+function CustomEmuDialog({ initial, onClose, onApply }: { initial?: CustomEmu; onClose: () => void; onApply: (size: CustomEmu) => void }) {
+  const t = useT();
+  const [width, setWidth] = useState(String(initial?.width ?? 1440));
+  const [height, setHeight] = useState(String(initial?.height ?? 900));
+  const [touch, setTouch] = useState(!!initial?.touch);
+  const [userAgent, setUserAgent] = useState(initial?.userAgent ?? "");
+  const w = Number(width);
+  const h = Number(height);
+  const valid = [w, h].every((n) => Number.isInteger(n) && n >= EMU_MIN && n <= EMU_MAX);
+  const submit = () => { if (valid) onApply({ width: w, height: h, touch: touch || undefined, userAgent: userAgent.trim() || undefined }); };
+  return (
+    <AppModal label={t.chat.browserEmuCustomTitle} onClose={onClose} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); submit(); } }}>
+      <div className="chat-modal-title">{t.chat.browserEmuCustomTitle}</div>
+      <div className="browser-emu-size">
+        <label className="ns-field">
+          <span className="ns-label">{t.chat.browserEmuWidth}</span>
+          <input className="ns-input" inputMode="numeric" value={width} autoFocus onChange={(e) => setWidth(e.target.value.replace(/\D/g, ""))} />
+        </label>
+        <span className="browser-emu-times" aria-hidden="true">×</span>
+        <label className="ns-field">
+          <span className="ns-label">{t.chat.browserEmuHeight}</span>
+          <input className="ns-input" inputMode="numeric" value={height} onChange={(e) => setHeight(e.target.value.replace(/\D/g, ""))} />
+        </label>
+      </div>
+      {!valid && <div className="scm-discard-repo" role="alert">{t.chat.browserEmuRange(EMU_MIN, EMU_MAX)}</div>}
+      <label className="scm-pr-draft">
+        <input type="checkbox" checked={touch} onChange={(e) => setTouch(e.target.checked)} />
+        {t.chat.browserEmuTouch}
+      </label>
+      <label className="ns-field">
+        <span className="ns-label">{t.chat.browserEmuUaLabel}</span>
+        <input className="ns-input" value={userAgent} placeholder={t.chat.browserEmuUaPlaceholder} spellCheck={false} onChange={(e) => setUserAgent(e.target.value)} />
+      </label>
+      <div className="chat-modal-actions">
+        <button type="button" className="ns-btn" onClick={onClose}>{t.newSession.cancel}</button>
+        <button type="button" className="ns-btn btn-primary" aria-disabled={!valid || undefined} onClick={submit}>{t.chat.browserEmuApply}</button>
+      </div>
+    </AppModal>
+  );
+}
+
+/// 接管了多久（m:ss），每秒走一次；没在接管时不起定时器。
+function usePausedFor(paused: boolean): string {
+  const [since, setSince] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!paused) { setSince(null); return; }
+    const start = Date.now();
+    setSince(start);
+    setNow(start);
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [paused]);
+  const seconds = since === null ? 0 : Math.max(0, Math.floor((now - since) / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
 /**
  * 面板「浏览器」页签：地址栏 + 一块占位区域。真正的网页是后端在 chat 窗口里叠的原生
  * 子 webview（browser_pane.rs），这里负责把占位区域的位置实时报过去。
@@ -46,8 +130,10 @@ export function BrowserPane({ info, visible, suggestions }: {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const blank = info.url === "about:blank";
+  const inputLocked = info.agentActive && !info.agentPaused;
   const [draft, setDraft] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const pausedFor = usePausedFor(!!info.agentPaused);
   const showNative = visible && !blank;
 
   // 位置同步：面板拖宽、最大化、窗口缩放、DOM 里冒出菜单/弹窗，都重新量一次。
@@ -66,7 +152,9 @@ export function BrowserPane({ info, visible, suggestions }: {
       frame = 0;
       const rect = host.getBoundingClientRect();
       const show = rect.width > 0 && rect.height > 0 && !occluded(rect);
-      const bounds = { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
+      // 原生视图只盖内容区：Agent 控制时占位区域留一圈内边距画边框（见 .browser-pane-view.is-agent）。
+      const inset = parseFloat(getComputedStyle(host).paddingTop) || 0;
+      const bounds = { x: rect.left + inset, y: rect.top + inset, width: Math.max(0, rect.width - inset * 2), height: Math.max(0, rect.height - inset * 2) };
       const key = show ? `${bounds.x},${bounds.y},${bounds.width},${bounds.height}` : "hidden";
       if (key === last) return;
       last = key;
@@ -87,7 +175,7 @@ export function BrowserPane({ info, visible, suggestions }: {
       // 卸载（关面板、换会话）时一定要藏起来：原生视图不会跟着 DOM 消失。
       void setBrowserPaneBounds(info.id, { x: 0, y: 0, width: 0, height: 0 }, false).catch(() => {});
     };
-  }, [info.id, showNative]);
+  }, [info.id, showNative, inputLocked]);
 
   // 新开的空白页签直接把光标放进地址栏。
   useEffect(() => {
@@ -95,6 +183,7 @@ export function BrowserPane({ info, visible, suggestions }: {
   }, [visible, blank]);
 
   const go = (url: string) => {
+    if (inputLocked) return;
     setError(null);
     setDraft(null);
     void navigateBrowserPane(info.id, url).catch((e) => setError(formatBackendError(e, t.locale)));
@@ -105,9 +194,33 @@ export function BrowserPane({ info, visible, suggestions }: {
     if (text) go(text);
   };
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  useEffect(() => { if (inputLocked) setMenu(null); }, [inputLocked]);
   const act = (action: Parameters<typeof browserPaneAction>[1]) => {
+    if (inputLocked) return;
     void browserPaneAction(info.id, action).catch((e) => setError(formatBackendError(e, t.locale)));
   };
+  // 设备模拟：Agent 用 browser_emulate 设的，用户也能在「…」菜单里自己选或还原。只有 Windows
+  // 的 WebView2 有 Chrome 调试协议，其他平台不给入口（后端也会明确拒绝）。
+  const emulation = info.emulation ?? null;
+  const canEmulate = isWindows();
+  const emulate = (spec: EmulateSpec) => {
+    if (inputLocked) return;
+    void emulateBrowserPane(info.id, spec).catch((e) => setError(formatBackendError(e, t.locale)));
+  };
+  // 自定义尺寸：三个预设不够用（用户：「这个最好也能自定义，不要写死」）。填过的尺寸记住最近 RECENT_EMU_MAX 个，
+  // 直接出现在菜单里，下次点一下就用。
+  const [customOpen, setCustomOpen] = useState(false);
+  const [recent, setRecent] = useState<CustomEmu[]>(loadRecentEmu);
+  const applyCustom = (size: CustomEmu) => {
+    setRecent(rememberRecentEmu(size));
+    emulate({ device: size.touch ? "mobile" : undefined, width: size.width, height: size.height, userAgent: size.userAgent || undefined });
+  };
+  const isCurrent = (size: CustomEmu) => !!emulation?.metrics && emulation.metrics.width === size.width && emulation.metrics.height === size.height;
+  const emuDetail = emulation ? [
+    emulation.metrics ? `${t.chat.browserEmuDevice(emulation.metrics.device)} ${emulation.metrics.width}×${emulation.metrics.height}` : null,
+    emulation.userAgent ? t.chat.browserEmuUa : null,
+    emulation.headerNames.length > 0 ? t.chat.browserEmuHeaders(emulation.headerNames.join(", ")) : null,
+  ].filter(Boolean).join(" · ") : "";
 
   // 权限请求：按钮在答复送达前锁住。后端每次答复的是排在最前的那条，连点两下会把下一条也
   // 一起答掉。按请求编号判断，不按对象引用：标题、加载状态这些无关推送每次都是新对象，会提前
@@ -136,13 +249,13 @@ export function BrowserPane({ info, visible, suggestions }: {
   return (
     <div className="browser-pane" style={visible ? undefined : { display: "none" }}>
       <form className="browser-pane-bar" onSubmit={submit}>
-        <button type="button" className="chat-diff-action" data-tip-placement="top" aria-label={t.chat.browserBack} data-tip={t.chat.browserBack} disabled={blank} onClick={() => act("back")}>
+        <button type="button" className="chat-diff-action" data-tip-placement="top" aria-label={t.chat.browserBack} data-tip={t.chat.browserBack} disabled={blank || inputLocked} onClick={() => act("back")}>
           <Icon glyph={icArrowLeft} size={14} />
         </button>
-        <button type="button" className="chat-diff-action" data-tip-placement="top" aria-label={t.chat.browserForward} data-tip={t.chat.browserForward} disabled={blank} onClick={() => act("forward")}>
+        <button type="button" className="chat-diff-action" data-tip-placement="top" aria-label={t.chat.browserForward} data-tip={t.chat.browserForward} disabled={blank || inputLocked} onClick={() => act("forward")}>
           <Icon glyph={icArrowRight} size={14} />
         </button>
-        <button type="button" className={"chat-diff-action" + (info.loading ? " is-loading" : "")} aria-label={t.chat.browserReload} data-tip-placement="top" data-tip={t.chat.browserReload} disabled={blank} onClick={() => act("reload")}>
+        <button type="button" className={"chat-diff-action" + (info.loading ? " is-loading" : "")} aria-label={t.chat.browserReload} data-tip-placement="top" data-tip={t.chat.browserReload} disabled={blank || inputLocked} onClick={() => act("reload")}>
           <Icon glyph={icRefresh} size={14} />
         </button>
         <input
@@ -151,6 +264,7 @@ export function BrowserPane({ info, visible, suggestions }: {
           value={draft ?? (blank ? "" : info.url)}
           placeholder={t.chat.browserAddress}
           aria-label={t.chat.browserAddress}
+          disabled={inputLocked}
           spellCheck={false}
           onChange={(event) => setDraft(event.target.value)}
           onFocus={(event) => event.target.select()}
@@ -164,7 +278,21 @@ export function BrowserPane({ info, visible, suggestions }: {
             }
           }}
         />
-        <button type="button" className="chat-diff-action" aria-label={t.chat.browserOpenExternal} data-tip-placement="top" data-tip={t.chat.browserOpenExternal} disabled={blank} onClick={() => void openLink(info.url).catch((e) => setError(formatBackendError(e, t.locale)))}>
+        {/* 正在模拟时在地址栏右侧标出来：页面看着和面板大小对不上时，一眼知道为什么，点一下还原。 */}
+        {emulation && (
+          <button
+            type="button"
+            className="browser-pane-emu"
+            aria-label={t.chat.browserEmuTip(emuDetail)}
+            data-tip-placement="top"
+            data-tip={t.chat.browserEmuTip(emuDetail)}
+            disabled={inputLocked}
+            onClick={() => emulate({ device: "reset" })}
+          >
+            {emulation.metrics ? `${t.chat.browserEmuDevice(emulation.metrics.device)} ${emulation.metrics.width}×${emulation.metrics.height}` : t.chat.browserEmuUa}
+          </button>
+        )}
+        <button type="button" className="chat-diff-action" aria-label={t.chat.browserOpenExternal} data-tip-placement="top" data-tip={t.chat.browserOpenExternal} disabled={blank || inputLocked} onClick={() => void openLink(info.url).catch((e) => setError(formatBackendError(e, t.locale)))}>
           <Icon glyph={icExternal} size={14} />
         </button>
         {/* 「…」菜单：缩放、打印、复制网址。网页里 Ctrl+F / Ctrl+P / Ctrl+滚轮这些 WebView2
@@ -176,7 +304,7 @@ export function BrowserPane({ info, visible, suggestions }: {
           aria-label={t.chat.browserMore}
           data-tip={t.chat.browserMore}
           aria-haspopup="menu"
-          disabled={blank}
+          disabled={blank || inputLocked}
           onClick={(event) => {
             const rect = event.currentTarget.getBoundingClientRect();
             setMenu(menu ? null : { x: rect.right - 200, y: rect.bottom + 4 });
@@ -197,18 +325,34 @@ export function BrowserPane({ info, visible, suggestions }: {
             "sep",
             { key: "print", label: t.chat.browserPrint, icon: null, hint: "Ctrl+P", onSelect: () => act("print") },
             { key: "copy", label: t.chat.browserCopyUrl, icon: null, onSelect: () => void navigator.clipboard?.writeText(info.url).catch(() => {}) },
+            ...(canEmulate ? [
+              "sep" as const,
+              ...(["desktop", "tablet", "mobile"] as const).map((device) => ({
+                key: `emu_${device}`,
+                label: { desktop: t.chat.browserEmuDesktop, tablet: t.chat.browserEmuTablet, mobile: t.chat.browserEmuMobile }[device],
+                icon: null,
+                hint: emulation?.metrics?.device === device ? t.chat.browserEmuCurrent : undefined,
+                onSelect: () => emulate({ device }),
+              })),
+              ...recent.map((size) => ({
+                key: `emu_recent_${size.width}x${size.height}${size.touch ? "t" : ""}`,
+                label: t.chat.browserEmuRecent(size.width, size.height, size.touch),
+                icon: null,
+                hint: isCurrent(size) ? t.chat.browserEmuCurrent : undefined,
+                onSelect: () => applyCustom(size),
+              })),
+              { key: "emu_custom", label: t.chat.browserEmuCustom, icon: null, onSelect: () => setCustomOpen(true) },
+              ...(emulation ? [{ key: "emu_reset", label: t.chat.browserEmuReset, icon: null, onSelect: () => emulate({ device: "reset" }) }] : []),
+            ] : []),
           ] satisfies (PathMenuItem | "sep")[]}
         />
       )}
-      {/* agent 操作时的提示与接管（同 Kimi Code「你可以随时查看 Agent 的操作并接管」）。 */}
-      {(info.agentActive || info.agentPaused) && (
-        <div className={"browser-pane-agent" + (info.agentPaused ? " is-paused" : "")} role="status">
-          <span className="browser-pane-agent-dot" aria-hidden="true" />
-          <span>{info.agentPaused ? t.chat.browserAgentPaused : t.chat.browserAgentActive}</span>
-          <button type="button" onClick={() => void setBrowserPaneAgentPaused(info.id, !info.agentPaused).catch(() => {})}>
-            {info.agentPaused ? t.chat.browserAgentResume : t.chat.browserAgentTakeOver}
-          </button>
-        </div>
+      {customOpen && (
+        <CustomEmuDialog
+          initial={emulation?.metrics ? { width: emulation.metrics.width, height: emulation.metrics.height, touch: emulation.metrics.device === "mobile" || emulation.metrics.device === "tablet" } : recent[0]}
+          onClose={() => setCustomOpen(false)}
+          onApply={(size) => { setCustomOpen(false); applyCustom(size); }}
+        />
       )}
       {info.permission && (
         <div className="browser-pane-notice is-permission" role="alert">
@@ -235,14 +379,31 @@ export function BrowserPane({ info, visible, suggestions }: {
         />
       )}
       {error && <div className="browser-pane-error" role="alert">{error}</div>}
-      <div ref={hostRef} className="browser-pane-view">
+      {/* agent 操作时的提示与接管（同 Kimi Code「Agent 正在控制此标签页 / 我来接管 / 已接管时长」）。
+          控制中：提示条与网页四周的边框同一个绿色（也是网页里 Agent 鼠标的颜色），连成一体，
+          一眼看出「这块现在归 Agent」。紧贴网页放（权限、下载提示在它上面），条和框才连得上；接管后退回中性色，显示已接管多久。 */}
+      {(info.agentActive || info.agentPaused) && (
+        <div className={"browser-pane-agent" + (info.agentPaused ? " is-paused" : "")} role="status">
+          <span className="browser-pane-agent-dot" aria-hidden="true" />
+          <span className="browser-pane-agent-text">
+            <strong>{info.agentPaused ? t.chat.browserAgentPaused : t.chat.browserAgentActive}</strong>
+            {info.agentPaused
+              ? <span>{pausedFor} · {t.chat.browserAgentPausedDetail}</span>
+              : inputLocked && isWindows() && <span>{t.chat.browserAgentActiveDetail}</span>}
+          </span>
+          <button type="button" onClick={() => void setBrowserPaneAgentPaused(info.id, !info.agentPaused).catch(() => {})}>
+            {info.agentPaused ? t.chat.browserAgentResume : t.chat.browserAgentTakeOver}
+          </button>
+        </div>
+      )}
+      <div ref={hostRef} className={"browser-pane-view" + (inputLocked && !blank ? " is-agent" : "")}>
         {blank && (
           <div className="browser-pane-start">
             <p>{t.chat.browserStartHint}</p>
             {suggestions.length > 0 && (
               <ul>
                 {suggestions.map((url) => (
-                  <li key={url}><button type="button" onClick={() => go(url)}>{url}</button></li>
+                  <li key={url}><button type="button" disabled={inputLocked} onClick={() => go(url)}>{url}</button></li>
                 ))}
               </ul>
             )}

@@ -146,6 +146,22 @@ pub(super) static RULES: &[ScreenRule] = &[
         Matcher::LineRegex(r"^[·✢✳✶✻✽]\s+\S.*(…|\.\.\.)\s*\(\d+"),
     )
     .visible(),
+    // 请求卡住、等着自动重试（2.1.327 包内渲染源码 + 用户实拍 2026-11-18）：spinner 状态行
+    // 被换成 `✻ Waiting for API response · will retry in 1m 9s · check your network`，
+    // 或带次数的 `✗ API Error (…) · Retrying in 5s · attempt 2/10`。这一行没有「… (计时」，
+    // 上一条认不出；输入框照画 ❯，标题拿不到时会被下一条判成可见 idle——回合其实还在。
+    // 文案锚在行尾，正文里引用的半句不命中；与运行条的重试行正则同源（retry_line_pattern）。
+    ScreenRule::new(
+        "api_retry_working",
+        ScreenState::Working,
+        965,
+        Region::BottomNonEmpty(8),
+        Matcher::Any(&[
+            Matcher::LineRegex(r"waiting for api response · will retry in [^·]{1,20} · check your network\s*$"),
+            Matcher::LineRegex(r"· (?:retrying in|retrying, waiting up to) [^·]{1,60}· attempt \d+/\d+(?: · [^·]{0,40})?\s*$"),
+        ]),
+    )
+    .visible(),
     // 提示框体内以 ❯ 开头且无任何审批文案 = 在等你输入的空闲态（可见证据）。
     ScreenRule::new(
         "live_prompt_box",

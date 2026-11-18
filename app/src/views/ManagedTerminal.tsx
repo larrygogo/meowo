@@ -325,6 +325,8 @@ type ManagedTerminalProps = {
   resumeOptions?: Record<string, string>;
   /// 渲染在 start/takeover 按钮旁的附加控件（权限改选下拉，由 ChatWindow 构造）。
   takeoverExtra?: ReactNode;
+  /** 会话目录已删除（见 ChatWindow 的 dirGone）：封面只写说明，不给「启动」——在原目录恢复注定失败。 */
+  dirGone?: boolean;
   /// 会话的工作目录：文件路径 link provider 点击时作 reveal 的根（见 scanLineForFilePaths）。
   /// null/缺席 = 根未知，路径链接整组不注册（点了也只会报「目录不存在」）。
   cwd?: string | null;
@@ -336,7 +338,7 @@ type ManagedTerminalProps = {
   findRef?: MutableRefObject<(() => void) | null>;
 };
 
-export function ManagedTerminal({ sessionId, status, reviewPending = false, background = false, onBackgroundInput, visible = true, onUserSubmit, attentionMarkers = [], interactivePrompt = false, expectMenu = false, grammar, newlineInput = null, imagePasteInput = "\x16", onAttention, onScreen, rearmRef: externalRearmRef, gridRef: externalGridRef, resumeOptions, takeoverExtra, cwd = null, onExternalViewers, findRef }: ManagedTerminalProps) {
+export function ManagedTerminal({ sessionId, status, reviewPending = false, background = false, onBackgroundInput, visible = true, onUserSubmit, attentionMarkers = [], interactivePrompt = false, expectMenu = false, grammar, newlineInput = null, imagePasteInput = "\x16", onAttention, onScreen, rearmRef: externalRearmRef, gridRef: externalGridRef, resumeOptions, takeoverExtra, dirGone = false, cwd = null, onExternalViewers, findRef }: ManagedTerminalProps) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -1911,7 +1913,7 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
               （worker 真的退了）才说结束，否则说「没接上」并给一次重接。 */}
           <div className="managed-terminal-cover-msg">{error || (background
             ? (exitCode !== undefined ? t.chat.terminalBackgroundGone : t.chat.terminalBackgroundLost)
-            : exitCode !== undefined ? (exitForced ? t.chat.terminalExitedForced(exitCode) : t.chat.terminalExited(exitCode)) : externalRunning ? t.chat.terminalExternal : t.chat.terminalReady)}</div>
+            : exitCode !== undefined ? (exitForced ? t.chat.terminalExitedForced(exitCode) : t.chat.terminalExited(exitCode)) : externalRunning ? t.chat.terminalExternal : dirGone ? t.chat.dirGoneBanner : t.chat.terminalReady)}</div>
           {/* 后台会话不给接管/启动按钮：那两条路对它必然失败（见 background 的说明）；
               还没拿到退出码时给「重新接入」——唯一对它有效的动作。 */}
           {background
@@ -1920,7 +1922,7 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
                 {starting ? t.chat.terminalStarting : t.chat.terminalBackgroundRetry}
               </button>
             )
-            : (
+            : !dirGone && (
               /* 权限改选（ChatWindow 构造）与动作按钮并排成一行：各自居中堆叠时两个
                  宽度互不相干的方块上下错落，读起来像散落的控件而不是一组操作。 */
               <div className="managed-terminal-cover-actions">

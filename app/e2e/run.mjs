@@ -17,13 +17,13 @@ const capDst = join(appDir, "src-tauri", "capabilities", "wdio.json");
 // Connection 头）已在 webdriver 9.30 修掉，@wdio/* 升到 9.32 后 Node 26 实测可跑，原先的
 // 「Node ≥ 26 直接拒跑」预检随之去掉。
 
-function run(bin, args, env = {}) {
+function run(bin, args, env = {}, shell = process.platform === "win32") {
   console.log(`\n▶ ${bin} ${args.join(" ")}`);
   const r = spawnSync(bin, args, {
     cwd: appDir,
     stdio: "inherit",
     env: { ...process.env, ...env },
-    shell: process.platform === "win32", // Windows 下解析 bun/.cmd 需要 shell
+    shell, // Windows 下只有 bun/.cmd 需要 shell；绝对路径的 node.exe 经 shell 会被空格截断
   });
   if (r.error) throw r.error;
   if (r.status !== 0) throw new Error(`退出码 ${r.status}: ${bin} ${args.join(" ")}`);
@@ -68,7 +68,7 @@ try {
   const require = createRequire(import.meta.url);
   // @wdio/cli 的 exports 只放 "."，bin 不能直接 resolve——从主入口推包根再进 bin。
   const wdioBin = join(dirname(require.resolve("@wdio/cli")), "..", "bin", "wdio.js");
-  run(process.execPath, [wdioBin, "run", "e2e/wdio.conf.ts"]);
+  run(process.execPath, [wdioBin, "run", "e2e/wdio.conf.ts"], {}, false);
 } finally {
   cleanup();
 }

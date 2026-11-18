@@ -1523,4 +1523,15 @@ mod tests {
         let off: Settings = serde_json::from_str(r#"{"notifications_enabled":false}"#).unwrap();
         assert!(!notify_kind_enabled(&off, "error"));
     }
+
+    /// 「取消gh」：旧设置「GitHub 连接方式」（auto / meowo / gh / off）不再有含义。四种值都照常读得进来（字段被忽略），
+    /// 下次保存时自然去掉；github.com 是否可用只看有没有 Meowo 的 GitHub 账号（github.rs），没有就视为未添加。
+    #[test]
+    fn 旧的_github_连接方式_读得进来且不再保存() {
+        for old in ["auto", "meowo", "gh", "off"] {
+            let s: Settings = serde_json::from_str(&format!(r#"{{"github_connection":"{old}","theme":"dark"}}"#)).unwrap();
+            assert_eq!(s.theme, "dark", "{old}：其余设置照常读");
+            assert!(!serde_json::to_string(&s).unwrap().contains("github_connection"), "{old}：保存时去掉旧字段");
+        }
+    }
 }

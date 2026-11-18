@@ -13,16 +13,19 @@ import type { ChatItem } from "../../api";
 /// 会话 PR 链接（最新在最后）交给「更改」面板：面板在对话窗之外几层，用 context 传，不逐层加属性。
 export const SessionPrsContext = createContext<readonly string[]>([]);
 
-/// 属于这个仓库的会话 PR，最新在前；排除面板已经按分支显示的那个。repoUrl 形如 https://github.com/o/r。
-export function sessionPrsInRepo(urls: readonly string[], repoUrl: string | null | undefined, shown: string | null | undefined, limit = 3): string[] {
+/// 属于这个仓库的会话 PR，最新在前；排除面板已经按分支显示的那个和用户收起的。repoUrl 形如 https://github.com/o/r。
+/// segment：仓库首页之后 PR 链接的路径段（GitLab 是 `/-/merge_requests/`，见 forgeWords.prPathSegment）。
+export function sessionPrsInRepo(urls: readonly string[], repoUrl: string | null | undefined, shown: string | null | undefined, dismissed: readonly string[] = [], limit = 3, segment = "/pull/"): string[] {
   if (!repoUrl) return [];
-  const prefix = repoUrl.replace(/\/+$/, "").toLowerCase() + "/pull/";
-  return urls.filter((url) => url.toLowerCase().startsWith(prefix) && url !== shown).reverse().slice(0, limit);
+  const prefix = repoUrl.replace(/\/+$/, "").toLowerCase() + segment;
+  return urls.filter((url) => url.toLowerCase().startsWith(prefix) && url !== shown && !dismissed.includes(url)).reverse().slice(0, limit);
 }
 
-const GH_PR = /(?:^|[\s;&|(`"'])gh(?:\.exe)?\s+pr\s+(\S+)/i;
+// gh pr …、glab mr …（GitLab）、tea pr / pulls …（Gitea / Forgejo）。
+const GH_PR = /(?:^|[\s;&|(`"'])(?:gh(?:\.exe)?\s+pr|glab(?:\.exe)?\s+mr|tea(?:\.exe)?\s+(?:pr|pulls?))\s+(\S+)/i;
 const LISTING = new Set(["list", "status"]);
-const PR_URL = /https:\/\/[^\s/"'<>()]+\/[^\s/"'<>()]+\/[^\s/"'<>()]+\/pull\/\d+(?![\d/])/g;
+// GitHub `/o/r/pull/N`、Gitea `/o/r/pulls/N`、Bitbucket `/w/r/pull-requests/N`、GitLab `/组…/r/-/merge_requests/N`。
+const PR_URL = /https:\/\/[^\s/"'<>()]+\/[^\s/"'<>()]+\/[^\s/"'<>()]+\/(?:pull|pulls|pull-requests)\/\d+(?![\d/])|https:\/\/[^\s/"'<>()]+(?:\/[^\s/"'<>()]+){2,}\/-\/merge_requests\/\d+(?![\d/])/g;
 
 /// 按最近一次出现的先后排好，最新的在最后。同一个 PR 只出现一次。
 export function sessionPullRequestUrls(items: readonly ChatItem[]): string[] {
@@ -50,4 +53,25 @@ export function sessionPullRequestUrls(items: readonly ChatItem[]): string[] {
 export function latestSessionPullRequest(items: readonly ChatItem[]): string | null {
   const urls = sessionPullRequestUrls(items);
   return urls[urls.length - 1] ?? null;
+}
+
+/// 手动收起的 PR（「更改」面板里已合并、已关闭的那几条，点 × 不再列）。按链接记，跨会话通用：
+/// 已经了结的 PR 在哪个会话里都不用再看。只是本机的显示偏好，读写失败就当没收起过。
+const DISMISSED_KEY = "meowo-dismissed-prs";
+const DISMISSED_LIMIT = 200;
+
+export function loadDismissedPrs(): string[] {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(DISMISSED_KEY) ?? "[]");
+    return Array.isArray(raw) ? raw.filter((url): url is string => typeof url === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/// 记下一条收起的 PR，返回新的列表。只留最近 200 条，旧的挤掉（早就不在会话里出现了）。
+export function dismissPr(url: string): string[] {
+  const next = [...loadDismissedPrs().filter((item) => item !== url), url].slice(-DISMISSED_LIMIT);
+  try { localStorage.setItem(DISMISSED_KEY, JSON.stringify(next)); } catch { /* 存不下就只在这次生效 */ }
+  return next;
 }

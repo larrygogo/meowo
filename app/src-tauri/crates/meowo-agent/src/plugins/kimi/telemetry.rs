@@ -137,6 +137,9 @@ fn tool_detail(name: &str, input: Option<&serde_json::Value>) -> Option<ToolDeta
             offset: num("offset"),
             limit: num("limit"),
         }),
+        // 本机实测入参：FetchURL {url}、WebSearch {query}。不给详情时摘要是整包 JSON。
+        "FetchURL" => Some(ToolDetail::Web { url: Some(text("url")?), query: None, more: 0 }),
+        "WebSearch" => Some(ToolDetail::Web { url: None, query: Some(text("query")?), more: 0 }),
         "Grep" | "Glob" => Some(ToolDetail::Search {
             pattern: text("pattern")?,
             path: path(),
@@ -144,6 +147,25 @@ fn tool_detail(name: &str, input: Option<&serde_json::Value>) -> Option<ToolDeta
         }),
         _ => None,
     }
+}
+
+/// NotifyUser 的固定回执（本机 417 次调用全是这一句）。
+const NOTIFY_USER_ACK: &str = "Update shown to the user.";
+
+/// Kimi 的 NotifyUser 是回合中途写给用户的一段进展说明（参数 title 可选、message 必有，
+/// 本机 451 次调用全是这个形状），不是要执行的操作。按工具行显示时摘要是整包 JSON，
+/// 改成一段 Agent 发言：有标题就加粗放第一行。缺 message 时照旧按工具显示。
+fn notify_user_text(name: &str, args: Option<&serde_json::Value>) -> Option<String> {
+    if name != "NotifyUser" {
+        return None;
+    }
+    let args = args?;
+    let message = args.get("message").and_then(|v| v.as_str()).map(str::trim).filter(|text| !text.is_empty())?;
+    let title = args.get("title").and_then(|v| v.as_str()).map(str::trim).filter(|text| !text.is_empty());
+    Some(match title {
+        Some(title) => format!("**{title}**\n\n{message}"),
+        None => message.to_string(),
+    })
 }
 
 /// Kimi 内置工具 → 语义类别（工具名取自本机 164 份主链 wire 的实际调用）。MCP 与其余
@@ -194,6 +216,30 @@ fn image_part_url(part: &serde_json::Value) -> Option<&str> {
 /// 统一落在 `paste_root()/queued/`（asset 协议 scope 内，前端才能渲染缩略图），按内容 sha /
 /// 行 id 命名做幂等——增量解析 reset 时会重放同一行。任何失败返回 None：正文照常显示，
 /// 这张图退化为不显示。
+fn mcp_image_url(part: &serde_json::Value) -> Option<String> {
+    if let Some(url) = image_part_url(part) { return Some(url.to_string()); }
+    if part.get("type").and_then(|v| v.as_str()) != Some("image") { return None; }
+    if let Some(source) = part.get("source") {
+        return Some(format!("data:{};base64,{}", source.get("media_type")?.as_str()?, source.get("data")?.as_str()?));
+    }
+    let mime = part.get("mimeType").or_else(|| part.get("mime_type")).or_else(|| part.get("media_type"))?.as_str()?;
+    Some(format!("data:{mime};base64,{}", part.get("data")?.as_str()?))
+}
+
+fn tool_result_media(value: Option<&serde_json::Value>, wire_dir: Option<&Path>, base_id: &str) -> (Option<String>, Vec<String>) {
+    let Some(value) = value else { return (None, Vec::new()) };
+    let owned = match value { serde_json::Value::String(raw) => serde_json::from_str::<serde_json::Value>(raw).ok(), _ => None };
+    let value = owned.as_ref().unwrap_or(value);
+    let Some(parts) = value.as_array().or_else(|| value.get("content").and_then(|v| v.as_array())) else { return (None, Vec::new()) };
+    let text = parts.iter().filter_map(|part| part.get("text").and_then(|v| v.as_str())).collect::<Vec<_>>().join("\n");
+    let images = parts.iter().enumerate().filter_map(|(index, part)| {
+        let url = mcp_image_url(part)?;
+        let path = persist_image_url(wire_dir, base_id, index, &url)?;
+        Some(format!("[Image: source: {}]", path.display()))
+    }).collect();
+    (Some(text), images)
+}
+
 fn persist_image_url(
     wire_dir: Option<&Path>,
     base_id: &str,
@@ -344,13 +390,13 @@ fn user_message_text(
     let Some(parts) = value.as_array() else {
         return value_text(value);
     };
-    let mut text = strip_image_compression_notes(
+    let mut text = strip_hook_results(&strip_image_compression_notes(
         &parts
             .iter()
             .filter_map(|part| part.get("text").and_then(|text| text.as_str()))
             .collect::<Vec<_>>()
             .join(""),
-    );
+    ));
     for (index, part) in parts.iter().enumerate() {
         let Some(url) = image_part_url(part) else {
             continue;
@@ -382,6 +428,29 @@ fn strip_image_compression_notes(text: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// 提交 hook 带回的上下文（Meowo 的 lead 提醒等），kimi 以 `<hook_result hook_event="…">…</hook_result>`
+/// 一段 text part 拼在用户原话前面写进记录（本机 wire 57 条）。那是写给模型的，不是用户说的话：
+/// 修前对话页把整段 hook 文字当成用户消息显示（2026-11-17 实拍）。没有闭合标签就原样保留。
+const HOOK_RESULT_OPEN: &str = "<hook_result";
+const HOOK_RESULT_CLOSE: &str = "</hook_result>";
+
+fn strip_hook_results(text: &str) -> String {
+    if !text.contains(HOOK_RESULT_OPEN) {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(HOOK_RESULT_OPEN) {
+        let Some(len) = rest[start..].find(HOOK_RESULT_CLOSE) else {
+            break;
+        };
+        out.push_str(&rest[..start]);
+        rest = &rest[start + len + HOOK_RESULT_CLOSE.len()..];
+    }
+    out.push_str(rest);
+    out.trim().to_string()
 }
 
 /// 用户敲 `/技能名 参数` 激活技能时，kimi 不记用户输入的那一行，只记一条
@@ -518,6 +587,14 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
                         .into_iter()
                         .collect();
                 }
+                // 带 promptId 的用户提交一定紧跟一条 message.id 相同的 context.append_message
+                // （本机 wire 398/398 条），那一条才是记录；这里不再出一条。修前两行靠「2 秒内同文」
+                // 判成双写合一，结果 Kimi 真收了两遍的同一句（如 7ms 内连着两条「继续」，2026-11-17
+                // 实拍）也被合成一条，对话页看不出重复；带 hook 文字的那条又因正文对不上合不掉。
+                // 没有 promptId 的旧版照旧，交给通用层判双写。
+                None | Some("user") if value.get("promptId").is_some_and(|id| id.is_string()) => {
+                    return Vec::new();
+                }
                 _ => {}
             }
             let text = user_message_text(
@@ -589,37 +666,30 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
             };
             let event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
             if matches!(event_type, "tool.result" | "tool_result") {
-                let text = event
-                    .get("output")
-                    .or_else(|| event.pointer("/result/output"))
-                    .or_else(|| event.get("result"))
-                    .map(value_text)
-                    .unwrap_or_default();
-                let tool_call_id = event
-                    .get("callId")
-                    .or_else(|| event.get("call_id"))
-                    .or_else(|| event.get("toolCallId"))
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string);
+                let output = event.get("output").or_else(|| event.pointer("/result/output")).or_else(|| event.get("result"));
+                // NotifyUser 的回执：调用已经显示成一段发言（见 notify_user_text），这句固定回执不再单列。
+                if output.and_then(|v| v.as_str()) == Some(NOTIFY_USER_ACK) {
+                    return Vec::new();
+                }
+                let mut text = output.map(value_text).unwrap_or_default();
+                let tool_call_id = event.get("callId").or_else(|| event.get("call_id")).or_else(|| event.get("toolCallId")).and_then(|v| v.as_str()).map(str::to_string);
+                let id = event_uuid.map(|uuid| format!("kimi-result-{uuid}")).or_else(|| tool_call_id.as_ref().map(|id| format!("kimi-result-{id}"))).unwrap_or_else(|| chat_id("result", line));
+                let (plain, images) = tool_result_media(output, wire_dir, &id);
+                if !images.is_empty() {
+                    if let Some(plain) = plain { text = plain; }
+                    for image in images {
+                        if !text.is_empty() { text.push('\n'); }
+                        text.push_str(&image);
+                    }
+                }
                 return vec![TranscriptEvent::ToolResult {
-                    // 实档的 tool.result 事件没有 uuid，callId 是它的稳定唯一键
-                    // （一次调用恰一份结果）；两者都缺才退回整行哈希。
-                    id: event_uuid
-                        .map(|uuid| format!("kimi-result-{uuid}"))
-                        .or_else(|| tool_call_id.as_ref().map(|id| format!("kimi-result-{id}")))
-                        .unwrap_or_else(|| chat_id("result", line)),
+                    id,
                     timestamp,
                     tool_call_id,
-                    // 子任务状态就写在这条结果里；顺手取出，折叠态才能显示进度。
                     subagent: KIMI_SUBAGENTS.detect_result(&text),
                     patch: None,
                     text,
-                    is_error: event
-                        .get("isError")
-                        .or_else(|| event.get("is_error"))
-                        .or_else(|| event.pointer("/result/isError"))
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false),
+                    is_error: event.get("isError").or_else(|| event.get("is_error")).or_else(|| event.pointer("/result/isError")).and_then(|v| v.as_bool()).unwrap_or(false),
                     facts: ToolFacts::default(),
                 }];
             }
@@ -670,6 +740,10 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
                         .get("input")
                         .or_else(|| part.get("arguments"))
                         .or_else(|| part.get("args"));
+                    if let Some(text) = notify_user_text(&name, args) {
+                        let id = part.get("toolCallId").or_else(|| part.get("id")).and_then(|v| v.as_str()).map(|id| format!("kimi-notify-{id}"));
+                        return vec![TranscriptEvent::AssistantMessage { id: id.unwrap_or_else(|| stable_id("notify")), timestamp, text }];
+                    }
                     let subagent = KIMI_SUBAGENTS.detect_call(&name, args);
                     vec![TranscriptEvent::ToolCall {
                         id: part
@@ -2097,6 +2171,18 @@ impl crate::caps::TelemetryCap for KimiTelemetry {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn browser_mcp_image_becomes_text_and_receipt_reference() {
+        use serde_json::json;
+        let value = json!({"content":[{"type":"text","text":"面板浏览器截图"},{"type":"image","mimeType":"image/jpeg","data":"/9j/4A=="}]});
+        let (plain, images) = super::tool_result_media(Some(&value), None, "kimi-browser-test");
+        assert_eq!(plain.as_deref(), Some("面板浏览器截图"));
+        assert_eq!(images.len(), 1);
+        let path = images[0].split("[Image: source: ").nth(1).and_then(|rest| rest.strip_suffix(']')).map(std::path::PathBuf::from).unwrap();
+        assert!(path.exists());
+        std::fs::remove_file(path).ok();
+    }
+
 
     #[test]
     fn state_title_only_counts_generated_or_custom() {
@@ -2638,6 +2724,52 @@ mod tests {
             .collect();
         assert_eq!(users, vec!["改一下", "继续", "继续"]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 2026-11-17 实拍 wire（正文截短）：「继续」先在 07:03:11 交给内核排着，07:07:35 又作为插话交了
+    /// 一次，07:11:24 两条前后 8ms 落盘。第一条的 turn.prompt 前面拼着 lead 提交 hook 的上下文。
+    /// 修前对话页显示「<hook_result …」一条加「继续」一条（第二条「继续」被当成双写吞掉）。
+    #[test]
+    fn full_read_keeps_both_real_duplicates_and_hides_hook_text() {
+        let wire = concat!(
+            r#"{"type":"turn.prompt","agentId":"main","input":[{"type":"text","text":"<hook_result hook_event=\"UserPromptSubmit\">\n[lead] 这个项目有进行中的任务\n</hook_result>"},{"type":"text","text":"继续"}],"origin":{"kind":"user"},"promptId":"msg_01M7M5267TZ897SQK60JTFKEC4","turnId":44,"trigger":"normal","time":1794899484566}"#,
+            "\n",
+            r#"{"type":"context.append_message","agentId":"main","message":{"role":"user","content":[{"type":"text","text":"继续"}],"toolCalls":[],"id":"msg_01M7M5267TZ897SQK60JTFKEC4","origin":{"kind":"user"}},"time":1794899484567}"#,
+            "\n",
+            r#"{"type":"turn.ended","agentId":"main","turnId":44,"reason":"completed","durationMs":0,"stopReason":"prompt_only","time":1794899484570}"#,
+            "\n",
+            r#"{"type":"prompt.completed","agentId":"main","promptId":"msg_01M7M5267TZ897SQK60JTFKEC4","reason":"completed","time":1794899484571}"#,
+            "\n",
+            r#"{"type":"turn.prompt","agentId":"main","input":[{"type":"text","text":"继续"}],"origin":{"kind":"user"},"promptId":"msg_01M7M5A80F55Y8ZZKNW27XT41X","turnId":45,"trigger":"notify","time":1794899484574}"#,
+            "\n",
+            r#"{"type":"context.append_message","agentId":"main","message":{"role":"user","content":[{"type":"text","text":"继续"}],"toolCalls":[],"id":"msg_01M7M5A80F55Y8ZZKNW27XT41X","origin":{"kind":"user"}},"time":1794899484575}"#,
+            "\n",
+            // 旧形态：hook 文字写在 append_message 正文里（本机 57 条），同样不显示。
+            r#"{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"<hook_result hook_event=\"UserPromptSubmit\">\n提醒\n</hook_result>"},{"type":"text","text":"1用本机编译"}]},"time":1794899490000}"#,
+            "\n",
+        );
+        let dir = std::env::temp_dir().join(format!("meowo-kimi-steer-dup-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("wire.jsonl");
+        std::fs::write(&path, wire).unwrap();
+        let delta = crate::transcript::read_chat_delta(&KIMI_TRANSCRIPT, &path, 0, None);
+        let users: Vec<_> = delta
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ChatItem::UserText { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(users, vec!["继续", "继续", "1用本机编译"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn strip_hook_results_keeps_unclosed_and_plain_text() {
+        assert_eq!(strip_hook_results("继续"), "继续");
+        assert_eq!(strip_hook_results("<hook_result a>x</hook_result>\n继续"), "继续");
+        assert_eq!(strip_hook_results("<hook_result a>没闭合"), "<hook_result a>没闭合");
     }
 
     /// `/undo N` 的回放（记录形态取自 kimi.exe 包内 buildUndoSwitchRecords）：撤回追加
@@ -3356,6 +3488,39 @@ mod tests {
             panic!("应解析成工具调用");
         };
         assert!(subagent.is_none());
+    }
+
+    /// 2026-11-18 手机实拍：NotifyUser 显示成一行「通知 {"message":"接口规则已经问出来了…」。
+    /// 它是写给用户的进展说明，应显示成一段发言；固定回执不单列。
+    #[test]
+    fn notify_user_shows_as_assistant_text() {
+        let wire = concat!(
+            r#"{"type":"context.append_loop_event","event":{"type":"tool.call","uuid":"u1","toolCallId":"call_n","name":"NotifyUser","args":{"title":"规则问出来了","message":"是个字体签名门槛，不是计数。"}},"time":1794934260000}"#,
+            "\n",
+            r#"{"type":"context.append_loop_event","event":{"type":"tool.result","parentUuid":"u1","toolCallId":"call_n","result":{"output":"Update shown to the user.","isError":false}},"time":1794934260057}"#,
+            "\n",
+            r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"call_m","name":"NotifyUser","args":{"message":"只有正文"}}}"#,
+        );
+        let items: Vec<ChatItem> = wire.lines().flat_map(parse_chat_items).collect();
+        let texts: Vec<&str> = items.iter().filter_map(|item| match item {
+            ChatItem::AssistantText { text, .. } => Some(text.as_str()),
+            _ => None,
+        }).collect();
+        assert_eq!(texts, ["**规则问出来了**\n\n是个字体签名门槛，不是计数。", "只有正文"]);
+        assert!(!items.iter().any(|item| matches!(item, ChatItem::ToolUse { .. } | ChatItem::ToolResult { .. })), "{items:?}");
+    }
+
+    /// FetchURL / WebSearch 带网页详情，行上显示地址或查询词，不是整包 JSON。
+    #[test]
+    fn fetch_url_and_web_search_carry_web_detail() {
+        let fetch = r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"f","name":"FetchURL","args":{"url":"https://ip.net.coffee/claude/"}}}"#;
+        let search = r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"s","name":"WebSearch","args":{"query":"指纹检测"}}}"#;
+        let detail = |line: &str| match parse_chat_items(line).into_iter().next() {
+            Some(ChatItem::ToolUse { detail, .. }) => detail,
+            other => panic!("应解析成工具调用：{other:?}"),
+        };
+        assert!(matches!(detail(fetch), Some(ToolDetail::Web { url: Some(url), query: None, .. }) if url == "https://ip.net.coffee/claude/"));
+        assert!(matches!(detail(search), Some(ToolDetail::Web { url: None, query: Some(query), .. }) if query == "指纹检测"));
     }
 
     /// 侧车流定位：回扫主流找到该 callId 的结果 → 抠 agent_id → `agents/<id>/wire.jsonl`。

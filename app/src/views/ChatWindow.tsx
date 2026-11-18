@@ -5,10 +5,10 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 // Tauri 事件反而直接给**源路径**,附件协议正好只要路径)。
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { pathKey, unquotePath } from "../paths";
+import { folderName, pathKey, unquotePath } from "../paths";
 import { COMPACTING_ACTIVITY } from "../activity";
 import { appConfirm } from "../confirm";
-import { forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitChangesOverview, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow,  refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, historyTone, liveSessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type RepoChangesDto, type LiveSession, type ModelPreset, type PendingApproval, type RuntimeRequest } from "../api";
+import { forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitChangesOverview, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow,  refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, historyTone, historyTurnTone, liveSessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type RepoChangesDto, type LiveSession, type ModelPreset, type PendingApproval, type RuntimeRequest } from "../api";
 import { hasEscLayers } from "../escLayers";
 import { useTauriEvent } from "../hooks/useTauriEvent";
 import { useVisibleInterval } from "../hooks/useVisibleInterval";
@@ -55,7 +55,8 @@ import { parseUserText } from "./chat/localCommand";
 import { ChatActionsContext, type ChatActions } from "./chat/chatActions";
 import { rejectedUndoTarget } from "./chat/rejectedRecovery";
 import { anchorFrom, echoItemId, freshAnchor, EchoActionsContext, EchoPhaseContext, outgoingStore, useOutgoingPrompts, type PromptAck } from "./chat/outgoingPrompts";
-import { DockWork } from "./chat/DockWork";
+import { DockWork, leadTabLink } from "./chat/DockWork";
+import { useLeadTask, type LeadTaskState } from "./chat/LeadPanel";
 import { ANCHOR_PX, countsAsUnseen, stickToBottom, useStickToBottom } from "./chat/useStickToBottom";
 import { useSidebarLayout } from "./chat/useSidebarLayout";
 import { pasteImagesNatively, useInterrupt, writeInterruptKeys } from "./chat/terminalInput";
@@ -70,7 +71,7 @@ import { QueuedPrompts, queueAttachments } from "./chat/QueuedPrompts";
 import { SessionPrsContext, sessionPullRequestUrls } from "./chat/sessionPrs";
 import { usePromptQueue } from "./chat/usePromptQueue";
 import { BottomSheet, SheetOnPhone } from "./chat/BottomSheet";
-import { runningActivityView, RunningBar, SnakeSpinner, TurnAnnouncer, useCliStatusStore } from "./chat/RunningBar";
+import { liveToolActivity, runningActivityView, RunningBar, SnakeSpinner, TurnAnnouncer, useCliStatusStore } from "./chat/RunningBar";
 import { ModelPicker, readStarred, type ModelPickerItem } from "./chat/ModelPicker";
 import { currentPresetId } from "./chat/modelLabels";
 import { ModelMenu, effortLabel } from "./chat/ModelMenu";
@@ -92,6 +93,7 @@ import { TranscriptSearch } from "./chat/TranscriptSearch";
 import { formatReviewComments, type ReviewComment } from "./chat/diffComments";
 import { changedFileCount, sessionTouchedPaths } from "./chat/gitDiff";
 import { setPanelLinkHandler } from "./chat/panelLinks";
+import { absolutePath, RevealChangeContext } from "./chat/panelReveal";
 import { localUrlsIn } from "./chat/localUrls";
 import { useGuardedWindowClose } from "./chat/windowClose";
 import { usePanel } from "./chat/usePanel";
@@ -145,7 +147,7 @@ import { agentAssets, tintStyle } from "../providers";
 import appLogoUrl from "../../src-tauri/icons/64x64.png";
 import { Icon } from "../icons/Icon";
 import { modeIconGlyph, modeIconName } from "./chat/modeIcon";
-import { icArrowLeftRight, icArrowUp, icChevronLeft, icCollapse, icExpand, icFile, icMessage, icShield, icSidebarLeft, icSparkles, icStop, icUndo } from "../icons/glyphs.chat";
+import { icArrowLeftRight, icArrowUp, icChevronLeft, icClock, icCollapse, icExpand, icFile, icMessage, icShield, icSidebarLeft, icSparkles, icStop, icUndo } from "../icons/glyphs.chat";
 import { icAlert, icCheck, icChevronDown, icClose, icPencil, icRefreshCw } from "../icons/glyphs";
 
 
@@ -185,6 +187,9 @@ const EMPTY_MARKERS: string[] = [];
 
 /** 终端就绪等待超过这么多秒才上横幅（之前只有发送钮转圈，见横幅处注释）。 */
 const TERMINAL_WAIT_NOTICE_S = 20;
+/// 屏幕卡答完后压住「去终端处理」兜底卡的最长时间（见 screenAnswered）。transcript 推送一般 1 秒内
+/// 就把 pendingReview 清掉；过了这个时间还没清，多半是终端真的还在等，放出兜底卡。
+const SCREEN_ANSWER_GRACE_MS = 4_000;
 /// 主列（标题栏 + 消息区 + 输入区）矮于这个高度（按 100% 缩放计）算「矮窗」，卡片走紧凑排法。
 /// 580 取自实测：620×760、1280×800@100% 主列 712/752 不算矮；620×480 是 432、1280×800@150% 折合 501。
 const SHORT_MAIN_HEIGHT = 580;
@@ -216,6 +221,11 @@ export function ChatWindow() {
   // 已停用的「Meowo 托管」会话（托管路线已删，旧库里的只读保留）：门卡换成停用说明，
   // 有原生会话 id 时给「用官方 CLI 打开」（走原生恢复路径）。
   const retiredManaged = history?.retiredManaged ?? null;
+  // 目录已删除（worktree 被清理、目录被手动删了）且进程不在：只读回看历史。输入区换成说明与「新开会话」，
+  // 不给「恢复会话」——agent 按目录找会话记录，换个目录续不上，原目录又没了，恢复注定失败。
+  const dirGone = !!history?.cwdMissing && !history.connected && !history.background;
+  // 「新开会话」的去处：推得出原项目就预填它；推不出不预填（不拿已经没了的目录去预填）。
+  const dirGoneOrigin = dirGone ? history?.originRoot ?? null : null;
   const [items, setItems] = useState<ChatItem[]>([]);
   // CLI 的送达回执（claude 入队记录）：不进时间线，只喂给发出消息的对账。按会话归零。
   const [queueAcks, setQueueAcks] = useState<readonly PromptAck[]>([]);
@@ -588,9 +598,12 @@ export function ChatWindow() {
   // history 未加载时按离线处理,避免首帧闪一下运行态。屏幕状态与侧栏同口径带上:gemini
   // 启动即落 running、首条消息前无事件纠正,只看 DB 会把空闲会话当运行中、发送改按排队键
   // Tab——正文停在输入框里发不出去(0.6.11 实机)。
-  // 后台子任务数与侧栏同源（后端同一份 transcript 分析）：主回合停了、后台子任务还在跑时，
-  // 这里和侧栏一样是「运行中」。此前这一位传的是 undefined，对话窗按空闲处理。
-  const tone = historyTone(history);
+  // 两个口径（见 historyTurnTone）：sessionWideTone 与侧栏、灵动岛同源，后台子任务还在跑也算
+  // 「运行中」，管窗口标题记号与标记完成的确认；tone 只看主回合，管发送、排队、撤销、运行条——
+  // 主回合停了、只剩后台子代理在跑时，终端输入框照常可用，对话页也要能直接发。
+  const sessionWideTone = historyTone(history);
+  const tone = historyTurnTone(history);
+  const backgroundOnly = sessionWideTone === "running" && tone === "waiting";
   // 要在终端里答的交互。Lead 关卡（gate）不算：它有自己的卡片（DockWork 的 LeadGateCard），
   // 不能再冒出一张「Agent 请求权限 / 去终端批准」的降级卡和发送软拦（做空审查 M2）。
   const terminalReview = history?.pendingReview && history.pendingReview !== "gate" ? history.pendingReview : null;
@@ -598,9 +611,11 @@ export function ChatWindow() {
   toneRef.current = tone;
   // 运行条：压缩中的哨兵顶替首行动词；真实命令才进次行（空值/哨兵不占次行）。
   const compactingNow = history?.currentActivity === COMPACTING_ACTIVITY;
-  const runningActivity = history?.currentActivity && !compactingNow
-    ? runningActivityView(history.currentActivity, t.chat.compacting, t.chat.running)
-    : null;
+  // 次行优先取 transcript 里还没回执的那条调用（正在跑的那一步）；记录给不出时退回 hook 值
+  // ——hook 只在工具跑完时写，长命令跑着时它是上一条已完成的命令（见 liveToolActivity）。
+  const liveTool = useMemo(() => liveToolActivity(items), [items]);
+  const runningActivity = compactingNow ? null
+    : liveTool ?? (history?.currentActivity ? runningActivityView(history.currentActivity, t.chat.compacting, t.chat.running) : null);
   const cliStatusStore = useCliStatusStore();
   // 换会话清掉上一个会话的状态行，别让它在新会话的运行条上活 3 秒。
   useEffect(() => { cliStatusStore.set(null); cliStatusStore.setRetry(null); }, [sessionId, cliStatusStore]);
@@ -653,10 +668,10 @@ export function ChatWindow() {
   // 任务栏,宜短。▶=在跑,●=等待/待处理,离线不加记号。
   useEffect(() => {
     const name = history?.title || t.chat.title;
-    const marker = tone === "running" ? "▶ " : tone === "pending" || tone === "waiting" ? "● " : "";
+    const marker = sessionWideTone === "running" ? "▶ " : tone === "pending" || tone === "waiting" ? "● " : "";
     // 非 Tauri 环境(测试/浏览器)下 getCurrentWindow 会抛错,吞掉即可(同 Sticker 的置顶写法)。
     try { void getCurrentWindow().setTitle(`${marker}${name} · Meowo`).catch(() => {}); } catch { /* noop */ }
-  }, [tone, history?.title, t]);
+  }, [tone, sessionWideTone, history?.title, t]);
   // 「结束会话」:结束正在跑的 Agent 此前只有终端页操作条里的入口,不开终端页的 GUI 用户
   // 无从结束,会话就一直在后台占着进程。可见性由后端 endable 门控——本 GUI 托管的 PTY,
   // 或进程仍活着的孤儿会话(broker 已收掉 PTY 记录,后端按 pid 杀树兜底);外部终端里跑的
@@ -717,7 +732,7 @@ export function ChatWindow() {
     // 先确认：这颗钮就挨着「结束会话」，那边点了要确认，这边误触却直接停掉一个跑到一半的任务。
     // 停在提示符上的会话（等你/空闲）不拦，勾掉就是勾掉。口径与侧栏、会话管理页共用（S-1，
     // 2026-11-12）：卡在审批上的（pending）回合也没走完，同样先问。
-    if (next && markDoneEndsWork(toneRef.current) && !(await confirmMarkDone([{ working: true }], t))) return;
+    if (next && markDoneEndsWork(historyTone(history)) && !(await confirmMarkDone([{ working: true }], t))) return;
     setArchiving(true);
     // 乐观翻转:IPC 往返 + 下一轮轮询才回真值,期间按钮维持旧文案会让人以为没点上。
     // 失败回滚并报错——静默失败等于骗用户「已归档」。
@@ -955,7 +970,10 @@ export function ChatWindow() {
   // 运行日志：发出的消息落进「发送失败」「未确认送达」各记一行（chat/chatDiag，验收 19）。
   useOutgoingDiag(sessionId, provider, outgoing);
   const cwd = history?.cwd ?? launchInfo?.cwd ?? null;
-  const folderOpeners = useFolderOpeners(cwd ?? "", setSendError).options;
+  // 目录已删时一切要读这个目录的东西（改动数胶囊、「更改」「文件」面板、用编辑器打开）都不挂：
+  // 读一个不存在的目录只会拿到报错或空壳。标题、会话信息照常用 cwd 显示它原来在哪。
+  const liveCwd = dirGone ? null : cwd;
+  const folderOpeners = useFolderOpeners(liveCwd ?? "", setSendError).options;
   // 「文件」入口有 cwd 即可用；「改动」入口仅当后端确认 cwd 是 git 仓库时出现。
   // 两个入口共用同一停靠面板，activeTab 保证面板不卸载时也能直达对应页签。
   const [gitSummary, setGitSummary] = useState<GitDiffSummaryDto | null>(null);
@@ -963,7 +981,8 @@ export function ChatWindow() {
   // 模型见 chat/panelTabs.ts，状态与动作见 chat/usePanel.ts）。
   // 会话已结束（库里 ended 且进程不在了）：面板不再补开它旧的终端和浏览器。
   const sessionEnded = history?.status === "ended" && !history?.connected;
-  const panel = usePanel(sessionId, cwd, setSendError, sessionEnded);
+  // 目录已删时不给面板目录、也不补开终端：不会在一个不存在的目录里起 shell（shell_terminal_open）。
+  const panel = usePanel(sessionId, liveCwd, setSendError, sessionEnded, dirGone);
   const panelActions = panel.actions;
   const panelState = panel.state;
   // 会话信息栏（chat/SessionInfo）：面板收起时露出来。开关全局一份、默认开（同 Kimi）；
@@ -988,6 +1007,12 @@ export function ChatWindow() {
     setPanelLinkHandler(panelActions.openUrl);
     return () => setPanelLinkHandler(null);
   }, [panelActions]);
+  // 对话里点改过的文件 → 面板「更改」里它的 diff（panelReveal.ts）。手机远程页没有右侧面板，不提供，
+  // 工具行和改动卡也就不出这个入口。
+  const revealChange = useMemo(
+    () => (remoteUi() || !cwd ? null : (path: string) => panelActions.revealDiff(absolutePath(path, cwd))),
+    [panelActions, cwd],
+  );
   // 面板快捷键（照 Kimi Code）：Ctrl+Shift+B 开合面板，Ctrl+Shift+G 改动，Ctrl+Shift+E 文件
   // （正在看就收起），Ctrl+T 新浏览器，Ctrl+` 面板终端，Ctrl+W 关当前页签，Ctrl+(Shift+)Tab 切换。
   // 焦点在终端里时这些键 xterm 自己吃掉（Ctrl+W 是删词、Ctrl+T 是换字），只有 Ctrl+` 被放行。
@@ -1016,7 +1041,7 @@ export function ChatWindow() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [panelActions]);
-  const diffCwd = cwd;
+  const diffCwd = liveCwd;
   // 改动面板里写的行评论,按会话分开攒着:切去别的会话再回来还在,点「插入输入框」
   // 才拼成一段文字交给用户自己发(发之前还能再改几句)。
   const [reviewComments, setReviewComments] = useState<ReadonlyMap<number, readonly ReviewComment[]>>(new Map());
@@ -1078,12 +1103,28 @@ export function ChatWindow() {
   // 认出过的仓库 / worktree 粘住：命令和编辑记录会随翻页滑出加载窗口，滑出去就又认不出来，
   // 列表里的 worktree 忽隐忽现。按会话记着，下次拉清单时当作「碰过的路径」一并交给后端。
   const usedRootsRef = useRef<Set<string>>(new Set());
-  // 换会话也清：同一个工作目录的两个会话改的仓库不同，不清会先露出上一个会话的仓库分组。
+  // 换会话不能露出上一个会话的仓库分组（同一个工作目录的两个会话改的仓库不同）。但一律清空会让「更改」页
+  // 每次切会话都先空一下再画回来（2026-11-18 用户：「每次切换会话，更改页都会闪烁一次」）。按会话记住上一次
+  // 的清单：切回来先显示它自己的旧结果，后台照常刷新、内容没变不重画；没来过的会话才从空开始。
+  const changesKey = `${sessionId}\u0000${diffCwd ?? ""}`;
+  const changesStateKeyRef = useRef(changesKey);
+  const changesCacheRef = useRef(new Map<string, { repos: RepoChangesDto[] | null; scmRoot: string | null; usedRoots: Set<string> }>());
   useEffect(() => {
-    setRepoChanges(null);
-    setScmRoot(null);
-    usedRootsRef.current = new Set();
-  }, [diffCwd, sessionId]);
+    // 只记「属于当前会话」的状态：换会话那一帧状态还是上一个会话的，不能记到新会话名下。
+    if (changesStateKeyRef.current !== changesKey) return;
+    const cache = changesCacheRef.current;
+    cache.delete(changesKey);
+    cache.set(changesKey, { repos: repoChanges, scmRoot, usedRoots: usedRootsRef.current });
+    // 只留最近 20 个会话，长时间不关窗口也不涨内存。
+    while (cache.size > 20) cache.delete(cache.keys().next().value as string);
+  }, [changesKey, repoChanges, scmRoot]);
+  useEffect(() => {
+    const cached = changesCacheRef.current.get(changesKey);
+    changesStateKeyRef.current = changesKey;
+    setRepoChanges(cached?.repos ?? null);
+    setScmRoot(cached?.scmRoot ?? null);
+    usedRootsRef.current = cached ? new Set(cached.usedRoots) : new Set();
+  }, [changesKey]);
   // 会话最近的命令文本（用户要求 2026-11-09）：agent 常 cd 进 worktree 用命令干活，编辑工具一次没碰过，
   // 只认编辑记录就看不到这个 worktree。后端按命令里出现的路径认（绝对 / 相对 / Git Bash 写法）。
   const commandsKey = useMemo(() => {
@@ -1153,11 +1194,17 @@ export function ChatWindow() {
   const effectiveSummary = gitSummary?.isRepo ? gitSummary : (pickedRepo?.summary ?? gitSummary);
   effectiveSummaryRef.current = effectiveSummary;
   isRepoRef.current = !!effectiveSummary?.isRepo;
+  // 摘要只跟工作目录有关：按目录记住上一次的，换会话时先显示该目录自己的旧摘要，不先露出上一个目录的。
+  const summaryCacheRef = useRef(new Map<string, GitDiffSummaryDto>());
+  useEffect(() => {
+    if (gitSummary && diffCwdRef.current) summaryCacheRef.current.set(diffCwdRef.current, gitSummary);
+  }, [gitSummary]);
   useEffect(() => {
     if (!diffCwd) { setGitSummary(null); return; }
+    setGitSummary(summaryCacheRef.current.get(diffCwd) ?? null);
     let cancelled = false;
     getGitDiffSummary(diffCwd)
-      .then((result) => { if (!cancelled) setGitSummary(result); })
+      .then((result) => { if (!cancelled) setGitSummary((prev) => (JSON.stringify(prev) === JSON.stringify(result) ? prev : result)); })
       .catch(() => { if (!cancelled) setGitSummary(null); });
     return () => { cancelled = true; };
   }, [diffCwd]);
@@ -1224,11 +1271,12 @@ export function ChatWindow() {
     ?.launch_options?.some((option) => option.switch === "dialog");
   useEffect(() => {
     setDynamicModeChoices([]);
-    if (!provider || !wantsDynamicModes) return;
+    // 目录已删：输入区整块换成门卡，没有模式菜单可用，也不拿已删的目录去问 agent。
+    if (!provider || !wantsDynamicModes || dirGone) return;
     let cancelled = false;
     agentDynamicModeChoices(provider, cwd).then((value) => { if (!cancelled) setDynamicModeChoices(value ?? []); }).catch(() => {});
     return () => { cancelled = true; };
-  }, [provider, cwd, wantsDynamicModes]);
+  }, [provider, cwd, wantsDynamicModes, dirGone]);
   const permissionOption = (provider
     ? agentsForOptions
         ?.find((agent) => agent.id === provider)
@@ -1303,7 +1351,8 @@ export function ChatWindow() {
   // 换会话/换 provider/换 cwd 仍立即查。
   const chatUiProbeRef = useRef({ key: "", at: 0 });
   useEffect(() => {
-    if (!provider) return;
+    // 目录已删：对话页只读，用不到交互能力表，也不拿已删的目录去探 agent。
+    if (!provider || dirGone) return;
     let stale = false;
     let timer = 0;
     const key = `${provider}\0${cwd ?? ""}\0${sessionId}`;
@@ -1316,7 +1365,7 @@ export function ChatWindow() {
     if (wait > 0) timer = window.setTimeout(fetchUi, wait);
     else fetchUi();
     return () => { stale = true; window.clearTimeout(timer); };
-  }, [provider, cwd, sessionId, runtimeCapabilityProbe]);
+  }, [provider, cwd, sessionId, runtimeCapabilityProbe, dirGone]);
 
   // 启动阻塞属于会话状态，不属于终端视图。即使用户从未打开终端 tab，也先用轻量增量
   // snapshot 探测 PTY；发现活跃 PTY 后在屏幕外挂载 xterm，还原 ANSI 当前屏并持续识别选择器。
@@ -2104,6 +2153,19 @@ export function ChatWindow() {
   const pageCovered = adminOpen || !!newSessionOpen;
   const shownPanelState = useMemo(() => (pageCovered ? { ...panelState, visible: false } : panelState), [pageCovered, panelState]);
 
+  // Lead 任务在这里取一次，停靠区（DockWork）和侧边面板的 Lead 页签共用：两边各自轮询的话，
+  // 一边作答后另一边要等下一拍才对上。只在用得着时取（对话视图，或面板里开着 Lead 页签），
+  // 和原先「停靠区挂着才轮询」一致，终端视图下不白拉。
+  // 手机远程页没有右侧面板：页签状态一概不认，停靠区保持原样、不出「在侧边面板打开」。
+  const openLeadTab = panelActions.openLead;
+  const leadTab = useMemo(() => leadTabLink(panelState, shownPanelState.visible, openLeadTab), [panelState, shownPanelState.visible, openLeadTab]);
+  const leadTabOpen = !!leadTab?.open;
+  const [leadTaskNow, leadRefresh, leadFailure] = useLeadTask(
+    sessionId !== 0 && (view === "chat" || leadTabOpen) ? cwd : null,
+    history ? history.ccSessionId ?? null : undefined,
+  );
+  const leadState = useMemo<LeadTaskState>(() => ({ task: leadTaskNow, refresh: leadRefresh, failure: leadFailure }), [leadTaskNow, leadRefresh, leadFailure]);
+
   const refresh = useCallback(async () => {
     if (sessionId <= 0 || busyRef.current) {
       // 0(远程未选会话)与负数(冷启动临时 id)都不该停留在加载态——0 漏掉的话
@@ -2399,10 +2461,21 @@ export function ChatWindow() {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useApprovalChannel 的 useState setter 与 ref，引用稳定
   }, [watchedQuestion, structuredQuestion, dismissedQuestion, sessionId, history, items]);
 
+  // 屏幕卡（终端里的审批框、菜单）刚在对话页答完：按键已写进终端，但 transcript 的 pendingReview
+  // 要慢一拍才清。这段空档里卡片已收、pendingReview 还在，会冒出一张「去终端处理」的兜底卡闪一下
+  // （2026-11-18 用户实拍：Kimi 每张授权卡点完都闪一次）。与 brokerOwnsReview 同理压住兜底，
+  // 但屏幕通道没有 broker 的了结信号，再加一个上限：超时仍未清空就放出兜底，免得真卡住时看不到卡。
+  const [screenAnswered, setScreenAnswered] = useState(false);
+  useEffect(() => {
+    if (!screenAnswered) return;
+    const timer = window.setTimeout(() => setScreenAnswered(false), SCREEN_ANSWER_GRACE_MS);
+    return () => window.clearTimeout(timer);
+  }, [screenAnswered]);
+  useEffect(() => { setScreenAnswered(false); }, [sessionId]);
   useEffect(() => {
     // transcript 的 pendingReview 比 broker 的实时状态慢一拍。只有历史状态确实清空后，
     // 才重新启用“去终端处理”的兼容提示，避免 GUI 审批完成时闪一下旧提示。
-    if (!history?.pendingReview) setBrokerOwnsReview(false);
+    if (!history?.pendingReview) { setBrokerOwnsReview(false); setScreenAnswered(false); }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useApprovalChannel 的 useState setter 与 ref，引用稳定
   }, [history?.pendingReview]);
 
@@ -2818,9 +2891,9 @@ export function ChatWindow() {
     sendText: (text) => sendTextRef.current(text),
     undoFrom: undoableIds ? (id, text) => void undoFromRef.current(id, text) : undefined,
     undoableIds,
-    newSession: () => void openNewSessionWindow({ cwd, provider }).catch(() => {}),
+    newSession: () => void openNewSessionWindow({ cwd: dirGone ? dirGoneOrigin : cwd, provider }).catch(() => {}),
     undoRejected: rejectedUndo ? () => void undoFromRef.current(rejectedUndo.id, rejectedUndo.text) : undefined,
-  }), [undoableIds, cwd, provider, rejectedUndo]);
+  }), [undoableIds, cwd, provider, rejectedUndo, dirGone, dirGoneOrigin]);
   /// 原生图片附加：逐张把附件写进系统剪贴板 → 发插件声明的粘贴键（claude 的 Ctrl-V、
   /// kimi 在 Windows 上的 Alt+V——发 Ctrl-V 会被它的 composer 无视，真机实拍）让 TUI
   /// 自己读（claude 的 `[Image #N]`、kimi 的 `[image #N (W×H)]`）→ 等第 N 个占位符出现
@@ -3369,7 +3442,8 @@ export function ChatWindow() {
         // 说明与卡片在场时的占位同一句（见 chat/composerCardLock）。
         if (latest.pendingReview && latest.pendingReview !== "gate") throw new Error(cardLockHint(lockForPendingReview(latest.pendingReview), t));
         if (latest.screenState === "blocked") throw new Error(t.chat.cardLockMenu);
-        const currentTone = historyTone(latest);
+        // 写终端前现查一次：只看主回合（后台子代理在跑时输入框照常可用，Enter 直接提交）。
+        const currentTone = historyTurnTone(latest);
         const key = currentTone === "running" ? chatUi?.queue_input : "\r";
         if (!key) throw new Error(t.chat.busySendUnavailable);
         outgoingStore.settle(outgoingId, { kind: currentTone === "running" ? "queued" : "echo" });
@@ -3397,7 +3471,8 @@ export function ChatWindow() {
     }
   };
   const deliverQueued = async (item: QueuedPromptDto) => {
-    if (queueBusy) return;
+    // sendPrompt 发往当前页的会话：不是这一会话的排队消息绝不能认领（会串到别的会话里发出去）。
+    if (queueBusy || item.sessionId !== sessionId || !isCurrentOperation()) return;
     setQueueBusy(true);
     let claimed = false;
     let handedOff = false;
@@ -3835,15 +3910,16 @@ export function ChatWindow() {
   // background 例外:它没有终端可接管,composer 是唯一出口(发送时后端另有拒绝话术)。
   // 已停用的「Meowo 托管」会话不看 supported：没绑定原生 id 的读不到原生记录（supported=false），
   // 也得锁住输入框、给出停用说明——托管通道已删，消息发不出去。
-  const composerGated = !!history && !history.background && history.ptyManaged === false
-    && (retiredManaged != null || (history.supported && (externalRunning || history.status === "ended")));
+  // 目录已删除同样锁住输入框，门卡换成只读说明（见 dirGone）。
+  const composerGated = dirGone || (!!history && !history.background && history.ptyManaged === false
+    && (retiredManaged != null || (history.supported && (externalRunning || history.status === "ended"))));
   // CLI 意外退出（二期 #7）：已结束的会话问一次托管终端的定格快照，后端判定为意外退出
   //（退出码非 0、不是用户结束、不在重启窗口内）就把「会话已结束」换成退出码 + 最后几行输出。
   // since 给最大值：只要退出信息，不要整段 1MiB 的输出回放。
-  const endedHere = composerGated && !externalRunning && sessionId > 0;
+  const endedHere = composerGated && !dirGone && !externalRunning && sessionId > 0;
   // 停用说明只在门卡还挂着时生效：「用官方 CLI 打开」之后 ptyManaged 翻 true，它就是普通原生会话，
   // 占位文字与 + 菜单（附件/斜杠/@）必须恢复（做空 R4：此前恢复后仍显示「已停用」、+ 永久置灰）。
-  const retiredGate = composerGated ? retiredManaged : null;
+  const retiredGate = composerGated && !dirGone ? retiredManaged : null;
   const [crash, setCrash] = useState<{ id: number; code: number; tail: string | null } | null>(null);
   useEffect(() => {
     if (!endedHere) return;
@@ -4080,6 +4156,24 @@ export function ChatWindow() {
     () => (approvalRequest ? approvalCardModel(approvalRequest, t, approvalTimedOut) : null),
     [approvalRequest, t, approvalTimedOut],
   );
+  // 手机端 history.pendingReview 往往比 broker 结构化审批早到一拍。立即渲染 RemoteTerminalKeys
+  // 会先闪一张终端按键卡，再换成正常审批卡（2026-11-16 用户两张实拍）。给接收通道一个短交接窗；
+  // 超过窗口仍没有结构化卡，才展示真正的终端兜底。
+  const terminalFallbackCandidate = view === "chat" && !terminalAttention && !approval && !brokerOwnsReview && !screenAnswered
+    && !!terminalReview && history?.ptyManaged !== false;
+  const terminalFallbackKey = terminalFallbackCandidate && remoteUi() ? `${sessionId}:${terminalReview}` : null;
+  const [terminalFallbackReadyKey, setTerminalFallbackReadyKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (!terminalFallbackKey) {
+      setTerminalFallbackReadyKey(null);
+      return;
+    }
+    const timer = window.setTimeout(() => setTerminalFallbackReadyKey(terminalFallbackKey), 800);
+    return () => window.clearTimeout(timer);
+  }, [terminalFallbackKey]);
+  const terminalFallbackShown = terminalFallbackCandidate
+    && (!remoteUi() || terminalFallbackReadyKey === terminalFallbackKey);
+
   // C-9：overlay 层是否有卡在场(供 wrapper 挂 is-active,消息列表底部淡出过渡随之启停)。
   // 条件镜像下方渲染分支:屏幕识别三卡互斥,题面两形态互斥,三类之间可并存(overlay 内纵向堆叠)。
   // 提问卡（屏幕识别选择器 + 题面两形态）用户要求两视图都出：broker 挂起时终端画面上
@@ -4090,7 +4184,7 @@ export function ChatWindow() {
     || (view === "chat" && (
       commandAttention
       || (terminalAttention && !commandAttention && !interactiveAttention)
-      || (!terminalAttention && (approval || (!brokerOwnsReview && terminalReview && history?.ptyManaged !== false)))
+      || (!terminalAttention && (approval || terminalFallbackShown))
     )),
   );
   // 屏幕菜单/审批「一次性作答」的在途去重(对应 broker 审批的 resolvingApproval):写 PTY
@@ -4117,6 +4211,7 @@ export function ChatWindow() {
         terminalMenuSeenRef.current = false;
         setTerminalMenuOpen(false);
         setTerminalAttention(null);
+        setScreenAnswered(true);
         // 模型平时由 Stop hook 落库，而 `/model` 切换不产生 Stop——不主动刷一次的话，
         // 对话页和贴纸会一直挂着旧模型直到下一条消息跑完。CLI 要一会儿才把新模型写进
         // 会话日志，故稍等再读。
@@ -4140,7 +4235,7 @@ export function ChatWindow() {
       void typeAnswerIntoTerminal(sessionId, flow, reason)
         .then((outcome) => {
           if (!isCurrentOperation()) return;
-          if (outcome === "sent") { setTerminalAttention(null); return; }
+          if (outcome === "sent") { setTerminalAttention(null); setScreenAnswered(true); return; }
           // 没进入等输入的状态：说明没有写进终端，审批框还在，卡片留着让用户重试或直接拒绝。
           logChatEvent(sessionId, { kind: "card_unrecognized", reason: "typed_answer_not_ready", detail: { what: "deny_reason" } });
           setSendError(t.chat.denyReasonNotSent, { terminal: true });
@@ -4605,13 +4700,15 @@ export function ChatWindow() {
             starred={!!history.ccSessionId && starredSet.has(history.ccSessionId)}
             onToggleStar={toggleStar}
             onRename={() => setRenaming(true)}
-            onFork={chatUi?.fork && sessionId > 0 ? () => void forkCurrent() : undefined}
-            onCopyResume={resumeCommand && !remoteUi() ? () => copyResumeCommand(resumeCommand) : undefined}
+            // 目录已删：分叉与恢复命令都要在原目录里跑，注定失败，不给入口。
+            onFork={chatUi?.fork && sessionId > 0 && !dirGone ? () => void forkCurrent() : undefined}
+            onCopyResume={resumeCommand && !remoteUi() && !dirGone ? () => copyResumeCommand(resumeCommand) : undefined}
             onCopyConversation={conversationExport.hasContent ? conversationExport.copyConversation : undefined}
             onCopyFinalAnswer={conversationExport.hasFinalAnswer ? conversationExport.copyFinalAnswer : undefined}
             onExportConversation={conversationExport.hasContent ? () => void conversationExport.exportConversation() : undefined}
             forkDisabled={tone === "running" || sending}
             onToggleArchived={() => void toggleArchived()}
+            archiveDisabledReason={history.archived && dirGone ? t.chat.dirGoneNoReopen : undefined}
             onSearch={() => { setView("chat"); setSearchOpen(true); }}
             t={t}
           />
@@ -4629,8 +4726,8 @@ export function ChatWindow() {
         )}
         archive={history && !history.archived && sessionId > 0 ? { busy: archiving, onClick: () => void toggleArchived() } : null}
         end={history?.endable ? { busy: endingSession, onClick: () => void endSession() } : null}
-        cwd={cwd}
-        prCwd={gitSummary?.isRepo ? cwd : (repoChanges?.[0]?.root ?? cwd)}
+        cwd={liveCwd}
+        prCwd={gitSummary?.isRepo ? liveCwd : (repoChanges?.[0]?.root ?? liveCwd)}
         sessionPrUrl={sessionPrUrl}
         gitSummary={effectiveSummary}
         changesOpen={panelState.visible && panel.active?.type === "diff"}
@@ -4642,7 +4739,7 @@ export function ChatWindow() {
         onTogglePanel={panelActions.toggle}
         panelAgentBusy={!panelState.visible && panel.agentBusy}
         panelWaiting={!panelState.visible && panel.permissionWaiting}
-        info={!remoteUi() && cwd && !panelState.visible ? { open: infoWide ? infoOn : infoFloating, onToggle: toggleInfo } : null}
+        info={!remoteUi() && liveCwd && !panelState.visible ? { open: infoWide ? infoOn : infoFloating, onToggle: toggleInfo } : null}
         onToggleTerminal={() => { const next = view === "terminal" ? "chat" : "terminal"; rememberViewPref(next); setView(next); }}
         onError={setSendError}
         onPullRequest={setTitlePullRequest}
@@ -4654,6 +4751,7 @@ export function ChatWindow() {
           终端侧懒挂载（terminalMounted），纯对话的用户不用白付 xterm 的创建成本。 */}
       {/* 工具行里落在会话目录下的路径显示成相对路径（见 ToolActivity 的 relativize）。 */}
       <ChatCwdContext.Provider value={cwd ?? null}>
+      <RevealChangeContext.Provider value={revealChange}>
       <ChatActionsContext.Provider value={chatActions}>
       <EchoPhaseContext.Provider value={echoPhases}>
       <EchoActionsContext.Provider value={echoActions}>
@@ -4764,6 +4862,16 @@ export function ChatWindow() {
             activity={runningActivity}
           />
         )}
+        {/* 主回合停了、后台子代理还在跑：照常可以发消息，这里只交代后台还在干活；各个子代理的
+            进度在停靠栏「子代理」里。不计时、不挂插话去向——那是主回合在跑时的说法。 */}
+        {!loading && sessionId !== 0 && backgroundOnly && (
+          <div className="chat-running is-background">
+            <div className="chat-running-line">
+              <SnakeSpinner />
+              <span className="chat-running-verb">{t.chat.backgroundOnlyRunning}</span>
+            </div>
+          </div>
+        )}
         {/* 已写进 CLI 的排队回执由 outgoingStore 对账；尚未交付的持久队列在下一组件，
             两者分界就是能否取消：领取后不再提供假取消。 */}
         {!loading && queuedShown.length > 0 && (
@@ -4797,7 +4905,8 @@ export function ChatWindow() {
                   </div>
                   <span className="chat-queue-tools">
                     {(item.phase === "uncertain" || item.phase === "failed") && <>
-                      <button type="button" className="chat-queue-tool" aria-label={t.chat.echoRetry} data-tip={t.chat.echoRetry} onClick={() => retryOutgoing(item.id)}><Icon glyph={icRefreshCw} size={14} /></button>
+                      {/* 未确认的不给重发：CLI 可能已收下只是没轮到，retryOutgoing 对它一律拒绝，列出来点了只会报错（见 Message 的 EchoUncertainActions）。 */}
+                      {item.phase === "failed" && <button type="button" className="chat-queue-tool" aria-label={t.chat.echoRetry} data-tip={t.chat.echoRetry} onClick={() => retryOutgoing(item.id)}><Icon glyph={icRefreshCw} size={14} /></button>}
                       <button type="button" className="chat-queue-tool" aria-label={t.chat.echoRestore} data-tip={t.chat.echoRestore} onClick={() => restoreOutgoing(item.id)}><Icon glyph={icUndo} size={14} /></button>
                     </>}
                     <button
@@ -4845,6 +4954,7 @@ export function ChatWindow() {
       </EchoActionsContext.Provider>
       </EchoPhaseContext.Provider>
       </ChatActionsContext.Provider>
+      </RevealChangeContext.Provider>
       </ChatCwdContext.Provider>
       {/* 区内搜索的叠层与胶囊：覆盖在滚动区之上，故与导航同样放在 main 之外。 */}
       {searchOpen && view === "chat" && !loading && timelineItems.length > 0 && (
@@ -5006,7 +5116,7 @@ export function ChatWindow() {
           会话的提问/审批一律留在终端处理（broker 同口径整段短路，见 pty.rs handle_approval），
           对着它弹一张只能「打开终端」的卡，和不弹相比只多一次打扰。ptyManaged 用严格
           === false（与 composerGated 同哲学）：DTO 必填，信号缺失只可能是错配，退回旧路径。 */}
-      {view === "chat" && !terminalAttention && !approval && !brokerOwnsReview && terminalReview && history?.ptyManaged !== false && <ApprovalCard
+      {terminalFallbackShown && <ApprovalCard
         returnFocusTo={promptInputRef}
         title={cardTitle(terminalReview, t)}
         badge={cardBadge(terminalReview, "pending", t)}
@@ -5077,6 +5187,7 @@ export function ChatWindow() {
             background={history?.background ?? false}
             resumeOptions={resumeOptions}
             takeoverExtra={resumePermissionPicker}
+            dirGone={dirGone}
             // 后台会话的按键注定无效。第一下就把用户领到对话页——那里的输入框走 daemon 的
             // 送话通道，是真能用的。原先的做法是让他打完一整句再弹错误，等于白打。
             onBackgroundInput={() => {
@@ -5104,7 +5215,7 @@ export function ChatWindow() {
       {view === "chat" && sessionId !== 0 && (
         <div className="chat-dock">
           {/* 停靠栏（计划/进度/后台任务）：状态、关闭规则与入口判定见 chat/DockWork。 */}
-          <DockWork sessionId={sessionId} cwd={cwd} ccSessionId={history?.ccSessionId ?? null} items={items} history={history} loading={loading} returnFocusTo={promptInputRef} live={{ activity: turnActivityOf(tone), alive: history?.connected ?? false }} />
+          <DockWork sessionId={sessionId} cwd={cwd} ccSessionId={history ? history.ccSessionId ?? null : undefined} lead={leadState} leadTab={leadTab} items={items} history={history} loading={loading} returnFocusTo={promptInputRef} live={{ activity: turnActivityOf(tone), alive: history?.connected ?? false }} />
           {sideAnswers.length > 0 && (
             <div className="chat-side-answers">
               {sideAnswers.map((entry) => (
@@ -5148,7 +5259,7 @@ export function ChatWindow() {
             </div>
           )}
           {/* sessionId=0(远程未选会话)没有可发送的对象,composer 整体不渲染。 */}
-          <footer ref={composeRef} className={"chat-compose" + (composerLocked ? " is-locked" : "") + (composerExpanded ? " is-expanded" : "")}>
+          <footer ref={composeRef} className={"chat-compose" + (dirGone ? " is-dir-gone" : "") + (composerLocked ? " is-locked" : "") + (composerExpanded ? " is-expanded" : "")}>
           {(promptLong || composerExpanded) && !compactChrome && (
             <button
               type="button"
@@ -5182,7 +5293,18 @@ export function ChatWindow() {
             >{t.chat.supersededGo}</button>
           </div>
         </div>}
-        {supersededTo == null && composerGated && <div className="chat-compose-gate">
+        {supersededTo == null && dirGone && history && <div className="chat-compose-gate is-dir-gone" data-testid="compose-dir-gone">
+          <span>{t.chat.dirGoneBanner}</span>
+          <div className="chat-compose-gate-actions">
+            <button
+              type="button"
+              className="sbtn"
+              data-tip={dirGoneOrigin ? t.chat.dirGoneNewInTip(dirGoneOrigin) : undefined}
+              onClick={() => void openNewSessionWindow({ cwd: dirGoneOrigin, provider: history.provider }).catch(() => {})}
+            >{dirGoneOrigin ? t.chat.dirGoneNewIn(folderName(dirGoneOrigin) || dirGoneOrigin) : t.chat.dirGoneNew}</button>
+          </div>
+        </div>}
+        {supersededTo == null && composerGated && !dirGone && <div className="chat-compose-gate">
           <span>{retiredManaged ? t.chat.managedRetired : externalRunning ? t.chat.sendNeedsTakeover : crashShown ? t.chat.agentCrashed(crashShown.code) : t.chat.composerGateEnded}</span>
           {!retiredManaged && crashShown?.tail && <pre className="chat-compose-gate-tail">{crashShown.tail}</pre>}
           {/* 恢复失败的原因就地可见（接管态的主文案已是同一句，不重复）。 */}
@@ -5200,7 +5322,9 @@ export function ChatWindow() {
             >{retiredManaged ? t.chat.managedRetiredOpenCli : externalRunning ? t.chat.terminalTakeover : t.chat.resumeSession}</button>
           </div>}
         </div>}
-        <>
+        {/* 目录已删：门卡就是整块输入区，不留锁住的输入框和那排用不了的控件（对照 Slack/Linear 的归档频道、
+            GitHub 锁定的 issue：只读状态下不显示不能用的控件）。 */}
+        {!dirGone && <>
         {/* 手机上斜杠命令走底部面板（对照 Kimi 的 slashSheet）：面板盖住输入框，所以自带一个搜索框，
             它直接绑在同一份 prompt 上——两边不用同步，选中命令即写回输入框、面板随之收起。
             还在敲 `/查询`、哪怕一条都没命中也不收，否则边打边消失的搜索框没法用。 */}
@@ -5333,7 +5457,15 @@ export function ChatWindow() {
         </div>}
         {attachmentNotice && <div className="chat-send-error" role="status"><span>{attachmentNotice}</span></div>}
         {/* 在跑或有待批审批时选的模型 / 模式：不写终端、不重启，这一轮结束后自动切（useSessionSettings）。 */}
-        {sessionSettings.notice && <div className="chat-send-error" role="status"><span>{sessionSettings.notice}</span></div>}
+        {/* 排着的切换是一件「待办」，不是出错：一行小字 + 时钟，能撤销；「关闭应用会取消」放进悬停提示，
+            不再占一整条灰底提示框（2026-11-18 用户截图：「这个能不能优化一下」）。 */}
+        {sessionSettings.notice && (sessionSettings.deferredRequest ? (
+          <div className="chat-deferred" role="status" data-tip={t.chat.settingsDeferredTip}>
+            <Icon glyph={icClock} size={12} className="chat-deferred-icon" />
+            <span className="chat-deferred-text">{sessionSettings.notice}</span>
+            <button type="button" className="chat-deferred-cancel" onClick={() => void sessionSettings.cancelDeferred()}>{t.chat.settingsDeferredCancel}</button>
+          </div>
+        ) : <div className="chat-send-error" role="status"><span>{sessionSettings.notice}</span></div>)}
         <textarea
           ref={promptInputRef}
           value={prompt}
@@ -5566,7 +5698,7 @@ export function ChatWindow() {
               //（daemon 托管，我们恢复不了它）。
               // 选项清单与 resumePermissionPicker 共用同一份构造（permissionChoiceOptions）。
               const resumeChoices = permissionOption && dimension === permissionOption.id
-                && history && !history.connected && !history.background
+                && history && !history.connected && !history.background && !dirGone
                 ? permissionChoiceOptions.map((option) => ({ ...option, inputs: [] }))
                 : null;
               const resumePick = resumeChoices !== null;
@@ -6008,7 +6140,7 @@ export function ChatWindow() {
           <button type="button" className="chat-send-takeover" onClick={() => setUndoNotice(false)}>{t.chat.slashMenuDismiss}</button>
         </div>}
         {copyNotice && <div className="chat-send-error" role="status"><span>{copyNotice.text}</span></div>}
-        </>
+        </>}
       </footer>
         </div>
       )}
@@ -6017,7 +6149,7 @@ export function ChatWindow() {
           折叠只加 is-collapsed（display:none）不卸载，面板状态原样保留。
           分栏柄落在两张卡之间的缝隙里，拖拽调宽（折叠/最大化时隐藏）。 */}
       {/* 会话信息栏：面板收起时露出来（同 Kimi Code）。够宽停靠，窄了从标题栏按钮弹浮层。 */}
-      {!remoteUi() && cwd && !pageCovered && !panelState.visible && (infoWide ? infoOn : infoFloating) && (
+      {!remoteUi() && liveCwd && !pageCovered && !panelState.visible && (infoWide ? infoOn : infoFloating) && (
         <SessionInfo
           mode={infoWide ? "docked" : "floating"}
           state={panelState}
@@ -6028,7 +6160,7 @@ export function ChatWindow() {
           onClose={infoWide ? undefined : () => setInfoFloating(false)}
         />
       )}
-      {cwd && (panelState.visible || panelState.tabs.length > 0) && (
+      {liveCwd && (panelState.visible || panelState.tabs.length > 0) && (
         <>
           {!remoteUi() && <div
             className={"chat-diff-resizer" + (shownPanelState.visible && !panelState.expanded ? "" : " is-hidden")}
@@ -6052,7 +6184,7 @@ export function ChatWindow() {
             ? (
               // 手机上只有改动一页、恒铺满全屏，收起即回到对话（远程不给文件、终端、浏览器）。
               <GitDiffView
-                cwd={cwd}
+                cwd={liveCwd}
                 summary={gitSummary}
                 repos={repoChanges}
                 width={diffResize.width}
@@ -6078,7 +6210,7 @@ export function ChatWindow() {
                 actions={panelActions}
                 shells={panel.shells}
                 panes={panel.panes}
-                cwd={cwd}
+                cwd={liveCwd}
                 summary={gitSummary}
                 repos={repoChanges}
                 width={shownPanelWidth}
@@ -6094,6 +6226,7 @@ export function ChatWindow() {
                 onSelectRoot={setScmRoot}
                 onChanged={refreshChanges}
                 sessionId={sessionId}
+                lead={leadState}
               />
             )}
           </Suspense>

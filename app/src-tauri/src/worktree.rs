@@ -8,11 +8,11 @@
 //! 判定条件（全部满足才 eligible）：
 //! - 会话目录在一个 linked worktree 里（主检出永远不删）
 //! - 没有别的未归档会话也在这个 worktree 里
-//! - `gh` 查到当前分支的 PR 是 MERGED——用 PR 状态而不是提交祖先关系，squash 合并后
+//! - 平台（经设置里的账号）查到当前分支的 PR 是 MERGED——用 PR 状态而不是提交祖先关系，squash 合并后
 //!   分支提交不在主干历史里，祖先判断会全部误判成「没合并」（这次清理里有 30+ 个这样的分支）
-//!   gh 用不了时（没装、没登录）改用 git 本地判断：分支内容已经全部进了远端主分支才算合并，
+//!   查不了时（没账号、令牌失效）改用 git 本地判断：分支内容已经全部进了远端主分支才算合并，
 //!   squash 合并靠「把整条分支压成一个提交再比 patch-id」认出来（[`local_merge_check`]）。
-//!   2026-11-10 leader 定（关卡 Q-no-gh）：没装 gh 的用户也要能清理。
+//!   2026-11-10 leader 定（关卡 Q-no-gh）：查不了 PR 的用户也要能清理。
 //! - worktree 里没有嵌套的仓库或 worktree（Claude Code 的 `.claude/worktrees/` 通常被忽略，
 //!   status 看不见，`git worktree remove` 却会连它一起删）
 //! - 每个子模块干净，且子模块 HEAD 在它的远端存在
@@ -34,7 +34,7 @@ use tauri::State;
 
 // ═══ 判定 ═══
 
-/// `gh pr view` 的结论。gh 没装、没登录、不是 GitHub 仓库都归到 Unavailable：
+/// 查当前分支 PR 的结论。没账号、令牌失效、远端认不出平台都归到 Unavailable：
 /// 判断不了有没有合并，就不能删。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PrLookup {
@@ -46,9 +46,9 @@ pub(crate) enum PrLookup {
         state: String,
         head_oid: String,
     },
-    /// gh 用不了，git 本地确认分支内容已经全部在远端主分支里（普通合并、快进或 squash）。
+    /// 查不了 PR，git 本地确认分支内容已经全部在远端主分支里（普通合并、快进或 squash）。
     LocalMerged,
-    /// gh 用不了，git 本地看分支还有内容不在远端主分支里。
+    /// 查不了 PR，git 本地看分支还有内容不在远端主分支里。
     LocalNotMerged,
 }
 
@@ -127,7 +127,7 @@ pub(crate) fn evaluate(f: &Facts) -> Option<(&'static str, Option<u32>)> {
     None
 }
 
-// ═══ git / gh ═══
+// ═══ git / 平台 ═══
 
 fn command(program: &str) -> Command {
     // mut 只有 Windows 要用（设 creation_flags），macOS 上 clippy 会报 unused_mut（CI 实测）。
@@ -159,37 +159,13 @@ fn git_repo(common: &Path, args: &[&str]) -> std::io::Result<std::process::Outpu
     command("git").arg(git_dir).args(args).output()
 }
 
-/// 真实的 `gh pr view`。不走 git.rs 的 60s 缓存：删除前要的是此刻的状态。
-pub(crate) fn gh_pr_lookup(dir: &Path) -> PrLookup {
-    let out = match command("gh")
-        .current_dir(dir)
-        .args(["pr", "view", "--json", "number,state,headRefOid"])
-        .output()
-    {
-        Ok(out) => out,
-        Err(_) => return PrLookup::Unavailable,
-    };
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr).to_lowercase();
-        return if err.contains("no pull requests found") {
-            PrLookup::NoPr
-        } else {
-            PrLookup::Unavailable
-        };
-    }
-    parse_pr_view(&String::from_utf8_lossy(&out.stdout)).unwrap_or(PrLookup::Unavailable)
+/// 查当前分支的 PR（不走 git.rs 的 60s 缓存：删除前要的是此刻的状态）。经统一的平台接口与设置里的账号；
+/// 没账号、令牌失效、远端认不出平台时按「查不了」走本地判定。Meowo 不调用本机 gh。
+pub(crate) fn pr_lookup(dir: &Path) -> PrLookup {
+    crate::forge::platform_pr_lookup(dir)
 }
 
-fn parse_pr_view(json: &str) -> Option<PrLookup> {
-    let v: serde_json::Value = serde_json::from_str(json).ok()?;
-    Some(PrLookup::Found {
-        number: u32::try_from(v.get("number")?.as_u64()?).ok()?,
-        state: v.get("state")?.as_str()?.to_string(),
-        head_oid: v.get("headRefOid")?.as_str()?.to_string(),
-    })
-}
-
-// ═══ 没有 gh 时的本地判定 ═══
+// ═══ 查不了 PR 时的本地判定 ═══
 
 /// 远端主分支的 remote-tracking 引用：优先 origin/HEAD 指向的那个，没有就试 origin/main、origin/master。
 /// 只认远端引用不认本地 main：本地 main 上可能有没推的合并，删了 worktree 东西就只剩本机一份。
@@ -522,7 +498,7 @@ fn worktree_changes(top: &Path) -> (u32, u32) {
 }
 
 /// 本地 HEAD 必须等于 PR 的 head 提交或是它的祖先：PR 合并时远端拿到的就是这个提交，
-/// 本地没有多出来的东西。不再用「某个远端分支包含 HEAD」兜底——分支名沿用旧名时，gh 会
+/// 本地没有多出来的东西。不再用「某个远端分支包含 HEAD」兜底——分支名沿用旧名时，平台会
 /// 拿到旧的已合并 PR，那时 HEAD 往往也在远端（刚推的新提交），兜底会把没合并的工作判成可删。
 fn has_unpushed(top: &Path, pr: &PrLookup) -> bool {
     // 本地判定已合并时，HEAD 的内容已经在远端主分支里（判定本身就是拿 HEAD 比的），删了不丢东西。
@@ -555,8 +531,8 @@ fn gather_facts(lay: &Layout, other_sessions: u32, pr_lookup: &dyn Fn(&Path) -> 
         unpushed: false,
         locked: false,
     };
-    // 前面的条件不满足就不往下查：gh 要联网，没必要对主检出也问一遍。
-    // 注意不能拿 evaluate 判断——此时 pr 还是默认的 Unavailable，会直接短路掉 gh 查询。
+    // 前面的条件不满足就不往下查：查 PR 要联网，没必要对主检出也问一遍。
+    // 注意不能拿 evaluate 判断——此时 pr 还是默认的 Unavailable，会直接短路掉 PR 查询。
     if !facts.linked_worktree || facts.branch.is_none() || facts.other_sessions > 0 {
         return facts;
     }
@@ -1110,6 +1086,40 @@ fn count_other_sessions(db_path: &Path, exclude: &[i64], top: &str) -> u32 {
         .count() as u32
 }
 
+/// worktree 删掉之后的善后（只改标记、不删任何会话数据）：
+/// - 目录里的会话都记下原项目，目录没了以后照样能给「在原项目新开会话」；
+/// - 发起删除的会话若还没标记完成就顺手标上——它的目录已经没了，留在「进行中」只会是一张续不上的卡。
+///   同目录的其他会话不用管：没标记完成的会话在用这个目录时，判定会以 shared_session 拒绝删除。
+pub(crate) fn after_removal(
+    store: &meowo_store::Store,
+    session_id: i64,
+    inside: &[i64],
+    origin: Option<&Path>,
+) {
+    if let Some(origin) = origin {
+        let origin = origin.to_string_lossy().replace('\\', "/");
+        for &id in inside {
+            let _ = store.set_session_origin_root(id, &origin);
+        }
+    }
+    if store.session_header(session_id).is_ok_and(|h| !h.archived) {
+        let _ = store.set_session_archived(session_id, true, super::now_ms());
+    }
+}
+
+/// cwd 落在 `top` 里的全部会话（已完成与进行中）。
+pub(crate) fn sessions_inside(store: &meowo_store::Store, top: &str) -> Vec<i64> {
+    let top = norm(Path::new(top));
+    store
+        .archived_session_cwds()
+        .into_iter()
+        .chain(store.unarchived_session_cwds())
+        .flatten()
+        .filter(|(_, cwd)| is_under(&norm(Path::new(cwd)), &top))
+        .map(|(id, _)| id)
+        .collect()
+}
+
 fn session_dir(db_path: &Path, session_id: i64) -> Result<PathBuf, String> {
     let store = super::open_store(db_path)?;
     let cwd = store
@@ -1131,7 +1141,7 @@ pub(crate) async fn worktree_status(
         Ok(status_for_dir(
             &dir,
             &|top| count_other_sessions(&db_path, &[session_id], top),
-            &gh_pr_lookup,
+            &pr_lookup,
         ))
     })
     .await
@@ -1151,14 +1161,25 @@ pub(crate) async fn remove_session_worktree(
     let db_path = state.db_path.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let dir = session_dir(&db_path, session_id)?;
+        // 原项目和目录里有哪些会话都要在删之前算：删完 `.git` 文件没了，路径也规范化不了。
+        let origin = crate::wtnew::origin::origin_root_of(&dir);
+        let inside = super::open_store(&db_path)
+            .map(|store| sessions_inside(&store, &expected_path))
+            .unwrap_or_default();
         // 同一个 worktree 下其他已归档会话不算「在用」：它们本来就会跟着一起显示「目录已删除」。
-        remove_dir_worktree(
+        let result = remove_dir_worktree(
             &dir,
             &expected_path,
             &|top| count_other_sessions(&db_path, &[session_id], top),
-            &gh_pr_lookup,
+            &pr_lookup,
             &confirmed_pids,
-        )
+        );
+        if matches!(&result, Ok(r) if r.removed) {
+            if let Ok(store) = super::open_store(&db_path) {
+                after_removal(&store, session_id, &inside, origin.as_deref());
+            }
+        }
+        result
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -1168,7 +1189,7 @@ pub(crate) async fn remove_session_worktree(
     result
 }
 
-/// 批量清理清单：所有已归档会话所在的 worktree（去重），各附判定结果。gh 要联网，
+/// 批量清理清单：所有已归档会话所在的 worktree（去重），各附判定结果。查 PR 要联网，
 /// 按 worktree 并发查，最多 4 个一起。
 #[tauri::command]
 pub(crate) async fn list_cleanable_worktrees(
@@ -1207,7 +1228,7 @@ pub(crate) async fn list_cleanable_worktrees(
                             status: status_for_dir(
                                 top,
                                 &|t| count_other_sessions(db_path, ids, t),
-                                &gh_pr_lookup,
+                                &pr_lookup,
                             ),
                         })
                     })

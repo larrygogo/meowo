@@ -4,6 +4,7 @@ import { adapter, invoke } from "./chatWindow.harness";
 import { ChatWindow } from "./ChatWindow";
 import type { QueuedPromptDto } from "../api";
 import { markRemoteUi } from "../remoteMode";
+import { anchorFrom, outgoingStore } from "./chat/outgoingPrompts";
 
 vi.mock("./ManagedTerminal", () => ({ ManagedTerminal: () => <div>PTY</div> }));
 
@@ -78,6 +79,19 @@ describe("ChatWindow 持久队列", () => {
     await waitFor(() => expect(screen.queryByText("卡住的消息", { selector: ".chat-queue-body" })).toBeNull(), { timeout: 4_000 });
     expect((await adapter.box()).value).toBe("卡住的消息");
     expect(harness.writes()).toEqual([]);
+  });
+
+  // 2026-11-17 实拍：排队区里「未确认送达」的消息挂着 ↻ 重发，点了只会报「正文可能仍在终端输入框」——
+  // retryOutgoing 对未确认的一律拒绝（CLI 可能已收下只是没轮到，重发会进两遍）。只给放回输入框。
+  it("排队区里未确认送达的消息不给重发，只给放回输入框", async () => {
+    queueHarness();
+    outgoingStore.add(771, { kind: "queued", text: "继续", attachmentOnly: false, anchor: anchorFrom([], null), phase: "uncertain", bodyWritten: false, draft: { prompt: "继续", attachments: [] } });
+    render(<ChatWindow />);
+    await screen.findByText("继续", { selector: ".chat-queue-body" });
+    const turn = document.querySelector(".chat-queued-turn")!;
+    expect(turn.querySelector('[aria-label="重发"]')).toBeNull();
+    expect(turn.querySelector('[aria-label="放回输入框"]')).not.toBeNull();
+    outgoingStore.reset();
   });
 
   it("用户在运行中主动提前交付才写官方 TUI", async () => {

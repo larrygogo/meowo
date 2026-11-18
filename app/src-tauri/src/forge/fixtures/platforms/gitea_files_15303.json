@@ -1,0 +1,22 @@
+[
+ {
+  "filename": "services/actions/task.go",
+  "status": "changed",
+  "additions": 1,
+  "deletions": 1,
+  "changes": 2,
+  "html_url": "https://codeberg.org/mfenniak/forgejo/src/commit/b9160301251f5115810a5083975dd91077fbd3d5/services/actions/task.go",
+  "contents_url": "https://codeberg.org/api/v1/repos/mfenniak/forgejo/contents/services/actions/task.go?ref=b9160301251f5115810a5083975dd91077fbd3d5",
+  "raw_url": "https://codeberg.org/mfenniak/forgejo/raw/commit/b9160301251f5115810a5083975dd91077fbd3d5/services/actions/task.go"
+ },
+ {
+  "filename": "services/actions/task_test.go",
+  "status": "changed",
+  "additions": 36,
+  "deletions": 0,
+  "changes": 36,
+  "html_url": "https://codeberg.org/mfenniak/forgejo/src/commit/b9160301251f5115810a5083975dd91077fbd3d5/services/actions/task_test.go",
+  "contents_url": "https://codeberg.org/api/v1/repos/mfenniak/forgejo/contents/services/actions/task_test.go?ref=b9160301251f5115810a5083975dd91077fbd3d5",
+  "raw_url": "https://codeberg.org/mfenniak/forgejo/raw/commit/b9160301251f5115810a5083975dd91077fbd3d5/services/actions/task_test.go"
+ }
+]

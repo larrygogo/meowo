@@ -76,11 +76,15 @@ export function collectSubagentReceipts(items: ChatItem[]): {
    *  配对按整份时间线做，不限于相邻——回执可以隔着别的块才到。与上面几张表同一趟扫描建出来，
    *  流式期间不为它多扫一遍。 */
   results: Map<string, Extract<ChatItem, { type: "tool_result" }>>;
+  /** 各委派**这一轮**开跑的时刻：最近一次从「没在跑」变成「在跑」的那条回执（启动回执，或
+   *  SendMessage 续上的回执）的时间戳。子任务面板的运行时长从这里算——续上的子代理按本轮计。 */
+  runningSince: Map<string, string | null>;
 } {
   const outcomes = new Map<string, SubagentOutcome>();
   const settledAt = new Map<string, number>();
   const finishedTs = new Map<string, string | null>();
   const results = new Map<string, Extract<ChatItem, { type: "tool_result" }>>();
+  const runningSince = new Map<string, string | null>();
   const taskOwner = new Map<string, string>();
   items.forEach((item, index) => {
     if (item.type !== "tool_result" || !item.tool_use_id) return;
@@ -95,11 +99,12 @@ export function collectSubagentReceipts(items: ChatItem[]): {
       if (seen === undefined) taskOwner.set(sub.task_id, owner);
       else owner = seen;
     }
+    if (sub.running > 0 && !((outcomes.get(owner)?.running ?? 0) > 0)) runningSince.set(owner, item.timestamp ?? null);
     outcomes.set(owner, sub);
     if (owner !== item.tool_use_id) {
       settledAt.set(owner, index);
       finishedTs.set(owner, item.timestamp ?? null);
     }
   });
-  return { outcomes, settledAt, finishedTs, results };
+  return { outcomes, settledAt, finishedTs, results, runningSince };
 }

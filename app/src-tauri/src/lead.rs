@@ -41,18 +41,20 @@ pub(crate) async fn answer_lead_gate(
     gate_id: String,
     choice: String,
     note: String,
+    version: Option<String>,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         // 按关卡 id 找任务：关卡可能挂在非 active 的旧任务里（做空审查 M4）
-        let task = meowo_reporter::lead::task_of_gate(&cwd, &gate_id).ok_or("lead/gate_missing")?;
+        let task = meowo_reporter::lead::task_of_gate_checked(&cwd, &gate_id)?;
         use tauri::Manager;
         let db = app.state::<crate::AppState>().db_path.clone();
-        let managed = crate::lead_conversation::answer_and_deliver(
+        let managed = crate::lead_conversation::answer_and_deliver_checked(
             &db,
             &cwd,
             &gate_id,
             &LeadGateAnswerDto { choice, note },
             Some(app.clone()),
+            version.as_deref(),
         )?;
         if !managed {
             if let Err(e) = resume_owner_if_gone(&app, &task) {
@@ -153,8 +155,7 @@ mod auto_resume_tests {
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
-const SKILL_MD: &str = include_str!("lead_assets/SKILL.md");
-const REDTEAM_MD: &str = include_str!("lead_assets/lead-redteam.md");
+const REDTEAM_HEADER: &str = "---\nname: lead-redteam\ndescription: 独立对照规格和证据验证交付，不修改源码。\ntools: Read, Grep, Glob, Bash\n---\n\n";
 /// 安装文件里的标记：卸载只删带它的文件，用户自己写的同名文件不碰。
 pub(crate) const MANAGED_MARK: &str = "由 Meowo 安装和管理";
 /// wait（asyncRewake）最多挂 7 天，hook timeout 设得更长一点，交给 reporter 自己按时退出。
@@ -278,6 +279,7 @@ pub(crate) fn install_into(
     if !claude_dir.is_dir() {
         return Err("lead/claude_missing".into()); // 没装 Claude Code 不凭空造目录
     }
+    let skill_body = meowo_agent::lead_install::skill_body(reporter)?;
     let skill = claude_dir.join("skills/lead/SKILL.md");
     let agent = claude_dir.join("agents/lead-redteam.md");
     // 初版（~/.claude/lead/hook.py 那套）留下的同名文件不带托管标记，但它就是要被接管的对象：
@@ -300,8 +302,8 @@ pub(crate) fn install_into(
     let mut settings = read_settings(&settings_path)?;
     std::fs::create_dir_all(claude_dir.join("skills/lead")).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(claude_dir.join("agents")).map_err(|e| e.to_string())?;
-    write_if_changed(&skill, SKILL_MD)?;
-    write_if_changed(&agent, REDTEAM_MD)?;
+    write_if_changed(&skill, &skill_body)?;
+    write_if_changed(&agent, &format!("{REDTEAM_HEADER}{}", meowo_agent::lead_install::REVIEW))?;
     // 每次启动 refresh_if_installed 都会走到这里：hook 已是目标状态就不重写 settings.json——
     // 否则每启动一次就改一次用户文件的 mtime、多一个与 claude 并发写同一文件的窗口。
     let before = settings.clone();
@@ -718,7 +720,7 @@ fn scan_gate_states(
     for cwd in cwds {
         // 项目里所有任务的关卡，不只 active 指向的那个（做空审查 M4）
         for (task, gate) in meowo_reporter::lead::project_gates(&cwd) {
-            if gate.status == "answered" {
+            if gate.status == "answered" || (gate.kind == "C" && gate.review.is_some()) {
                 answered(&task);
             }
             if gate.status != "pending" {
@@ -947,7 +949,8 @@ mod install_tests {
 
         install_into(&dir, "C:/m/meowo-reporter.exe", None).unwrap();
         assert!(installed_in(&dir));
-        assert!(dir.join("agents/lead-redteam.md").exists());
+        assert_eq!(std::fs::read_to_string(dir.join("skills/lead/SKILL.md")).unwrap(), meowo_agent::lead_install::skill_body("C:/m/meowo-reporter.exe").unwrap());
+        assert_eq!(std::fs::read_to_string(dir.join("agents/lead-redteam.md")).unwrap(), format!("{REDTEAM_HEADER}{}", meowo_agent::lead_install::REVIEW));
         let v = settings_of(&dir);
         let cmds = lead_cmds(&v);
         for mode in ["session", "claim", "stop", "wait"] {

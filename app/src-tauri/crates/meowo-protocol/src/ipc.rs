@@ -140,8 +140,22 @@ pub struct SubagentBranchProbeDto {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
 pub struct SubagentProbeDto {
-    /// 归一化状态：`running` / `completed` / `failed`。
+    /// 归一化状态：`running` / `completed` / `failed`；侧车没留下状态信号、只读到了用量时
+    /// 为 `unknown`（claude 的侧车不记结局，状态以主链回执为准，这里只补 token）。
     pub status: String,
+    /// 子代理到此刻用掉的 token，口径对齐 Claude Code 终端子代理行的「↓ 387.8k tokens」
+    /// （2.1.327 包内 `latestInputTokens + cumulativeOutputTokens`）：**最近一条**回复的输入
+    /// （含缓存写入与缓存读取，即此刻的上下文大小）+ **每条**回复的输出累加。同一个子代理被
+    /// SendMessage 续上后写的还是同一个侧车文件，这里是整个子代理的累计。
+    /// None = 该 provider 的侧车不带用量（拿不到就不显示，不估算）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "number"))]
+    pub tokens: Option<u64>,
+    /// 侧车元数据里记的这次委派的说明（claude 的 `agent-<id>.meta.json` 的 description）。面板里由
+    /// SendMessage 代表、最初委派不在已载入窗口里的子代理，靠它显示原来的名字，而不是续上时那句话。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub description: Option<String>,
     /// 侧车最后一次落盘的时刻（ISO-8601）。面板据此把耗时从「委派→现在」纠正成
     /// 真实执行时长；还在跑时为 None。
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -544,6 +558,16 @@ pub struct ChatHistoryDto {
     /// 已归档（与看板 `LiveItem.archived` 同一列）。对话窗标题栏据此在「归档 / 取消归档」
     /// 之间切换：归档只改看板可见性，不动会话本身——归档态的会话照样能继续对话。
     pub archived: bool,
+    /// 工作目录已经不在磁盘上（worktree 被清理、目录被手动删掉），且会话进程不在。与侧栏
+    /// `LiveItem.cwd_missing` 同口径。对话页据此只读回看：输入区换成「目录已删除，不能继续」
+    /// 与「新开会话」，不给「恢复会话」——agent 按目录找会话记录，换个目录续不上，原目录又没了。
+    #[serde(default)]
+    pub cwd_missing: bool,
+    /// 目录已删时推得出的原项目（主检出根目录，仍在磁盘上；见 wtnew::origin::origin_for_missing）。
+    /// 「在原项目新开会话」预填它；推不出、或目录还在时为 None（不下发）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub origin_root: Option<String>,
     /// Agent 自己维护的待办清单（快照式待办工具经 hook 落库）。空 = 该会话没有清单，
     /// 或该 agent 的待办是增量事件而非快照（当前版本的 Claude Code 即如此）。
     pub todos: Vec<TodoDto>,
@@ -971,7 +995,7 @@ fn is_false(b: &bool) -> bool {
 }
 
 /// 当前分支的 Pull Request（对话页标题栏，对照 Kimi 的「打开 Pull Request」与状态标记）。
-/// 由 `gh pr view` 取得；没装 gh / 没登录 / 分支没有 PR 时命令返回 None，前端不显示。
+/// 经设置里的账号向平台查；没账号 / 令牌失效 / 分支没有 PR 时命令返回 None，前端不显示。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
@@ -1016,6 +1040,11 @@ pub struct PullRequestDto {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     #[cfg_attr(test, ts(type = "boolean", optional))]
     pub queued: bool,
+    /// 代码托管平台：`gitlab` / `gitea` / `bitbucket`；GitHub（含企业版）不填。界面按它用平台的叫法
+    /// （GitLab 是合并请求 MR、编号写 `!12`，检查叫流水线）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub forge: Option<String>,
 }
 
 /// PR 的一项检查。
@@ -1099,35 +1128,69 @@ pub struct PrReviewDto {
     pub monitor: Option<PrMonitorDto>,
 }
 
-/// 「更改」面板的 GitHub 区块（`git_forge_status`）：gh 能不能用、开 PR 的默认值、当前分支的 PR 与检查。
-/// gh 不可用时只有 `compare_url`（前端开 PR 改为打开 GitHub 网页），不显示 CI、不能在应用里合并。
+/// 「更改」面板的 PR / MR 区块（`git_forge_status`）：有没有账号、开 PR 的默认值、当前分支的 PR 与检查。
+/// 没账号时只有 `compare_url`（前端开 PR 改为打开网页），不显示 CI、不能在应用里合并。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ForgeStatusDto {
-    /// `ok` / `missing`（没装）/ `unauthenticated`（没登录）/ `not_github`（远端不是 GitHub）/ `no_remote`。
+    /// `ok` / `no_account`（认出了平台、没有这台主机的账号）/ `unauthenticated`（令牌失效，要重新登录）/
+    /// `not_github`（远端认不出平台）/ `no_remote`。字段名沿用改版前的写法；Meowo 不调用本机 gh。
     pub gh: String,
-    /// gh 太旧（`gh pr merge` 没有 `--match-head-commit`）：合并按钮不可用并说明。
-    pub gh_too_old: bool,
     /// GitHub 仓库首页（`https://github.com/<owner>/<repo>`）。远端不是 GitHub 时为 None。
     pub repo_url: Option<String>,
-    /// 当前分支对默认分支的 compare 网页（没装 gh 时「开 PR」打开它）。
+    /// 当前分支对默认分支的 compare 网页（没有账号时「开 PR」打开它）。
     pub compare_url: Option<String>,
-    /// 仓库允许的合并方式（`merge` / `squash` / `rebase`），gh repo view 读，缓存 1 小时。
+    /// 仓库允许的合并方式（`merge` / `squash` / `rebase`），向平台查，缓存 1 小时。
     pub merge_methods: Vec<String>,
     /// 这个仓库上次用的合并方式（按 owner/repo 记在本机）。
     pub last_merge_method: Option<String>,
     pub pr: Option<PullRequestDto>,
     /// 还没有 PR 时，开 PR 表单的默认值。
     pub pr_defaults: Option<PrDefaultsDto>,
-    /// 多个 GitHub 远端、又没用 `gh repo set-default` 定过时，PR 可以开在哪些远端的仓库（界面上让用户选，
-    /// 选择按仓库记在 `~/.meowo/forge.json`）。只有一个 GitHub 远端或 gh 已定时为空。
+    /// 多个认得出平台的远端时，PR 可以开在哪些远端的仓库（界面上让用户选，选择按仓库记在 `~/.meowo/forge.json`）。
+    /// 只有一个时为空。
     pub repo_choices: Vec<ForgeRepoChoiceDto>,
-    /// PR 现在按哪个远端的仓库算（gh-resolved、用户选的、唯一的；没定时是暂按的 origin）。
+    /// PR 现在按哪个远端的仓库算（用户选的、唯一的；没定时是暂按的 origin）。
     pub repo_remote: Option<String>,
-    /// 多个 GitHub 远端还没定：查状态暂按 origin，开 PR / 合并返回 `gh/ambiguous_repo`，要先选。
+    /// 多个远端还没定：查状态暂按 origin，开 PR / 合并返回 `gh/ambiguous_repo`，要先选。
     pub repo_needs_choice: bool,
+    /// 仓库所在的代码托管平台：`github` / `gitlab` / `gitea` / `bitbucket` / `gitee`。远端认不出平台时为 None。
+    /// `gh` 为 `no_account` 时表示认出了平台、但设置里还没有这台主机的账号（不发请求，界面引导去添加）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub forge: Option<String>,
+    /// 平台所在主机（`github.com`、`gitlab.com`、自建主机名）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub forge_host: Option<String>,
+}
+
+/// github.com 账号（`GET /user` 的展示字段）。不含令牌。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct GithubAccountDto {
+    pub login: String,
+    pub name: Option<String>,
+    pub avatar_url: Option<String>,
+}
+
+/// 设备码登录进行中：一次性代码与去哪里输入。`device_code` 是轮询凭据，留在后端，不在这里。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct GithubDeviceCodeDto {
+    /// 用户在 GitHub 上输入的代码（形如 `ABCD-1234`）。
+    pub user_code: String,
+    /// 输入代码的网页（`https://github.com/login/device`）。
+    pub verification_uri: String,
+    /// 代码过期的时刻（毫秒时间戳）。
+    #[cfg_attr(test, ts(type = "number"))]
+    pub expires_at: i64,
 }
 
 /// 侧栏会话行的 PR / CI 与改动数（`sidebar_git_badges`，UI 优化 #54，对照 Conductor / Warp 的侧栏）。
@@ -1143,7 +1206,7 @@ pub struct SidebarGitBadgeDto {
     pub additions: u32,
     pub deletions: u32,
     pub files: u32,
-    /// 当前分支的 PR。没装 gh、没登录、没有 PR、或窗口隐藏且缓存里没有时为 None。
+    /// 当前分支的 PR。没账号、令牌失效、没有 PR、或窗口隐藏且缓存里没有时为 None。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub pr: Option<SidebarPrBadgeDto>,
@@ -1163,6 +1226,77 @@ pub struct SidebarPrBadgeDto {
     pub checks: Option<String>,
     pub url: String,
     pub title: String,
+    /// 平台（同 PullRequestDto.forge；GitHub 不填）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub forge: Option<String>,
+}
+
+/// 代码托管账号（设置 › 代码托管 › 平台账号）：平台 + 主机 + 账号名。不含令牌（令牌只在系统凭据库里）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct ForgeAccountDto {
+    /// `github`（github.com 与企业版）/ `gitlab` / `gitea` / `bitbucket` / `gitee`。
+    pub platform: String,
+    /// 主机（可带端口），如 `gitlab.com`、`git.example.com`。
+    pub host: String,
+    pub login: String,
+    pub name: Option<String>,
+    /// 令牌被拒（撤销、过期、权限被收回）：要重新添加。
+    pub needs_relogin: bool,
+    /// 用设备码登录的（只有 github.com）；否则是个人访问令牌。
+    pub oauth: bool,
+}
+
+/// 进行中的设备码登录（github.com）：一次性代码与去哪里输入。轮询凭据留在后端。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct ForgeDeviceCodeDto {
+    pub platform: String,
+    pub host: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    /// 带好代码的网页（平台给了才有）；没有时用 verification_uri。
+    pub verification_uri_complete: Option<String>,
+    #[cfg_attr(test, ts(type = "number"))]
+    pub expires_at: i64,
+}
+
+/// 设置 › 代码托管 › Git：Meowo 实际调用的 git 程序与全局提交身份（`git_tool_status`）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct GitToolDto {
+    /// 找到了能跑的 git（`git --version` 成功）。找不到时提交、推送、改动列表、PR 都用不了。
+    pub found: bool,
+    /// git 程序的完整路径（按 PATH 找到的第一个，与 Meowo 起 git 时一致）。
+    pub path: Option<String>,
+    /// 版本号，如 `2.47.1.windows.1`。
+    pub version: Option<String>,
+    /// `git config --global user.name`；没设为 None。
+    pub user_name: Option<String>,
+    /// `git config --global user.email`；没设为 None。
+    pub user_email: Option<String>,
+    /// 找不到或跑不起来时的原话（给用户看）。
+    pub error: Option<String>,
+}
+
+/// 设置页「代码托管 › 平台账号」的状态（`forge_accounts`）。不含令牌。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct ForgeAccountsDto {
+    pub accounts: Vec<ForgeAccountDto>,
+    /// 这个平台有系统凭据库可存令牌。
+    pub credential_supported: bool,
+    /// 进行中的设备码登录（设置窗重开时接着显示）。
+    pub pending: Option<ForgeDeviceCodeDto>,
 }
 
 /// PR 可以开在的一个仓库：远端名 + GitHub 的 owner/repo。
@@ -1395,6 +1529,9 @@ pub struct LeadTaskDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub delivery: Option<LeadDeliveryDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub issues: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1463,6 +1600,21 @@ pub struct LeadCheckDto {
     /// 「待实测」，不和「还没做」混在一起（2026-11-12：云端 Xbot 第三期 11 条只差 beta 实测，面板只显示 5/18）。
     #[serde(default)]
     pub blocked: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub evidence: Option<Vec<LeadEvidenceDto>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LeadEvidenceDto {
+    pub command: String,
+    pub result: String,
+    pub revision: String,
+    pub reference: String,
+    pub limitations: String,
 }
 
 /// 关卡（`.lead/<task>/gate.json`）。状态 pending → answered（Meowo 写）→ consumed（agent 写）。
@@ -1483,6 +1635,21 @@ pub struct LeadGateDto {
     pub status: String,
     /// 已作答时的答复。
     pub answer: Option<LeadGateAnswerDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub review: Option<LeadReviewDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub version: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LeadReviewDto {
+    pub revision: String,
+    pub checks: Vec<LeadCheckDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -6,7 +6,7 @@ import type { ForgeStatusDto, GitDiffSummaryDto, PullRequestDto, RepoChangesDto 
 import { formatBackendError } from "../../i18n/errors";
 import { zh } from "../../i18n/zh";
 import { en } from "../../i18n/en";
-import { ForgeBar, FORGE_POLL_MS } from "./ForgeBar";
+import { clearForgeCaches, ForgeBar, FORGE_POLL_MS } from "./ForgeBar";
 import { ArchivedWorktreePrompt } from "../../worktreeCleanup";
 import { SESSION_ARCHIVED_EVENT } from "../../hooks/useSessionActions";
 
@@ -38,7 +38,7 @@ const pr = (over: Partial<PullRequestDto> = {}): PullRequestDto => ({
   ...over,
 });
 const forge = (over: Partial<ForgeStatusDto> = {}): ForgeStatusDto => ({
-  gh: "ok", ghTooOld: false, repoUrl: "https://github.com/o/r", compareUrl: "https://github.com/o/r/compare/main...meowo/drill?expand=1",
+  gh: "ok", repoUrl: "https://github.com/o/r", compareUrl: "https://github.com/o/r/compare/main...meowo/drill?expand=1",
   mergeMethods: ["squash", "rebase"], lastMergeMethod: "rebase", pr: null,
   prDefaults: { title: "feat: drill", body: "- feat: drill", base: "main" }, repoChoices: [], repoRemote: "origin", repoNeedsChoice: false, ...over,
 });
@@ -67,6 +67,7 @@ beforeEach(() => {
   });
 });
 afterEach(() => {
+  clearForgeCaches();
   cleanup();
   vi.useRealTimers();
   Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
@@ -142,15 +143,56 @@ describe("#20 开 PR", () => {
     expect(calls("gh_pr_create")[0][1]).toEqual({ cwd: ROOT, title: "feat: drill", body: "- feat: drill", base: "main", draft: false, sessionCwd: "C:/w/meowo" });
   });
 
-  it("没装 gh：先推送再打开 compare 网页，并说明看不到 CI", async () => {
-    status = forge({ gh: "missing", mergeMethods: [] });
+  // 改版前：没装 gh → 「没装 gh，看不到 CI」。现在 github.com 与其他平台一样：没添加账号 → 引导去设置添加。
+  it("github.com 没账号：先推送再打开 compare 网页，并引导去设置添加账号", async () => {
+    status = forge({ gh: "no_account", forge: "github", forgeHost: "github.com", mergeMethods: [] });
     renderBar();
-    expect(await screen.findByText(zh.forge.ghMissing)).toBeTruthy();
+    expect(await screen.findByText(zh.forgeP.noAccount(zh.forgeWords.github))).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: zh.forge.openOnGithub }));
     await waitFor(() => expect(calls("open_link").length).toBe(1));
     expect(calls("open_link")[0][1]).toEqual({ url: "https://github.com/o/r/compare/main...meowo/drill?expand=1" });
     expect(calls("git_push_start").length).toBe(1);
     expect(calls("gh_pr_create").length).toBe(0);
+  });
+});
+
+describe("github.com 账号（设置 › 代码托管）", () => {
+  it("github.com 没账号：引导去设置的代码托管分区添加账号", async () => {
+    status = forge({ gh: "no_account", forge: "github", forgeHost: "github.com", mergeMethods: [] });
+    renderBar();
+    const notice = await screen.findByTestId("forge-connection-notice");
+    expect(notice.textContent).toContain(zh.forgeP.noAccount(zh.forgeWords.github));
+    fireEvent.click(within(notice).getByRole("button", { name: zh.forgeP.addAccount(zh.forgeWords.github) }));
+    await waitFor(() => expect(calls("open_settings").length).toBe(1));
+    expect(localStorage.getItem("meowo-settings-section")).toBe("github");
+  });
+
+  it("github.com 令牌失效：说明看不到检查，引导去重新添加", async () => {
+    status = forge({ gh: "unauthenticated", forge: "github", forgeHost: "github.com", mergeMethods: [] });
+    renderBar();
+    const notice = await screen.findByTestId("forge-connection-notice");
+    expect(notice.textContent).toContain(zh.forgeP.relogin(zh.forgeWords.github));
+    fireEvent.click(within(notice).getByRole("button", { name: zh.forgeP.reloginAction }));
+    await waitFor(() => expect(calls("open_settings").length).toBe(1));
+    expect(localStorage.getItem("meowo-settings-section")).toBe("github");
+  });
+
+  it("手机远程上只说原因，不给登录入口", async () => {
+    remote = true;
+    status = forge({ gh: "no_account", forge: "github", forgeHost: "github.com", mergeMethods: [] });
+    renderBar();
+    const notice = await screen.findByTestId("forge-connection-notice");
+    expect(within(notice).queryByRole("button")).toBeNull();
+  });
+
+  // 改版前有「关闭」方式（gh = off）：现在没有关闭开关，后端不再回 off；认不出平台的远端照旧不显示 PR 区块。
+  it("认不出平台的远端：不显示 PR 区块，也不提示添加账号", async () => {
+    status = forge({ gh: "not_github", repoUrl: null, compareUrl: null, mergeMethods: [] });
+    renderBar({ unpushed: 0 });
+    await waitFor(() => expect(calls("git_forge_status").length).toBeGreaterThan(0));
+    expect(screen.queryByTestId("forge-connection-notice")).toBeNull();
+    expect(screen.queryByRole("button", { name: zh.forge.openOnGithub })).toBeNull();
+    expect(screen.queryByRole("button", { name: zh.forge.openPr })).toBeNull();
   });
 });
 
@@ -443,7 +485,38 @@ describe("「更改」面板列出本会话的 PR", () => {
     ]);
   });
 
-  it("会话里没动过 PR：面板和以前一样，不出这一块、不多问 gh", async () => {
+  it("已合并、已关闭的可以收起，记住后不再列，空位由更早的补上；开着的不给收起", async () => {
+    const { SessionPrsContext } = await import("./sessionPrs");
+    localStorage.removeItem("meowo-dismissed-prs");
+    status = forge({ pr: null });
+    const state = (n: string) => (n === "540" ? "merged" : n === "536" ? "closed" : "open");
+    handler = (command, args) => {
+      if (command !== "git_pull_request_by_url") return null;
+      const n = String(args.url).split("/").pop()!;
+      return { number: Number(n), state: state(n), url: args.url, title: `PR ${n}` };
+    };
+    const urls = [520, 530, 536, 540].map((n) => `https://github.com/o/r/pull/${n}`);
+    const view = () => <SessionPrsContext.Provider value={urls}><ForgeBar repo={repo()} sessionCwd="C:/w/meowo" sessionId={7} active onChanged={() => {}} /></SessionPrsContext.Provider>;
+    render(view());
+    const block = await screen.findByTestId("scm-session-prs");
+    await within(block).findByText("#540 PR 540");
+    expect(within(block).queryByRole("button", { name: zh.forge.dismissPr(530) })).toBeNull();
+    fireEvent.click(within(block).getByRole("button", { name: zh.forge.dismissPr(540) }));
+    await waitFor(() => expect(within(block).queryByText("#540 PR 540")).toBeNull());
+    await within(block).findByText("#520 PR 520");
+    fireEvent.click(within(block).getByRole("button", { name: zh.forge.dismissPr(536) }));
+    await waitFor(() => expect(within(block).queryByText("#536 PR 536")).toBeNull());
+    // 重开面板仍不列。
+    cleanup();
+    render(view());
+    const again = await screen.findByTestId("scm-session-prs");
+    await within(again).findByText("#530 PR 530");
+    expect(within(again).queryByText("#540 PR 540")).toBeNull();
+    expect(within(again).queryByText("#536 PR 536")).toBeNull();
+    localStorage.removeItem("meowo-dismissed-prs");
+  });
+
+  it("会话里没动过 PR：面板和以前一样，不出这一块、不多查 PR", async () => {
     status = forge({ pr: pr() });
     render(<ForgeBar repo={repo()} sessionCwd="C:/w/meowo" sessionId={7} active onChanged={() => {}} />);
     await screen.findByTestId("scm-pr");

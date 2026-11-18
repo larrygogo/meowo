@@ -94,3 +94,47 @@ pub(crate) fn remember(cwd: &str, origin: &str) {
         (Instant::now(), Some(origin.replace('\\', "/"))),
     );
 }
+
+/// 目录已经删掉的会话原来属于哪个项目（给「在原项目新开会话」）。目录没了，`.git` 文件跟着没了，
+/// [`origin_root_of`] 推不出来，只能靠别的线索，依次：
+/// 1. 库里记过的原项目（标记完成、删 worktree 时趁目录还在记下的，见 store 的 origin_root 列）；
+/// 2. 路径形状：Claude Code 自己开的 worktree 在 `<仓库>/.claude/worktrees/<名字>`；Meowo 默认把
+///    worktree 开在原项目旁边，叫 `<仓库名>-<用途>`（wtnew::target_dir 的 Sibling）。
+///
+/// 只认仍在磁盘上的主检出（`.git` 是目录）：推出来的目录不存在或不是仓库，宁可返回 None 让前端
+/// 给普通的「新建会话」，也不把用户带到一个猜错的地方。结果只用来预填新建会话的目录，用户看得到、改得了。
+pub(crate) fn origin_for_missing(recorded: Option<&str>, cwd: &str) -> Option<String> {
+    let found = recorded
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+        .map(PathBuf::from)
+        .filter(|r| is_main_checkout(r))
+        .or_else(|| guess_from_path(Path::new(cwd.trim())))?;
+    Some(found.to_string_lossy().replace('\\', "/"))
+}
+
+fn is_main_checkout(dir: &Path) -> bool {
+    dir.join(".git").is_dir()
+}
+
+fn guess_from_path(cwd: &Path) -> Option<PathBuf> {
+    // `<仓库>/.claude/worktrees/<名字>[/子目录…]`：取 `.claude` 的上一级。
+    let parts: Vec<_> = cwd.components().collect();
+    for i in 0..parts.len().saturating_sub(2) {
+        let is = |k: usize, name: &str| parts[k].as_os_str().eq_ignore_ascii_case(name);
+        if is(i + 1, ".claude") && is(i + 2, "worktrees") {
+            let repo: PathBuf = parts[..=i].iter().collect();
+            return is_main_checkout(&repo).then_some(repo);
+        }
+    }
+    // `<上级>/<仓库名>-<用途>`：用途里也可能有连字符，从最长的前缀往短里试（`meowo-fix-a` 先试
+    // `meowo-fix` 再试 `meowo`），取第一个是主检出的同级目录。
+    let parent = cwd.parent()?;
+    let name = cwd.file_name()?.to_str()?;
+    name.match_indices('-')
+        .rev()
+        .map(|(at, _)| &name[..at])
+        .filter(|prefix| !prefix.is_empty())
+        .map(|prefix| parent.join(prefix))
+        .find(|candidate| is_main_checkout(candidate))
+}

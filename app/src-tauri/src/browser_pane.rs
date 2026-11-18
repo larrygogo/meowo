@@ -32,6 +32,107 @@ use tauri::{
 
 const BLANK: &str = "about:blank";
 
+/// Windows 在每个子浏览器自己的 `WRY_WEBVIEW` 父句柄上禁用输入，整棵 HWND 树（含 iframe）
+/// 都收不到人工键鼠；Agent 的 eval、渲染和 CapturePreview 不受影响。页面 JS 看不见也改不了
+/// 这个原生状态，避免了主世界输入门被网页调用 `set(false)` 或替换全局对象绕过。
+#[cfg(windows)]
+pub(crate) fn set_agent_input_locked(app: &tauri::AppHandle, id: u32, locked: bool) {
+    let Ok(webview) = webview(app, id) else {
+        return;
+    };
+    if let Err(error) = webview.with_webview(move |platform| unsafe {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
+        let controller = platform.controller();
+        let mut hwnd = HWND::default();
+        if let Err(error) = controller.ParentWindow(&mut hwnd) {
+            eprintln!("[browser] 页签 {id} 原生输入开关找不到句柄：{error}");
+            return;
+        }
+        let _ = EnableWindow(hwnd, !locked);
+    }) {
+        eprintln!("[browser] 页签 {id} 原生输入开关下发失败：{error}");
+    }
+}
+
+#[cfg(all(feature = "e2e", windows))]
+#[tauri::command]
+pub(crate) fn browser_pane_e2e_native_click(
+    app: tauri::AppHandle,
+    id: u32,
+    x: f64,
+    y: f64,
+) -> Result<String, String> {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        mouse_event, IsWindowEnabled, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetClassNameW, SetCursorPos, WindowFromPoint,
+    };
+
+    if !x.is_finite() || !y.is_finite() || x < 0.0 || y < 0.0 {
+        return Err("无效的测试点击坐标".into());
+    }
+    let webview = webview(&app, id)?;
+    let window = app.get_window("chat").ok_or("chat 窗口不存在")?;
+    window.show().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())?;
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let diagnostic = Arc::new(Mutex::new(String::new()));
+    let sink = diagnostic.clone();
+    // WDIO 不枚举原生子 WebView；E2E 用真实用户态鼠标事件验证 EnableWindow，
+    // 不能用 SendMessage（它会绕过禁用窗口的输入语义）。生产构建不注册此命令。
+    webview.with_webview(move |platform| unsafe {
+        use windows::Win32::Foundation::HWND;
+        let controller = platform.controller();
+        let mut hwnd = HWND::default();
+        if let Err(error) = controller.ParentWindow(&mut hwnd) {
+            *sink.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = format!("找不到原生句柄：{error}");
+            return;
+        }
+        let mut origin = POINT { x: 0, y: 0 };
+        if ClientToScreen(hwnd.0, &mut origin) == 0 {
+            *sink.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = "客户区坐标换算失败".into();
+            return;
+        }
+        let screen_x = origin.x + (x * scale).round() as i32;
+        let screen_y = origin.y + (y * scale).round() as i32;
+        let class_of = |hwnd| {
+            let mut buffer = [0u16; 96];
+            let len = GetClassNameW(hwnd, buffer.as_mut_ptr(), buffer.len() as i32);
+            String::from_utf16_lossy(&buffer[..len.max(0) as usize])
+        };
+        let target = WindowFromPoint(POINT { x: screen_x, y: screen_y });
+        *sink.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = format!(
+            "id={id} enabled={} class={} target={} origin=({}, {}) point=({}, {})",
+            IsWindowEnabled(hwnd.0), class_of(hwnd.0), class_of(target), origin.x, origin.y, screen_x, screen_y
+        );
+        if SetCursorPos(screen_x, screen_y) == 0 {
+            return;
+        }
+        mouse_event(MOUSEEVENTF_MOVE, 0, 0, 0, 0);
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+    }).map_err(|e| e.to_string())?;
+    let result = diagnostic.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+    Ok(result)
+}
+
+/// WKWebView 没有等价的逐视图输入开关；其他平台仍禁用工具栏并保留接管，但不注入可被
+/// 网页篡改的 JS 输入门。macOS 的原生视图隔离需另行实机实现与验证。
+#[cfg(not(windows))]
+pub(crate) fn set_agent_input_locked(app: &tauri::AppHandle, id: u32, locked: bool) {
+    let _ = (app, id, locked);
+}
+
+fn control_allows_human_input(agent_active: bool, agent_paused: bool) -> bool {
+    !agent_active || agent_paused
+}
+
 /// 从没在面板里显示过的页签给页面的视口（逻辑像素）。agent 新开的页签常常一次都没露过面，
 /// 以前建出来是 1×1，页面里量到 `innerWidth×innerHeight = 2x2`（2026-11-09 实测，150% 缩放），
 /// 要求「滚到底才能点」的页面（Discord OAuth 授权页）永远判不到底。
@@ -90,6 +191,9 @@ pub(crate) struct BrowserPaneInfo {
     pub(crate) agent_active: bool,
     /// 用户点了「接管」：agent 的浏览器操作一律拒绝，直到用户交还。
     pub(crate) agent_paused: bool,
+    /// 每次接管/交还都换代；排队中的旧调用即使看到已交还也不能续跑。
+    #[serde(skip)]
+    pub(crate) agent_generation: u64,
     /// 页面缩放比例（1.0 = 100%），「…」菜单里调。
     pub(crate) zoom: f64,
     /// 最近几次下载，旧的在前（见 `download_started`）。
@@ -100,7 +204,9 @@ pub(crate) struct BrowserPaneInfo {
     /// 实测：阻止后再下两次，既无权限请求也无下载事件），不留这条提示用户又会以为没下成而
     /// 反复点。有新下载开始（说明不拦了）、页面重新加载或跳走、用户点 × 时消失。
     pub(crate) blocked: Option<BrowserPermission>,
-    // 以下三项只在后端用，不发给前端。
+    /// 设备模拟（视口、UA、附加请求头），没模拟是 None。见 browser_emulation.rs。
+    pub(crate) emulation: Option<crate::browser_emulation::Emulation>,
+    // 以下几项只在后端用，不发给前端。
     /// 原生视图眼下摆在哪。
     #[serde(skip)]
     placement: Placement,
@@ -108,9 +214,19 @@ pub(crate) struct BrowserPaneInfo {
     /// 没显示过就是 DEFAULT_VIEWPORT。
     #[serde(skip)]
     viewport: (f64, f64),
+    /// 面板里实际显示的尺寸（不抬下限），设备模拟按它算缩放比例。
+    #[serde(skip)]
+    shown: (f64, f64),
+    /// 正在生效或正要生效的模拟尺寸。面板变化时的补发在主线程上现读它（见 `refit_later`），
+    /// set_emulation 一开始就改它、失败再改回，补发就不会把旧尺寸写回去。
+    #[serde(skip)]
+    emulation_target: Option<crate::browser_emulation::Metrics>,
     /// agent 用过这个页签：收起时挪到窗口外接着渲染，而不是藏起来。见 `Placement`。
     #[serde(skip)]
     keep_rendering: bool,
+    /// 同一个页签的 Agent 工具调用串行；锁随页签状态释放，不留全局残留。
+    #[serde(skip)]
+    pub(crate) operation: Arc<Mutex<()>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -438,6 +554,16 @@ pub(crate) fn webview(app: &tauri::AppHandle, id: u32) -> Result<tauri::Webview,
         .ok_or_else(|| "browser_pane/not_found".to_string())
 }
 
+pub(crate) fn ensure_human_action_allowed(state: &BrowserPanes, id: u32) -> Result<(), String> {
+    let map = state.panes.lock().map_err(|e| e.to_string())?;
+    let info = map.get(&id).ok_or("browser_pane/not_found")?;
+    if control_allows_human_input(info.agent_active, info.agent_paused) {
+        Ok(())
+    } else {
+        Err("browser_pane/agent_active".into())
+    }
+}
+
 pub(crate) fn parse_target(app: &tauri::AppHandle, raw: &str) -> Result<Url, String> {
     let text = normalize_input(raw).ok_or("browser_pane/bad_url")?;
     let url = Url::parse(&text).map_err(|_| "browser_pane/bad_url".to_string())?;
@@ -497,13 +623,18 @@ pub(crate) fn open_pane(
         loading: target.as_str() != BLANK,
         agent_active: false,
         agent_paused: false,
+        agent_generation: 0,
         zoom: 1.0,
         downloads: Vec::new(),
         permission: None,
         blocked: None,
+        emulation: None,
         placement: Placement::Hidden,
         viewport: DEFAULT_VIEWPORT,
+        shown: DEFAULT_VIEWPORT,
+        emulation_target: None,
         keep_rendering: false,
+        operation: Arc::new(Mutex::new(())),
     };
     state
         .panes
@@ -523,7 +654,7 @@ pub(crate) fn open_pane(
     let builder = WebviewBuilder::new(label_of(id), WebviewUrl::External(target))
         // 页内跳转同样过一遍白名单：页面自己把 location 改到 tauri.localhost 也拦得住。
         .on_navigation(move |url| allowed(url, nav_dev.as_ref()))
-        .on_page_load(move |_, payload| {
+        .on_page_load(move |page, payload| {
             // Started 对应 WebView2 的 ContentLoading：只有新文档开始加载才触发，点附件链接
             // 下载不会触发（wry 0.57.1 webview2/mod.rs）。
             let loading = matches!(payload.event(), PageLoadEvent::Started);
@@ -541,6 +672,11 @@ pub(crate) fn open_pane(
                     info.blocked = None;
                 }
             });
+            // 跨站跳转会换渲染进程：E2E 实测换进程后模拟的宽高还在，缩放比例却丢了，页面按
+            // 1280 原尺寸画在 600 宽的面板里，右半边看不到也点不到。每次加载完按目标补发一次。
+            if !loading {
+                refit_later(&load_app, &page, id);
+            }
         })
         // 接管下载：Windows 上 wry 随之 SetHandled，WebView2 自己的下载框不再出；macOS 上
         // 不接 WKWebView 根本不下（wry 只在有回调时才挂下载代理）。都存进系统「下载」文件夹，
@@ -655,7 +791,23 @@ pub(crate) fn keep_rendering(
     if info.placement == Placement::OnScreen {
         return Ok(());
     }
-    conceal(&webview, info)
+    conceal(&webview, info)?;
+    drop(map);
+    // 挪到窗口外后视口换成 parked 尺寸，模拟的缩放比例跟着重算。
+    refit_later(app, &webview, id);
+    Ok(())
+}
+
+/// 面板尺寸变了（拖宽、收起、展开）：按此刻的目标模拟和视口重算缩放。只发不等；尺寸和视口
+/// 在主线程上执行时才读（见 browser_emulation::refit）。调用时不能持有页签状态锁。
+fn refit_later(app: &tauri::AppHandle, webview: &tauri::Webview, id: u32) {
+    let app = app.clone();
+    crate::browser_emulation::refit(webview, move || {
+        let panes = app.state::<BrowserPanes>();
+        let map = panes.panes.lock().ok()?;
+        let info = map.get(&id)?;
+        Some((info.emulation_target.clone()?, view_size(info)))
+    });
 }
 
 /// 前端占位区域的位置（CSS 像素，相对窗口内容区左上角）。visible=false 时让开：
@@ -676,7 +828,14 @@ pub(crate) async fn browser_pane_set_bounds(
     let mut map = state.panes.lock().map_err(|e| e.to_string())?;
     let info = map.get_mut(&id).ok_or("browser_pane/not_found")?;
     if !visible || width < 1.0 || height < 1.0 {
-        return conceal(&webview, info);
+        let was = info.placement;
+        conceal(&webview, info)?;
+        let parked = was != Placement::Parked && info.placement == Placement::Parked;
+        drop(map);
+        if parked {
+            refit_later(&app, &webview, id);
+        }
+        return Ok(());
     }
     // 记下面板里的尺寸，收起后 agent 接着用时页面视口不变，排版不会跳。
     info.viewport = parked_viewport((width, height));
@@ -687,16 +846,116 @@ pub(crate) async fn browser_pane_set_bounds(
         })
         .map_err(|e| e.to_string())?;
     webview.show().map_err(|e| e.to_string())?;
+    // 面板拖宽拖窄：模拟尺寸不变，按新面板重算缩放，整页仍在面板里看得到。
+    let resized = info.shown != (width, height) || info.placement != Placement::OnScreen;
+    info.shown = (width, height);
     info.placement = Placement::OnScreen;
+    drop(map);
+    if resized {
+        refit_later(&app, &webview, id);
+    }
     Ok(())
+}
+
+/// 页签此刻给页面的实际视口：在面板上就是面板尺寸，收起时是 parked 尺寸。
+fn view_size(info: &BrowserPaneInfo) -> (f64, f64) {
+    if info.placement == Placement::OnScreen {
+        info.shown
+    } else {
+        info.viewport
+    }
+}
+
+/// 把页签的设备模拟整体换成 `next`（None = 还原）。返回是否需要刷新（UA 或请求头变了）。
+/// 必须在非主线程调用：CDP 的回调在主线程。
+///
+/// `check` 在每一步 CDP 前和记状态前调用（Agent 传接管检查）：用户中途接管、或某一步失败，
+/// 尽力把已发出的部分撤回到原状态再报错，状态记录不动——不留「改了一半」的页签，也不在
+/// 报「被拒」的同时其实已经生效（独立审查发现）。
+pub(crate) fn set_emulation(
+    app: &tauri::AppHandle,
+    state: &BrowserPanes,
+    id: u32,
+    next: Option<crate::browser_emulation::Emulation>,
+    check: &dyn Fn() -> Result<(), String>,
+) -> Result<bool, String> {
+    use crate::browser_emulation::{calls, needs_reload, run_calls};
+    let (before, view) = {
+        let mut map = state.panes.lock().map_err(|e| e.to_string())?;
+        let info = map.get_mut(&id).ok_or("browser_pane/not_found")?;
+        // 先改目标：此后排进主线程的面板补发按新尺寸算，不会把旧尺寸写回去。
+        info.emulation_target = next.as_ref().and_then(|e| e.metrics.clone());
+        (info.emulation.clone(), view_size(info))
+    };
+    let webview = webview(app, id)?;
+    let applied = run_calls(&webview, calls(before.as_ref(), next.as_ref(), view), check)
+        .and_then(|()| check());
+    if let Err(error) = applied {
+        if let Ok(mut map) = state.panes.lock() {
+            if let Some(info) = map.get_mut(&id) {
+                info.emulation_target = before.as_ref().and_then(|e| e.metrics.clone());
+            }
+        }
+        // 撤回不再看接管：它只是把页签恢复成用户接管前看到的样子。
+        let _ = run_calls(&webview, calls(next.as_ref(), before.as_ref(), view), &|| Ok(()));
+        return Err(error);
+    }
+    let reload = needs_reload(before.as_ref(), next.as_ref());
+    update(app, &state.panes, id, |info| info.emulation = next);
+    Ok(reload)
+}
+
+/// 用户在「…」菜单里选设备、自定义尺寸或还原。参数与 Agent 的 browser_emulate 同一套校验（请求头只给
+/// Agent：在菜单里填请求头太重，用户真要测请求头可以让 Agent 设）。
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn browser_pane_emulate(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, BrowserPanes>,
+    id: u32,
+    device: Option<String>,
+    width: Option<u32>,
+    height: Option<u32>,
+    user_agent: Option<String>,
+) -> Result<(), String> {
+    ensure_human_action_allowed(&state, id)?;
+    let next = crate::browser_emulation::parse(&serde_json::json!({
+        "device": device,
+        "width": width,
+        "height": height,
+        "user_agent": user_agent.filter(|ua| !ua.trim().is_empty()),
+    }))?;
+    // CDP 每一步要等主线程回调（最长数秒）：放到 blocking 线程上等，不占 async 运行时。
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<BrowserPanes>();
+        // 和 Agent 的浏览器操作同一把页签锁串行：否则人工切设备与 Agent 的 browser_emulate 同时进行时，
+        // 两边的 CDP 交错、记录的目标和实际对不上（独立审查复验指出）。
+        let operation = state
+            .panes
+            .lock()
+            .map_err(|e| e.to_string())?
+            .get(&id)
+            .map(|info| info.operation.clone())
+            .ok_or("browser_pane/not_found")?;
+        let _operation = operation.lock().map_err(|e| e.to_string())?;
+        let check = || ensure_human_action_allowed(&state, id);
+        if set_emulation(&app, &state, id, next, &check)? {
+            webview(&app, id)?.reload().map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub(crate) async fn browser_pane_navigate(
     app: tauri::AppHandle,
+    state: tauri::State<'_, BrowserPanes>,
     id: u32,
     url: String,
 ) -> Result<(), String> {
+    ensure_human_action_allowed(&state, id)?;
     let target = parse_target(&app, &url)?;
     webview(&app, id)?
         .navigate(target)
@@ -711,6 +970,7 @@ pub(crate) async fn browser_pane_action(
     id: u32,
     action: String,
 ) -> Result<(), String> {
+    ensure_human_action_allowed(&state, id)?;
     let webview = webview(&app, id)?;
     // 缩放档位同 Chromium（Ctrl+滚轮也能缩，WebView2 自带）。
     const STEPS: &[f64] = &[0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
@@ -750,7 +1010,7 @@ pub(crate) async fn browser_pane_action(
     }
 }
 
-/// 「接管」/「交还」：接管后 agent 的浏览器操作一律拒绝，用户自己操作页面不受影响。
+/// 「接管」/「交还」：接管后立即解开网页人工输入，并拒绝后续 Agent 操作。
 #[tauri::command]
 pub(crate) fn browser_pane_set_agent_paused(
     app: tauri::AppHandle,
@@ -759,11 +1019,22 @@ pub(crate) fn browser_pane_set_agent_paused(
     paused: bool,
 ) {
     update(&app, &state.panes, id, |info| {
+        info.agent_generation = info.agent_generation.wrapping_add(1);
         info.agent_paused = paused;
         if paused {
             info.agent_active = false;
         }
     });
+    let input_locked = state
+        .panes
+        .lock()
+        .ok()
+        .and_then(|map| {
+            map.get(&id)
+                .map(|info| !control_allows_human_input(info.agent_active, info.agent_paused))
+        })
+        .unwrap_or(false);
+    set_agent_input_locked(&app, id, input_locked);
 }
 
 #[tauri::command]
@@ -856,7 +1127,12 @@ mod tests {
         assert_eq!(list[1].path.as_deref(), Some(Path::new("C:/dl/g.zip")));
 
         // 已经结束的不会再被改；对不上号返回 false。
-        assert!(!download_finished(&mut list, "https://a.test/f.txt", None, false));
+        assert!(!download_finished(
+            &mut list,
+            "https://a.test/f.txt",
+            None,
+            false
+        ));
         assert_eq!(list[0].state, DownloadState::Done);
     }
 
@@ -864,7 +1140,11 @@ mod tests {
     fn same_url_downloaded_twice_finishes_the_latest_one() {
         let mut list = Vec::new();
         download_started(&mut list, "https://a.test/f.txt", Path::new("C:/dl/f.txt"));
-        download_started(&mut list, "https://a.test/f.txt", Path::new("C:/dl/f (1).txt"));
+        download_started(
+            &mut list,
+            "https://a.test/f.txt",
+            Path::new("C:/dl/f (1).txt"),
+        );
         download_finished(&mut list, "https://a.test/f.txt", None, true);
         assert_eq!(list[0].state, DownloadState::Progress);
         assert_eq!(list[1].state, DownloadState::Done);
@@ -878,7 +1158,10 @@ mod tests {
         }
         assert_eq!(list.len(), MAX_DOWNLOADS);
         // 没有文件名时取网址最后一段。
-        assert_eq!(list.last().unwrap().file_name, format!("{}", MAX_DOWNLOADS + 2));
+        assert_eq!(
+            list.last().unwrap().file_name,
+            format!("{}", MAX_DOWNLOADS + 2)
+        );
         let ids: Vec<u32> = list.iter().map(|entry| entry.id).collect();
         assert!(ids.windows(2).all(|pair| pair[0] < pair[1]));
     }
@@ -939,7 +1222,9 @@ mod tests {
         let json = serde_json::to_value(&list[0]).unwrap();
         assert_eq!(json["fileName"], "f.txt");
         assert_eq!(json["state"], "progress");
-        assert!(json.get("url").is_none() && json.get("urlKey").is_none() && json.get("path").is_none());
+        assert!(
+            json.get("url").is_none() && json.get("urlKey").is_none() && json.get("path").is_none()
+        );
     }
 
     #[test]
@@ -992,6 +1277,14 @@ mod tests {
         let position = rect.position.to_logical::<f64>(1.0);
         assert_eq!((size.width, size.height), (520.0, 700.0));
         assert!(position.x + size.width < 0.0);
+    }
+
+    #[test]
+    fn agent_control_owns_human_navigation_until_takeover() {
+        assert!(!control_allows_human_input(true, false));
+        assert!(control_allows_human_input(true, true));
+        assert!(control_allows_human_input(false, false));
+        assert!(control_allows_human_input(false, true));
     }
 
     #[test]

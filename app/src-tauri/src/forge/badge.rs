@@ -1,10 +1,10 @@
 //! 侧栏会话行的 PR / CI 状态点与 `+N −M`（UI 优化 #54，对照 Conductor / Warp 的侧栏 GitHub 状态）。
 //!
-//! 节流规矩与二期「更改」面板同一份（规格「gh 调用每仓库 ≥60s 一次，窗口隐藏 0 次」）：
+//! 节流规矩与二期「更改」面板同一份（规格「平台请求每仓库 ≥60s 一次，窗口隐藏 0 次」）：
 //! - PR 读写的是 forge 的 [`Caches::prs`]，键同 [`pr_key`]（公共 .git + 仓库 + head 分支）。面板刚查过的，
 //!   侧栏直接用；侧栏查过的，面板 60 秒内也不再查。同一仓库的多个会话只算一次。
-//! - `online = false`（窗口隐藏 / 最小化）：只读缓存，**一次 gh 都不调**，连 `gh auth status` 也不碰。
-//! - 没装 gh / 没登录：PR 一律为 None，只给改动数（产品事实：用户不一定装了 gh）。
+//! - `online = false`（窗口隐藏 / 最小化）：只读缓存，**一个平台请求都不发**。
+//! - 没账号 / 令牌失效：PR 一律为 None，只给改动数。
 //!
 //! 改动数走本地 git（不联网），按目录缓存 [`DIFF_TTL`]：侧栏跟着 board-changed 每几百毫秒就可能刷新一次，
 //! 几十个工作目录每轮各跑一遍 `git status` + `numstat` 撑不住。
@@ -16,7 +16,9 @@
 //! 同一基准（release）改后：冷态 438ms / 38 个进程，热态 1ms / 0 个，30 秒一轮的稳态 297ms / 24 个
 //!（改前 4100ms / 125 个）；大仓库单目录冷态 372→155ms。
 
-use super::{lock, pr_key, repo_head, view_pr, Ctx, GhState, PR_TTL};
+use super::api::Target;
+use super::platform;
+use super::{find_pr, lock, pr_key, repo_head, Ctx, GhRemote, GhState, PR_TTL};
 use meowo_protocol::ipc::{PullRequestDto, SidebarGitBadgeDto, SidebarPrBadgeDto};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -43,14 +45,28 @@ const DIR_WORKERS: usize = 4;
 pub(crate) struct DiffCache {
     entries: Mutex<HashMap<String, (Instant, Option<DiffCounts>)>>,
     targets: Mutex<HashMap<String, TargetEntry>>,
-    /// 标题栏直查 gh 的结果，按目录缓存（forge 解析不出仓库的远端才走，见 [`title_pr_with`]）。
-    direct_prs: Mutex<HashMap<String, (Instant, Option<PullRequestDto>)>>,
     /// 会话里 agent 建过、动过的 PR，按链接缓存（见 [`url_pr_with`]）。
     url_prs: Mutex<HashMap<String, (Instant, Option<PullRequestDto>)>>,
 }
 
-/// 一个目录的 PR 去向：(缓存键, 仓库 owner/name, gh 认的 head)。没有 GitHub 远端、detached 时为 None。
-type PrTarget = Option<(String, String, String)>;
+/// 一个目录的 PR 去向：缓存键、PR 所在仓库、head（`<owner>:<分支>` 写法、分支名、fork 时 head 所在仓库）。
+#[derive(Clone)]
+struct PrWhere {
+    key: String,
+    base: GhRemote,
+    qualified: String,
+    branch: String,
+    head_slug: Option<String>,
+}
+
+impl PrWhere {
+    fn target(&self) -> Target<'_> {
+        Target::Branch { qualified: &self.qualified, branch: &self.branch, head_slug: self.head_slug.as_deref() }
+    }
+}
+
+/// 没有认得出平台的远端、detached 时为 None。
+type PrTarget = Option<PrWhere>;
 
 struct TargetEntry {
     at: Instant,
@@ -71,6 +87,11 @@ impl DiffCache {
 
 static DIFFS: std::sync::LazyLock<DiffCache> = std::sync::LazyLock::new(DiffCache::default);
 
+/// GitHub 连接变了：标题栏直查与按链接查的 PR 缓存作废（PR 去向是本地 git 的，不受影响）。
+pub(crate) fn invalidate_prs() {
+    lock(&DIFFS.url_prs).clear();
+}
+
 fn to_badge(pr: &PullRequestDto) -> SidebarPrBadgeDto {
     SidebarPrBadgeDto {
         number: pr.number,
@@ -78,6 +99,7 @@ fn to_badge(pr: &PullRequestDto) -> SidebarPrBadgeDto {
         checks: pr.checks_summary.clone(),
         url: pr.url.clone(),
         title: pr.title.clone(),
+        forge: pr.forge.clone(),
     }
 }
 
@@ -94,8 +116,11 @@ fn pr_target(cache: &DiffCache, ctx: &Ctx, dir: &str) -> PrTarget {
             return entry.target.clone();
         }
     }
-    let (info, common_dir, git_dir) = repo_head(dir, ctx.env, &ctx.prefs, true)?;
-    let target = pr_key(&info).and_then(|key| Some((key, info.gh.slug()?.to_string(), info.head_ref()?)));
+    let (info, common_dir, git_dir) = repo_head(dir, ctx.env, &ctx.prefs, ctx.forges, true)?;
+    let target = pr_key(&info).and_then(|key| {
+        let (qualified, branch) = info.branch_target()?;
+        Some(PrWhere { key, base: info.gh.base.clone()?, qualified, branch, head_slug: info.head_slug().map(str::to_string) })
+    });
     let watch = vec![git_dir.join("HEAD"), common_dir.join("config"), git_dir.join("config.worktree"), ctx.prefs.clone()];
     let entry = TargetEntry { at: Instant::now(), stamps: stamps(&watch), watch, target: target.clone() };
     lock(&cache.targets).insert(dir.to_string(), entry);
@@ -107,9 +132,11 @@ fn pr_badge(ctx: &Ctx, target: PrTarget, dir: &str, online: bool) -> Option<Side
     cached_pr(ctx, target, dir, online).as_ref().map(to_badge)
 }
 
-/// 一个目录当前分支的 PR，走 forge 的 PR 缓存（侧栏与标题栏共用）。online=false 时只看缓存（不论新旧），绝不调 gh。
+/// 一个目录当前分支的 PR，走 forge 的 PR 缓存（侧栏与标题栏共用）。online=false 时只看缓存（不论新旧），不发请求。
+/// 认得出平台、但没有这台主机的账号：什么都不查（不报错、不发请求）。
 fn cached_pr(ctx: &Ctx, target: PrTarget, dir: &str, online: bool) -> Option<PullRequestDto> {
-    let (key, slug, head) = target?;
+    let place = target?;
+    let key = place.key.clone();
     let cached = lock(&ctx.caches.prs).get(&key).cloned();
     if let Some((at, pr)) = &cached {
         if !online || at.elapsed() < PR_TTL {
@@ -119,16 +146,17 @@ fn cached_pr(ctx: &Ctx, target: PrTarget, dir: &str, online: bool) -> Option<Pul
     if !online {
         return None;
     }
-    // 登录状态自带 5 分钟缓存；没装、没登录就不查 PR（缓存里有旧的也不显示：登录失效时别挂着过期的 CI 结果）。
-    if ctx.caches.gh_state(ctx.gh, false) != GhState::Ok {
+    let forge = ctx.forge_for(&place.base).ok()?;
+    // 令牌失效就不查 PR（缓存里有旧的也不显示：登录失效时别挂着过期的 CI 结果）。
+    if forge.state(false) != GhState::Ok {
         return None;
     }
-    match view_pr(ctx.gh, ctx.caches, dir, Some(&slug), Some(&head)) {
+    match find_pr(forge.as_ref(), dir, Some(&place.base.slug), &place.target()) {
         Ok(pr) => {
             lock(&ctx.caches.prs).insert(key, (Instant::now(), pr.clone()));
             pr
         }
-        // 断网、限流：沿用上一次的，状态点不会一闪而没；同时记下这次查询时间，60 秒内不再重打 gh。
+        // 断网、限流：沿用上一次的，状态点不会一闪而没；同时记下这次查询时间，60 秒内不再重查。
         // 不记的话前端每轮（30 秒、目录变化、回前台）都会重查，限流时越查越限（做空审查第二轮指出）。
         Err(_) => {
             let previous = cached.and_then(|(_, pr)| pr);
@@ -139,85 +167,55 @@ fn cached_pr(ctx: &Ctx, target: PrTarget, dir: &str, online: bool) -> Option<Pul
 }
 
 /// 标题栏的 PR（对话页「打开 Pull Request」）。与侧栏、「更改」面板共用 [`Caches::prs`](super::Caches) 与按目录
-/// 缓存的 PR 去向：以前标题栏按目录另存一份 60 秒缓存、自己调 `gh pr view`，同一仓库前台时每分钟可能多打
-/// 一次 gh（tests/title_pr.rs 计数）。标题栏只在窗口可见时轮询（ChatTitleBar），按在线处理。
-/// 回包只留号、状态、链接、标题：与以前的形状一致，检查与分支那些面板字段标题栏不用。
-///
-/// forge 解析不出仓库的远端（只认 github.com，企业版 `github.example.com` 这类认不出）照旧在目录里直接
-/// `gh pr view`、按目录缓存 60 秒：gh 自己认得企业版主机，以前标题栏能显示的 PR 不能因为共用缓存丢掉
-/// （coordinator 11-11 指出的回退，tests/title_pr.rs 企业版那条）。
+/// 缓存的 PR 去向（tests/title_pr.rs 计数）。标题栏只在窗口可见时轮询（ChatTitleBar），按在线处理。
+/// 回包只留号、状态、链接、标题：检查与分支那些面板字段标题栏不用。远端认不出平台（没加账号的自建主机）不查。
 pub(crate) fn title_pr_with(ctx: &Ctx, diffs: &DiffCache, cwd: &str) -> Option<PullRequestDto> {
     let dir = cwd.trim();
     if dir.is_empty() || !std::path::Path::new(dir).is_dir() {
         return None;
     }
-    let pr = match pr_target(diffs, ctx, dir) {
-        Some(target) => cached_pr(ctx, Some(target), dir, true)?,
-        None => direct_pr(ctx, diffs, dir)?,
-    };
-    Some(PullRequestDto { number: pr.number, state: pr.state, url: pr.url, title: pr.title, ..Default::default() })
+    let pr = cached_pr(ctx, pr_target(diffs, ctx, dir), dir, true)?;
+    Some(PullRequestDto { number: pr.number, state: pr.state, url: pr.url, title: pr.title, forge: pr.forge, ..Default::default() })
 }
 
-/// 以前标题栏的查法：在目录里跑 `gh pr view`（不带 --repo，由 gh 按当前分支和远端自己认），按目录缓存 60 秒。
-/// 不在仓库里（上级都没有 .git）就不起 gh。失败、没有 PR 都记成 None，60 秒内不重查。
-fn direct_pr(ctx: &Ctx, diffs: &DiffCache, dir: &str) -> Option<PullRequestDto> {
-    if !std::path::Path::new(dir).ancestors().any(|p| p.join(".git").exists()) {
-        return None;
-    }
-    if let Some((at, pr)) = lock(&diffs.direct_prs).get(dir) {
-        if at.elapsed() < PR_TTL {
-            return pr.clone();
-        }
-    }
-    let pr = (ctx.gh)(dir, &["pr", "view", "--json", "number,state,isDraft,url,title"])
-        .filter(|out| out.ok())
-        .and_then(|out| crate::git::parse_pull_request(&out.stdout));
-    lock(&diffs.direct_prs).insert(dir.to_string(), (Instant::now(), pr.clone()));
-    pr
-}
-
-/// 会话里 agent 用 gh 建过、动过的 PR：前端从时间线的命令输出里抠出链接，这里按链接问 gh 现状
-/// （开着、草稿、已合并、已关闭），按链接缓存 60 秒。
+/// 会话里 agent 建过、动过的 PR：前端从时间线里 agent 跑的 `gh pr create` 之类命令的输出抠出链接（只是读文本，
+/// Meowo 自己不调 gh），这里按链接问各平台现状（开着、草稿、已合并、已关闭），按链接缓存 60 秒。没有这台主机的
+/// 账号、认不出平台都不查。
 ///
 /// 为什么不按分支：agent 常在临时 worktree 里另切分支建 PR，建完把 worktree 删掉，会话目录停在
 /// 原来的分支上，按分支查到的是那个分支的旧 PR（2026-11-16 实拍：刚建了 #536，标题栏仍是已合并的 #530）。
-/// 链接里已经带了仓库和编号，不依赖目录的当前分支；目录只当 gh 的工作目录（企业版主机靠 gh 自己的配置认）。
 pub(crate) fn url_pr_with(ctx: &Ctx, diffs: &DiffCache, cwd: &str, url: &str) -> Option<PullRequestDto> {
     let url = url.trim();
     if !is_pr_url(url) {
         return None;
     }
+    let (host, _, _, shape) = platform::parse_pr_url(url)?;
     if let Some((at, pr)) = lock(&diffs.url_prs).get(url) {
         if at.elapsed() < PR_TTL {
             return pr.clone();
         }
     }
     let dir = if std::path::Path::new(cwd.trim()).is_dir() { cwd.trim().to_string() } else { std::env::temp_dir().to_string_lossy().into_owned() };
-    let pr = (ctx.gh)(&dir, &["pr", "view", url, "--json", "number,state,isDraft,url,title"])
-        .filter(|out| out.ok())
-        .and_then(|out| crate::git::parse_pull_request(&out.stdout));
+    let pr = match ctx.forges.platform(&host) {
+        Some(known) if known == shape => ctx.forges.open(&host).and_then(|forge| forge.find_url(&dir, url).ok().flatten()),
+        _ => None,
+    };
     lock(&diffs.url_prs).insert(url.to_string(), (Instant::now(), pr.clone()));
     pr
 }
 
-/// `https://<主机>/<owner>/<repo>/pull/<编号>`：只认这一种形状，别的字符串不交给 gh。
+/// PR / MR 网页链接，且编号就是最后一段（`/files`、`--web` 之类的尾巴不认）：GitHub `…/pull/<n>`、
+/// GitLab `…/-/merge_requests/<n>`、Gitea / Gitee `…/pulls/<n>`、Bitbucket `…/pull-requests/<n>`。别的字符串不查。
 pub(crate) fn is_pr_url(url: &str) -> bool {
-    let Some(rest) = url.strip_prefix("https://") else {
-        return false;
-    };
-    let parts: Vec<&str> = rest.split('/').collect();
-    parts.len() == 5
-        && parts.iter().all(|part| !part.is_empty() && !part.chars().any(char::is_whitespace))
-        && parts[3] == "pull"
-        && parts[4].chars().all(|c| c.is_ascii_digit())
+    platform::parse_pr_url(url).is_some() && url.ends_with(|c: char| c.is_ascii_digit()) && !url.contains(['?', '#'])
 }
 
-/// 正式的按链接查询：真 gh、进程内共用的缓存。
+/// 正式的按链接查询：真账号、进程内共用的缓存。
 pub(crate) fn url_pull_request(cwd: &str, url: &str) -> Option<PullRequestDto> {
     url_pr_with(&Ctx::real(), &DIFFS, cwd, url)
 }
 
-/// 正式的标题栏查询：真 gh、进程内共用的缓存。
+/// 正式的标题栏查询：真账号、进程内共用的缓存。
 pub(crate) fn title_pull_request(cwd: &str) -> Option<PullRequestDto> {
     title_pr_with(&Ctx::real(), &DIFFS, cwd)
 }
@@ -272,8 +270,7 @@ pub(crate) fn badges_with(
 ) -> Vec<SidebarGitBadgeDto> {
     let mut seen = HashSet::new();
     let list: Vec<&String> = cwds.iter().filter(|cwd| !cwd.trim().is_empty() && seen.insert(cwd.as_str())).take(MAX_CWDS).collect();
-    // 本地 git（改动数、PR 去向）各目录互不相干，并行算；gh 留在下面串行：登录状态只问一次，
-    // 联网查 PR 本来就每仓库 60 秒才一次。
+    // 本地 git（改动数、PR 去向）各目录互不相干，并行算；联网查 PR 留在下面串行，本来就每仓库 60 秒才一次。
     let local = par_map(&list, DIR_WORKERS, |cwd| {
         let dir = cwd.trim();
         if !std::path::Path::new(dir).is_dir() {

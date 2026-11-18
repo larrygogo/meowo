@@ -8,8 +8,8 @@ import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import { remoteUi } from "../../remoteMode";
 import {
-  activate, activeTab, addTab, closeTabs, cycle, EMPTY_PANEL, forgetPanel, keysToClose, loadPanel, movePanel, moveTab, newTabKey, openSingleton,
-  savePanel, setVisible, updateTab, type PanelState, type PanelTab,
+  activate, activeTab, addTab, closeTabs, consumeReveal, cycle, EMPTY_PANEL, forgetPanel, keysToClose, loadPanel, movePanel, moveTab, newTabKey, openSingleton,
+  revealIn, savePanel, setVisible, updateTab, type PanelState, type PanelTab,
 } from "./panelTabs";
 import { confirmCloseShells, moveShellOwner, trackShell, untrackShell, untrackShellOwner } from "./windowClose";
 
@@ -21,7 +21,8 @@ export type PanelActions = ReturnType<typeof usePanel>["actions"];
  * 页签清单按会话存在 localStorage；终端和浏览器的进程在后端，这里按编号对上号：
  * 切到一个没有活进程的终端 / 浏览器页签（新开的，或应用重启过），就按存下的目录 / 网址重新起一个。
  */
-export function usePanel(sessionId: number, cwd: string | null, onError: (message: string) => void, ended = false) {
+/** blocked：会话目录已删（ChatWindow 的 dirGone）——页签里记着的目录也不在了，不补开任何终端或浏览器进程。 */
+export function usePanel(sessionId: number, cwd: string | null, onError: (message: string) => void, ended = false, blocked = false) {
   const t = useT();
   const [panel, setPanel] = useState<{ sessionId: number; state: PanelState }>(() => ({ sessionId, state: loadPanel(sessionId) }));
   // 换会话：先存旧会话的（保存 effect 已经在每次变化时存过），再读新会话的。
@@ -145,7 +146,7 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
   const spawning = useRef(new Set<string>());
   const active = activeTab(state);
   useEffect(() => {
-    if (remoteUi() || !liveLoaded || !state.visible || !active) return;
+    if (remoteUi() || blocked || !liveLoaded || !state.visible || !active) return;
     if (spawning.current.has(active.key)) return;
     // 已结束的会话不补开旧进程（上面的 effect 会把这种页签去掉）。
     if (ended && ((active.type === "term" && active.shellId !== null) || (active.type === "browser" && active.paneId !== null))) return;
@@ -173,7 +174,7 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
         .catch((e) => onError(formatBackendError(e, t.locale)))
         .finally(() => spawning.current.delete(key));
     }
-  }, [active, state.visible, liveLoaded, shells, panes, sessionId, cwd, update, onError, t.locale, ended]);
+  }, [active, state.visible, liveLoaded, shells, panes, sessionId, cwd, update, onError, t.locale, ended, blocked]);
 
   // ── 关闭：终端里还有程序在跑先确认（参照 Kimi Code「关闭正在运行的终端？」）──
   const close = useCallback(async (keys: readonly string[]) => {
@@ -202,6 +203,13 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
     close: (key: string, scope: "one" | "others" | "right" | "all" = "one") => void close(keysToClose(stateRef.current, key, scope)),
     openDiff: () => update((prev) => openSingleton(prev, "diff")),
     openFiles: () => update((prev) => openSingleton(prev, "files")),
+    /** Lead 面板「在侧边面板打开」、停靠区「已在侧边面板」那行：开着就切过去，没开就新加；面板收起时一并展开。 */
+    openLead: () => update((prev) => openSingleton(prev, "lead")),
+    /** 对话里点了改过的文件：打开「更改」并定位到它的 diff（path 为绝对路径，见 panelReveal.ts）。 */
+    revealDiff: (path: string) => update((prev) => revealIn(prev, "diff", path)),
+    /** 文件已经没有改动时的退路：在「文件」里打开它。 */
+    revealFile: (path: string) => update((prev) => revealIn(prev, "files", path)),
+    consumeReveal: (nonce: number) => update((prev) => consumeReveal(prev, nonce)),
     newTerminal: () => {
       if (!cwd) return;
       update((prev) => addTab(prev, { key: newTabKey("term"), type: "term", shellId: null, cwd }));
@@ -321,6 +329,8 @@ export function tabTitle(tab: PanelTab, shells: ReadonlyMap<number, ShellTermina
       return t.chat.diffChangesTab;
     case "files":
       return t.chat.filesTab;
+    case "lead":
+      return t.chat.leadEntry;
     case "term":
     {
       const info = tab.shellId !== null ? shells.get(tab.shellId) : undefined;

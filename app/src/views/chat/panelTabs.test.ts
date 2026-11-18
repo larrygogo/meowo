@@ -85,3 +85,25 @@ describe("面板页签模型", () => {
     expect(loadPanel(7, storage)).toMatchObject({ visible: false, active: "b" });
   });
 });
+
+describe("Lead 页签", () => {
+  it("一个会话最多一个：再打开是切过去，面板收起时先展开", () => {
+    let state = openSingleton(EMPTY_PANEL, "lead");
+    expect(state.tabs).toEqual([{ key: state.active, type: "lead" }]);
+    state = setVisible(addTab(state, term("t")), false);
+    const again = openSingleton(state, "lead");
+    expect(again.tabs.filter((tab) => tab.type === "lead")).toHaveLength(1);
+    expect(again.active).toBe(state.tabs[0].key);
+    expect(again.visible).toBe(true);
+  });
+
+  it("存取 Lead 页签；旧数据里认不出的页签类型丢掉，不连累整份记录", () => {
+    const storage = new MemoryStorage();
+    savePanel(7, { tabs: [{ key: "l", type: "lead" }, term("t")], active: "l", visible: true, expanded: false }, storage);
+    expect(loadPanel(7, storage)).toEqual({ tabs: [{ key: "l", type: "lead" }, term("t")], active: "l", visible: true, expanded: false });
+
+    // 没有 Lead 页签的旧版本记录照常读出；更新版本写进来的未知类型（比如以后加的页签）被跳过。
+    storage.setItem("meowo-panel-tabs.v1:8", JSON.stringify({ tabs: [{ key: "d", type: "diff" }, { key: "x", type: "notes" }], active: "x", visible: true, expanded: false, savedAt: 1 }));
+    expect(loadPanel(8, storage)).toEqual({ tabs: [{ key: "d", type: "diff" }], active: "d", visible: true, expanded: false });
+  });
+});

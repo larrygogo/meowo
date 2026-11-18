@@ -34,6 +34,7 @@ import { IdentityDialog } from "./IdentityDialog";
 import { moveAmongRows } from "./listKeys";
 import { errorCode, PanelMessage, type PanelAction } from "./PanelMessage";
 import { PanelPromptContext } from "./panelPrompt";
+import type { ChangeTarget } from "./panelReveal";
 import { Icon } from "../../icons/Icon";
 import { icGitBranch, icMenu, icMinus, icUndo } from "../../icons/glyphs.chat";
 import { icCheck, icPlus } from "../../icons/glyphs";
@@ -80,8 +81,11 @@ type UndoInfo = { root: string; id: string; trashed: number };
 /// 失败提示：retry 是「重做刚才那一步」（git/locked 给「重试」，补完身份后自动重做提交）。
 /// undo：放弃到一半失败时后端带回的撤销号（git/discard_partial，做空第一轮 #1）。kind：哪一步失败的。
 type ScmError = { text: string; code: string; retry?: () => void; undo?: UndoInfo; kind?: BusyKind };
-/// 结果提示：undo 是放弃后的撤销号（git.rs undo_discard，walkthrough P-5）。
-type ScmNotice = { text: string; undo?: UndoInfo };
+/// 结果提示：undo 是放弃后的撤销号（git.rs undo_discard，walkthrough P-5）。actions：别的出路（如「在文件中打开」）。
+type ScmNotice = { text: string; undo?: UndoInfo; actions?: PanelAction[] };
+
+/// 对话里点了改过的文件，要在这里定位（见 panelReveal.ts）。openInFiles：没有改动时的退路，没有就不给按钮。
+export type ScmReveal = { nonce: number; target: ChangeTarget; openInFiles: (() => void) | null };
 /// 未跟踪的条目（文件或折叠目录）：放弃时进回收站，不在撤销号里（同 git.rs discard_with_ops 的划分）。
 const isUntracked = (file: ScmFile) => file.worktreeStatus === "U";
 /// 写操作之后焦点去哪（walkthrough P-3）：行被挪到别的组或消失时，焦点掉到 body；记下原来在哪一组第几行，
@@ -97,7 +101,7 @@ export function pickRepo(repos: readonly RepoChangesDto[], selected: string | nu
     ?? null;
 }
 
-export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChanged, comments, touchedPaths, turnTouchedPaths, onAddComment, onRemoveComment, escOverrideRef, live = false, sessionId = null, visible = true }: {
+export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChanged, comments, touchedPaths, turnTouchedPaths, onAddComment, onRemoveComment, escOverrideRef, live = false, sessionId = null, visible = true, reveal = null, onRevealed }: {
   /** 会话工作目录（手机桥按它收口）。 */
   cwd: string;
   repos: readonly RepoChangesDto[];
@@ -117,10 +121,16 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
   sessionId?: number | null;
   /** 面板可见：收起时推送 / PR 区块不轮询 GitHub。 */
   visible?: boolean;
+  /** 从对话里点过来的定位请求；处理完回调 onRevealed 让面板清掉它。 */
+  reveal?: ScmReveal | null;
+  onRevealed?: (nonce: number) => void;
 }) {
   const t = useT();
   const repo = pickRepo(repos, selectedRoot);
-  const [open, setOpen] = useState<{ root: string; kind: GroupKind; path: string } | null>(null);
+  // nonce：从对话里点过来的那次打开。进单文件 diff 的 key 带上它——已经开着同一组的另一个文件时，
+  // ChangesView 只在挂载时读 initialPath，不换 key 就停在原来那个文件上。
+  // file：定位到折叠的未跟踪目录里的文件时补的那一条（它不在摘要里，ChangesView 靠清单认未跟踪）。
+  const [open, setOpen] = useState<{ root: string; kind: GroupKind; path: string; nonce?: number; file?: ScmFile } | null>(null);
   const [search, setSearch] = useState("");
   const [scopeChoice, setScope] = useState<"all" | "session" | "turn" | "checkpoints">("all");
   const [layout, setLayoutState] = useState<"list" | "tree">(readDiffLayout);
@@ -181,6 +191,27 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
     }
   });
 
+  // 对话里点了改过的文件：切到它所在的仓库、打开它的 diff；已经没有改动就留在列表上说一句，能在「文件」里
+  // 打开的给个按钮（用户要求：不能点了没反应）。每个请求只处理一次，处理完让面板清掉，切走再回来不会再跳。
+  useEffect(() => {
+    if (!reveal) return;
+    const { target, nonce, openInFiles } = reveal;
+    if (target.found) {
+      onSelectRoot(target.root);
+      setNotice(null);
+      setOpen({ root: target.root, kind: target.group, path: target.rel, nonce, file: target.file as ScmFile });
+    } else {
+      if (target.root) onSelectRoot(target.root);
+      setOpen(null);
+      setNotice({
+        text: target.root ? t.chat.revealNoChange : t.chat.revealNoChangeOutside,
+        actions: openInFiles ? [{ label: t.chat.revealOpenInFiles, testId: "scm-reveal-files", onClick: openInFiles }] : [],
+      });
+    }
+    onRevealed?.(nonce);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 只按请求号触发：同一个请求在轮询重渲染时不能重复打开
+  }, [reveal?.nonce]);
+
   // 写操作 / 返回之后把焦点放回列表（P-3）。每次渲染后看一眼：焦点已经掉到 body、原来那一行也不在了，
   // 才接手（用户自己把焦点挪走了就不抢）。8 秒内没等到就作废。
   // eslint-disable-next-line react-hooks/exhaustive-deps -- 刻意每次渲染后检查：行是在轮询拿到新清单的那次渲染里消失的
@@ -230,14 +261,14 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
     // 目录条目不是文件，不进单文件 diff 的清单；从折叠目录里点开的文件不在摘要里，补进去（ChangesView 靠清单认
     // 未跟踪、决定读盘）。只补点开的这一个：目录里可能有上万个文件，整份塞进去它的文件列表又要卡。
     const fromDir = open.kind === "work" && !files.some((file) => file.path === open.path)
-      ? [...dirFiles.values()].flatMap((state) => state.files).find((file) => file.path === open.path)
+      ? [...dirFiles.values()].flatMap((state) => state.files).find((file) => file.path === open.path) ?? open.file
       : undefined;
     const summary = open.kind === "committed"
       ? { ...repo.summary, files: repo.committed, ahead: null, behind: null }
       : { ...repo.summary, files: [...files.filter((file) => !isDirEntry(file)), ...(fromDir ? [fromDir] : [])] };
     return (
       <ChangesView
-        key={`open\u0000${key}\u0000${open.kind}`}
+        key={`open\u0000${key}\u0000${open.kind}\u0000${open.nonce ?? 0}`}
         cwd={root}
         summary={summary}
         diffBase={open.kind === "committed" ? repo.base : null}
@@ -632,8 +663,8 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
         {error && <PanelMessage tone="error" text={error.text} actions={errorActions(error)} onDismiss={() => setError(null)} testId="scm-error" focusAfter={focusCommitInput} />}
         {notice && (
           <PanelMessage tone="notice" text={notice.text} testId="scm-notice" focusAfter={focusCommitInput}
-            actions={notice.undo ? [{ label: t.chat.scmUndo, testId: "scm-undo", onClick: () => undoDiscard(notice.undo!) }] : []}
-            onDismiss={notice.undo ? () => setNotice(null) : undefined} />
+            actions={notice.undo ? [{ label: t.chat.scmUndo, testId: "scm-undo", onClick: () => undoDiscard(notice.undo!) }] : notice.actions ?? []}
+            onDismiss={notice.undo || notice.actions ? () => setNotice(null) : undefined} />
         )}
         {/* P-10：说清楚之后给按钮，不让人自己去找「全部」和搜索框。 */}
         {commitBlockedByFilter && !!message.trim() && (

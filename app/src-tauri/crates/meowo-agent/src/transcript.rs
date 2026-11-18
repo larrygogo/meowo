@@ -602,6 +602,17 @@ pub trait SubagentSpec: Sync {
     fn detect_result(&self, _output: &str) -> Option<SubagentOutcome> {
         None
     }
+
+    /// 侧车流到此刻用掉的 token（口径见 `SubagentProbeDto::tokens`）。默认 None：该
+    /// provider 的侧车不带用量，面板就不显示数字。
+    fn stream_tokens(&self, _stream: &Path) -> Option<u64> {
+        None
+    }
+
+    /// 侧车元数据里这次委派的说明（见 `SubagentProbeDto::description`）。默认 None。
+    fn stream_description(&self, _stream: &Path) -> Option<String> {
+        None
+    }
 }
 
 /// 某 agent 的 transcript 规格：定位文件 + 解析标题 + 产出增量解析器。
@@ -847,9 +858,16 @@ pub fn probe_subagent_state(
     let mut running = false;
     let mut failed = false;
     let mut known = false;
+    let mut tokens: Option<u64> = None;
+    let description = streams
+        .first()
+        .and_then(|stream| subagents.stream_description(&stream.path));
     let mut finished_at: Option<String> = None;
     let mut branches: Vec<SubagentBranchProbeDto> = Vec::with_capacity(streams.len());
     for stream in &streams {
+        if let Some(used) = subagents.stream_tokens(&stream.path) {
+            tokens = Some(tokens.unwrap_or(0) + used);
+        }
         match stream.status.as_deref() {
             Some("running") => {
                 known = true;
@@ -887,10 +905,13 @@ pub fn probe_subagent_state(
                 .filter(|_| !branch_running),
         });
     }
-    if !known {
+    // 状态读不出但有用量（claude）：照样回，状态标 unknown，由主链回执定状态。
+    if !known && tokens.is_none() {
         return None;
     }
-    let status = if running {
+    let status = if !known {
+        "unknown"
+    } else if running {
         "running"
     } else if failed {
         "failed"
@@ -900,8 +921,10 @@ pub fn probe_subagent_state(
     Some(SubagentProbeDto {
         status: status.to_string(),
         // 还在跑就没有「结束时刻」可言：侧车尾部的时间只是最近一次落盘。
-        finished_at: finished_at.filter(|_| !running),
+        finished_at: finished_at.filter(|_| known && !running),
         branches,
+        tokens,
+        description,
     })
 }
 
@@ -1186,7 +1209,18 @@ fn fold_lines(spec: &dyn TranscriptSpec, path: &Path, base: u64, parsed: &[Parse
         let mut link = None;
         match &line.mark {
             Some(ChatLineMark::Link { id, parent }) => link = Some((id.as_str(), parent.as_deref())),
-            Some(ChatLineMark::TurnStart) => turn_starts.push(index),
+            Some(ChatLineMark::TurnStart) => {
+                turn_starts.push(index);
+                // 一轮开始的行自己不出消息（Kimi 带 promptId 的 turn.prompt，记录在随后的
+                // append_message）：新的一轮开始了，前一条用户消息不再是谁的双写。不清的话，
+                // 连着两轮发同一句（7ms 内两条「继续」）会被当成双写吞掉一条。
+                // 别家的一轮开始行本身就出用户消息，走不到这里。
+                // 清掉之后前一条是什么已经确定（没有），尾读窗口不必为此扩窗。
+                if line.items.is_empty() {
+                    last_user = None;
+                    user_state_unknown = false;
+                }
+            }
             Some(ChatLineMark::Undo(count)) => {
                 undone = true;
                 // 窗口里不够 n 轮：整读会收回窗口之前的轮次，起点在窗口外，这里复现不了。

@@ -468,6 +468,29 @@ fn tool_call_events(
         .collect()
 }
 
+fn browser_mcp_media(output: &serde_json::Value, base_id: &str) -> Option<(String, Vec<String>)> {
+    let owned = match output { serde_json::Value::String(raw) => serde_json::from_str::<serde_json::Value>(raw).ok(), _ => None };
+    let output = owned.as_ref().unwrap_or(output);
+    let parts = output.as_array().or_else(|| output.get("content").and_then(|v| v.as_array()))?;
+    let mut images = Vec::new();
+    for (index, part) in parts.iter().enumerate() {
+        if part.get("type").and_then(|v| v.as_str()) != Some("image") { continue; }
+        let source = part.get("source").unwrap_or(part);
+        let mime = source.get("media_type").or_else(|| source.get("mimeType")).or_else(|| source.get("mime_type")).and_then(|v| v.as_str());
+        let data = source.get("data").and_then(|v| v.as_str());
+        let (Some(mime), Some(data)) = (mime, data) else { continue };
+        let ext = match mime { "image/png" => "png", "image/jpeg" => "jpg", "image/gif" => "gif", "image/webp" => "webp", _ => continue };
+        use base64::Engine;
+        let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) else { continue };
+        let id: String = base_id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(64).collect();
+        let Some(path) = crate::fsutil::persist_paste_bytes(&format!("{id}-{index}"), ext, &bytes) else { continue };
+        images.push(format!("[Image: source: {}]", path.display()));
+    }
+    if images.is_empty() { return None; }
+    let text = parts.iter().filter_map(|part| part.get("text").or_else(|| part.get("output_text")).and_then(|v| v.as_str())).collect::<Vec<_>>().join("\n");
+    Some((text, images))
+}
+
 /// 工具回执。脚本回执按 `text()` 分段，第 i 段挂到 `<call_id>#<i>`；直接调用的回执并成一条。
 /// 失败的来源有三个：行上的 `is_error`（新版恒无）、脚本状态头 `Script failed`、命令结果里
 /// 的非零退出码——此前只看第一个，失败的命令从不标红（走查 A2）。
@@ -504,6 +527,22 @@ fn tool_result_events(
         }
     };
     let base = chat_id("result", line);
+    if !scripted {
+        if let Some((plain, images)) = browser_mcp_media(payload.get("output").unwrap_or(&serde_json::Value::Null), &base) {
+            let mut text = plain;
+            for image in images {
+                if !text.is_empty() { text.push('\n'); }
+                text.push_str(&image);
+            }
+            let merged = OutputPart {
+                text,
+                exit_code: parts.iter().rev().find_map(|part| part.exit_code),
+                is_error: parts.iter().any(|part| part.is_error),
+                interrupted: parts.iter().any(|part| part.interrupted),
+            };
+            return vec![result(base, call_id, merged)];
+        }
+    }
     if scripted {
         return parts
             .into_iter()
@@ -1173,6 +1212,17 @@ impl crate::caps::TelemetryCap for CodexTelemetry {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn browser_mcp_image_becomes_receipt_reference() {
+        use serde_json::json;
+        let output = json!({"content":[{"type":"text","text":"面板浏览器截图"},{"type":"image","mimeType":"image/jpeg","data":"/9j/4A=="}]});
+        let (text, images) = super::browser_mcp_media(&output, "codex-browser-test").unwrap();
+        assert_eq!(text, "面板浏览器截图");
+        let path = images[0].split("[Image: source: ").nth(1).and_then(|rest| rest.strip_suffix(']')).map(std::path::PathBuf::from).unwrap();
+        assert!(path.exists());
+        std::fs::remove_file(path).ok();
+    }
 
     #[test]
     fn thread_name_takes_the_last_entry_for_the_session() {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { promptQueueList, type PromptQueueChangedDto, type QueuedPromptDto } from "../../api";
 import { useTauriEvent } from "../../hooks/useTauriEvent";
 import { remoteUi } from "../../remoteMode";
@@ -32,5 +32,12 @@ export function usePromptQueue(sessionId: number) {
     return () => window.clearInterval(timer);
   }, [refresh]);
 
-  return { items, refresh, upsert };
+  // 只交出属于当前会话的条目。换会话那一帧 items 还是上一个会话的（清空在 effect 里，晚一拍），
+  // 旧会话的 refresh 也可能在切走后才回来；此时 ChatWindow 的投递 effect 按新会话的 sessionId
+  // 认领旧会话的消息、发进新会话——用户报「排队的消息会串到别的会话里面去发送」（2026-11-18）。
+  const own = useMemo(
+    () => items.every((item) => item.sessionId === sessionId) ? items : items.filter((item) => item.sessionId === sessionId),
+    [items, sessionId],
+  );
+  return { items: own, refresh, upsert };
 }

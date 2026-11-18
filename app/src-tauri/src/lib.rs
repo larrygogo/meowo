@@ -4,6 +4,7 @@ mod agent_updates;
 mod app_bundle;
 mod bgpty;
 mod browser_agent;
+mod browser_emulation;
 mod browser_pane;
 mod browser_permission;
 mod chat;
@@ -18,8 +19,11 @@ mod envpath;
 mod exit_report;
 mod forge;
 mod fsutil;
+mod forge_accounts;
+mod github;
 mod git;
 mod git_target;
+mod git_tool;
 mod island;
 mod lead;
 mod lead_conversation;
@@ -1599,6 +1603,13 @@ pub fn run() {
             forge::gh_pr_create,
             forge::gh_pr_merge,
             forge::forge_choose_repo,
+            git_tool::git_tool_status,
+            git_tool::git_identity_set,
+            forge_accounts::forge_accounts,
+            forge_accounts::forge_account_add,
+            forge_accounts::forge_account_remove,
+            forge_accounts::forge_login_start,
+            forge_accounts::forge_login_cancel,
             forge::badge::sidebar_git_badges,
             forge::review::pr_review,
             forge::review::pr_comment,
@@ -1647,10 +1658,15 @@ pub fn run() {
             browser_pane::browser_pane_set_bounds,
             browser_pane::browser_pane_navigate,
             browser_pane::browser_pane_action,
+            browser_pane::browser_pane_emulate,
             browser_pane::browser_pane_close,
             browser_pane::browser_pane_set_agent_paused,
             browser_pane::browser_pane_answer_permission,
             browser_pane::browser_pane_reveal_download,
+            #[cfg(feature = "e2e")]
+            browser_agent::browser_agent_e2e,
+            #[cfg(all(feature = "e2e", windows))]
+            browser_pane::browser_pane_e2e_native_click,
             shell_terminal::shell_terminal_open,
             shell_terminal::shell_terminal_list,
             shell_terminal::shell_terminal_attach,
@@ -1714,6 +1730,7 @@ pub fn run() {
             session_settings::queue_session_settings,
             session_settings::queued_session_settings,
             session_settings::take_queued_session_settings,
+            session_settings::cancel_queued_session_settings,
             agent_updates::check_agent_updates,
             agent_updates::installed_agent_versions,
             profile::list_profiles,
@@ -1849,6 +1866,7 @@ pub fn run() {
             }
             // 上次进程在写入途中消失时只恢复成失败，不自动重写 CLI。
             prompt_queue::recover_prompt_deliveries(app.handle());
+            github::init(app.handle());
             forge::review::start_monitor_worker(app.handle());
             // 远程访问桥（手机浏览器）：manage 生命周期状态后按 settings 决定是否启动。
             // 默认关闭时 apply 是 no-op，不监听任何端口。
@@ -2281,6 +2299,105 @@ mod tests {
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
         }
+    }
+
+    /// 目录已删除的会话：进行中与已完成都标 cwd_missing（此前只标已完成，进行中的点进去只有
+    /// 一个注定失败的「恢复会话」），进程还连着的不标；原项目读库里记下的那一笔。
+    #[test]
+    fn missing_cwd_is_flagged_on_both_tabs_with_recorded_origin() {
+        let base = std::env::temp_dir().join(format!(
+            "meowo-gone-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let origin = base.join("repo");
+        std::fs::create_dir_all(origin.join(".git")).unwrap();
+        let gone = base.join("repo-wt-gone").to_string_lossy().into_owned();
+        std::fs::create_dir_all(base.join("somewhere-else")).unwrap();
+        let elsewhere = base.join("somewhere-else/x").to_string_lossy().into_owned();
+        let path = base.join("board.db");
+        let store = meowo_store::Store::open(&path).unwrap();
+        let project = store.upsert_project_by_root("/p", "p", 1).unwrap();
+        let make = |key: &str, cwd: &str, at: i64| {
+            let (sid, _) = store.start_session(project, key, at).unwrap();
+            store.on_user_prompt(sid, key, at).unwrap();
+            store.set_session_cwd(sid, cwd, at).unwrap();
+            store.end_session(sid, at).unwrap();
+            sid
+        };
+        let ongoing = make("ongoing", &elsewhere, 10);
+        let done = make("done", &gone, 20);
+        let live = make("live", &elsewhere, 30);
+        let fine = make("fine", &origin.to_string_lossy(), 40);
+        store.set_session_archived(done, true, 21).unwrap();
+        store.set_session_archived(fine, true, 41).unwrap();
+        store
+            .set_session_origin_root(ongoing, &origin.to_string_lossy())
+            .unwrap();
+        // 「live」的进程还活着：目录没了也不标（它就在那里跑）。
+        store.set_session_pid(live, 31_337, 30).unwrap();
+        store
+            .set_session_status(live, meowo_store::SessionStatus::Waiting, 30)
+            .unwrap();
+        drop(store);
+
+        let cache = std::sync::Mutex::new(meowo_agent::TranscriptCache::new());
+        let alive: std::collections::HashSet<_> = [31_337].into_iter().collect();
+        let pty_none = std::collections::HashSet::new();
+        let no_runtimes = SessionRuntimeIndex::new();
+        let no_approvals = std::collections::HashSet::new();
+        let no_screens = std::collections::HashMap::new();
+        let page = |tab: &str| {
+            live_sessions_blocking(
+                &path,
+                &cache,
+                LiveContext {
+                    alive: &alive,
+                    pty_live: &pty_none,
+                    runtimes: &no_runtimes,
+                    approvals: &no_approvals,
+                    screen_states: &no_screens,
+                },
+                tab,
+                None,
+                None,
+                PageReq {
+                    before_last_event_at: None,
+                    before_id: None,
+                    limit: 20,
+                    order: meowo_store::ListOrder::Activity,
+                },
+            )
+            .unwrap()
+            .items
+        };
+        let norm = |p: &std::path::Path| p.to_string_lossy().replace('\\', "/");
+        let ongoing_items = page("all");
+        let find = |items: &[crate::session_query::LiveItem], id: i64| {
+            items
+                .iter()
+                .find(|item| item.inner.session.id == id)
+                .map(|item| (item.cwd_missing, item.origin_root.clone()))
+        };
+        assert_eq!(
+            find(&ongoing_items, ongoing),
+            Some((true, Some(norm(&origin)))),
+            "进行中的会话目录没了也要标，原项目取库里记下的"
+        );
+        assert_eq!(find(&ongoing_items, live).map(|v| v.0), Some(false), "进程还连着不标");
+        let done_items = page("archived");
+        assert_eq!(
+            find(&done_items, done),
+            Some((true, Some(norm(&origin)))),
+            "没记过原项目：按 <仓库名>-<用途> 的同级命名猜出 repo"
+        );
+        assert_eq!(find(&done_items, fine).map(|v| v.0), Some(false));
+
+        drop(cache);
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// 代次是「取消登录」的整个机制：watch 线程每轮比对自己出生时的代次，不等就静默退出。
