@@ -905,16 +905,26 @@ pub(crate) fn set_emulation(
     Ok(reload)
 }
 
-/// 用户在「…」菜单里选设备或还原（只给预设，自定义尺寸和请求头留给 Agent 的工具）。
+/// 用户在「…」菜单里选设备、自定义尺寸或还原。参数与 Agent 的 browser_emulate 同一套校验（请求头只给
+/// Agent：在菜单里填请求头太重，用户真要测请求头可以让 Agent 设）。
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn browser_pane_emulate(
     app: tauri::AppHandle,
     state: tauri::State<'_, BrowserPanes>,
     id: u32,
-    device: String,
+    device: Option<String>,
+    width: Option<u32>,
+    height: Option<u32>,
+    user_agent: Option<String>,
 ) -> Result<(), String> {
     ensure_human_action_allowed(&state, id)?;
-    let next = crate::browser_emulation::parse(&serde_json::json!({ "device": device }))?;
+    let next = crate::browser_emulation::parse(&serde_json::json!({
+        "device": device,
+        "width": width,
+        "height": height,
+        "user_agent": user_agent.filter(|ua| !ua.trim().is_empty()),
+    }))?;
     // CDP 每一步要等主线程回调（最长数秒）：放到 blocking 线程上等，不占 async 运行时。
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<BrowserPanes>();

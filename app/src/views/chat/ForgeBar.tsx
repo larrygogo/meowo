@@ -52,26 +52,50 @@ const sameRoot = (a: string, b: string) => normPath(a).toLowerCase() === normPat
 /// 这个会话在本仓库里建过、动过的 PR（链接来自时间线，见 sessionPrs），按链接问现状。最多 3 个，最新在前；
 /// 面板已经按分支显示的那个、用户收起的不列（收起后空出的位置由更早的补上）。面板收起、手机上都不查
 ///（按链接查是桌面专用命令）。
+/// 切换会话时 ForgeBar 会按仓库重建，状态从空开始：合并按钮、PR 卡片要等后端查回来才出现，每次切换都闪一下
+///（2026-11-18 用户：「更改面板还是会闪，主要是合并的按钮、PR 卡片等」）。按仓库记住上一次的结果，重建时先显示它，
+/// 后台照常刷新。只在本窗口进程内存里，最多留 FORGE_CACHE_MAX 个仓库。
+const FORGE_CACHE_MAX = 30;
+const forgeCache = new Map<string, ForgeStatusDto>();
+const sessionPrsCache = new Map<string, PullRequestDto[]>();
+/** 测试之间清掉模块级缓存（同一进程里各条测试不该看到上一条的仓库状态）。 */
+export function clearForgeCaches() {
+  forgeCache.clear();
+  sessionPrsCache.clear();
+}
+function remember<T>(cache: Map<string, T>, key: string, value: T) {
+  cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > FORGE_CACHE_MAX) cache.delete(cache.keys().next().value as string);
+}
+
 function useSessionPrs(root: string, repoUrl: string | null | undefined, shown: string | null | undefined, dismissed: readonly string[], active: boolean): PullRequestDto[] {
   const urls = useContext(SessionPrsContext);
   // 链接里没有空格，用空格拼成一个键：数组每次渲染都是新的，拿它当依赖会每次重查。
   const key = sessionPrsInRepo(urls, repoUrl, shown, dismissed).join(" ");
-  const [prs, setPrs] = useState<PullRequestDto[]>([]);
+  const cacheKey = `${root}\u0000${key}`;
+  const [prs, setPrs] = useState<PullRequestDto[]>(() => sessionPrsCache.get(cacheKey) ?? []);
   useEffect(() => {
-    // 还在列表里的先留着，等新结果回来再换：收起一条时其余几条不闪一下。
+    // 还在列表里的先留着，等新结果回来再换：收起一条时其余几条不闪一下。换仓库重建时先用上次记住的。
     const keep = new Set(key ? key.split(" ") : []);
-    setPrs((prev) => prev.filter((item) => keep.has(item.url)));
+    const cached = sessionPrsCache.get(cacheKey);
+    setPrs((prev) => (cached ?? prev).filter((item) => keep.has(item.url)));
     if (!key || !active || remoteUi()) return;
     let alive = true;
     void Promise.all(key.split(" ").map((url) => getPullRequestByUrl(root, url).catch(() => null)))
-      .then((list) => { if (alive) setPrs(list.filter((item): item is PullRequestDto => !!item)); });
+      .then((list) => {
+        const found = list.filter((item): item is PullRequestDto => !!item);
+        remember(sessionPrsCache, cacheKey, found);
+        if (alive) setPrs((prev) => (JSON.stringify(prev) === JSON.stringify(found) ? prev : found));
+      });
     return () => { alive = false; };
-  }, [root, key, active]);
+  }, [root, key, cacheKey, active]);
   return prs;
 }
 
 export function useForgeStatus(root: string, sessionCwd: string | null, active: boolean) {
-  const [forge, setForge] = useState<ForgeStatusDto | null>(null);
+  const cacheKey = `${root}\u0000${sessionCwd ?? ""}`;
+  const [forge, setForge] = useState<ForgeStatusDto | null>(() => forgeCache.get(cacheKey) ?? null);
   const lastRef = useRef(0);
   const reqRef = useRef(0);
   const load = useCallback((force: boolean) => {
@@ -79,11 +103,16 @@ export function useForgeStatus(root: string, sessionCwd: string | null, active: 
     lastRef.current = Date.now();
     const req = ++reqRef.current;
     getForgeStatus(root, force, sessionCwd)
-      .then((dto) => { if (req === reqRef.current) setForge(dto); })
+      .then((dto) => {
+        remember(forgeCache, cacheKey, dto);
+        // 内容没变不换对象：免得每轮轮询都让整条 ForgeBar 重画。
+        if (req === reqRef.current) setForge((prev) => (JSON.stringify(prev) === JSON.stringify(dto) ? prev : dto));
+      })
       .catch(() => {});
-  }, [root, sessionCwd]);
+  }, [root, sessionCwd, cacheKey]);
   useEffect(() => {
-    setForge(null);
+    // 换仓库：先显示这个仓库上次的结果（没有才清空），不先空一下再画回来。
+    setForge(forgeCache.get(cacheKey) ?? null);
     if (!active) return;
     load(false);
     const timer = window.setInterval(() => load(false), FORGE_POLL_MS);
@@ -98,7 +127,7 @@ export function useForgeStatus(root: string, sessionCwd: string | null, active: 
       window.removeEventListener("focus", onFocus);
       reqRef.current += 1;
     };
-  }, [active, load]);
+  }, [active, load, cacheKey]);
   return { forge, refresh: load };
 }
 

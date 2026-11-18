@@ -173,9 +173,8 @@ export function editOutcome(item: import("./shared").ToolUseItem, result?: impor
   return { detail, path, patch, delta, files };
 }
 
-/// 会话工作目录：工具行里落在它下面的路径显示成相对路径（终端里就是这样），
-/// 绝对路径的长前缀会把真正有用的文件名挤出可视区（2026-10 用户实拍）。
-export const ChatCwdContext = createContext<string | null>(null);
+import { ChatCwdContext } from "./chatCwd";
+export { ChatCwdContext };
 
 /// 去掉 cwd 前缀。Windows 路径大小写不敏感、正反斜杠混用，比较前统一归一化。
 export function relativize(text: string, cwd: string | null): string {

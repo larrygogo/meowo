@@ -55,7 +55,8 @@ import { parseUserText } from "./chat/localCommand";
 import { ChatActionsContext, type ChatActions } from "./chat/chatActions";
 import { rejectedUndoTarget } from "./chat/rejectedRecovery";
 import { anchorFrom, echoItemId, freshAnchor, EchoActionsContext, EchoPhaseContext, outgoingStore, useOutgoingPrompts, type PromptAck } from "./chat/outgoingPrompts";
-import { DockWork } from "./chat/DockWork";
+import { DockWork, leadTabLink } from "./chat/DockWork";
+import { useLeadTask, type LeadTaskState } from "./chat/LeadPanel";
 import { ANCHOR_PX, countsAsUnseen, stickToBottom, useStickToBottom } from "./chat/useStickToBottom";
 import { useSidebarLayout } from "./chat/useSidebarLayout";
 import { pasteImagesNatively, useInterrupt, writeInterruptKeys } from "./chat/terminalInput";
@@ -92,6 +93,7 @@ import { TranscriptSearch } from "./chat/TranscriptSearch";
 import { formatReviewComments, type ReviewComment } from "./chat/diffComments";
 import { changedFileCount, sessionTouchedPaths } from "./chat/gitDiff";
 import { setPanelLinkHandler } from "./chat/panelLinks";
+import { absolutePath, RevealChangeContext } from "./chat/panelReveal";
 import { localUrlsIn } from "./chat/localUrls";
 import { useGuardedWindowClose } from "./chat/windowClose";
 import { usePanel } from "./chat/usePanel";
@@ -996,6 +998,12 @@ export function ChatWindow() {
     setPanelLinkHandler(panelActions.openUrl);
     return () => setPanelLinkHandler(null);
   }, [panelActions]);
+  // 对话里点改过的文件 → 面板「更改」里它的 diff（panelReveal.ts）。手机远程页没有右侧面板，不提供，
+  // 工具行和改动卡也就不出这个入口。
+  const revealChange = useMemo(
+    () => (remoteUi() || !cwd ? null : (path: string) => panelActions.revealDiff(absolutePath(path, cwd))),
+    [panelActions, cwd],
+  );
   // 面板快捷键（照 Kimi Code）：Ctrl+Shift+B 开合面板，Ctrl+Shift+G 改动，Ctrl+Shift+E 文件
   // （正在看就收起），Ctrl+T 新浏览器，Ctrl+` 面板终端，Ctrl+W 关当前页签，Ctrl+(Shift+)Tab 切换。
   // 焦点在终端里时这些键 xterm 自己吃掉（Ctrl+W 是删词、Ctrl+T 是换字），只有 Ctrl+` 被放行。
@@ -1086,12 +1094,28 @@ export function ChatWindow() {
   // 认出过的仓库 / worktree 粘住：命令和编辑记录会随翻页滑出加载窗口，滑出去就又认不出来，
   // 列表里的 worktree 忽隐忽现。按会话记着，下次拉清单时当作「碰过的路径」一并交给后端。
   const usedRootsRef = useRef<Set<string>>(new Set());
-  // 换会话也清：同一个工作目录的两个会话改的仓库不同，不清会先露出上一个会话的仓库分组。
+  // 换会话不能露出上一个会话的仓库分组（同一个工作目录的两个会话改的仓库不同）。但一律清空会让「更改」页
+  // 每次切会话都先空一下再画回来（2026-11-18 用户：「每次切换会话，更改页都会闪烁一次」）。按会话记住上一次
+  // 的清单：切回来先显示它自己的旧结果，后台照常刷新、内容没变不重画；没来过的会话才从空开始。
+  const changesKey = `${sessionId}\u0000${diffCwd ?? ""}`;
+  const changesStateKeyRef = useRef(changesKey);
+  const changesCacheRef = useRef(new Map<string, { repos: RepoChangesDto[] | null; scmRoot: string | null; usedRoots: Set<string> }>());
   useEffect(() => {
-    setRepoChanges(null);
-    setScmRoot(null);
-    usedRootsRef.current = new Set();
-  }, [diffCwd, sessionId]);
+    // 只记「属于当前会话」的状态：换会话那一帧状态还是上一个会话的，不能记到新会话名下。
+    if (changesStateKeyRef.current !== changesKey) return;
+    const cache = changesCacheRef.current;
+    cache.delete(changesKey);
+    cache.set(changesKey, { repos: repoChanges, scmRoot, usedRoots: usedRootsRef.current });
+    // 只留最近 20 个会话，长时间不关窗口也不涨内存。
+    while (cache.size > 20) cache.delete(cache.keys().next().value as string);
+  }, [changesKey, repoChanges, scmRoot]);
+  useEffect(() => {
+    const cached = changesCacheRef.current.get(changesKey);
+    changesStateKeyRef.current = changesKey;
+    setRepoChanges(cached?.repos ?? null);
+    setScmRoot(cached?.scmRoot ?? null);
+    usedRootsRef.current = cached ? new Set(cached.usedRoots) : new Set();
+  }, [changesKey]);
   // 会话最近的命令文本（用户要求 2026-11-09）：agent 常 cd 进 worktree 用命令干活，编辑工具一次没碰过，
   // 只认编辑记录就看不到这个 worktree。后端按命令里出现的路径认（绝对 / 相对 / Git Bash 写法）。
   const commandsKey = useMemo(() => {
@@ -1161,11 +1185,17 @@ export function ChatWindow() {
   const effectiveSummary = gitSummary?.isRepo ? gitSummary : (pickedRepo?.summary ?? gitSummary);
   effectiveSummaryRef.current = effectiveSummary;
   isRepoRef.current = !!effectiveSummary?.isRepo;
+  // 摘要只跟工作目录有关：按目录记住上一次的，换会话时先显示该目录自己的旧摘要，不先露出上一个目录的。
+  const summaryCacheRef = useRef(new Map<string, GitDiffSummaryDto>());
+  useEffect(() => {
+    if (gitSummary && diffCwdRef.current) summaryCacheRef.current.set(diffCwdRef.current, gitSummary);
+  }, [gitSummary]);
   useEffect(() => {
     if (!diffCwd) { setGitSummary(null); return; }
+    setGitSummary(summaryCacheRef.current.get(diffCwd) ?? null);
     let cancelled = false;
     getGitDiffSummary(diffCwd)
-      .then((result) => { if (!cancelled) setGitSummary(result); })
+      .then((result) => { if (!cancelled) setGitSummary((prev) => (JSON.stringify(prev) === JSON.stringify(result) ? prev : result)); })
       .catch(() => { if (!cancelled) setGitSummary(null); });
     return () => { cancelled = true; };
   }, [diffCwd]);
@@ -2111,6 +2141,19 @@ export function ChatWindow() {
   // 走 visible=false 而不是藏 DOM，面板里的浏览器是原生 webview，只有收起态才会把它藏掉。
   const pageCovered = adminOpen || !!newSessionOpen;
   const shownPanelState = useMemo(() => (pageCovered ? { ...panelState, visible: false } : panelState), [pageCovered, panelState]);
+
+  // Lead 任务在这里取一次，停靠区（DockWork）和侧边面板的 Lead 页签共用：两边各自轮询的话，
+  // 一边作答后另一边要等下一拍才对上。只在用得着时取（对话视图，或面板里开着 Lead 页签），
+  // 和原先「停靠区挂着才轮询」一致，终端视图下不白拉。
+  // 手机远程页没有右侧面板：页签状态一概不认，停靠区保持原样、不出「在侧边面板打开」。
+  const openLeadTab = panelActions.openLead;
+  const leadTab = useMemo(() => leadTabLink(panelState, shownPanelState.visible, openLeadTab), [panelState, shownPanelState.visible, openLeadTab]);
+  const leadTabOpen = !!leadTab?.open;
+  const [leadTaskNow, leadRefresh, leadFailure] = useLeadTask(
+    sessionId !== 0 && (view === "chat" || leadTabOpen) ? cwd : null,
+    history ? history.ccSessionId ?? null : undefined,
+  );
+  const leadState = useMemo<LeadTaskState>(() => ({ task: leadTaskNow, refresh: leadRefresh, failure: leadFailure }), [leadTaskNow, leadRefresh, leadFailure]);
 
   const refresh = useCallback(async () => {
     if (sessionId <= 0 || busyRef.current) {
@@ -4694,6 +4737,7 @@ export function ChatWindow() {
           终端侧懒挂载（terminalMounted），纯对话的用户不用白付 xterm 的创建成本。 */}
       {/* 工具行里落在会话目录下的路径显示成相对路径（见 ToolActivity 的 relativize）。 */}
       <ChatCwdContext.Provider value={cwd ?? null}>
+      <RevealChangeContext.Provider value={revealChange}>
       <ChatActionsContext.Provider value={chatActions}>
       <EchoPhaseContext.Provider value={echoPhases}>
       <EchoActionsContext.Provider value={echoActions}>
@@ -4896,6 +4940,7 @@ export function ChatWindow() {
       </EchoActionsContext.Provider>
       </EchoPhaseContext.Provider>
       </ChatActionsContext.Provider>
+      </RevealChangeContext.Provider>
       </ChatCwdContext.Provider>
       {/* 区内搜索的叠层与胶囊：覆盖在滚动区之上，故与导航同样放在 main 之外。 */}
       {searchOpen && view === "chat" && !loading && timelineItems.length > 0 && (
@@ -5155,7 +5200,7 @@ export function ChatWindow() {
       {view === "chat" && sessionId !== 0 && (
         <div className="chat-dock">
           {/* 停靠栏（计划/进度/后台任务）：状态、关闭规则与入口判定见 chat/DockWork。 */}
-          <DockWork sessionId={sessionId} cwd={cwd} ccSessionId={history ? history.ccSessionId ?? null : undefined} items={items} history={history} loading={loading} returnFocusTo={promptInputRef} live={{ activity: turnActivityOf(tone), alive: history?.connected ?? false }} />
+          <DockWork sessionId={sessionId} cwd={cwd} ccSessionId={history ? history.ccSessionId ?? null : undefined} lead={leadState} leadTab={leadTab} items={items} history={history} loading={loading} returnFocusTo={promptInputRef} live={{ activity: turnActivityOf(tone), alive: history?.connected ?? false }} />
           {sideAnswers.length > 0 && (
             <div className="chat-side-answers">
               {sideAnswers.map((entry) => (
@@ -6153,6 +6198,7 @@ export function ChatWindow() {
                 onSelectRoot={setScmRoot}
                 onChanged={refreshChanges}
                 sessionId={sessionId}
+                lead={leadState}
               />
             )}
           </Suspense>
