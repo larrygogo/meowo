@@ -438,7 +438,11 @@ fn gitlab_评审_讨论批准改动文件_行内评论钉在_diff_refs() {
     let post = |path: &str, line: i64, side: &str| {
         gl.line_comment(".", "gitlab-org/cli", 4365, path, line, side, "x").unwrap();
         let (_, _, body, _) = fake.calls().into_iter().rfind(|(m, _, _, _)| m == "POST").unwrap();
-        (body["position"]["old_line"].as_i64(), body["position"]["new_line"].as_i64(), body["position"]["old_path"].clone())
+        (
+            body["position"]["old_line"].as_i64(),
+            body["position"]["new_line"].as_i64(),
+            body["position"]["old_path"].clone(),
+        )
     };
     let doc = "docs/source/auth/login.md";
     assert_eq!(post(doc, 48, "NEW"), (Some(48), Some(48), json!(doc)));
@@ -476,19 +480,30 @@ fn gitlab_行内评论_重命名文件用旧路径() {
     let mr = fixture("gitlab_mr_4365.json");
     let fake = Fake::new(move |method, url, _| match (method, url) {
         ("GET", u) if u.ends_with("/merge_requests/4365") => resp(200, mr.clone()),
-        ("GET", u) if u.contains("/diffs") => resp(200, json!([{ "old_path": "src/old.go", "new_path": "src/new.go", "renamed_file": true, "diff": "@@ -1,2 +1,2 @@
+        ("GET", u) if u.contains("/diffs") => resp(
+            200,
+            json!([{ "old_path": "src/old.go", "new_path": "src/new.go", "renamed_file": true, "diff": "@@ -1,2 +1,2 @@
  a
 -b
 +c
-" }])),
+" }]),
+        ),
         ("POST", _) => resp(201, json!({})),
         _ => resp(404, json!({})),
     });
     let flags = Mutex::new(Vec::new());
-    gitlab(&fake, &flags).line_comment(".", "gitlab-org/cli", 4365, "src/new.go", 1, "NEW", "x").unwrap();
+    gitlab(&fake, &flags)
+        .line_comment(".", "gitlab-org/cli", 4365, "src/new.go", 1, "NEW", "x")
+        .unwrap();
     let (_, _, body, _) = fake.calls().into_iter().rfind(|(m, _, _, _)| m == "POST").unwrap();
-    assert_eq!((body["position"]["old_path"].clone(), body["position"]["new_path"].clone()), (json!("src/old.go"), json!("src/new.go")));
-    assert_eq!((body["position"]["old_line"].as_i64(), body["position"]["new_line"].as_i64()), (Some(1), Some(1)));
+    assert_eq!(
+        (body["position"]["old_path"].clone(), body["position"]["new_path"].clone()),
+        (json!("src/old.go"), json!("src/new.go"))
+    );
+    assert_eq!(
+        (body["position"]["old_line"].as_i64(), body["position"]["new_line"].as_i64()),
+        (Some(1), Some(1))
+    );
 }
 
 #[test]
@@ -930,6 +945,57 @@ fn show(label: &str, pr: &meowo_protocol::ipc::PullRequestDto) {
     );
 }
 
+// 真机核对的期望值：独立写死的对照表（审查指出不能拿实现自己的映射函数自证）。左边是平台原始状态，右边是界面
+// 应显示的结论，依据各平台文档对状态的定义：GitLab job（允许失败的失败、手动的不挡合并）、Gitea commit status
+//（warning 视为通过）、Bitbucket build status（STOPPED 不算通过）。表里没有的原始值直接让核对失败，不去猜。
+const GITLAB_EXPECT: &[(&str, bool, &str)] = &[
+    ("success", false, "pass"),
+    ("success", true, "pass"),
+    ("failed", false, "fail"),
+    ("failed", true, "skipped"),
+    ("canceled", false, "fail"),
+    ("canceled", true, "fail"),
+    ("skipped", false, "skipped"),
+    ("skipped", true, "skipped"),
+    ("manual", true, "skipped"),
+    ("manual", false, "pending"),
+    ("created", false, "pending"),
+    ("pending", false, "pending"),
+    ("running", false, "pending"),
+    ("running", true, "pending"),
+];
+const GITEA_EXPECT: &[(&str, &str)] = &[
+    ("success", "pass"),
+    ("warning", "pass"),
+    ("failure", "fail"),
+    ("error", "fail"),
+    ("pending", "pending"),
+    ("skipped", "skipped"),
+];
+const BITBUCKET_EXPECT: &[(&str, &str)] = &[("SUCCESSFUL", "pass"), ("FAILED", "fail"), ("STOPPED", "fail"), ("INPROGRESS", "pending")];
+
+fn expect_gitlab(status: &str, allow_failure: bool) -> &'static str {
+    GITLAB_EXPECT
+        .iter()
+        .find(|(s, a, _)| *s == status && *a == allow_failure)
+        .map(|(_, _, w)| *w)
+        .unwrap_or_else(|| panic!("对照表里没有 {status}/{allow_failure}"))
+}
+fn expect_gitea(status: &str) -> &'static str {
+    GITEA_EXPECT
+        .iter()
+        .find(|(s, _)| *s == status)
+        .map(|(_, w)| *w)
+        .unwrap_or_else(|| panic!("对照表里没有 {status}"))
+}
+fn expect_bitbucket(state: &str) -> &'static str {
+    BITBUCKET_EXPECT
+        .iter()
+        .find(|(s, _)| *s == state)
+        .map(|(_, w)| *w)
+        .unwrap_or_else(|| panic!("对照表里没有 {state}"))
+}
+
 #[test]
 #[ignore]
 fn live_只读_三个平台() {
@@ -996,7 +1062,8 @@ fn live_只读_三个平台() {
             assert_eq!(check.name, job["name"].as_str().unwrap());
             assert_eq!(
                 check.state,
-                gitlab::job_state(job["status"].as_str().unwrap(), job["allow_failure"].as_bool().unwrap_or(false))
+                expect_gitlab(job["status"].as_str().unwrap(), job["allow_failure"].as_bool().unwrap_or(false)),
+                "{job}"
             );
         }
     } else {
@@ -1072,7 +1139,7 @@ fn live_只读_三个平台() {
     assert_eq!(by_branch.checks.len(), statuses.len());
     for (check, st) in by_branch.checks.iter().zip(statuses) {
         assert_eq!(check.name, st["context"].as_str().unwrap());
-        assert_eq!(check.state, gitea::status_state(st["status"].as_str().unwrap()));
+        assert_eq!(check.state, expect_gitea(st["status"].as_str().unwrap()), "{st}");
     }
 
     // Bitbucket：atlassian/atlassian-connect-express 最近的打开 PR（同仓库分支）。
@@ -1127,6 +1194,6 @@ fn live_只读_三个平台() {
     eprintln!("  原始：statuses={} [{}]", statuses.len(), listing.join(", "));
     assert_eq!(by_branch.checks.len(), statuses.len());
     for (check, st) in by_branch.checks.iter().zip(statuses) {
-        assert_eq!(check.state, bitbucket::status_state(st["state"].as_str().unwrap()));
+        assert_eq!(check.state, expect_bitbucket(st["state"].as_str().unwrap()), "{st}");
     }
 }
