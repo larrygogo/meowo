@@ -202,6 +202,8 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
     close: (key: string, scope: "one" | "others" | "right" | "all" = "one") => void close(keysToClose(stateRef.current, key, scope)),
     openDiff: () => update((prev) => openSingleton(prev, "diff")),
     openFiles: () => update((prev) => openSingleton(prev, "files")),
+    /** Lead 面板「在侧边面板打开」、停靠区「已在侧边面板」那行：开着就切过去，没开就新加；面板收起时一并展开。 */
+    openLead: () => update((prev) => openSingleton(prev, "lead")),
     newTerminal: () => {
       if (!cwd) return;
       update((prev) => addTab(prev, { key: newTabKey("term"), type: "term", shellId: null, cwd }));
@@ -321,6 +323,8 @@ export function tabTitle(tab: PanelTab, shells: ReadonlyMap<number, ShellTermina
       return t.chat.diffChangesTab;
     case "files":
       return t.chat.filesTab;
+    case "lead":
+      return t.chat.leadEntry;
     case "term":
     {
       const info = tab.shellId !== null ? shells.get(tab.shellId) : undefined;

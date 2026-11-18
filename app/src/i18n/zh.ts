@@ -1005,6 +1005,11 @@ export const zh = {
     planEmpty: "计划模式已开启，写出的计划会显示在这里",
     // Lead 工作流（停靠栏 Lead 入口 + 关卡卡片）
     leadEntry: "Lead",
+    leadOpenInPanel: "在侧边面板打开",
+    leadInPanelTip: "已在侧边面板打开，点击查看",
+    leadGateInPanel: "Lead 关卡等你作答，已在侧边面板打开",
+    leadGateInPanelGo: "去作答",
+    leadTabEmpty: "这个会话目前没有 Lead 任务",
     leadPhase: (phase: string) => ({ interview: "访谈中", spec: "写规格", design: "出方案", implement: "实施中", verify: "验证中", done: "已完成", blocked: "卡住了" } as Record<string, string>)[phase] ?? phase,
     leadChecksProgress: (passed: number, total: number) => `验收 ${passed}/${total}`,
     leadChecksEmpty: "还没有验收清单",

@@ -5859,6 +5859,24 @@ button.scm-check-name:hover { text-decoration: underline; }
 .lead-tab.is-active { background: var(--cc-panel-raised); color: var(--cc-text); box-shadow: var(--shadow-sm); }
 /* 验收项自带 4px 内边距（悬停底色要包住文字）：列表区左右收 12px，圆圈与标题图标、页签同落在 16px 线上。 */
 .panel-lead .dock-work-body { padding-left: var(--sp-12); padding-right: var(--sp-12); }
+/* Lead 开进侧边面板（.side-panel-lead）：同一个面板组件，去掉停靠浮层的壳（绝对定位、限高、阴影、圆角），
+   高度跟面板走；关卡卡片和面板排成一列、整页一起滚，关卡卡片不再自己限高。 */
+.side-panel-lead { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: var(--sp-8); padding: var(--sp-8) 0 var(--sp-12); }
+.side-panel-lead > .side-panel-empty { align-self: stretch; }
+.side-panel-lead > .lead-gate-card { width: auto; max-height: none; margin: 0 var(--sp-12); animation: none; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cc-warn-vivid) 70%, transparent); }
+.side-panel-lead > .lead-gate-card .chat-approval-copy { max-height: none; overflow: visible; }
+.panel-lead.is-in-panel { position: static; left: auto; bottom: auto; width: auto; max-height: none; flex: 0 0 auto; transform: none; margin: 0; overflow: visible; border-radius: 0; background: transparent; box-shadow: none; }
+.panel-lead.is-in-panel .dock-work-head { padding-top: var(--sp-4); }
+.panel-lead.is-in-panel .dock-work-body { overflow: visible; }
+/* 胶囊末尾的侧栏小图标：Lead 已在侧边面板开着，点胶囊去那里。 */
+.lead-pill-in-panel { color: var(--cc-text-faint); }
+/* 关卡挪进侧边面板后，停靠区留的一行提醒（页签不在眼前时）。和关卡卡片同一圈琥珀细线，认得出是同一件事；
+   一行高，不占输入框上方的地方。 */
+.lead-gate-moved { display: flex; align-items: center; gap: var(--sp-8); width: min(var(--chat-col), calc(100% - 48px)); margin: 0 auto var(--sp-8); padding: var(--sp-8) var(--sp-14); box-sizing: border-box; border: 0; border-radius: var(--radius-lg); background: var(--cc-panel-raised); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cc-warn-vivid) 70%, transparent); color: var(--cc-text); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; transition: background var(--dur-fast) var(--ease-out); }
+.lead-gate-moved:hover { background: linear-gradient(var(--fill-hover), var(--fill-hover)), var(--cc-panel-raised); }
+.lead-gate-moved-icon { flex: 0 0 auto; color: var(--cc-warn-vivid); }
+.lead-gate-moved-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lead-gate-moved-go { flex: 0 0 auto; color: var(--cc-text-dim); font-size: var(--text-xs); }
 .lead-checks { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--sp-2); }
 .lead-check { display: grid; grid-template-columns: 16px auto minmax(0, 1fr) auto; gap: var(--sp-8); align-items: start; padding: var(--sp-6) var(--sp-4); border-radius: var(--radius-md); color: var(--cc-text); font-size: var(--text-sm); line-height: 1.55; cursor: pointer; }
 .lead-check-id { padding-top: 1px; color: var(--cc-text-faint); font: var(--text-xs)/1.55 var(--cc-mono); font-variant-numeric: tabular-nums; }
