@@ -380,26 +380,69 @@ fn report_auth(key: String, used: Token, ok: bool) {
     }
 }
 
-/// GitLab 设备码登录的访问令牌快过期了：用刷新令牌续，新的一对存回凭据库。续不上就标「要重新登录」。
-fn refresh_if_due(account: &Account) -> Option<Token> {
-    let due = account.oauth && account.expires_at.is_some_and(|at| at <= crate::now_ms() + 60_000);
-    if !due || GITLAB_CLIENT_ID.is_empty() {
-        return token_of(account);
+fn refresh_due(account: &Account, now_ms: i64) -> bool {
+    account.oauth && account.expires_at.is_some_and(|at| at <= now_ms + 60_000)
+}
+
+/// 每个账号一把续期锁：侧栏角标按目录并行查 PR（badge.rs DIR_WORKERS），几个线程同时发现令牌快过期时只能有一个去续。
+/// GitLab 续期后旧的刷新令牌立即作废，第二个线程拿旧刷新令牌再续会被拒，以前就把账号误标成「要重新登录」。
+fn refresh_lock(key: &str) -> std::sync::Arc<Mutex<()>> {
+    static LOCKS: Mutex<Option<HashMap<String, std::sync::Arc<Mutex<()>>>>> = Mutex::new(None);
+    lock(&LOCKS).get_or_insert_with(HashMap::new).entry(key.to_string()).or_default().clone()
+}
+
+/// 续期的结果。
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Refresh {
+    /// 不用续，或别的线程刚续过：用凭据库里现在的令牌。
+    Current(Option<Token>),
+    /// 续好了。
+    Renewed(Token),
+    /// 刷新令牌被拒（撤销、过期）：已标「要重新登录」。
+    Rejected,
+}
+
+/// 续期（可注入，单测覆盖并发）。拿到这个账号的锁之后重读清单与凭据库：别的线程可能刚续过，清单里的过期时刻已经
+/// 往后挪了，这时直接用新令牌。连不上（还没收到回包）不算被拒，不标重登，下次再续。
+pub(crate) fn refresh_with(path: &Path, vaults: Vaults, http: &dyn ForgeHttp, client_id: &str, key: &str, now_ms: i64) -> Refresh {
+    let guard = refresh_lock(key);
+    let _held = lock(&guard);
+    let Some(account) = load_list(path).into_iter().find(|a| a.key() == key) else { return Refresh::Current(None) };
+    let current = || vaults(&account, false).read().ok().flatten();
+    if !refresh_due(&account, now_ms) || account.needs_relogin {
+        return Refresh::Current(current());
     }
-    let refresh = vault_for(account, true).read().ok().flatten()?;
-    let http = RealForgeHttp { host: account.host.clone() };
-    match oauth_refresh(&http, &account.host, GITLAB_CLIENT_ID, &refresh) {
-        Ok(tokens) => {
-            let _ = store_oauth(&list_path(), &system_vaults, account.clone(), &tokens, crate::now_ms());
-            forget_all();
-            Some(tokens.access)
-        }
+    let Some(refresh) = vaults(&account, true).read().ok().flatten() else { return Refresh::Current(current()) };
+    match oauth_refresh(http, &account.host, client_id, &refresh) {
+        Ok(tokens) => match store_oauth(path, vaults, account.clone(), &tokens, now_ms) {
+            Ok(_) => Refresh::Renewed(tokens.access),
+            Err(_) => Refresh::Current(current()),
+        },
+        Err(e) if e.starts_with("forge/network") || e.starts_with("forge/tls") => Refresh::Current(current()),
         Err(_) => {
-            let mut list = load_list(&list_path());
-            if let Some(a) = list.iter_mut().find(|a| a.key() == account.key()) {
+            let mut list = load_list(path);
+            if let Some(a) = list.iter_mut().find(|a| a.key() == key) {
                 a.needs_relogin = true;
             }
-            let _ = save_list(&list_path(), &list);
+            let _ = save_list(path, &list);
+            Refresh::Rejected
+        }
+    }
+}
+
+/// GitLab 设备码登录的访问令牌快过期了：用刷新令牌续，新的一对存回凭据库。刷新令牌被拒才标「要重新登录」。
+fn refresh_if_due(account: &Account) -> Option<Token> {
+    if !refresh_due(account, crate::now_ms()) || GITLAB_CLIENT_ID.is_empty() {
+        return token_of(account);
+    }
+    let http = RealForgeHttp { host: account.host.clone() };
+    match refresh_with(&list_path(), &system_vaults, &http, GITLAB_CLIENT_ID, &account.key(), crate::now_ms()) {
+        Refresh::Current(token) => token,
+        Refresh::Renewed(token) => {
+            forget_all();
+            Some(token)
+        }
+        Refresh::Rejected => {
             forget_all();
             crate::github::emit_changed();
             None

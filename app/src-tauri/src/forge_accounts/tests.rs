@@ -568,3 +568,53 @@ fn 自建实例的端口_ssh_与_https_远端都按账号的主机走() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// 审查指出：侧栏按目录并行查 PR，几个线程同时发现 GitLab 令牌快过期会各自续期；GitLab 续期后旧刷新令牌作废，
+/// 后到的线程拿旧刷新令牌被拒，账号被误标「要重新登录」。现在每个账号一把锁、拿锁后重读，只续一次。
+#[test]
+fn 设备码令牌并发续期_只续一次_不误标重登() {
+    let path = sandbox("refresh-race");
+    let vault = MemVault::default();
+    let vaults = vault.open();
+    let account = Account { platform: "gitlab".into(), host: "gitlab.com".into(), login: "alice".into(), ..Default::default() };
+    let tokens = OauthTokens { access: Token::secret("ACC1").unwrap(), refresh: Token::secret("REF1"), expires_in: Some(30) };
+    let stored = store_oauth(&path, &vaults, account, &tokens, 0).unwrap();
+    let calls = AtomicUsize::new(0);
+    let http = FakeHttp::new(move |_, _, body, _| {
+        let Some(Body::Form(pairs)) = body else { panic!() };
+        let used = pairs.iter().find(|(k, _)| *k == "refresh_token").map(|(_, v)| v.clone()).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        if used == "REF1" {
+            resp(200, json!({ "access_token": "ACC2", "refresh_token": "REF2", "expires_in": 7200 }))
+        } else {
+            resp(400, json!({ "error": "invalid_grant" }))
+        }
+    });
+    let results: Vec<Refresh> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                scope.spawn(|| {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    refresh_with(&path, &vaults, &http, "cid", &stored.key(), 1_000)
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    assert_eq!(calls.load(Ordering::SeqCst), 4);
+    assert_eq!(http.calls.lock().unwrap().len(), 1, "只续一次");
+    let acc2 = Token::secret("ACC2").unwrap();
+    assert!(results.iter().all(|r| *r == Refresh::Renewed(acc2.clone()) || *r == Refresh::Current(Some(acc2.clone()))), "{results:?}");
+    assert!(!load_list(&path)[0].needs_relogin);
+    // 连不上不算被拒：不标重登，下次再续。
+    let path2 = sandbox("refresh-down");
+    let account = Account { platform: "gitlab".into(), host: "gitlab.com".into(), login: "bob".into(), ..Default::default() };
+    let stored = store_oauth(&path2, &vaults, account, &tokens, 0).unwrap();
+    let down = FakeHttp::new(|_, _, _, _| Err("connection refused".into()));
+    assert_eq!(refresh_with(&path2, &vaults, &down, "cid", &stored.key(), 1_000), Refresh::Current(Some(Token::secret("ACC1").unwrap())));
+    assert!(!load_list(&path2)[0].needs_relogin);
+    // 刷新令牌真的被拒：标重登。
+    let rejected = FakeHttp::new(|_, _, _, _| resp(400, json!({ "error": "invalid_grant" })));
+    assert_eq!(refresh_with(&path2, &vaults, &rejected, "cid", &stored.key(), 1_000), Refresh::Rejected);
+    assert!(load_list(&path2)[0].needs_relogin);
+}
