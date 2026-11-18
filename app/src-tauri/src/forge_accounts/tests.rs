@@ -114,6 +114,12 @@ fn 平台与主机校验() {
         Err("forge/bitbucket_cloud_only".into())
     );
     assert_eq!(check_target("svn", "x.example"), Err("forge/invalid_platform".into()));
+    // Gitee 只认 gitee.com（企业版与私有部署本轮不做）；令牌走 `Authorization: token`。
+    assert_eq!(check_target("gitee", "gitee.com"), Ok((Platform::Gitee, "gitee.com".into())));
+    assert_eq!(check_target("gitee", "gitee.corp.example"), Err("forge/gitee_com_only".into()));
+    assert_eq!(check_target("gitea", "gitee.com"), Err("forge/platform_mismatch: gitee".into()));
+    assert_eq!(auth_for(Platform::Gitee, Token::secret("abc").unwrap(), None).header(), "token abc");
+    assert_eq!(api_host(Platform::Gitee, "gitee.com"), "gitee.com");
     assert_eq!(check_target("gitlab", "not a host"), Err("forge/invalid_host".into()));
 }
 

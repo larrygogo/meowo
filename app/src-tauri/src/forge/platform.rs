@@ -17,6 +17,8 @@ pub(crate) enum Platform {
     Gitlab,
     Gitea,
     Bitbucket,
+    /// gitee.com（码云）。企业版与私有部署本轮不做。
+    Gitee,
 }
 
 impl Platform {
@@ -26,6 +28,7 @@ impl Platform {
             Platform::Gitlab => "gitlab",
             Platform::Gitea => "gitea",
             Platform::Bitbucket => "bitbucket",
+            Platform::Gitee => "gitee",
         }
     }
 
@@ -35,6 +38,7 @@ impl Platform {
             "gitlab" => Some(Platform::Gitlab),
             "gitea" | "forgejo" => Some(Platform::Gitea),
             "bitbucket" => Some(Platform::Bitbucket),
+            "gitee" => Some(Platform::Gitee),
             _ => None,
         }
     }
@@ -77,6 +81,7 @@ pub(crate) fn public_platform(host: &str) -> Option<Platform> {
         GITHUB_COM => Some(Platform::Github),
         "gitlab.com" => Some(Platform::Gitlab),
         "bitbucket.org" => Some(Platform::Bitbucket),
+        "gitee.com" => Some(Platform::Gitee),
         "codeberg.org" => Some(Platform::Gitea),
         _ => None,
     }
@@ -255,6 +260,11 @@ pub(crate) fn compare_url(platform: Platform, host: &str, slug: &str, base: &str
             format!("{repo}/compare/{}...{head}", path_escape(base))
         }
         Platform::Bitbucket => format!("{repo}/pull-requests/new?source={}&dest={}", enc(head), enc(base)),
+        // Gitee：新建 PR 页 `/pull/new/<owner>:<源分支>...<owner>:<目标分支>`（源分支在 fork 里时写 fork 的 owner）。
+        Platform::Gitee => {
+            let owner = slug.split('/').next().unwrap_or_default();
+            format!("{repo}/pull/new/{}:{}...{owner}:{}", head_owner.unwrap_or(owner), path_escape(head), path_escape(base))
+        }
     }
 }
 
@@ -298,6 +308,8 @@ pub(crate) fn parse_pr_url(url: &str) -> Option<(String, String, u32, Platform)>
     }
     let platform = match parts[2] {
         "pull" => Platform::Github,
+        // Gitea 与 Gitee 的 PR 链接同形（/pulls/N），按主机分：gitee.com 是 Gitee。
+        "pulls" if host_name(&host) == "gitee.com" => Platform::Gitee,
         "pulls" => Platform::Gitea,
         "pull-requests" => Platform::Bitbucket,
         _ => return None,
@@ -360,6 +372,12 @@ mod tests {
         assert_eq!(recognize(f, "git@gitlab.com:g/s/r.git").map(|r| r.2), Some(Platform::Gitlab));
         assert_eq!(recognize(f, "https://bitbucket.org/ws/r").map(|r| r.2), Some(Platform::Bitbucket));
         assert_eq!(recognize(f, "https://codeberg.org/o/r").map(|r| r.2), Some(Platform::Gitea));
+        assert_eq!(recognize(f, "git@gitee.com:openharmony/docs.git").map(|r| r.2), Some(Platform::Gitee));
+        assert_eq!(parse_pr_url("https://gitee.com/openharmony/docs/pulls/95569").map(|r| r.3), Some(Platform::Gitee));
+        assert_eq!(
+            compare_url(Platform::Gitee, "gitee.com", "o/r", "master", "feat/x", None),
+            "https://gitee.com/o/r/pull/new/o:feat/x...o:master"
+        );
         assert_eq!(recognize(f, "https://git.example.com/o/r"), None, "没声明的自建主机不认");
         // 段数不合平台：GitHub / Bitbucket / Gitea 只认两段。
         assert_eq!(recognize(f, "https://github.com/o/r/extra"), None);

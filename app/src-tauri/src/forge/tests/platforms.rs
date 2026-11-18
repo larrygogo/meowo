@@ -894,8 +894,8 @@ fn 企业版_内置实现走_api_v3_与_api_graphql_只发往这台主机() {
 
 // ═══ 只读真机核对（M7）：默认跳过，手动跑 ═══
 //
-// `cargo test -p meowo-app --lib live_只读_三个平台 -- --ignored --nocapture`
-// 不带任何令牌，只发 GET：用本实现对 gitlab.com、codeberg.org、bitbucket.org 的公开仓库按链接与按分支查 PR/MR
+// `cargo test -p meowo-app --lib live_只读_各平台 -- --ignored --nocapture`
+// 不带任何令牌，只发 GET：用本实现对 gitlab.com、codeberg.org、bitbucket.org、gitee.com 的公开仓库按链接与按分支查 PR/MR
 // 与检查，再直接取官方 API 的原始响应逐项对照（号、状态、标题、头提交、检查条数与各项状态）。
 
 fn live_client(host: &str) -> Client<'static> {
@@ -988,6 +988,26 @@ fn expect_gitea(status: &str) -> &'static str {
         .map(|(_, w)| *w)
         .unwrap_or_else(|| panic!("对照表里没有 {status}"))
 }
+/// Gitee check-run：与 GitHub 的 CheckRun 同义（官方 Swagger 的 status / conclusion 枚举）。
+const GITEE_RUN_EXPECT: &[(&str, &str, &str)] = &[
+    ("queued", "", "pending"),
+    ("in_progress", "", "pending"),
+    ("completed", "success", "pass"),
+    ("completed", "neutral", "pass"),
+    ("completed", "skipped", "skipped"),
+    ("completed", "failure", "fail"),
+    ("completed", "cancelled", "fail"),
+    ("completed", "timed_out", "fail"),
+    ("completed", "action_required", "fail"),
+];
+fn expect_gitee_run(status: &str, conclusion: &str) -> &'static str {
+    let conclusion = if status == "completed" { conclusion } else { "" };
+    GITEE_RUN_EXPECT
+        .iter()
+        .find(|(s, c, _)| *s == status && *c == conclusion)
+        .map(|(_, _, w)| *w)
+        .unwrap_or_else(|| panic!("对照表里没有 {status}/{conclusion}"))
+}
 fn expect_bitbucket(state: &str) -> &'static str {
     BITBUCKET_EXPECT
         .iter()
@@ -998,7 +1018,7 @@ fn expect_bitbucket(state: &str) -> &'static str {
 
 #[test]
 #[ignore]
-fn live_只读_三个平台() {
+fn live_只读_各平台() {
     // GitLab：gitlab-org/cli 最近更新的、同仓库分支的打开 MR。
     let opened = live_raw(
         "gitlab.com",
@@ -1196,4 +1216,235 @@ fn live_只读_三个平台() {
     for (check, st) in by_branch.checks.iter().zip(statuses) {
         assert_eq!(check.state, expect_bitbucket(st["state"].as_str().unwrap()), "{st}");
     }
+
+    // Gitee：openharmony/docs 最近更新的打开 PR（fork 来的按 head 仓库区分）。
+    let pulls = live_raw(
+        "gitee.com",
+        "https://gitee.com/api/v5/repos/openharmony/docs/pulls?state=open&sort=updated&direction=desc&per_page=5",
+    );
+    let pull = pulls.as_array().unwrap().first().expect("有打开的 PR").clone();
+    let number = pull["number"].as_u64().unwrap() as u32;
+    let head_repo = pull["head"]["repo"]["full_name"].as_str().unwrap().to_string();
+    let head_branch = pull["head"]["ref"].as_str().unwrap().to_string();
+    let ge = super::super::gitee::Gitee {
+        client: live_client("gitee.com"),
+        state: GhState::Ok,
+        login: None,
+    };
+    let head_slug = (head_repo != "openharmony/docs").then_some(head_repo.as_str());
+    let target = Target::Branch {
+        qualified: &head_branch,
+        branch: &head_branch,
+        head_slug,
+    };
+    let by_branch = retry("gitee 按分支", || ge.find(".", Some("openharmony/docs"), &target)).expect("按分支找到");
+    let by_url = retry("gitee 按链接", || ge.find_url(".", pull["html_url"].as_str().unwrap())).expect("按链接找到");
+    show("gitee 按分支", &by_branch);
+    show("gitee 按链接", &by_url);
+    let raw = live_raw("gitee.com", &format!("https://gitee.com/api/v5/repos/openharmony/docs/pulls/{number}"));
+    eprintln!(
+        "  原始：#{} state={} draft={} mergeable={} head={} ({head_repo})",
+        raw["number"], raw["state"], raw["draft"], raw["mergeable"], raw["head"]["sha"]
+    );
+    assert_eq!((by_branch.number, by_url.number), (number, number));
+    assert_eq!(by_branch.head_oid.as_deref(), raw["head"]["sha"].as_str());
+    assert_eq!(by_branch.title, raw["title"].as_str().unwrap());
+    let expect_state = if raw["draft"].as_bool() == Some(true) { "draft" } else { "open" };
+    assert_eq!(by_branch.state, expect_state);
+    let runs = live_raw(
+        "gitee.com",
+        &format!(
+            "https://gitee.com/api/v5/repos/openharmony/docs/commits/{}/check-runs?per_page=100",
+            raw["head"]["sha"].as_str().unwrap()
+        ),
+    );
+    let runs = runs["check_runs"].as_array().cloned().unwrap_or_default();
+    eprintln!("  原始：check_runs={}", runs.len());
+    assert_eq!(by_branch.checks.len(), runs.len());
+    for (check, run) in by_branch.checks.iter().zip(&runs) {
+        assert_eq!(
+            check.state,
+            expect_gitee_run(run["status"].as_str().unwrap_or(""), run["conclusion"].as_str().unwrap_or("")),
+            "{run}"
+        );
+    }
+}
+
+// ═══ Gitee（gitee.com）═══
+//
+// 样例：gitee_* 是 2026-11-18 对 gitee.com 公开仓库 openharmony/docs 不带令牌只读 GET 原样存下的（PR !95569 来自 fork
+// liuyongkai2/docs_lisiteng，正文截到 200 字；`pulls?state=open&head=0704`；该 PR 的评论、改动文件、头提交的 check-runs
+// （空）；`/api/v5/user` 不带令牌的 401）。check-run 的 status / conclusion 取值取自官方 Swagger（/api/v5/doc_json 的
+// 「创建检查项」参数枚举）。
+
+fn gitee<'a>(fake: &'a Fake, flags: &'a Mutex<Vec<bool>>) -> super::super::gitee::Gitee<'a> {
+    super::super::gitee::Gitee {
+        client: client(fake, Auth::Token(token()), flags),
+        state: GhState::Ok,
+        login: Some("me".into()),
+    }
+}
+
+#[test]
+fn gitee_pr_映射_fork_未知能否合并_没有检查不编造() {
+    use super::super::gitee;
+    let checks = gitee::map_checks(&fixture("gitee_checkruns_empty.json"));
+    assert!(checks.is_empty());
+    let pr = gitee::map_pull(&fixture("gitee_pull_95569.json"), checks).unwrap();
+    assert_eq!((pr.number, pr.state.as_str(), pr.forge.as_deref()), (95569, "open", Some("gitee")));
+    assert_eq!(pr.url, "https://gitee.com/openharmony/docs/pulls/95569");
+    assert_eq!((pr.base_ref.as_deref(), pr.head_ref.as_deref()), (Some("master"), Some("0704")));
+    assert_eq!(pr.head_oid.as_deref(), Some("5f61c05b90b4e321e83b77bb15a104ad74dad63b"));
+    // 实测 mergeable=false（Gitee 不给原因）：按「还不知道」，不当冲突。
+    assert_eq!((pr.mergeable.as_deref(), pr.merge_state.as_deref()), (Some("UNKNOWN"), Some("UNKNOWN")));
+    assert_eq!(pr.checks_summary.as_deref(), Some("none"), "仓库没接检查就不显示检查");
+    for (status, conclusion, want) in [
+        ("queued", "", "pending"),
+        ("in_progress", "", "pending"),
+        ("completed", "success", "pass"),
+        ("completed", "neutral", "pass"),
+        ("completed", "skipped", "skipped"),
+        ("completed", "failure", "fail"),
+        ("completed", "cancelled", "fail"),
+        ("completed", "timed_out", "fail"),
+        ("completed", "action_required", "fail"),
+    ] {
+        assert_eq!(
+            gitee::check_state(&json!({ "status": status, "conclusion": conclusion })),
+            want,
+            "{status}/{conclusion}"
+        );
+    }
+    let mut merged = fixture("gitee_pull_95569.json");
+    merged["state"] = "merged".into();
+    assert_eq!(gitee::map_pull(&merged, Vec::new()).unwrap().state, "merged");
+}
+
+#[test]
+fn gitee_按分支找_head_过滤_fork_与同仓库_500_当没找到() {
+    let fake = Fake::new(|_, url, _| match url {
+        u if u.starts_with("https://gitee.com/api/v5/repos/openharmony/docs/pulls?state=open&head=0704") => {
+            resp(200, fixture("gitee_pulls_open_head.json"))
+        }
+        // 实测 state=all 配 head 回 500；不带 head 的最近列表这里给空。
+        u if u.contains("state=all") => resp(200, json!([])),
+        u if u.contains("/check-runs") => resp(200, fixture("gitee_checkruns_empty.json")),
+        _ => resp(500, json!({ "message": "500 Internal Server Error" })),
+    });
+    let flags = Mutex::new(Vec::new());
+    let ge = gitee(&fake, &flags);
+    let target = Target::Branch {
+        qualified: "liuyongkai2:0704",
+        branch: "0704",
+        head_slug: Some("liuyongkai2/docs_lisiteng"),
+    };
+    let pr = ge.find(".", Some("openharmony/docs"), &target).unwrap().unwrap();
+    assert_eq!(pr.number, 95569);
+    assert!(fake.calls().iter().all(|(_, url, _, auth)| url.starts_with("https://gitee.com/api/v5/")
+        && !url.contains("access_token")
+        && auth.as_deref() == Some("token glpat-TEST")));
+    // 同仓库的 0704 分支没有：不把 fork 的认成自己的。
+    assert_eq!(ge.find(".", Some("openharmony/docs"), &branch("0704")).unwrap(), None);
+    // 列表回 500（head 配 state=all 的实测行为）：当没找到，不报错。
+    let broken = Fake::new(|_, _, _| resp(500, json!({ "message": "500 Internal Server Error" })));
+    assert_eq!(gitee(&broken, &flags).find(".", Some("o/r"), &branch("x")).unwrap(), None);
+}
+
+#[test]
+fn gitee_合并_先核对头提交_方式按参数_拒绝归类() {
+    let pr = super::super::gitee::map_pull(&fixture("gitee_pull_95569.json"), Vec::new()).unwrap();
+    let reply = std::sync::Arc::new(Mutex::new(resp(200, json!({ "sha": "x", "merged": true }))));
+    let r2 = reply.clone();
+    let fake = Fake::new(move |method, url, _| match (method, url) {
+        ("GET", u) if u.ends_with("/pulls/95569") => resp(200, fixture("gitee_pull_95569.json")),
+        ("PUT", _) => r2.lock().unwrap().clone(),
+        _ => resp(404, json!({})),
+    });
+    let flags = Mutex::new(Vec::new());
+    let ge = gitee(&fake, &flags);
+    assert_eq!(ge.merge(".", "openharmony/docs", &pr, "squash", "0000"), Err("gh/head_changed".into()));
+    assert!(!fake.calls().iter().any(|(m, _, _, _)| m == "PUT"), "头提交对不上不发合并");
+    let head = pr.head_oid.clone().unwrap();
+    assert_eq!(ge.merge(".", "openharmony/docs", &pr, "squash", &head), Ok(false));
+    let (_, url, body, _) = fake.calls().into_iter().find(|(m, _, _, _)| m == "PUT").unwrap();
+    assert_eq!(url, "https://gitee.com/api/v5/repos/openharmony/docs/pulls/95569/merge");
+    assert_eq!(body, json!({ "merge_method": "squash" }));
+    for (message, want) in [
+        ("此 Pull Request 存在冲突，无法自动合并", format!("gh/merge_conflict: {}", pr.url)),
+        ("该 Pull Request 未通过审查", "gh/review_required".to_string()),
+        ("仓库不允许此合并方式", "gh/method_not_allowed".to_string()),
+        ("Pull Request 未达到合并条件", "gh/merge_blocked: Pull Request 未达到合并条件".to_string()),
+    ] {
+        *reply.lock().unwrap() = resp(400, json!({ "message": message }));
+        assert_eq!(ge.merge(".", "openharmony/docs", &pr, "merge", &head), Err(want), "{message}");
+    }
+    *reply.lock().unwrap() = resp(403, json!({ "message": "403 Forbidden" }));
+    assert_eq!(
+        ge.merge(".", "openharmony/docs", &pr, "merge", &head),
+        Err("forge/forbidden: 403 Forbidden".into())
+    );
+}
+
+#[test]
+fn gitee_评论_改动文件_行内评论按_diff_序号() {
+    use super::super::gitee;
+    let comments = gitee::map_comments(fixture("gitee_comments_95569.json").as_array().unwrap());
+    assert_eq!(comments.len(), 5);
+    let inline: Vec<_> = comments.iter().filter(|c| c.path.is_some()).collect();
+    assert_eq!(inline.len(), 1);
+    assert_eq!((inline[0].line, inline[0].side.as_deref()), (Some(17999), Some("RIGHT")));
+    assert!(inline[0].url.as_deref().unwrap().ends_with("/pulls/95569#note_43636791"));
+    let files = gitee::map_files(fixture("gitee_files_95569.json").as_array().unwrap());
+    assert_eq!((files[0].additions, files[0].deletions), (2, 2), "Gitee 的行数是字符串");
+    let patch = files[0].patch.clone().unwrap();
+    assert!(patch.starts_with("@@ -17996,7 +17996,7 @@"));
+    // 样例 diff：三行上下文（17996–17998）之后删一行、加一行。position 从第一个 @@ 之后数。
+    assert_eq!(gitee::diff_line_position(&patch, "NEW", 17996), Some(1));
+    assert_eq!(gitee::diff_line_position(&patch, "OLD", 17999), Some(4));
+    assert_eq!(gitee::diff_line_position(&patch, "NEW", 17999), Some(5));
+    assert_eq!(gitee::diff_line_position(&patch, "NEW", 1), None, "不在 diff 里的行发不了行内评论");
+    let fake = Fake::new(|method, url, _| match (method, url) {
+        ("GET", u) if u.ends_with("/pulls/95569") => resp(200, fixture("gitee_pull_95569.json")),
+        ("GET", u) if u.ends_with("/files") => resp(200, fixture("gitee_files_95569.json")),
+        ("POST", _) => resp(201, json!({})),
+        _ => resp(404, json!({})),
+    });
+    let flags = Mutex::new(Vec::new());
+    let path = "zh-cn/application-dev/reference/apis-arkui/_ark_u_i___native_module.md";
+    gitee(&fake, &flags)
+        .line_comment(".", "openharmony/docs", 95569, path, 17999, "NEW", "x")
+        .unwrap();
+    let (_, url, body, _) = fake.calls().into_iter().find(|(m, _, _, _)| m == "POST").unwrap();
+    assert_eq!(url, "https://gitee.com/api/v5/repos/openharmony/docs/pulls/95569/comments");
+    assert_eq!(
+        body,
+        json!({ "body": "x", "commit_id": "5f61c05b90b4e321e83b77bb15a104ad74dad63b", "path": path, "position": 5 })
+    );
+}
+
+#[test]
+fn gitee_开_pr_已有开着的直接给链接_401_要重新登录() {
+    let fake = Fake::new(|method, url, _| match (method, url) {
+        ("GET", u) if u.contains("/pulls?state=open&head=0704") => resp(200, fixture("gitee_pulls_open_head.json")),
+        ("GET", "https://gitee.com/api/v5/user") => resp(401, fixture("gitee_user_noauth.json")),
+        _ => resp(500, json!({})),
+    });
+    let flags = Mutex::new(Vec::new());
+    let ge = gitee(&fake, &flags);
+    let new = NewPr {
+        title: "x",
+        body: "",
+        base: "master",
+        head: "liuyongkai2:0704",
+        branch: "0704",
+        head_slug: Some("liuyongkai2/docs_lisiteng"),
+        draft: false,
+    };
+    assert_eq!(
+        ge.create(".", Some("openharmony/docs"), &new),
+        Err("gh/pr_exists: https://gitee.com/openharmony/docs/pulls/95569".into())
+    );
+    assert!(fake.calls().iter().all(|(m, _, _, _)| m == "GET"));
+    let client = client(&fake, Auth::Token(token()), &flags);
+    assert_eq!(super::super::gitee::current_user(&client), Err("gh/not_authed".into()));
 }

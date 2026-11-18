@@ -140,6 +140,7 @@ fn system_vaults(account: &Account, refresh: bool) -> Box<dyn Vault> {
 pub(crate) fn api_host(platform: Platform, host: &str) -> String {
     match platform {
         Platform::Bitbucket => bitbucket::API_HOST.into(),
+        Platform::Gitee => crate::forge::gitee::HOST.into(),
         _ => host.to_string(),
     }
 }
@@ -147,7 +148,8 @@ pub(crate) fn api_host(platform: Platform, host: &str) -> String {
 /// 令牌 → 认证头：GitLab / 企业版 Bearer；Gitea `token`；Bitbucket 有邮箱用 Basic，没有用 Bearer。
 pub(crate) fn auth_for(platform: Platform, token: Token, auth_user: Option<&str>) -> Auth {
     match (platform, auth_user.filter(|u| !u.is_empty())) {
-        (Platform::Gitea, _) => Auth::Token(token),
+        // Gitee 文档写 access_token 查询参数；实测也认 `Authorization: token`，用请求头，令牌不进地址。
+        (Platform::Gitea | Platform::Gitee, _) => Auth::Token(token),
         (Platform::Bitbucket, Some(user)) => Auth::Basic {
             user: user.to_string(),
             token,
@@ -193,6 +195,7 @@ pub(crate) fn build<'a>(
             login,
         }),
         Platform::Bitbucket => Box::new(Bitbucket { client, state, login }),
+        Platform::Gitee => Box::new(crate::forge::gitee::Gitee { client, state, login }),
         Platform::Github => unreachable!(),
     })
 }
@@ -217,6 +220,7 @@ pub(crate) fn whoami(
         Platform::Gitlab => gitlab::current_user(&client, host),
         Platform::Gitea => gitea::current_user(&client, host),
         Platform::Bitbucket => bitbucket::current_user(&client),
+        Platform::Gitee => crate::forge::gitee::current_user(&client),
         Platform::Github => unreachable!(),
     }
 }
@@ -233,6 +237,9 @@ pub(crate) fn check_target(platform: &str, host: &str) -> Result<(Platform, Stri
     }
     if platform == Platform::Bitbucket && name != "bitbucket.org" {
         return Err("forge/bitbucket_cloud_only".into());
+    }
+    if platform == Platform::Gitee && name != "gitee.com" {
+        return Err("forge/gitee_com_only".into());
     }
     if let Some(known) = platform::public_platform(name) {
         if known != platform {

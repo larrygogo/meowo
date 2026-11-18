@@ -29,6 +29,7 @@ pub(crate) mod bitbucket;
 mod builtin;
 pub(crate) mod ghe;
 pub(crate) mod gitea;
+pub(crate) mod gitee;
 pub(crate) mod gitlab;
 pub(crate) mod http;
 pub(crate) mod platform;
