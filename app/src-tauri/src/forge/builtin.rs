@@ -185,7 +185,7 @@ const SCALARS: &[&str] = &[
 
 /// `--json` 字段 → GraphQL 选择集。另外总带上分页与挑 PR 要用的内部字段（meowo 前缀的别名，不进输出）。
 fn pr_selection(fields: &[&str]) -> Result<String, String> {
-    let mut parts = vec!["meowoId: id".to_string(), "meowoState: state".into(), "meowoCross: isCrossRepository".into(), "meowoOwner: headRepositoryOwner{login}".into()];
+    let mut parts = vec!["meowoId: id".to_string(), "meowoState: state".into(), "meowoCross: isCrossRepository".into(), "meowoOwner: headRepositoryOwner{login}".into(), "meowoHead: headRefName".into()];
     for field in fields {
         if SCALARS.contains(field) {
             parts.push(field.to_string());
@@ -245,15 +245,25 @@ fn gh_pr_json(node: &Value, fields: &[&str]) -> Value {
     Value::Object(out)
 }
 
-/// gh 按分支找 PR 的挑法：同仓库分支只认非 fork 的 PR，`owner:分支` 只认那个 owner 的；有开着的取开着的，
-/// 否则取最新的（列表按创建时间倒序）。
-fn pick_branch_pr<'v>(nodes: &'v [Value], owner: Option<&str>) -> Option<&'v Value> {
-    let matches = |n: &&Value| match owner {
-        Some(owner) => str_or(n, "/meowoOwner/login", "").eq_ignore_ascii_case(owner),
-        None => !n.get("meowoCross").and_then(|c| c.as_bool()).unwrap_or(false),
+/// gh 按分支找 PR 的挑法，逐条照 gh 2.96 的 pkg/cmd/pr/shared/finder.go `findForRefs`（403–441 行）：
+/// - 查同名 head 分支最近的 30 条（按创建时间倒序，不限状态）；
+/// - 开着的稳定排到前面；
+/// - PR 的 head 写法（fork 是 `owner:分支`，同仓库只是分支名，见 api/queries_pr.go `HeadLabel`）要与要找的
+///   写法完全相等（find_refs_resolution.go `Matches`）；
+/// - 要找的分支就是仓库默认分支时，只认开着的（gh issue #4263：默认分支上的已合并 / 已关闭 PR 没意义）。
+fn pick_branch_pr<'v>(nodes: &'v [Value], qualified: &str, default_branch: Option<&str>) -> Option<&'v Value> {
+    let label = |n: &Value| {
+        let head = str_or(n, "/meowoHead", "");
+        if n.get("meowoCross").and_then(|c| c.as_bool()).unwrap_or(false) {
+            format!("{}:{head}", str_or(n, "/meowoOwner/login", ""))
+        } else {
+            head.to_string()
+        }
     };
-    let candidates: Vec<&Value> = nodes.iter().filter(matches).collect();
-    candidates.iter().find(|n| str_or(n, "/meowoState", "") == "OPEN").or(candidates.first()).copied()
+    let open = |n: &Value| str_or(n, "/meowoState", "") == "OPEN";
+    let mut sorted: Vec<&Value> = nodes.iter().collect();
+    sorted.sort_by_key(|n| !open(n));
+    sorted.into_iter().find(|n| label(n) == qualified && (open(n) || default_branch != Some(qualified)))
 }
 
 // ═══ 执行 ═══
@@ -372,14 +382,13 @@ impl Builtin<'_> {
                     .ok_or_else(|| fail(format!("GraphQL: Could not resolve to a PullRequest with the number of {number}. (repository.pullRequest)")))?
             }
             Target::Branch(branch) => {
-                let (head_owner, head) = match branch.split_once(':') {
-                    Some((o, b)) => (Some(o), b),
-                    None => (None, branch.as_str()),
-                };
-                let query = format!("query($owner:String!,$name:String!,$head:String!){{repository(owner:$owner,name:$name){{pullRequests(headRefName:$head,first:10,orderBy:{{field:CREATED_AT,direction:DESC}}){{nodes{{{selection}}}}}}}}}");
+                // gh 的 ParseQualifiedHeadRef：`owner:分支` 拆开，查询只用分支名。
+                let head = branch.split_once(':').map_or(branch.as_str(), |(_, b)| b);
+                let query = format!("query($owner:String!,$name:String!,$head:String!){{repository(owner:$owner,name:$name){{pullRequests(headRefName:$head,first:30,orderBy:{{field:CREATED_AT,direction:DESC}}){{nodes{{{selection}}}}} defaultBranchRef{{name}}}}}}");
                 let data = self.graphql(&query, json!({ "owner": owner, "name": name, "head": head }))?;
                 let nodes = data.pointer("/repository/pullRequests/nodes").and_then(|n| n.as_array()).cloned().unwrap_or_default();
-                pick_branch_pr(&nodes, head_owner).cloned().ok_or_else(|| fail(format!("no pull requests found for branch \"{branch}\"")))?
+                let default_branch = data.pointer("/repository/defaultBranchRef/name").and_then(|n| n.as_str());
+                pick_branch_pr(&nodes, branch, default_branch).cloned().ok_or_else(|| fail(format!("no pull requests found for branch \"{branch}\"")))?
             }
         };
         let node = self.more_pages(node, &fields)?;

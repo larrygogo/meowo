@@ -92,6 +92,7 @@ fn gql_node(gh: &Value, owner: &str, cross: bool) -> Value {
     obj.insert("meowoState".into(), gh["state"].clone());
     obj.insert("meowoCross".into(), json!(cross));
     obj.insert("meowoOwner".into(), json!({ "login": owner }));
+    obj.insert("meowoHead".into(), gh["headRefName"].clone());
     node
 }
 
@@ -445,4 +446,46 @@ fn 关闭时状态标为_off() {
     let mut dto = forge_status_with(&ctx, &s(&repo), false).unwrap();
     label_connection(&mut dto, "gh");
     assert_eq!(dto.gh, "missing", "本机 gh 方式没装 gh：照旧是 missing");
+}
+
+/// 回归（独立审查 #2）：与 gh 的 findForRefs 对齐——查 30 条、开着的优先、head 写法完全相等、
+/// 分支就是默认分支时不认已合并 / 已关闭的。修复前只查 10 条、默认分支上会挑到已合并的 PR。
+#[test]
+fn pr_view_按分支_对齐_gh_查30条_默认分支不认已了结的() {
+    let prefs = std::env::temp_dir().join("meowo-builtin-none.json");
+    let base: Value = serde_json::from_str(&fixture("derived_pr_no_checks.json")).unwrap();
+    let with = |number: u64, state: &str, head: &str, owner: &str, cross: bool| {
+        let mut pr = base.clone();
+        pr["number"] = json!(number);
+        pr["state"] = json!(state);
+        pr["headRefName"] = json!(head);
+        gql_node(&pr, owner, cross)
+    };
+    // 12 个 fork 用了同名分支、都比自己的新：自己的那条排在第 13 位。
+    let mut crowded: Vec<Value> = (100..112).map(|n| with(n, "OPEN", "feature", &format!("fork{n}"), true)).collect();
+    crowded.push(with(7, "OPEN", "feature", "acme", false));
+    let main_nodes = json!([with(20, "MERGED", "main", "acme", false), with(21, "CLOSED", "main", "acme", false)]);
+    let main_open = json!([with(22, "MERGED", "main", "acme", false), with(23, "OPEN", "main", "acme", false)]);
+    let crowded = json!(crowded);
+    let api = Api::new(move |_, _, body| {
+        let q = query_of(body);
+        assert!(q.contains("first:30") && q.contains("defaultBranchRef{name}"), "{q}");
+        let nodes = match body["variables"]["head"].as_str().unwrap() {
+            "feature" => crowded.clone(),
+            "main" if body["variables"]["name"] == "repo" => main_nodes.clone(),
+            "main" => main_open.clone(),
+            _ => json!([]),
+        };
+        data(json!({ "repository": { "pullRequests": { "nodes": nodes }, "defaultBranchRef": { "name": "main" } } }))
+    });
+    let number = |args: &[&str]| {
+        let out = run(&api, &prefs, ".", args);
+        if out.code == Some(0) { json_out(&out)["number"].as_u64() } else { assert!(out.stderr.contains("no pull requests found")); None }
+    };
+    assert_eq!(number(&["pr", "view", "feature", "--repo", "acme/repo", "--json", "number"]), Some(7));
+    assert_eq!(number(&["pr", "view", "fork105:feature", "--repo", "acme/repo", "--json", "number"]), Some(105));
+    // gh 的 HeadLabel：同仓库 PR 的写法没有 owner，`acme:feature` 对不上同仓库那条。
+    assert_eq!(number(&["pr", "view", "acme:feature", "--repo", "acme/repo", "--json", "number"]), None);
+    assert_eq!(number(&["pr", "view", "main", "--repo", "acme/repo", "--json", "number"]), None, "默认分支上只有已了结的：没有 PR");
+    assert_eq!(number(&["pr", "view", "main", "--repo", "acme/other", "--json", "number"]), Some(23), "默认分支上开着的照认");
 }
