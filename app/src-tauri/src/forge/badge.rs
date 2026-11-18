@@ -71,6 +71,12 @@ impl DiffCache {
 
 static DIFFS: std::sync::LazyLock<DiffCache> = std::sync::LazyLock::new(DiffCache::default);
 
+/// GitHub 连接变了：标题栏直查与按链接查的 PR 缓存作废（PR 去向是本地 git 的，不受影响）。
+pub(crate) fn invalidate_prs() {
+    lock(&DIFFS.direct_prs).clear();
+    lock(&DIFFS.url_prs).clear();
+}
+
 fn to_badge(pr: &PullRequestDto) -> SidebarPrBadgeDto {
     SidebarPrBadgeDto {
         number: pr.number,

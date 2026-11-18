@@ -1137,6 +1137,59 @@ pub struct ForgeStatusDto {
     pub repo_remote: Option<String>,
     /// 多个 GitHub 远端还没定：查状态暂按 origin，开 PR / 合并返回 `gh/ambiguous_repo`，要先选。
     pub repo_needs_choice: bool,
+    /// 这次实际用的 GitHub 连接：`gh`（本机 gh）/ `meowo`（Meowo 登录的令牌）/ `off`（设置里关了，
+    /// 这时 `gh` 字段为 `off`，不发任何 GitHub 请求）。旧后端没有这个字段。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub connection: Option<String>,
+}
+
+/// GitHub 连接里登录的账号（`GET /user` 的展示字段）。不含令牌。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct GithubAccountDto {
+    pub login: String,
+    pub name: Option<String>,
+    pub avatar_url: Option<String>,
+}
+
+/// 设备码登录进行中：一次性代码与去哪里输入。`device_code` 是轮询凭据，留在后端，不在这里。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct GithubDeviceCodeDto {
+    /// 用户在 GitHub 上输入的代码（形如 `ABCD-1234`）。
+    pub user_code: String,
+    /// 输入代码的网页（`https://github.com/login/device`）。
+    pub verification_uri: String,
+    /// 代码过期的时刻（毫秒时间戳）。
+    #[cfg_attr(test, ts(type = "number"))]
+    pub expires_at: i64,
+}
+
+/// 设置页「GitHub 连接」的状态（`github_status`）。不含令牌。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct GithubConnectionDto {
+    /// 用户选的方式：`auto` / `meowo` / `gh` / `off`。
+    pub mode: String,
+    /// 实际在用：`meowo` / `gh` / `off`。自动模式下 Meowo 登录了是 meowo，否则 gh。
+    pub active: String,
+    /// Meowo 登录的账号；没登录为 None。
+    pub account: Option<GithubAccountDto>,
+    /// 令牌被 GitHub 拒了（撤销、过期）：要重新登录。
+    pub needs_relogin: bool,
+    /// 本机找得到 gh。
+    pub gh_installed: bool,
+    /// 这个平台有系统凭据库可存令牌（Windows 凭据管理器、macOS 钥匙串）。
+    pub credential_supported: bool,
+    /// 正在进行的设备码登录（设置窗重开时接着显示代码）。
+    pub pending: Option<GithubDeviceCodeDto>,
 }
 
 /// 侧栏会话行的 PR / CI 与改动数（`sidebar_git_badges`，UI 优化 #54，对照 Conductor / Warp 的侧栏）。

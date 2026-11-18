@@ -138,6 +138,9 @@ import type { GitDiffSummaryDto } from "./generated/contracts/GitDiffSummaryDto"
 import type { GitChangedFileDto } from "./generated/contracts/GitChangedFileDto";
 import type { PullRequestDto } from "./generated/contracts/PullRequestDto";
 import type { ForgeStatusDto } from "./generated/contracts/ForgeStatusDto";
+import type { GithubConnectionDto } from "./generated/contracts/GithubConnectionDto";
+import type { GithubDeviceCodeDto } from "./generated/contracts/GithubDeviceCodeDto";
+import type { GithubAccountDto } from "./generated/contracts/GithubAccountDto";
 import type { GitJobDto } from "./generated/contracts/GitJobDto";
 import type { MergeResultDto } from "./generated/contracts/MergeResultDto";
 import type { PushResultDto } from "./generated/contracts/PushResultDto";
@@ -1034,6 +1037,35 @@ export function forgeChooseRepo(cwd: string, remote: string, sessionCwd?: string
 }
 export type { ForgeStatusDto, GitJobDto, MergeResultDto, PullResultDto, PushResultDto };
 
+// ═══ GitHub 连接（设置 › GitHub，后端 github.rs）═══
+// 令牌只在后端的系统凭据库里，这里的类型都不含令牌。
+
+/** 自动（Meowo 登录了用 Meowo，否则本机 gh）/ Meowo 登录 / 本机 gh / 关闭。 */
+export type GithubConnectionMode = "auto" | "meowo" | "gh" | "off";
+export type { GithubConnectionDto, GithubDeviceCodeDto, GithubAccountDto };
+/** 连接状态变了（切方式、登录、退出、令牌被拒）：PR 区块、侧栏角标、设置页各自重拉。 */
+export const GITHUB_CHANGED_EVENT = "github-connection-changed";
+/** 一次设备码登录结束。取消不发。 */
+export const GITHUB_LOGIN_EVENT = "github-login-finished";
+export type GithubLoginFinished = { state: "ok" | "expired" | "denied" | "error"; error: string | null };
+
+export function githubStatus(): Promise<GithubConnectionDto> {
+  return invoke("github_status");
+}
+export function githubSetMode(mode: GithubConnectionMode): Promise<GithubConnectionDto> {
+  return invoke("github_set_mode", { mode });
+}
+/** 向 GitHub 要一次性代码。结果经 GITHUB_LOGIN_EVENT 推回来。 */
+export function githubLoginStart(): Promise<GithubDeviceCodeDto> {
+  return invoke("github_login_start");
+}
+export function githubLoginCancel(): Promise<void> {
+  return invoke("github_login_cancel");
+}
+export function githubLogout(): Promise<GithubConnectionDto> {
+  return invoke("github_logout");
+}
+
 /** 「文件」页签：列出 cwd 下 rel 目录的直接子条目（目录在前，后端已排序并跳过 .git）。 */
 export function listDirEntries(cwd: string, rel: string): Promise<DirEntryDto[]> {
   return invoke("list_dir_entries", { cwd, rel });
@@ -1335,6 +1367,8 @@ export type Settings = {
   notification_sound: boolean;
   /** 回合结束后把最终回答之前的工作过程收成一行（对照 Kimi「消息自动折叠」）。 */
   chat_turn_folding: boolean;
+  /** PR 功能用谁的身份连 GitHub（设置 › GitHub）。只经 githubSetMode 改，set_settings 落盘前以磁盘值回填。 */
+  github_connection?: GithubConnectionMode;
   /** 贴纸主窗口几何（W-17）。设置窗不编辑它；后端 set_settings 落盘前以磁盘值回填。
    *  读写走 windowState.ts 的 get/set_sticker_window_state，这里仅为快照对齐。 */
   sticker_window?: {

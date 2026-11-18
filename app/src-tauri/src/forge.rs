@@ -24,6 +24,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 pub(crate) mod badge;
+mod builtin;
 pub(crate) mod review;
 pub(crate) use badge::sidebar_git_badges_for;
 
@@ -1086,8 +1087,64 @@ pub(crate) struct Ctx<'a> {
 
 impl Ctx<'static> {
     fn real() -> Self {
-        Ctx { gh: &real_gh, caches: &CACHES, prefs: prefs_path(), env: &[] }
+        Ctx { gh: &connected_gh, caches: &CACHES, prefs: prefs_path(), env: &[] }
     }
+}
+
+/// 生产的 gh 入口：按设置里的 GitHub 连接分派（见 github.rs）。关闭时什么都不发（等同没装 gh）；
+/// Meowo 登录时交给内置实现（forge/builtin.rs）；否则是本机 gh。forge、侧栏、标题栏、worktree 清理都经这里。
+pub(crate) fn connected_gh(dir: &str, args: &[&str]) -> Option<CmdOut> {
+    dispatch_gh(crate::github::executor(), dir, args, &real_gh, &builtin::run_real, &targets_github_com)
+}
+
+/// 内置实现的入口形状：(目录, 参数, 令牌)。
+pub(crate) type BuiltinExec<'a> = &'a dyn Fn(&str, &[&str], Option<&crate::github::Token>) -> CmdOut;
+
+/// 分派本身（可注入，单测覆盖四种方式与自动方式按主机分流）。
+pub(crate) fn dispatch_gh(executor: crate::github::Executor, dir: &str, args: &[&str], gh: GhExec, builtin: BuiltinExec, is_github: &dyn Fn(&str, &[&str]) -> bool) -> Option<CmdOut> {
+    use crate::github::Executor;
+    match executor {
+        Executor::Off => None,
+        Executor::Gh => gh(dir, args),
+        Executor::Meowo(token) => Some(builtin(dir, args, token.as_ref())),
+        // 自动：Meowo 登录只认 github.com；企业版等别的主机照旧交给本机 gh。
+        Executor::Auto(token) if is_github(dir, args) => Some(builtin(dir, args, Some(&token))),
+        Executor::Auto(_) => gh(dir, args),
+    }
+}
+
+/// 这条 gh 调用是不是冲着 github.com：带链接看链接的主机；带 --repo 的、api、登录状态与 merge --help 是
+/// forge 只对 github.com 远端发的（forge 认不出主机时不带 --repo）；剩下的（worktree 清理、标题栏直查）按
+/// 目录的远端认。
+pub(crate) fn targets_github_com(dir: &str, args: &[&str]) -> bool {
+    if let Some(url) = args.iter().find(|a| a.starts_with("https://")) {
+        return url.starts_with("https://github.com/") || url.starts_with("https://api.github.com/");
+    }
+    match args {
+        ["auth", "status", ..] | ["api", ..] | ["pr", "merge", "--help"] => return true,
+        _ => {}
+    }
+    if args.iter().any(|a| *a == "--repo" || *a == "-R") {
+        return true;
+    }
+    repo_head(dir, &[], &prefs_path(), false).is_some_and(|(info, _, _)| info.gh.slug().is_some())
+}
+
+/// 本机找得到 gh（设置页显示用；与 real_gh 同一套查找）。
+pub(crate) fn gh_installed() -> bool {
+    find_gh().is_some()
+}
+
+/// GitHub 连接变了（切方式、登录、退出）：登录状态、gh 新旧、合并方式、PR 缓存与侧栏 / 标题栏 / 评审的
+/// 缓存全部作废，下一次查询按新的连接重来。
+pub(crate) fn invalidate_connection() {
+    *lock(&CACHES.auth) = None;
+    *lock(&CACHES.too_old) = None;
+    lock(&CACHES.methods).clear();
+    lock(&CACHES.prs).clear();
+    lock(&CACHES.queued).clear();
+    badge::invalidate_prs();
+    review::invalidate_cache();
 }
 
 /// PR 缓存键：公共 .git 目录 + PR 所在仓库 + head。换了仓库（界面上选了别的远端）就是另一份缓存。
@@ -1144,6 +1201,7 @@ pub(crate) fn forge_status_with(ctx: &Ctx, cwd: &str, force: bool) -> Result<For
         repo_choices: Vec::new(),
         repo_remote: None,
         repo_needs_choice: false,
+        connection: None,
     };
     if !info.has_remote {
         return Ok(dto);
@@ -1209,9 +1267,22 @@ pub(crate) fn forge_status_with(ctx: &Ctx, cwd: &str, force: bool) -> Result<For
 
 #[tauri::command]
 pub(crate) async fn git_forge_status(cwd: String, force: Option<bool>) -> Result<ForgeStatusDto, String> {
-    tauri::async_runtime::spawn_blocking(move || forge_status_with(&Ctx::real(), &cwd, force.unwrap_or(false)))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        let connection = crate::github::executor().label();
+        let mut dto = forge_status_with(&Ctx::real(), &cwd, force.unwrap_or(false))?;
+        label_connection(&mut dto, connection);
+        Ok(dto)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 告诉前端这次用的是哪种连接；设置里关了时 `gh` 记为 `off`（前端不显示 PR 区块，也不提示装 gh）。
+pub(crate) fn label_connection(dto: &mut ForgeStatusDto, connection: &str) {
+    dto.connection = Some(connection.to_string());
+    if connection == "off" && dto.gh == "missing" {
+        dto.gh = "off".into();
+    }
 }
 
 fn require_gh(ctx: &Ctx) -> Result<(), String> {

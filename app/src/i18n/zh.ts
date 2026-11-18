@@ -1852,9 +1852,9 @@ export const zh = {
   settings: {
     // account 分区实际内容是账号/配额/登录/安装/中转——曾叫「Agent」，想「看额度还剩多少」
     // 「退出登录」的用户猜不到该点它（key 名 account 与显示名分裂也是自证）。
-    nav: { general: "通用", sessions: "会话", appearance: "外观", shortcuts: "快捷键", remote: "手机远程", network: "网络", account: "账号与用量", extensions: "扩展", about: "关于" },
+    nav: { general: "通用", sessions: "会话", appearance: "外观", shortcuts: "快捷键", remote: "手机远程", network: "网络", github: "GitHub", account: "账号与用量", extensions: "扩展", about: "关于" },
     // 设置搜索额外匹配的词（不显示）：导航名为排版改短后，旧名里的词仍要能搜到对应分区。
-    navSearchExtra: { shortcuts: "键盘", account: "账号 用量" },
+    navSearchExtra: { shortcuts: "键盘", account: "账号 用量", github: "PR gh 登录" },
     searchPlaceholder: "搜索设置…",
     searchNoResults: "没有匹配的设置项",
     searchClear: "清除搜索",
@@ -2089,6 +2089,48 @@ export const zh = {
     // 配置端口与实际监听分叉（多实例共享 settings.json，另一实例改端口本实例不跟随）。
     boundMismatch: (configured: number, actual: number) =>
       `端口 ${configured} 未生效，实际监听 ${actual}，二维码按实际生成`,
+  },
+  // 设置 › GitHub（github.rs）：PR 角标、开 PR、合并、评审评论用哪种方式连 GitHub。
+  github: {
+    mode: "连接方式",
+    modeAuto: "自动",
+    modeMeowo: "Meowo 登录",
+    modeGh: "本机 gh",
+    modeOff: "关闭",
+    modeDesc: {
+      auto: "在 Meowo 里登录过就用这个账号，否则用本机 gh。",
+      meowo: "只用在 Meowo 里登录的账号，不需要装 gh。",
+      gh: "用本机 gh 和它登录的账号，支持 GitHub Enterprise。",
+      off: "不连接 GitHub，不显示 PR 和 CI。",
+    } as Record<"auto" | "meowo" | "gh" | "off", string>,
+    active: "正在使用",
+    activeMeowo: (login: string | null): string => (login ? `Meowo 登录 · ${login}` : "Meowo 登录（未登录）"),
+    activeGh: (installed: boolean): string => (installed ? "本机 gh" : "本机 gh（没找到 gh）"),
+    activeOff: "已关闭",
+    accountCaption: "Meowo 登录",
+    account: "GitHub 账号",
+    signedOutDesc: "登录后不装 gh 也能使用 PR 功能。只支持 github.com。",
+    signIn: "登录 GitHub",
+    signingIn: "正在请求代码…",
+    codeLabel: "在 GitHub 上输入这个代码",
+    codeHint: (minutes: number) => `打开 github.com/login/device 输入代码并授权，代码 ${minutes} 分钟内有效。`,
+    copyAndOpen: "复制代码并打开 GitHub",
+    copyCode: "复制",
+    copied: "已复制",
+    waiting: "等待在 GitHub 上授权…",
+    cancel: "取消",
+    signedInDesc: (where: string) => `令牌保存在${where}。`,
+    vaultWindows: " Windows 凭据管理器",
+    vaultMac: "系统钥匙串",
+    signOut: "退出登录",
+    signOutConfirm: "退出后，Meowo 会删掉保存在本机的令牌。如需在 GitHub 上收回授权，请到 GitHub 设置的 Applications 页面撤销 Meowo。",
+    reloginDesc: "GitHub 不再接受这个登录（授权可能已撤销），请重新登录。",
+    relogin: "重新登录",
+    unsupported: "这个系统没有可用的凭据库，不支持 Meowo 登录，可以改用本机 gh。",
+    expired: "代码已过期，请重新登录。",
+    denied: "已在 GitHub 上拒绝授权。",
+    loginFailed: (e: string) => `登录没有完成：${e}`,
+    note: "Meowo 登录使用 GitHub 设备码授权，权限与 gh 默认一致（repo、read:org）。",
   },
   relay: {
     title: "API 中转",
@@ -2383,6 +2425,9 @@ export const zh = {
     cleanupHint: "这个 worktree 可以清理了",
     ghMissing: "没装 gh，看不到 CI",
     ghUnauthed: "gh 没登录，看不到 CI",
+    // Meowo 登录方式下没登录 / 令牌被拒：引导去设置 › GitHub。
+    meowoUnauthed: "没有登录 GitHub，看不到 CI",
+    signInGithub: "去设置里登录",
     repoNeedsChoice: "有多个 GitHub 远端，先选仓库",
     repoPick: "选择仓库",
     repoAt: (slug: string) => `PR 开在 ${slug}`,

@@ -19,6 +19,7 @@ mod envpath;
 mod exit_report;
 mod forge;
 mod fsutil;
+mod github;
 mod git;
 mod git_target;
 mod island;
@@ -1600,6 +1601,11 @@ pub fn run() {
             forge::gh_pr_create,
             forge::gh_pr_merge,
             forge::forge_choose_repo,
+            github::github_status,
+            github::github_set_mode,
+            github::github_login_start,
+            github::github_login_cancel,
+            github::github_logout,
             forge::badge::sidebar_git_badges,
             forge::review::pr_review,
             forge::review::pr_comment,
@@ -1856,6 +1862,7 @@ pub fn run() {
             }
             // 上次进程在写入途中消失时只恢复成失败，不自动重写 CLI。
             prompt_queue::recover_prompt_deliveries(app.handle());
+            github::init(app.handle());
             forge::review::start_monitor_worker(app.handle());
             // 远程访问桥（手机浏览器）：manage 生命周期状态后按 settings 决定是否启动。
             // 默认关闭时 apply 是 no-op，不监听任何端口。

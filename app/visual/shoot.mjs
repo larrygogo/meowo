@@ -107,7 +107,7 @@ const ISLAND_SCENES = [
 ];
 // 定尺寸的独立窗口：按 window.rs 里的真实窗口尺寸拍（设置 620×460、引导 460×600、更新 400×252 起、
 // 确认框 420×208 起再按内容收拢、新建会话 460×520）。上面桌面矩阵里的 settings-* / onboarding 是拉宽拉高的压力测试。
-const SETTINGS_SECTIONS = ["general", "sessions", "appearance", "shortcuts", "remote", "network", "account", "extensions", "about", "search", "noresults"];
+const SETTINGS_SECTIONS = ["general", "sessions", "appearance", "shortcuts", "remote", "network", "github", "account", "extensions", "about", "search", "noresults"];
 const PANE_SCENES = [
   ...SETTINGS_SECTIONS.map((sec) => ({ scene: "settingswin-" + sec, w: 620, h: 460, sel: sec === "noresults" ? ".settings-noresults" : ".settings" })),
   { scene: "onboarding-1", w: 460, h: 600, sel: ".obm-chat" },

@@ -6,7 +6,9 @@
  * 颜色也只用 PR 四态（同标题栏 `.tb-pr`）和增删色，不与状态点同色系混用。
  */
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { getSidebarGitBadges, type SidebarGitBadgeDto } from "../../api";
+import { listen } from "@tauri-apps/api/event";
+import { GITHUB_CHANGED_EVENT, getSidebarGitBadges, type SidebarGitBadgeDto } from "../../api";
+import { remoteUi } from "../../remoteMode";
 import { useT } from "../../i18n";
 
 /** 前端多久问一次。后端 PR 每仓库 60 秒才真查一次 GitHub、改动数 15 秒一算，这里问得再勤也只是读缓存。 */
@@ -69,8 +71,18 @@ export function useSidebarGitBadges(cwds: readonly (string | null | undefined)[]
     const timer = window.setInterval(fetchNow, POLL_MS);
     const onVisible = () => { if (document.visibilityState === "visible") fetchNow(); };
     document.addEventListener("visibilitychange", onVisible);
+    // 设置里切了 GitHub 连接方式、登录或退出：PR 状态点马上按新的连接重取（后端缓存已作废）。
+    let offChanged: (() => void) | undefined;
+    if (!remoteUi()) {
+      try {
+        void listen(GITHUB_CHANGED_EVENT, fetchNow)
+          .then((off) => { if (alive) offChanged = off; else off(); })
+          .catch(() => {});
+      } catch { /* 非 Tauri 环境 */ }
+    }
     return () => {
       alive = false;
+      offChanged?.();
       window.clearTimeout(first);
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
