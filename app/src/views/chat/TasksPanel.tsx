@@ -17,6 +17,11 @@ export type BackgroundTask = {
   meta: string | null;
   /** stop = 已中断：没等到结局，也不会再有（所在回合被打断、会话进程没了）。 */
   state: "run" | "done" | "fail" | "stop";
+  /** 这一轮开跑的时刻（毫秒）：运行中的行据此实时走表。续上的子代理从续上那一刻算。 */
+  startedAt?: number | null;
+  /** 向侧车查用量时用的 id：一般是委派那条调用的 id；最初的委派不在已载入窗口里、由
+   *  SendMessage 代表的子代理，用它的 agentId（侧车文件按它命名）。 */
+  probeId?: string;
   /** 子代理交了结论、它派出的后台活儿还在跑：仍按完成算，行里提示「后台仍在运行」。 */
   backgroundRunning?: boolean;
   durationMs: number | null;
@@ -33,14 +38,18 @@ export type TaskFilter = "recent" | "running" | "done" | "all";
 /// 回执说在跑的后台任务，要会话进程还活着才算。否则是已中断——此前这两种都记成运行中，
 /// 面板头永远挂着「N 运行中」（走查 A1）。
 export function collectBackgroundTasks(items: ChatItem[], live: SessionLive = ASSUME_LIVE): { bash: BackgroundTask[]; subagents: BackgroundTask[] } {
-  const { outcomes, finishedTs } = collectSubagentReceipts(items);
+  const { outcomes, finishedTs, runningSince } = collectSubagentReceipts(items);
   const bash: BackgroundTask[] = [];
   const subagents: BackgroundTask[] = [];
   const turnStart = liveTurnStart(items);
   for (const [index, item] of items.entries()) {
     if (item.type !== "tool_use") continue;
     const isShell = isBackgroundShell(item, outcomes);
-    if (!isShell && !isSubagentDelegation(item, outcomes)) continue;
+    // 被 SendMessage 续上的子代理，最初那次委派不在已载入的窗口里（首屏只有末尾一屏）时，续上
+    // 回执的 task_id 找不到归属，结局就挂在 SendMessage 自己身上——由它代表这个子代理，否则
+    // 终端里在跑的子代理面板上看不见（实拍 2026-11-18）。最初的委派在窗口里时，结局归它，不重复。
+    const resumedHere = !isShell && item.name === "SendMessage" && !!outcomes.get(item.id)?.task_id;
+    if (!isShell && !resumedHere && !isSubagentDelegation(item, outcomes)) continue;
     const outcome = outcomes.get(item.id);
     const state: BackgroundTask["state"] = !outcome
       ? (live.activity !== "idle" && index > turnStart ? "run" : "stop")
@@ -48,18 +57,20 @@ export function collectBackgroundTasks(items: ChatItem[], live: SessionLive = AS
       // 被叫停的子任务（codex interrupt_agent）：没跑完，也不是失败。
       : outcome.interrupted ? "stop"
       : outcome.failed > 0 ? "fail" : "done";
-    const started = Date.parse(item.timestamp ?? "");
+    // 本轮开跑时刻：最近一次「开跑」回执（启动或续上）的时间，没有就退回调用时刻。
+    const started = Date.parse(runningSince.get(item.id) ?? item.timestamp ?? "");
     const ended = Date.parse(finishedTs.get(item.id) ?? "");
     const durationMs = state !== "run" && Number.isFinite(started) && Number.isFinite(ended) && ended >= started ? ended - started : null;
     const sortKey = (state !== "run" ? finishedTs.get(item.id) : null) ?? item.timestamp ?? "";
     if (isShell) {
       const command = item.detail?.kind === "command" ? item.detail.command : item.summary;
       const description = item.detail?.kind === "command" ? item.detail.description?.trim() : null;
-      bash.push({ id: item.id, name: description || `$ ${command}`, meta: description ? `$ ${command}` : null, state, durationMs, sortKey });
+      bash.push({ id: item.id, name: description || `$ ${command}`, meta: description ? `$ ${command}` : null, state, durationMs, sortKey, startedAt: Number.isFinite(started) ? started : null });
     } else {
       // 结论已交、后台仍在运行：按完成算（不占「进行中」），行里提示一句（做空第二轮）。
       const backgroundRunning = state === "done" && outcome?.background_running === true;
-      subagents.push({ id: item.id, name: subagentName(item), meta: null, state, durationMs, sortKey, backgroundRunning });
+      const probeId = resumedHere ? outcome?.task_id ?? item.id : item.id;
+      subagents.push({ id: item.id, name: subagentName(item), meta: null, state, durationMs, sortKey, backgroundRunning, startedAt: Number.isFinite(started) ? started : null, probeId });
     }
   }
   return { bash, subagents };
@@ -71,7 +82,8 @@ function subagentName(item: ToolUseItem): string {
   if (raw.startsWith("{")) {
     try {
       const parsed = JSON.parse(raw) as Record<string, unknown>;
-      const text = parsed.description ?? parsed.prompt;
+      // SendMessage 的参数没有 description，取给子代理的话（首行，长的交给 CSS 截断）。
+      const text = parsed.description ?? parsed.prompt ?? parsed.summary ?? (typeof parsed.message === "string" ? parsed.message.split("\n")[0] : undefined);
       if (typeof text === "string" && text.trim()) return text.trim();
     } catch { /* 不是 JSON 就用原文 */ }
   }

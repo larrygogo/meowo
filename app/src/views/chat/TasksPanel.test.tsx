@@ -52,6 +52,34 @@ describe("后台任务", () => {
     expect(states([use, launched, done("r2", "2026-11-03T06:36:00Z"), send, resumed, done("r4", "2026-11-03T06:45:00Z")])).toEqual([["toolu_a", "done"]]);
   });
 
+  // 实拍 2026-11-18（本机 transcript 解析结果，脱敏）：子代理 04:01 派出，之后被 SendMessage 续上四次，
+  // 最近一次 05:25:33 续上、05:29:20 收工。对话页首屏只载入末尾 200 条，最初那次委派（和它的启动回执）
+  // 不在已载入的窗口里：续上回执的 task_id 找不到归属，面板里看不到它在跑（终端里两个子代理在跑，面板
+  // 「1 运行中」）。找不到最初委派时，就由续上它的那条 SendMessage 代表这个子代理。
+  it("最初的委派不在已载入窗口里：SendMessage 续上的子代理照样算运行中，收工后算完成", () => {
+    const send: ChatItem = {
+      type: "tool_use", id: "toolu_01Wm61", timestamp: "2026-11-18T05:25:32.636Z", name: "SendMessage", kind: "other",
+      summary: JSON.stringify({ to: "acb4b19", message: "CI 全绿，请做只读真机核对" }),
+    };
+    const resumed: ChatItem = {
+      type: "tool_result", id: "441993b6:0", timestamp: "2026-11-18T05:25:33.178Z", tool_use_id: "toolu_01Wm61",
+      text: "{\"success\":true,\"message\":\"Resuming agent acb4b19\",\"resumedAgentId\":\"acb4b19\"}", is_error: false,
+      subagent: { running: 1, completed: 0, failed: 0, task_id: "acb4b19" },
+    };
+    const finished: ChatItem = {
+      type: "tool_result", id: "queued-notice:2026-11-18T05:29:20.098Z", timestamp: "2026-11-18T05:29:20.098Z", tool_use_id: "toolu_01Wm61",
+      text: "Agent \"Implement GitHub connection feature\" finished", is_error: false,
+      subagent: { running: 0, completed: 1, failed: 0, task_id: "acb4b19" },
+    };
+    const live = { activity: "idle" as const, alive: true };
+    const running = collectBackgroundTasks([send, resumed], live).subagents;
+    expect(running.map((task) => [task.id, task.name, task.state, task.probeId])).toEqual([["toolu_01Wm61", "CI 全绿，请做只读真机核对", "run", "acb4b19"]]);
+    // 运行时长从这一次续上算起（本轮），不是从最初派出算。
+    expect(running[0].startedAt).toBe(Date.parse("2026-11-18T05:25:33.178Z"));
+    const done = collectBackgroundTasks([send, resumed, finished], live).subagents;
+    expect(done.map((task) => [task.state, task.durationMs])).toEqual([["done", 227_000 - 80]]);
+  });
+
   it("「最近」= 全部运行中 + 最近结束的 5 条，结束的按完成时刻倒序", () => {
     const task = (id: string, state: BackgroundTask["state"], sortKey: string): BackgroundTask => ({ id, name: id, meta: null, state, durationMs: null, sortKey });
     const tasks = [task("old", "done", "01"), task("run", "run", "02"), ...["03", "04", "05", "06", "07"].map((key) => task(key, "done", key)), task("bad", "fail", "08")];
