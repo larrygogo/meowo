@@ -1076,6 +1076,14 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     const editing = editingId === item.session.id;
     // 目录已删的会话不挂（点进去也恢复不了，下面另有「目录已删除」）。
     const badgeCwd = item.cwd && !item.cwd_missing ? item.cwd : null;
+    // 目录已删除（worktree 清理掉了、目录被手动删了）：不管按不按目录分组都要显示——点进去只能看历史。
+    // 跟在目录名后面同一行（对照 Kimi / Linear：状态标签与次要信息同排），不单开第三行：
+    // 第三行让这张卡比别的卡高一截，手机列表里还曾被压扁的卡片挤到下一张卡上（2026-11-18 实拍）。
+    const goneTag = item.cwd_missing ? (
+      <span className="chat-sidebar-gone" data-tip={t.worktree.dirMissingTip} data-testid="sidebar-dir-missing">
+        {t.worktree.dirMissing}<span className="chat-sidebar-gone-more">{t.worktree.dirMissingMore}</span>
+      </span>
+    ) : null;
     // 条目从 <button> 改成 role=button 的 <div>：里面要放「⋯」按钮，button 套 button 是
     // 非法 HTML（浏览器会把内层拆出去）。键盘可达性靠 tabIndex + Enter/Space 补齐；
     // tabIndex 是 roving 的——只有 tabbableId 那条进 Tab 序，其余靠列表的 ↑↓ 到达（C-17）。
@@ -1261,18 +1269,16 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
             <span className="chat-sidebar-metaline">
               <span className="chat-sidebar-meta" data-tip={item.cwd ?? undefined}>{dir}</span>
               {badgeCwd && <SidebarGitBadgeSlot store={gitBadges} cwd={badgeCwd} />}
+              {goneTag}
             </span>
           ) : groupMode === "dir" && worktreeNameOf(item) ? (
             /* 包 5：按工作区分组时 worktree 会话归在原项目的组里，组内标出它开在哪个 worktree。 */
             <span className="chat-sidebar-metaline">
               <span className="chat-sidebar-wt" data-testid="sidebar-worktree-tag" data-tip={t.wtnew.tagTip(worktreeNameOf(item)!)}>{worktreeNameOf(item)}</span>
               {badgeCwd && <SidebarGitBadgeSlot store={gitBadges} cwd={badgeCwd} />}
+              {goneTag}
             </span>
-          ) : null)}
-          {/* 目录已删除（worktree 清理掉了）：不管按不按目录分组都要显示——点进去恢复不了，得先说。 */}
-          {item.cwd_missing && (
-            <span className="chat-sidebar-gone" data-tip={t.worktree.dirMissingTip} data-testid="sidebar-dir-missing">{t.worktree.dirMissing}</span>
-          )}
+          ) : goneTag && <span className="chat-sidebar-metaline">{goneTag}</span>)}
         </span>
         {/* 右侧：时间（对照 Kimi 的紧凑「3d」），等待中换成「已等待 X」警示色；悬停时让位给「⋯」。
             旧库/合成数据可能缺 last_event_at：NaN 会让 Intl 直接抛错炸掉整棵侧栏，缺失时不显示。 */}
@@ -1682,6 +1688,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           onStar={() => toggleStar(ctxItem.session.cc_session_id)}
           onRename={() => startRename(ctxItem)}
           onArchive={() => void toggleArchived(ctxItem)}
+          archiveDisabledReason={ctxItem.archived && ctxItem.cwd_missing ? t.chat.dirGoneNoReopen : null}
           // 多选入口:Ctrl+点击对鼠标用户不可发现,菜单里给一个显式的起点。
           onSelectMode={() => {
             selectAnchorRef.current = ctxItem.session.id;

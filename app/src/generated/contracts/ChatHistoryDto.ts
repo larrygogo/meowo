@@ -85,6 +85,17 @@ background: boolean,
  */
 archived: boolean, 
 /**
+ * 工作目录已经不在磁盘上（worktree 被清理、目录被手动删掉），且会话进程不在。与侧栏
+ * `LiveItem.cwd_missing` 同口径。对话页据此只读回看：输入区换成「目录已删除，不能继续」
+ * 与「新开会话」，不给「恢复会话」——agent 按目录找会话记录，换个目录续不上，原目录又没了。
+ */
+cwdMissing: boolean, 
+/**
+ * 目录已删时推得出的原项目（主检出根目录，仍在磁盘上；见 wtnew::origin::origin_for_missing）。
+ * 「在原项目新开会话」预填它；推不出、或目录还在时为 None（不下发）。
+ */
+originRoot?: string, 
+/**
  * Agent 自己维护的待办清单（快照式待办工具经 hook 落库）。空 = 该会话没有清单，
  * 或该 agent 的待办是增量事件而非快照（当前版本的 Claude Code 即如此）。
  */

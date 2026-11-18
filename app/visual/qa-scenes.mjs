@@ -167,6 +167,8 @@ export const QA_SHOTS = [
   { name: "qa-side-rename", scene: "pop-idle", sel: ".chat-sidebar-edit", steps: [["rclick", ".chat-sidebar-item >> nth=1"], ["click", ".ctx-menu .ctx-item:has-text('重命名')"]] },
   { name: "qa-side-search", scene: "pop-idle", sel: ".chat-sidebar-deep-hit", steps: [["type", ".chat-sidebar-search input", "schema"], ["tick", 500], ["click", ".chat-sidebar-deep .chat-sidebar-more"]] },
   { name: "qa-side-empty", scene: "flow-side-empty", sel: ".chat-sidebar-empty" },
+  { name: "qa-side-gone", scene: "flow-side-gone", sel: ".chat-sidebar-gone", steps: [["click", ".chat-sidebar-tabs button >> nth=1"]], langs: ["zh", "en"] },
+  { name: "qa-dir-gone", scene: "flow-dir-gone", sel: "[data-testid=compose-dir-gone]", langs: ["zh", "en"] },
   { name: "qa-side-error", scene: "flow-side-error", sel: ".chat-sidebar-empty.is-error" },
   { name: "qa-side-done", scene: "pop-idle", sel: ".chat-sidebar-cleanbar", steps: [["click", ".chat-sidebar-tabs button >> nth=1"], ["click", ".chat-sidebar-cleanbar button"]] },
   { name: "qa-side-ws", scene: "flow-plain", sel: ".chat-sidebar-tabs", steps: [["click", ".chat-sidebar-tabs button >> nth=2"]] },
@@ -294,6 +296,9 @@ export const QA_SHOTS = [
   { name: "qa-m-mode", page: "mobile", scene: "mobile-idle", size: PHONE, sel: ".chat-sheet", steps: [["click", ".chat-compose .chat-mode-button"]] },
   { name: "qa-m-lead-kbd", page: "mobile", scene: "mobile-lead", size: [375, 476], sel: ".lead-gate-card", steps: [["click", ".lead-gate-add-note"]] },
   { name: "qa-m-list-hover", page: "mobile", scene: "mobile-list", size: PHONE, sel: ".remote-session-list", langs: ["en"] },
+  // 目录已删除的会话：「已完成」列表多过一屏时卡片不许被压扁、标签不许压到下一张卡上（2026-11-18 手机实拍）；点开是只读门卡。
+  { name: "qa-m-list-gone", page: "mobile", scene: "mobile-list-gone", size: PHONE, sel: ".chat-sidebar-gone", steps: [["click", ".chat-sidebar-tabs button >> nth=1"]], langs: ["zh", "en"] },
+  { name: "qa-m-dir-gone", page: "mobile", scene: "mobile-dir-gone", size: PHONE, sel: "[data-testid=compose-dir-gone]", langs: ["zh", "en"] },
   { name: "qa-m-slash", page: "mobile", scene: "mobile-idle", size: PHONE, steps: [["type", TA, "/"]], sel: ".chat-sheet" },
   { name: "qa-m-at", page: "mobile", scene: "mobile-idle", size: PHONE, steps: [["type", TA, "@src"], ["tick", 400]], sel: "#chat-at-listbox" },
   { name: "qa-m-add", page: "mobile", scene: "mobile-idle", size: PHONE, steps: [["click", ".chat-attach-button"]], sel: ".chat-sheet" },

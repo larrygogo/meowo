@@ -1,6 +1,7 @@
 // 视觉回归 harness 共用的假数据：在演示用的那段假会话（src/demo/chatData.ts）上加长内容、
 // 补「更改」面板要的 git 接口。只给 app/visual/ 下的截图页用，不进产品构建。
 import { CHAT_SESSION_ID } from "../src/demo/chatData";
+import { makeSession } from "../src/demo/data";
 
 /// 与 src/demo/*Embed.tsx 同一个冻结时刻，时间戳在两次拍摄间不漂。
 export const FIXED_NOW = 1_780_000_000_000;
@@ -245,3 +246,25 @@ export const MODE_MARKERS = [
   { marker: "plan mode on", value: "plan" },
   { marker: "bypass permissions on", value: "bypassPermissions" },
 ];
+
+/// 目录已删除的会话打开后的历史（只读回看）：已结束、进程不在、推得出原项目（门卡给「在 web-app 新开会话」）。
+export const DIR_GONE_HISTORY = { status: "ended", connected: false, ptyManaged: false, endable: false, pendingReview: null, archived: true, cwdMissing: true, originRoot: "C:/dev/web-app" };
+
+/// 「已完成」列表里混着目录已删除的会话（worktree 合并后被清理）：卡片第三行多一枚虚线标签。
+/// 条数要多过一屏——列表是定高的 flex 列，卡片被压缩时标签会溢出到下一张卡上（2026-11-18 手机实拍）。
+export function goneSessions(lang: "zh" | "en"): unknown[] {
+  const zh = lang === "zh";
+  const rows = zh
+    ? [["重构登录页表单校验", "web-app", false], ["worktree 里修好的支付回调重复扣款，PR 已合并", "billing-fix-callback", true], ["补齐导出接口的单测", "api", false],
+      ["升级依赖", "web-app", false], ["把夜间构建的缓存目录挪到工作区外", "infra-nightly", true], ["排查夜间构建失败", "infra", false],
+      ["写发布说明", "docs", false], ["清理旧的特性开关", "web-app", false], ["统一错误码", "api", false]]
+    : [["Refactor login form validation", "web-app", false], ["Fix the duplicate charge in the payment callback (worktree, PR merged)", "billing-fix-callback", true], ["Add tests for the export API", "api", false],
+      ["Upgrade dependencies", "web-app", false], ["Move the nightly build cache out of the workspace", "infra-nightly", true], ["Investigate the nightly build failure", "infra", false],
+      ["Write the release notes", "docs", false], ["Remove old feature flags", "web-app", false], ["Unify error codes", "api", false]];
+  return rows.map(([title, project, gone], i) => {
+    const one = makeSession({ title: title as string, project: project as string, status: "ended", connected: false, archived: true, agoMin: 30 + i * 90, provider: (["claude", "codex", "kimi"] as const)[i % 3] });
+    one.session.id = 300 + i;
+    one.archived_at = FIXED_NOW - i * 3_600_000;
+    return gone ? { ...one, cwd_missing: true } : one;
+  });
+}

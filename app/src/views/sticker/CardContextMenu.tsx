@@ -18,6 +18,7 @@ export function CardContextMenu({
   onStar,
   onRename,
   onArchive,
+  archiveDisabledReason = null,
   onSelectMode = null,
   onOpenDir,
   onEndSession,
@@ -32,6 +33,8 @@ export function CardContextMenu({
   onStar: () => void;
   onRename: () => void;
   onArchive: () => void;
+  /** 有值时「标记完成 / 恢复进行中」置灰，下面写明原因（目录已删的会话不能放回进行中）。 */
+  archiveDisabledReason?: string | null;
   /** 进入多选（侧栏批量归档）；贴纸没有多选态，不传即隐藏。 */
   onSelectMode?: (() => void) | null;
   /** 打开项目目录；会话无 cwd（旧数据）时传 null 隐藏该项。 */
@@ -118,10 +121,18 @@ export function CardContextMenu({
         <PencilIcon />
         {t.sticker.renameTitle}
       </button>
-      <button type="button" role="menuitem" className="ctx-item" onClick={act(onArchive)}>
+      {/* 置灰同 worktree 那项：aria-disabled 而非 disabled，读屏用户才听得到下面那句原因；触屏点上去也有字可看。 */}
+      <button
+        type="button"
+        role="menuitem"
+        className={"ctx-item" + (archiveDisabledReason ? " is-disabled" : "")}
+        aria-disabled={archiveDisabledReason ? true : undefined}
+        onClick={archiveDisabledReason ? undefined : act(onArchive)}
+      >
         <ArchiveIcon archived={archived} />
         {archived ? t.sticker.unarchive : t.sticker.archive}
       </button>
+      {archiveDisabledReason && <div className="ctx-note" role="note">{archiveDisabledReason}</div>}
       {onSelectMode && (
         <button type="button" role="menuitem" className="ctx-item" onClick={act(onSelectMode)}>
           <CheckIcon />

@@ -955,3 +955,72 @@ fn 原项目推算_相对_gitdir_绝对_commondir_子模块_bare() {
     );
     assert_eq!(origin::origin_root_of(&bare_wt), None);
 }
+
+// ═══ 目录已删除的会话推原项目 ═══
+
+#[test]
+fn 目录已删_记过的原项目优先_其次按路径形状猜() {
+    let fx = fixture("gone");
+    let main = fx.main.to_string_lossy().replace('\\', "/");
+    // 记过且还在：直接用。
+    let gone = fx.root().join("elsewhere/whatever");
+    assert_eq!(
+        origin::origin_for_missing(Some(&main), gone.to_str().unwrap()),
+        Some(main.clone())
+    );
+    // Meowo 的同级命名 `<仓库名>-<用途>`（用途里带连字符）。主检出叫 app。
+    let sibling = fx.root().join("app-fix-login-1112");
+    assert_eq!(
+        origin::origin_for_missing(None, sibling.to_str().unwrap()),
+        Some(main.clone())
+    );
+    // 记过的原项目也删了：退回按路径猜。
+    let dead = fx.root().join("dead-repo").to_string_lossy().into_owned();
+    assert_eq!(
+        origin::origin_for_missing(Some(&dead), sibling.to_str().unwrap()),
+        Some(main.clone())
+    );
+    // Claude Code 的 `<仓库>/.claude/worktrees/<名字>`，子目录也认。
+    let claude_wt = fx.main.join(".claude/worktrees/brave-otter/packages/web");
+    assert_eq!(
+        origin::origin_for_missing(None, claude_wt.to_str().unwrap()),
+        Some(main.clone())
+    );
+}
+
+#[test]
+fn 目录已删_猜不出就返回_none_不把用户带到猜错的地方() {
+    let fx = fixture("gone2");
+    // 同级有目录但不是仓库。
+    std::fs::create_dir_all(fx.root().join("notes")).unwrap();
+    let a = fx.root().join("notes-2026");
+    assert_eq!(origin::origin_for_missing(None, a.to_str().unwrap()), None);
+    // 名字里没有连字符、也不在 .claude/worktrees 下。
+    let b = fx.root().join("scratch");
+    assert_eq!(origin::origin_for_missing(None, b.to_str().unwrap()), None);
+    // .claude/worktrees 的上一级不是仓库。
+    let c = fx.root().join("plain/.claude/worktrees/x");
+    assert_eq!(origin::origin_for_missing(None, c.to_str().unwrap()), None);
+    // 空串。
+    assert_eq!(origin::origin_for_missing(Some("  "), ""), None);
+}
+
+#[test]
+fn 标记完成时趁目录还在记下原项目() {
+    let fx = fixture("archive-origin");
+    let wt = fx.root().join("app-wt");
+    run(&fx.main, &["worktree", "add", "-q", "-b", "w", wt.to_str().unwrap()]);
+    let store = meowo_store::Store::open_in_memory().unwrap();
+    let project = store.upsert_project_by_root("/p", "p", 1).unwrap();
+    let (in_wt, _) = store.start_session(project, "wt", 1).unwrap();
+    let (in_main, _) = store.start_session(project, "main", 1).unwrap();
+    store.set_session_cwd(in_wt, &wt.to_string_lossy(), 2).unwrap();
+    store.set_session_cwd(in_main, &fx.main.to_string_lossy(), 2).unwrap();
+    crate::session_command::apply_archived(&store, in_wt, true, 3).unwrap();
+    crate::session_command::apply_archived(&store, in_main, true, 3).unwrap();
+    assert_eq!(
+        store.session_origin_root(in_wt).unwrap(),
+        Some(fx.main.to_string_lossy().replace('\\', "/"))
+    );
+    assert_eq!(store.session_origin_root(in_main).unwrap(), None, "主检出不是 worktree，不记");
+}

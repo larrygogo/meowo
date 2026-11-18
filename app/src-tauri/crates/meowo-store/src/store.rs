@@ -221,7 +221,8 @@ impl Store {
     /// v29: PR 显式监控、轮询基线与去重事件；唤醒状态持久化，重启后不重复注入。
     /// v30: 监控事件按 (monitor_key, id) 去重，避免不同 PR 的同 SHA 检查互相吞掉。
     /// v31: 持久排队消息可拖拽排序（prompt_queue.position）。
-    const USER_VERSION: i64 = 31;
+    /// v32: sessions 加 origin_root 列（worktree 会话的原项目，目录删掉后给「在原项目新开会话」用）。
+    const USER_VERSION: i64 = 32;
 
     /// 一次性建表 + 迁移 + 建索引，用 `PRAGMA user_version` 门控：已是最新版直接返回，
     /// 避免 statusline/hook 每次 open 都重跑 DDL 与注定失败的 ALTER（hot-path 浪费）。
@@ -256,7 +257,7 @@ impl Store {
             tx.commit()?;
         }
         // 给旧库补列（新库 SCHEMA 已含这些列 → ALTER 必报 duplicate，忽略即可）。
-        const ALTERS: [&str; 24] = [
+        const ALTERS: [&str; 25] = [
             "ALTER TABLE managed_deliveries ADD COLUMN origin TEXT NOT NULL DEFAULT 'user'",
             "ALTER TABLE sessions ADD COLUMN pid INTEGER",
             "ALTER TABLE sessions ADD COLUMN pid_shared INTEGER NOT NULL DEFAULT 0",
@@ -296,6 +297,8 @@ impl Store {
             "ALTER TABLE sessions ADD COLUMN turns INTEGER NOT NULL DEFAULT 0",
             // 排队消息拖拽排序（v31）：老库补齐后全是 NULL = 没拖过，按入队先后，正是我们要的。
             "ALTER TABLE prompt_queue ADD COLUMN position INTEGER",
+            // worktree 会话的原项目（v32）：老库补齐后全是 NULL = 没记过，目录还在的照旧现场推算。
+            "ALTER TABLE sessions ADD COLUMN origin_root TEXT",
         ];
         for sql in ALTERS {
             if let Err(e) = conn.execute(sql, []) {
@@ -2077,6 +2080,29 @@ impl Store {
 
     /// 手动归档/取消归档某会话。不更新 last_event_at，避免排序乱跳。
     /// 归档时记录 archived_at（用于「归档超过 N 天自动隐藏」）；取消归档清空。
+    /// 记下会话的原项目（worktree 的主检出根目录，见 migrations.rs 的列注释）。
+    pub fn set_session_origin_root(&self, session_id: i64, origin_root: &str) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE sessions SET origin_root = ?1 WHERE id = ?2",
+            rusqlite::params![origin_root, session_id],
+        )?;
+        Ok(())
+    }
+
+    /// 记过的原项目；没记过（或会话不存在）为 None。
+    pub fn session_origin_root(&self, session_id: i64) -> Result<Option<String>, StoreError> {
+        use rusqlite::OptionalExtension;
+        let r = self
+            .conn
+            .query_row(
+                "SELECT origin_root FROM sessions WHERE id = ?1",
+                [session_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?;
+        Ok(r.flatten())
+    }
+
     pub fn set_session_archived(
         &self,
         session_id: i64,
