@@ -608,6 +608,11 @@ pub trait SubagentSpec: Sync {
     fn stream_tokens(&self, _stream: &Path) -> Option<u64> {
         None
     }
+
+    /// 侧车元数据里这次委派的说明（见 `SubagentProbeDto::description`）。默认 None。
+    fn stream_description(&self, _stream: &Path) -> Option<String> {
+        None
+    }
 }
 
 /// 某 agent 的 transcript 规格：定位文件 + 解析标题 + 产出增量解析器。
@@ -854,6 +859,9 @@ pub fn probe_subagent_state(
     let mut failed = false;
     let mut known = false;
     let mut tokens: Option<u64> = None;
+    let description = streams
+        .first()
+        .and_then(|stream| subagents.stream_description(&stream.path));
     let mut finished_at: Option<String> = None;
     let mut branches: Vec<SubagentBranchProbeDto> = Vec::with_capacity(streams.len());
     for stream in &streams {
@@ -916,6 +924,7 @@ pub fn probe_subagent_state(
         finished_at: finished_at.filter(|_| known && !running),
         branches,
         tokens,
+        description,
     })
 }
 
