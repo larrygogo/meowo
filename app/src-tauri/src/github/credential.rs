@@ -12,13 +12,8 @@ const TARGET: &str = "Meowo/github.com";
 const ACCOUNT: &str = "github.com";
 
 /// `security -i` 从标准输入读的那一行：写入（-U 已有则更新）。令牌不进进程参数（`ps` 看不到）。
-/// 各段都放在双引号里；Token::new 已把令牌限制在字母数字与 `_-.`，条目名是常量，拼不出引号或别的命令。
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub(crate) fn interactive_add_line(target: &str, token: &Token) -> Option<String> {
-    interactive_line(target, ACCOUNT, "Meowo GitHub", token)
-}
-
-/// 同上，条目的 account 与标签可指定（代码托管账号用）。
+/// 各段都放在双引号里；Token::new 已把令牌限制在字母数字与 `_-.`，任一段含引号、反斜杠或换行就不拼。
+/// 条目的 account 与标签由调用方指定（代码托管账号用）。
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn interactive_line(target: &str, account: &str, label: &str, token: &Token) -> Option<String> {
     let plain = |s: &str| !s.is_empty() && !s.contains(['"', '\\', '\n', '\r']);
@@ -292,10 +287,10 @@ mod line_tests {
     fn security_交互写入行_令牌不进参数且拼不出别的命令() {
         let token = Token::new("gho_ABC_123").unwrap();
         assert_eq!(
-            interactive_add_line(TARGET, &token).unwrap(),
+            interactive_line(TARGET, ACCOUNT, "Meowo GitHub", &token).unwrap(),
             "add-generic-password -U -s \"Meowo/github.com\" -a \"github.com\" -l \"Meowo GitHub\" -w \"gho_ABC_123\"\n"
         );
-        assert!(interactive_add_line("bad\"target", &token).is_none());
-        assert!(interactive_add_line("line\nbreak", &token).is_none());
+        assert!(interactive_line("bad\"target", ACCOUNT, "Meowo GitHub", &token).is_none());
+        assert!(interactive_line("line\nbreak", ACCOUNT, "Meowo GitHub", &token).is_none());
     }
 }
