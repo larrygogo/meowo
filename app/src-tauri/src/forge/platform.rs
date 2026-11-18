@@ -164,6 +164,11 @@ pub(crate) trait Forges: Sync {
     fn platform(&self, host: &str) -> Option<Platform>;
     /// 这台主机的平台接口（有账号才有）；github.com 不经这里（走 GitHub 连接方式）。None = 没有账号。
     fn open(&self, host: &str) -> Option<Box<dyn ForgeApi + '_>>;
+    /// 这台主机能不能查 PR（不联网）：github.com 恒能（走 GitHub 连接方式），别的主机要有账号。挑 PR 所在远端时
+    /// 先在能用的主机里挑。
+    fn usable(&self, host: &str) -> bool {
+        host_name(host) == GITHUB_COM
+    }
 }
 
 /// 只认公共主机、没有任何账号。

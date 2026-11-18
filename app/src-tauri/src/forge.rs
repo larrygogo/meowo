@@ -900,13 +900,19 @@ fn resolve_gh_repo(cfg: &GitConfig, forges: &dyn Forges, chosen: Option<&str>, t
             Some(GhRemote { remote, slug, host, platform })
         })
         .collect();
-    let resolved_any = all.iter().find(|g| cfg.get("remote", Some(&g.remote), "gh-resolved") == Some("base"));
-    let named = |name: Option<&str>| name.and_then(|n| all.iter().find(|g| g.remote == n));
+    // 先只在「用得上」的主机里挑：github.com（走 GitHub 连接方式）与加了账号的主机。认得出平台但没账号的主机只在
+    // 一台可用的都没有时才轮到（那时界面引导去添加账号）。审查指出的回退：origin 在 gitlab.com 没账号、分支推在
+    // github.com 的远端时，以前照常显示 GitHub 的 PR，不能因为 origin 认得出是 GitLab 就变成「去添加账号」。
+    // 不改成「推送远端优先于 origin」：fork 工作流里推送远端是自己的 fork，PR 却开在 origin（上游），那样会挑错仓库。
+    let usable: Vec<&GhRemote> = all.iter().filter(|g| forges.usable(&g.host)).collect();
+    let pool: Vec<&GhRemote> = if usable.is_empty() { all.iter().collect() } else { usable };
+    let resolved_any = pool.iter().copied().find(|g| cfg.get("remote", Some(&g.remote), "gh-resolved") == Some("base"));
+    let named = |name: Option<&str>| name.and_then(|n| pool.iter().copied().find(|g| g.remote == n));
     let host = resolved_any
         .or_else(|| named(chosen))
         .or_else(|| named(Some("origin")))
         .or_else(|| named(target.map(|t| t.remote.as_str())))
-        .or(all.first())
+        .or(pool.first().copied())
         .map(|g| g.host.clone());
     let github: Vec<GhRemote> = all.iter().filter(|g| Some(&g.host) == host.as_ref()).cloned().collect();
     let by_name = |name: &str| github.iter().find(|g| g.remote == name).cloned();

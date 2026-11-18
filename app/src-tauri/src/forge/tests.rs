@@ -980,6 +980,27 @@ fn 只有一个_github_远端_直接用_不要求选() {
     assert_eq!(dto.repo_url.as_deref(), Some("https://github.com/larrygogo/meowo-pr-drill"));
 }
 
+/// 审查指出的回退：origin 在 gitlab.com、分支推在 github.com 的远端、没加 GitLab 账号。改版前「更改」面板照常显示
+/// GitHub 的 PR；不能因为 origin 认得出是 GitLab 就整块变成「去添加账号」。
+#[test]
+fn origin_在_gitlab_没账号_另一远端在_github_照常用_github() {
+    let sb = Sandbox::new("gl-origin");
+    let repo = github_repo(&sb);
+    sb.git(&repo, &["remote", "rename", "origin", "gh"]);
+    sb.git(&repo, &["remote", "add", "origin", "https://gitlab.com/o/meowo-pr-drill.git"]);
+    let init = sb.git(&repo, &["rev-parse", "HEAD~1"]);
+    sb.git(&repo, &["update-ref", "refs/remotes/gh/main", &init]);
+    sb.git(&repo, &["update-ref", "refs/remotes/gh/meowo/drill", &init]);
+    sb.git(&repo, &["branch", "-q", "--set-upstream-to", "gh/meowo/drill"]);
+    let prefs = sb.root.join("forge.json");
+    let fake = FakeGh::new().views(vec![ok(&fixture("derived_pr_no_checks.json"))]);
+    let dto = status(&fake, &Caches::default(), &prefs, &repo, false);
+    assert_eq!((dto.gh.as_str(), dto.forge.as_deref()), ("ok", Some("github")));
+    assert_eq!(dto.repo_url.as_deref(), Some("https://github.com/larrygogo/meowo-pr-drill"));
+    assert_eq!(dto.pr.map(|p| p.number), Some(12));
+    assert!(!dto.repo_needs_choice);
+}
+
 // ═══ 推送 / PR 目标判定（做空第二轮，scratchpad/redteam2r 的 rt2_ 实验转正）═══
 
 fn has_branch(bare: &Path, branch: &str) -> bool {

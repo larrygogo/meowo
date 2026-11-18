@@ -214,6 +214,9 @@ impl Forges for ListForges<'_> {
     fn platform(&self, host: &str) -> Option<Platform> {
         platform::public_platform(host).or_else(|| account_for(&self.list, host).and_then(Account::platform))
     }
+    fn usable(&self, host: &str) -> bool {
+        platform::host_name(host) == platform::GITHUB_COM || account_for(&self.list, host).is_some()
+    }
     fn open(&self, host: &str) -> Option<Box<dyn ForgeApi + '_>> {
         let account = account_for(&self.list, host)?;
         build(
