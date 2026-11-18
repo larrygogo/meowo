@@ -53,7 +53,7 @@ pub(crate) const GITHUB_COM: &str = "github.com";
 
 /// 别名归一：ssh 专用主机、www 前缀都按网页主机算。
 fn canonical_host(host: &str) -> String {
-    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    let host = host_key(host);
     match host.as_str() {
         "www.github.com" | "ssh.github.com" => GITHUB_COM.into(),
         "altssh.gitlab.com" | "www.gitlab.com" => "gitlab.com".into(),
@@ -63,9 +63,17 @@ fn canonical_host(host: &str) -> String {
     }
 }
 
-/// 内置认得的公共主机。
+/// 主机标识：「主机[:非默认端口]」，小写，https 的默认端口 443 去掉。账号里的主机、远端拆出的主机、链接里的主机、
+/// HTTP 白名单都按它比较（审查指出：账号填 host:443 时 url 库会去掉默认端口，原来的比较永远对不上）。
+pub(crate) fn host_key(host: &str) -> String {
+    let host = host.trim().trim_end_matches('/').to_ascii_lowercase();
+    let host = host.strip_suffix(":443").unwrap_or(&host);
+    host.trim_end_matches('.').to_string()
+}
+
+/// 内置认得的公共主机（只看主机名，端口不影响）。
 pub(crate) fn public_platform(host: &str) -> Option<Platform> {
-    match canonical_host(host).as_str() {
+    match canonical_host(host_name(&host_key(host))).as_str() {
         GITHUB_COM => Some(Platform::Github),
         "gitlab.com" => Some(Platform::Gitlab),
         "bitbucket.org" => Some(Platform::Bitbucket),
@@ -127,9 +135,22 @@ pub(crate) fn parse_remote_url(url: &str) -> Option<RemoteUrl> {
             return None;
         }
         let (authority, path) = after.split_once('/')?;
-        let host = authority.rsplit('@').next()?;
-        // [IPv6] 不认；端口去掉。
-        let host = host.split(':').next()?;
+        let authority = authority.rsplit('@').next()?;
+        // [IPv6] 不认。https / http 的非默认端口就是网页与 API 的端口，保留（自建实例 https://host:8443/…）；
+        // ssh / git 协议的端口是 ssh 端口，与网页无关，去掉（网页端口由账号里声明的主机补上，见 Forges::host_of）。
+        let (name, port) = match authority.split_once(':') {
+            Some((name, port)) => (name, Some(port)),
+            None => (authority, None),
+        };
+        let keep = match (scheme.to_ascii_lowercase().as_str(), port) {
+            ("https", Some(p)) => p != "443",
+            ("http", Some(p)) => p != "80",
+            _ => false,
+        };
+        let host = match port.filter(|_| keep) {
+            Some(port) => format!("{name}:{port}"),
+            None => name.to_string(),
+        };
         (host, path)
     } else {
         // scp 写法：[user@]host:path。冒号前不能有斜杠；单个字母是 Windows 盘符（C:/repo）。
@@ -137,9 +158,9 @@ pub(crate) fn parse_remote_url(url: &str) -> Option<RemoteUrl> {
         if left.contains('/') || left.contains('\\') || left.len() <= 1 {
             return None;
         }
-        (left.rsplit('@').next()?, path)
+        (left.rsplit('@').next()?.to_string(), path)
     };
-    let host = canonical_host(host);
+    let host = canonical_host(&host);
     if !valid_host(&host) {
         return None;
     }
@@ -169,6 +190,11 @@ pub(crate) trait Forges: Sync {
     fn usable(&self, host: &str) -> bool {
         host_name(host) == GITHUB_COM
     }
+    /// 远端拆出的主机 → 这台主机的标识（网页与 API 用）。有账号时用账号里声明的写法：ssh 远端拆不出网页端口，
+    /// 由账号补上 :8443 之类。
+    fn host_of(&self, host: &str) -> String {
+        host_key(host)
+    }
 }
 
 /// 只认公共主机、没有任何账号。
@@ -189,6 +215,7 @@ pub(crate) static NO_ACCOUNTS: NoAccounts = NoAccounts;
 pub(crate) fn recognize(forges: &dyn Forges, url: &str) -> Option<(String, String, Platform)> {
     let remote = parse_remote_url(url)?;
     let platform = forges.platform(&remote.host)?;
+    let remote = RemoteUrl { host: forges.host_of(&remote.host), ..remote };
     platform
         .path_ok(remote.path.split('/').count())
         .then_some((remote.host, remote.path, platform))
@@ -304,7 +331,10 @@ mod tests {
             ("https://user@bitbucket.org/ws/repo.git", "bitbucket.org", "ws/repo"),
             ("git@bitbucket.org:ws/repo.git", "bitbucket.org", "ws/repo"),
             ("https://codeberg.org/forgejo/forgejo.git", "codeberg.org", "forgejo/forgejo"),
-            ("https://git.example.com:8443/team/app/", "git.example.com", "team/app"),
+            ("https://git.example.com:8443/team/app/", "git.example.com:8443", "team/app"),
+            ("https://git.example.com:443/team/app", "git.example.com", "team/app"),
+            ("http://git.example.com:80/team/app", "git.example.com", "team/app"),
+            ("http://git.example.com:3000/team/app", "git.example.com:3000", "team/app"),
             ("ssh://git@git.example.com:2222/team/app.git", "git.example.com", "team/app"),
         ];
         for (url, host, path) in cases {
@@ -405,5 +435,10 @@ mod tests {
         assert_eq!(normalize_host_input("bad host.com"), None);
         assert_eq!(normalize_host_input("a.com:99999"), None);
         assert_eq!(host_name("git.example.com:8443"), "git.example.com");
+        // 默认端口规整掉：账号填 host:443 与远端 / 链接里的 host 是同一台。
+        assert_eq!(normalize_host_input("git.example.com:443"), Some("git.example.com".into()));
+        assert_eq!(host_key("Git.Example.com:443"), "git.example.com");
+        assert_eq!(public_platform("gitlab.com:443"), Some(Platform::Gitlab));
+        assert_eq!(parse_pr_url("https://git.example.com:8443/g/r/-/merge_requests/3").map(|p| p.0), Some("git.example.com:8443".into()));
     }
 }

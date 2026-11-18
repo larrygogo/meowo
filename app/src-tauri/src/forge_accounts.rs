@@ -113,7 +113,8 @@ pub(crate) fn save_list(path: &Path, accounts: &[Account]) -> Result<(), String>
 
 /// 这台主机（不含端口）的账号。
 pub(crate) fn account_for<'l>(list: &'l [Account], host: &str) -> Option<&'l Account> {
-    list.iter().find(|a| platform::host_name(&a.host).eq_ignore_ascii_case(host))
+    // 只比主机名：https 远端带网页端口、ssh 远端带的是 ssh 端口（已去掉），同一台主机一个账号。
+    list.iter().find(|a| platform::host_name(&platform::host_key(&a.host)) == platform::host_name(&platform::host_key(host)))
 }
 
 /// 凭据库的条目。refresh = GitLab 的刷新令牌那一条。
@@ -418,11 +419,18 @@ impl Forges for Accounts {
         platform::host_name(host) == platform::GITHUB_COM || account_for(&list(), host).is_some()
     }
 
+    fn host_of(&self, host: &str) -> String {
+        match account_for(&list(), host) {
+            Some(account) if platform::public_platform(host).is_none() => platform::host_key(&account.host),
+            _ => platform::host_key(host),
+        }
+    }
+
     fn open(&self, host: &str) -> Option<Box<dyn ForgeApi + '_>> {
         let account = account_for(&list(), host)?.clone();
         let platform = account.platform()?;
         // 公共主机的平台是固定的：清单里写错了平台（手改文件）就不用它。
-        if platform::public_platform(host).is_some_and(|p| p != platform) || host == platform::GITHUB_COM {
+        if platform::public_platform(host).is_some_and(|p| p != platform) || platform::host_name(host) == platform::GITHUB_COM {
             return None;
         }
         let token = refresh_if_due(&account);

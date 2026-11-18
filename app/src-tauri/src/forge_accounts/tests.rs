@@ -217,6 +217,12 @@ impl Forges for ListForges<'_> {
     fn usable(&self, host: &str) -> bool {
         platform::host_name(host) == platform::GITHUB_COM || account_for(&self.list, host).is_some()
     }
+    fn host_of(&self, host: &str) -> String {
+        match account_for(&self.list, host) {
+            Some(account) if platform::public_platform(host).is_none() => platform::host_key(&account.host),
+            _ => platform::host_key(host),
+        }
+    }
     fn open(&self, host: &str) -> Option<Box<dyn ForgeApi + '_>> {
         let account = account_for(&self.list, host)?;
         build(
@@ -519,3 +525,46 @@ fn 更改面板_gitlab_仓库走平台接口_不碰_gh() {
 }
 
 use serde_json::json;
+
+/// 审查指出：自建实例的端口在远端解析里丢了，网页链接与 API 地址没端口；账号填 host:443 时比较对不上。
+#[test]
+fn 自建实例的端口_ssh_与_https_远端都按账号的主机走() {
+    let dir = std::env::temp_dir().join(format!("meowo-forge-port-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git").current_dir(&dir).args(args).env("GIT_CONFIG_NOSYSTEM", "1").output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "init"]);
+    git(&["switch", "-q", "-c", "feat"]);
+    let http = FakeHttp::new(|_, url, _, _| match url {
+        u if u.contains("/merge_requests?") => resp(200, json!([])),
+        u if u.ends_with("/projects/g%2Fapp") => resp(200, json!({ "id": 1, "squash_option": "default_off" })),
+        _ => resp(404, json!({})),
+    });
+    let gh = |_: &str, _: &[&str]| None;
+    for (account_host, remote, want_host) in [
+        ("git.corp.example:8443", "ssh://git@git.corp.example:2222/g/app.git", "git.corp.example:8443"),
+        ("git.corp.example:8443", "https://git.corp.example:8443/g/app.git", "git.corp.example:8443"),
+        ("git.corp.example:443", "https://git.corp.example/g/app.git", "git.corp.example"),
+    ] {
+        let _ = std::process::Command::new("git").current_dir(&dir).args(["remote", "remove", "origin"]).output();
+        git(&["remote", "add", "origin", remote]);
+        let account = Account { platform: "gitlab".into(), host: platform::normalize_host_input(account_host).unwrap(), login: "me".into(), ..Default::default() };
+        let forges = ListForges { list: vec![account], http: &http };
+        http.calls.lock().unwrap().clear();
+        let caches = crate::forge::Caches::default();
+        let ctx = crate::forge::Ctx { forges: &forges, gh: &gh, caches: &caches, prefs: dir.join("forge.json"), env: &[("GIT_CONFIG_NOSYSTEM", Some("1"))] };
+        let dto = crate::forge::forge_status_with(&ctx, &dir.to_string_lossy(), false).unwrap();
+        assert_eq!((dto.gh.as_str(), dto.forge_host.as_deref()), ("ok", Some(want_host)), "{remote}");
+        assert_eq!(dto.repo_url, Some(format!("https://{want_host}/g/app")), "{remote}");
+        assert!(dto.compare_url.as_deref().unwrap_or_default().starts_with(&format!("https://{want_host}/g/app/-/merge_requests/new")), "{remote}");
+        let calls = http.calls.lock().unwrap().clone();
+        assert!(!calls.is_empty() && calls.iter().all(|(_, url, _)| url.starts_with(&format!("https://{want_host}/api/v4/"))), "{remote}: {calls:?}");
+        // 真实 HTTP 的白名单也认这台主机（含默认端口写法）。
+        assert!(crate::forge::http::allowed(&api_host(Platform::Gitlab, &forges.list[0].host), &format!("https://{want_host}/api/v4/user")));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -74,7 +74,8 @@ fn origin(url: &str) -> Option<String> {
 
 /// 只许发往这台主机（含端口）。
 pub(crate) fn allowed(host: &str, url: &str) -> bool {
-    origin(url).is_some_and(|o| o == host.to_ascii_lowercase())
+    // url 库会去掉默认端口 443，账号主机按同一规则规整后再比（host:443 与 host 是同一台）。
+    origin(url).is_some_and(|o| o == super::platform::host_key(host))
 }
 
 /// 重定向去哪：同一台主机的 https 才跟，别的原样回给调用方。
@@ -392,6 +393,9 @@ mod tests {
         assert!(allowed("gitlab.com", "https://gitlab.com/api/v4/user"));
         assert!(allowed("git.example.com:8443", "https://git.example.com:8443/api/v1/user"));
         assert!(!allowed("git.example.com:8443", "https://git.example.com/api/v1/user"));
+        // 账号主机写了默认端口：url 库去掉 :443 后仍算同一台（审查：以前全部报 host_not_allowed）。
+        assert!(allowed("git.example.com:443", "https://git.example.com/api/v1/user"));
+        assert!(allowed("git.example.com:443", "https://git.example.com:443/api/v1/user"));
         assert!(!allowed("gitlab.com", "http://gitlab.com/api/v4/user"), "不许降级成 http");
         assert!(!allowed("gitlab.com", "https://gitlab.com.evil.net/api"));
         assert!(!allowed("gitlab.com", "https://evil.net/?https://gitlab.com/"));
