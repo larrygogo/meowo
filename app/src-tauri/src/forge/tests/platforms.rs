@@ -506,6 +506,27 @@ fn gitlab_行内评论_重命名文件用旧路径() {
     );
 }
 
+/// 复核指出：大文件 GitLab 不给 diff（too_large / collapsed，diff 为空），以前按「块外上下文行」同时带了 old_line 与 new_line；
+/// 拿不到 diff 就只带面板给的那一侧。
+#[test]
+fn gitlab_行内评论_拿不到_diff_只带一侧() {
+    let mr = fixture("gitlab_mr_4365.json");
+    let fake = Fake::new(move |method, url, _| match (method, url) {
+        ("GET", u) if u.ends_with("/merge_requests/4365") => resp(200, mr.clone()),
+        ("GET", u) if u.contains("/diffs") => resp(200, json!([{ "old_path": "big.json", "new_path": "big.json", "diff": "", "too_large": true, "collapsed": true }])),
+        ("POST", _) => resp(201, json!({})),
+        _ => resp(404, json!({})),
+    });
+    let flags = Mutex::new(Vec::new());
+    let gl = gitlab(&fake, &flags);
+    gl.line_comment(".", "gitlab-org/cli", 4365, "big.json", 10, "NEW", "x").unwrap();
+    let (_, _, body, _) = fake.calls().into_iter().rfind(|(m, _, _, _)| m == "POST").unwrap();
+    assert_eq!((body["position"]["old_line"].as_i64(), body["position"]["new_line"].as_i64()), (None, Some(10)));
+    gl.line_comment(".", "gitlab-org/cli", 4365, "big.json", 7, "OLD", "x").unwrap();
+    let (_, _, body, _) = fake.calls().into_iter().rfind(|(m, _, _, _)| m == "POST").unwrap();
+    assert_eq!((body["position"]["old_line"].as_i64(), body["position"]["new_line"].as_i64()), (Some(7), None));
+}
+
 #[test]
 fn gitlab_401_标要重新登录() {
     let fake = Fake::new(|_, _, _| resp(401, fixture("gitlab_user_401.json")));

@@ -550,9 +550,10 @@ impl ForgeApi for Gitlab<'_> {
         let old_path = entry.map(|d| s(d, "/old_path")).filter(|p| !p.is_empty()).unwrap_or(path);
         let new_path = entry.map(|d| s(d, "/new_path")).filter(|p| !p.is_empty()).unwrap_or(path);
         let (old_line, new_line) = match entry {
-            Some(d) => diff_position(s(d, "/diff"), side, line),
-            None if side == "OLD" => (Some(line), None),
-            None => (None, Some(line)),
+            // 大文件 GitLab 不给 diff（too_large / collapsed）：推不出另一侧，按面板给的一侧填，不猜成上下文行。
+            Some(d) if !s(d, "/diff").trim().is_empty() => diff_position(s(d, "/diff"), side, line),
+            _ if side == "OLD" => (Some(line), None),
+            _ => (None, Some(line)),
         };
         let mut position = json!({
             "position_type": "text",
