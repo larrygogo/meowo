@@ -543,15 +543,17 @@ export const zh = {
     emptyStarting: "会话正在启动…",
     // 切模型 / 模式（任务 20261114-tui-model-switch）：运行中或有待批审批时不写终端、不重启，排到这一轮之后。
     // 队列存在 Meowo 进程里：Meowo 重启会清空，界面写明（复核 M3）。
-    settingsDeferred: (name: string) => `这一轮结束后切换到「${name}」（关闭应用会取消）`,
+    settingsDeferredTip: "排在 Meowo 里，关闭 Meowo 会取消这次切换",
+    settingsDeferredCancel: "撤销",
+    settingsDeferred: (name: string) => `这一轮结束后切换到「${name}」`,
     // Lead 关卡等待中：带参重启会杀掉会话内的关卡等待器，接回后没有回合、没人再起等待器，答复后不会自动
     // 继续（做空 N3；B7 真机探针 Kimi/Gemini 均证实，evidence/round3-n3），排到续跑那一轮跑完之后。
-    settingsDeferredLead: (name: string) => `关卡答复后那一轮跑完再切换到「${name}」（关闭应用会取消）`,
+    settingsDeferredLead: (name: string) => `关卡答复后那一轮跑完再切换到「${name}」`,
     // 会话没在运行：Codex/OpenCode 恢复时不回放模型，打开后由宿主经会话服务补设（做空 N6）。
-    settingsDeferredOpen: (name: string) => `打开会话后切换到「${name}」（关闭应用会取消）`,
+    settingsDeferredOpen: (name: string) => `打开会话后切换到「${name}」`,
     // 排了 30 分钟这一轮还没结束（或宿主一直没等到空闲）：出队，告诉用户（做空 N5）。
     // 对话页执行时会话服务 / TUI 还没就绪：交给宿主等就绪再切（做空 R5）。
-    settingsDeferredReady: (name: string) => `会话就绪后切换到「${name}」（关闭应用会取消）`,
+    settingsDeferredReady: (name: string) => `会话就绪后切换到「${name}」`,
     // Codex 会话内首次切进要沙箱的档（必要时询问 / 自动审查）：带沙箱参数重开了会话（第五轮 P3），≤20 字。
     settingsSandboxReopen: (name: string) => `已带沙箱重开会话，切到「${name}」`,
     settingsQueueExpired: "等太久没切成，已取消，请重新选择",
@@ -1121,11 +1123,12 @@ export const zh = {
     tabCloseOthers: "关闭其他",
     tabCloseRight: "关闭右侧",
     tabCloseAll: "关闭所有",
-    browserAgentActive: "Agent 正在操作",
-    browserAgentActiveDetail: "Agent 正在操作，网页输入已锁定",
-    browserAgentPaused: "你已接管，Agent 暂时不能操作",
-    browserAgentTakeOver: "接管",
-    browserAgentResume: "交还",
+    browserAgentActive: "Agent 正在控制此页面",
+    browserAgentActiveDetail: "你的点击和输入暂不生效",
+    browserAgentPaused: "你已接管",
+    browserAgentPausedDetail: "Agent 暂停操作",
+    browserAgentTakeOver: "我来接管",
+    browserAgentResume: "交还 Agent",
     browserAgentBusyTip: "Agent 正在操作浏览器",
     browserMore: "更多",
     browserZoomIn: "放大",
@@ -1133,6 +1136,15 @@ export const zh = {
     browserZoomReset: "重置缩放",
     browserPrint: "打印",
     browserCopyUrl: "复制网址",
+    browserEmuDesktop: "模拟桌面 1280×800",
+    browserEmuTablet: "模拟平板 820×1180",
+    browserEmuMobile: "模拟手机 390×844",
+    browserEmuReset: "还原为面板尺寸",
+    browserEmuCurrent: "当前",
+    browserEmuDevice: (device: string) => ({ desktop: "桌面", tablet: "平板", mobile: "手机" } as Record<string, string>)[device] ?? "自定义",
+    browserEmuUa: "UA 已改",
+    browserEmuHeaders: (names: string) => `附加请求头：${names}`,
+    browserEmuTip: (detail: string) => `正在模拟：${detail}。点击还原为面板尺寸`,
     // 网页的权限请求（browser_permission.rs）：「httpbin.org 想要下载多个文件」。
     browserPermissionAsk: (host: string, what: string) => `${host} 想要${what}`,
     browserPermissionKinds: {

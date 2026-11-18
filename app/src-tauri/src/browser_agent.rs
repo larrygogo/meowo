@@ -498,6 +498,42 @@ fn run(
             snapshot(app, id)
         }
         "browser_snapshot" => snapshot(app, id),
+        "browser_emulate" => {
+            // 参数先校验完再动页签：不对就原样报错，模拟状态不变。
+            let next = crate::browser_emulation::parse(args)?;
+            let summary = match &next {
+                Some(_) => format!(
+                    "已设置：{}",
+                    crate::browser_emulation::describe(next.as_ref())
+                ),
+                None => "已还原为面板实际大小和默认 UA".to_string(),
+            };
+            let panes = app.state::<BrowserPanes>();
+            ensure_agent_control(&panes, id, generation)?;
+            let check = || ensure_agent_control(&panes, id, generation);
+            let reload = browser_pane::set_emulation(app, &panes, id, next, &check)?;
+            if reload {
+                // 刷新会丢掉用户刚接管后在页面上做的事：刷新前再确认一次控制权还在。
+                check()?;
+                browser_pane::webview(app, id)?
+                    .reload()
+                    .map_err(|e| e.to_string())?;
+                std::thread::sleep(Duration::from_millis(400));
+            } else {
+                // 只改尺寸：给响应式布局一帧重排。
+                std::thread::sleep(Duration::from_millis(300));
+            }
+            wait_loaded(app, id, generation)?;
+            let reloaded = if reload {
+                "，已刷新页面让服务端按新请求重新渲染"
+            } else {
+                ""
+            };
+            Ok(format!(
+                "{summary}{reloaded}。\n\n{}",
+                snapshot(app, id)?
+            ))
+        }
         "browser_click" => {
             let r = ref_arg(args)?;
             point(app, id, &r)?;
@@ -667,19 +703,42 @@ fn snapshot(app: &tauri::AppHandle, id: u32) -> Result<String, String> {
         Value::String(s) => s,
         other => other.to_string(),
     };
-    let (waiting, blocked) = app
+    let (waiting, blocked, emulation) = app
         .state::<BrowserPanes>()
         .panes
         .lock()
         .ok()
         .and_then(|map| {
-            map.get(&id)
-                .map(|info| (info.permission.clone(), info.blocked.clone()))
+            map.get(&id).map(|info| {
+                (
+                    info.permission.clone(),
+                    info.blocked.clone(),
+                    info.emulation.clone(),
+                )
+            })
         })
-        .unwrap_or((None, None));
+        .unwrap_or((None, None, None));
+    // 视口写在页面内容前面：Agent 先知道看到的是哪一版布局，再决定要不要 browser_emulate。
+    // 乘上 visualViewport.scale：手机模拟下内容超宽时页面会像真手机一样缩小装下，innerWidth
+    // 量的是缩小后的可见区域（E2E 实测 390 宽的手机报成 1240），媒体查询看到的仍是 390。
+    let inner = eval(
+        app,
+        id,
+        "(() => { const s = (window.visualViewport && visualViewport.scale) || 1; return [Math.round(innerWidth * s), Math.round(innerHeight * s)]; })()",
+    )
+        .ok()
+        .and_then(|v| {
+            let pair = v.as_array()?;
+            Some((
+                pair.first()?.as_u64()? as u32,
+                pair.get(1)?.as_u64()? as u32,
+            ))
+        })
+        .unwrap_or((0, 0));
     Ok(format!(
-        "{}{page}",
-        permission_note(waiting.as_ref(), blocked.as_ref())
+        "{}{}{page}",
+        permission_note(waiting.as_ref(), blocked.as_ref()),
+        crate::browser_emulation::viewport_note(emulation.as_ref(), inner)
     ))
 }
 
@@ -853,6 +912,7 @@ const AUTO_ALLOWED: &[&str] = &[
     "browser_forward",
     "browser_reload",
     "browser_screenshot",
+    "browser_emulate",
 ];
 
 /// 托管会话启动时追加的参数（pty.rs 的 start_spawned，外部终端启动不走这里）。各 agent 怎么接
@@ -1403,6 +1463,38 @@ mod tests {
     fn evaluate_is_not_auto_allowed() {
         assert!(!AUTO_ALLOWED.contains(&"browser_evaluate"));
         assert!(AUTO_ALLOWED.contains(&"browser_click"));
+    }
+
+    /// meowo-reporter 的 MCP 工具清单在可执行文件里（不在库里），这里读它的源码核对：
+    /// 除 browser_evaluate 外每个工具都在免审批清单里，免审批清单也没有清单外的名字。
+    /// 加工具只改一边时，claude 会对新工具逐次弹审批（或放行一个不存在的名字）。
+    #[test]
+    fn auto_allowed_matches_the_mcp_tool_list() {
+        let source = include_str!("../crates/meowo-reporter/src/mcp.rs");
+        let body = &source[source.find("fn tools()").expect("mcp.rs 里找不到 tools()")..];
+        let body = &body[..body.find("#[cfg(test)]").unwrap_or(body.len())];
+        let mut listed: Vec<&str> = Vec::new();
+        for (at, _) in body.match_indices("\"browser_") {
+            let name = &body[at + 1..];
+            let name = &name[..name.find('"').unwrap()];
+            if !listed.contains(&name) {
+                listed.push(name);
+            }
+        }
+        assert!(listed.contains(&"browser_emulate"), "{listed:?}");
+        for name in &listed {
+            assert_eq!(
+                AUTO_ALLOWED.contains(name),
+                *name != "browser_evaluate",
+                "{name}"
+            );
+        }
+        for name in AUTO_ALLOWED {
+            assert!(
+                listed.contains(name),
+                "免审批清单里的 {name} 不在 MCP 工具清单中"
+            );
+        }
     }
 
     #[test]

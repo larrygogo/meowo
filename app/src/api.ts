@@ -637,7 +637,18 @@ export type BrowserPaneInfo = {
   permission: BrowserPermission | null;
   /** 用户刚阻止的请求：同一页面不会再问，被拦的下载也没有事件，留一条提示（刷新后可重试）。 */
   blocked: BrowserPermission | null;
+  /** 设备模拟（视口、UA、附加请求头），没模拟是 null。请求头只给名字，不给值。见 browser_emulation.rs。 */
+  emulation?: BrowserEmulation | null;
 };
+export type BrowserEmulation = {
+  metrics: { device: "desktop" | "tablet" | "mobile" | "custom"; width: number; height: number } | null;
+  userAgent: string | null;
+  headerNames: string[];
+};
+/** 用户在「…」菜单里选设备或还原（自定义尺寸、请求头只给 Agent 的工具用）。 */
+export function emulateBrowserPane(id: number, device: "desktop" | "tablet" | "mobile" | "reset"): Promise<void> {
+  return invoke("browser_pane_emulate", { id, device });
+}
 /** id 每条请求不同：前端据此判断答复是否已送达（见 BrowserPane 的防连点）。 */
 export type BrowserPermission = { id: number; kind: string; host: string };
 export type BrowserDownload = { id: number; fileName: string; state: "progress" | "done" | "failed" };
@@ -1498,6 +1509,11 @@ export function queuedSessionSettings(sessionId: number): Promise<unknown> {
 
 export function takeQueuedSessionSettings(sessionId: number): Promise<unknown> {
   return invoke<unknown>("take_queued_session_settings", { sessionId } satisfies SessionArg);
+}
+
+/** 撤掉排着的切换（不管等待条件）；返回是否真的撤掉了（已经执行了就是 false）。 */
+export function cancelQueuedSessionSettings(sessionId: number): Promise<boolean> {
+  return invoke<boolean>("cancel_queued_session_settings", { sessionId } satisfies SessionArg);
 }
 
 /** 会话此刻的模型与模式（后端 session_settings::LiveSettings）：会话服务机制读 rollout 最新段，

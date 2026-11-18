@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { answerBrowserPanePermission, browserPaneAction, navigateBrowserPane, openLink, revealBrowserPaneDownload, setBrowserPaneAgentPaused, setBrowserPaneBounds, type BrowserDownload, type BrowserPaneInfo } from "../../api";
+import { answerBrowserPanePermission, browserPaneAction, emulateBrowserPane, navigateBrowserPane, openLink, revealBrowserPaneDownload, setBrowserPaneAgentPaused, setBrowserPaneBounds, type BrowserDownload, type BrowserPaneInfo } from "../../api";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import { PathMenu, type PathMenuItem } from "./pathMenu";
@@ -31,6 +31,22 @@ export function occluded(area: DOMRect, root: ParentNode = document): boolean {
   return false;
 }
 
+/// 接管了多久（m:ss），每秒走一次；没在接管时不起定时器。
+function usePausedFor(paused: boolean): string {
+  const [since, setSince] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!paused) { setSince(null); return; }
+    const start = Date.now();
+    setSince(start);
+    setNow(start);
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [paused]);
+  const seconds = since === null ? 0 : Math.max(0, Math.floor((now - since) / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
 /**
  * 面板「浏览器」页签：地址栏 + 一块占位区域。真正的网页是后端在 chat 窗口里叠的原生
  * 子 webview（browser_pane.rs），这里负责把占位区域的位置实时报过去。
@@ -50,6 +66,7 @@ export function BrowserPane({ info, visible, suggestions }: {
   const inputLocked = info.agentActive && !info.agentPaused;
   const [draft, setDraft] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const pausedFor = usePausedFor(!!info.agentPaused);
   const showNative = visible && !blank;
 
   // 位置同步：面板拖宽、最大化、窗口缩放、DOM 里冒出菜单/弹窗，都重新量一次。
@@ -68,7 +85,9 @@ export function BrowserPane({ info, visible, suggestions }: {
       frame = 0;
       const rect = host.getBoundingClientRect();
       const show = rect.width > 0 && rect.height > 0 && !occluded(rect);
-      const bounds = { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
+      // 原生视图只盖内容区：Agent 控制时占位区域留一圈内边距画边框（见 .browser-pane-view.is-agent）。
+      const inset = parseFloat(getComputedStyle(host).paddingTop) || 0;
+      const bounds = { x: rect.left + inset, y: rect.top + inset, width: Math.max(0, rect.width - inset * 2), height: Math.max(0, rect.height - inset * 2) };
       const key = show ? `${bounds.x},${bounds.y},${bounds.width},${bounds.height}` : "hidden";
       if (key === last) return;
       last = key;
@@ -89,7 +108,7 @@ export function BrowserPane({ info, visible, suggestions }: {
       // 卸载（关面板、换会话）时一定要藏起来：原生视图不会跟着 DOM 消失。
       void setBrowserPaneBounds(info.id, { x: 0, y: 0, width: 0, height: 0 }, false).catch(() => {});
     };
-  }, [info.id, showNative]);
+  }, [info.id, showNative, inputLocked]);
 
   // 新开的空白页签直接把光标放进地址栏。
   useEffect(() => {
@@ -113,6 +132,19 @@ export function BrowserPane({ info, visible, suggestions }: {
     if (inputLocked) return;
     void browserPaneAction(info.id, action).catch((e) => setError(formatBackendError(e, t.locale)));
   };
+  // 设备模拟：Agent 用 browser_emulate 设的，用户也能在「…」菜单里自己选或还原。只有 Windows
+  // 的 WebView2 有 Chrome 调试协议，其他平台不给入口（后端也会明确拒绝）。
+  const emulation = info.emulation ?? null;
+  const canEmulate = isWindows();
+  const emulate = (device: Parameters<typeof emulateBrowserPane>[1]) => {
+    if (inputLocked) return;
+    void emulateBrowserPane(info.id, device).catch((e) => setError(formatBackendError(e, t.locale)));
+  };
+  const emuDetail = emulation ? [
+    emulation.metrics ? `${t.chat.browserEmuDevice(emulation.metrics.device)} ${emulation.metrics.width}×${emulation.metrics.height}` : null,
+    emulation.userAgent ? t.chat.browserEmuUa : null,
+    emulation.headerNames.length > 0 ? t.chat.browserEmuHeaders(emulation.headerNames.join(", ")) : null,
+  ].filter(Boolean).join(" · ") : "";
 
   // 权限请求：按钮在答复送达前锁住。后端每次答复的是排在最前的那条，连点两下会把下一条也
   // 一起答掉。按请求编号判断，不按对象引用：标题、加载状态这些无关推送每次都是新对象，会提前
@@ -170,6 +202,20 @@ export function BrowserPane({ info, visible, suggestions }: {
             }
           }}
         />
+        {/* 正在模拟时在地址栏右侧标出来：页面看着和面板大小对不上时，一眼知道为什么，点一下还原。 */}
+        {emulation && (
+          <button
+            type="button"
+            className="browser-pane-emu"
+            aria-label={t.chat.browserEmuTip(emuDetail)}
+            data-tip-placement="top"
+            data-tip={t.chat.browserEmuTip(emuDetail)}
+            disabled={inputLocked}
+            onClick={() => emulate("reset")}
+          >
+            {emulation.metrics ? `${t.chat.browserEmuDevice(emulation.metrics.device)} ${emulation.metrics.width}×${emulation.metrics.height}` : t.chat.browserEmuUa}
+          </button>
+        )}
         <button type="button" className="chat-diff-action" aria-label={t.chat.browserOpenExternal} data-tip-placement="top" data-tip={t.chat.browserOpenExternal} disabled={blank || inputLocked} onClick={() => void openLink(info.url).catch((e) => setError(formatBackendError(e, t.locale)))}>
           <Icon glyph={icExternal} size={14} />
         </button>
@@ -203,18 +249,19 @@ export function BrowserPane({ info, visible, suggestions }: {
             "sep",
             { key: "print", label: t.chat.browserPrint, icon: null, hint: "Ctrl+P", onSelect: () => act("print") },
             { key: "copy", label: t.chat.browserCopyUrl, icon: null, onSelect: () => void navigator.clipboard?.writeText(info.url).catch(() => {}) },
+            ...(canEmulate ? [
+              "sep" as const,
+              ...(["desktop", "tablet", "mobile"] as const).map((device) => ({
+                key: `emu_${device}`,
+                label: { desktop: t.chat.browserEmuDesktop, tablet: t.chat.browserEmuTablet, mobile: t.chat.browserEmuMobile }[device],
+                icon: null,
+                hint: emulation?.metrics?.device === device ? t.chat.browserEmuCurrent : undefined,
+                onSelect: () => emulate(device),
+              })),
+              ...(emulation ? [{ key: "emu_reset", label: t.chat.browserEmuReset, icon: null, onSelect: () => emulate("reset") }] : []),
+            ] : []),
           ] satisfies (PathMenuItem | "sep")[]}
         />
-      )}
-      {/* agent 操作时的提示与接管（同 Kimi Code「你可以随时查看 Agent 的操作并接管」）。 */}
-      {(info.agentActive || info.agentPaused) && (
-        <div className={"browser-pane-agent" + (info.agentPaused ? " is-paused" : "")} role="status">
-          <span className="browser-pane-agent-dot" aria-hidden="true" />
-          <span>{info.agentPaused ? t.chat.browserAgentPaused : inputLocked && isWindows() ? t.chat.browserAgentActiveDetail : t.chat.browserAgentActive}</span>
-          <button type="button" onClick={() => void setBrowserPaneAgentPaused(info.id, !info.agentPaused).catch(() => {})}>
-            {info.agentPaused ? t.chat.browserAgentResume : t.chat.browserAgentTakeOver}
-          </button>
-        </div>
       )}
       {info.permission && (
         <div className="browser-pane-notice is-permission" role="alert">
@@ -241,7 +288,24 @@ export function BrowserPane({ info, visible, suggestions }: {
         />
       )}
       {error && <div className="browser-pane-error" role="alert">{error}</div>}
-      <div ref={hostRef} className="browser-pane-view">
+      {/* agent 操作时的提示与接管（同 Kimi Code「Agent 正在控制此标签页 / 我来接管 / 已接管时长」）。
+          控制中：提示条与网页四周的边框同一个绿色（也是网页里 Agent 鼠标的颜色），连成一体，
+          一眼看出「这块现在归 Agent」。紧贴网页放（权限、下载提示在它上面），条和框才连得上；接管后退回中性色，显示已接管多久。 */}
+      {(info.agentActive || info.agentPaused) && (
+        <div className={"browser-pane-agent" + (info.agentPaused ? " is-paused" : "")} role="status">
+          <span className="browser-pane-agent-dot" aria-hidden="true" />
+          <span className="browser-pane-agent-text">
+            <strong>{info.agentPaused ? t.chat.browserAgentPaused : t.chat.browserAgentActive}</strong>
+            {info.agentPaused
+              ? <span>{pausedFor} · {t.chat.browserAgentPausedDetail}</span>
+              : inputLocked && isWindows() && <span>{t.chat.browserAgentActiveDetail}</span>}
+          </span>
+          <button type="button" onClick={() => void setBrowserPaneAgentPaused(info.id, !info.agentPaused).catch(() => {})}>
+            {info.agentPaused ? t.chat.browserAgentResume : t.chat.browserAgentTakeOver}
+          </button>
+        </div>
+      )}
+      <div ref={hostRef} className={"browser-pane-view" + (inputLocked && !blank ? " is-agent" : "")}>
         {blank && (
           <div className="browser-pane-start">
             <p>{t.chat.browserStartHint}</p>

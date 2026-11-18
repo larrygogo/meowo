@@ -172,6 +172,9 @@ export const QA_SHOTS = [
   { name: "qa-browser-paused", scene: "flow-browser-paused", sel: ".browser-pane" },
   { name: "qa-browser-idle", scene: "flow-browser-idle", sel: ".browser-pane" },
   { name: "qa-browser-blank", scene: "flow-browser-blank", sel: ".browser-pane" },
+  { name: "qa-browser-emu", scene: "flow-browser-emu", sel: ".browser-pane-emu", langs: ["zh", "en"] },
+  { name: "qa-browser-emu-menu", scene: "flow-browser-emu", sel: ".browser-pane-emu", steps: [["click", ".browser-pane-bar button[aria-haspopup='menu']"]] },
+  { name: "qa-browser-emu-tip", scene: "flow-browser-emu", sel: ".browser-pane-emu", steps: [["hover", ".browser-pane-emu"], ["tick", 900]] },
   { name: "qa-shell", scene: "flow-shell", sel: ".shell-term" },
   // ── 托管终端页签 ──
   // 浅色那张和深色那张除 DEV 角标外逐像素相同，这是产品定的：终端页签整窗恒为深色（styles.css

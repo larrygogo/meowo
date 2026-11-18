@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent, type PointerEvent } from "react";
 import { Icon, type Glyph } from "../../icons/Icon";
 import { icClose, icPencil, icRefreshCw } from "../../icons/glyphs";
 import { icArrowUp, icGrip, icPaperclip, icUndo } from "../../icons/glyphs.chat";
@@ -115,14 +115,6 @@ export function QueuedPrompts({
     rest.splice(after ? at + 1 : at, 0, id);
     void reorder(rest);
   };
-  const dragOver = (item: QueuedPromptDto, event: DragEvent<HTMLDivElement>) => {
-    if (dragging == null || item.state !== "held") return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
-    const box = event.currentTarget.getBoundingClientRect();
-    const after = event.clientY > box.top + box.height / 2;
-    if (drop?.id !== item.id || drop.after !== after) setDrop({ id: item.id, after });
-  };
   const endDrag = () => { cancelTouch(); setDragging(null); setDrop(null); };
   const updateTouch = () => {
     const active = touch.current;
@@ -152,8 +144,11 @@ export function QueuedPrompts({
     setDrop((old) => old?.id === target?.id && old?.after === target?.after ? old : target);
     frame.current = requestAnimationFrame(updateTouch);
   };
+  // 鼠标、触摸、笔都走指针事件，不用 HTML 拖放：Windows 上对话窗为了接住文件拖入，在页面的渲染窗口上
+  // 注册了自己的系统拖放目标（src-tauri/src/dropzone.rs），网页内部的 HTML 拖放跟着失效——dragover /
+  // drop 根本不触发，桌面上拖了没反应（2026-11-18 用户报「排队消息的拖拽排序不生效」）。
   const touchStart = (event: PointerEvent<HTMLButtonElement>, id: number) => {
-    if (busy || event.pointerType === "mouse" || !event.isPrimary) return;
+    if (busy || !event.isPrimary || (event.pointerType === "mouse" && event.button !== 0)) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     touch.current = { pointerId: event.pointerId, id, x: event.clientX, y: event.clientY, startY: event.clientY, moved: false, target: null };
@@ -202,12 +197,6 @@ export function QueuedPrompts({
       className={"chat-queued-turn is-" + item.state
         + (dragging === item.id ? " is-dragging" : "")
         + (drop?.id === item.id && dragging !== item.id ? (drop.after ? " drop-after" : " drop-before") : "")}
-      onDragOver={(event) => dragOver(item, event)}
-      onDrop={(event) => {
-        event.preventDefault();
-        if (dragging != null && drop) moveTo(dragging, drop.id, drop.after);
-        endDrag();
-      }}
     >
       {editing === item.id && draft ? <div className="chat-queue-editor">
         <textarea
@@ -247,19 +236,11 @@ export function QueuedPrompts({
             className="chat-queue-grip"
             aria-label={t.chat.queueDragHandle}
             data-tip={t.chat.queueDragHandle}
-            draggable={!busy}
             onPointerDown={(event) => touchStart(event, item.id)}
             onPointerMove={touchMove}
             onPointerUp={touchEnd}
             onPointerCancel={touchCancel}
             onLostPointerCapture={touchCancel}
-            onDragStart={(event) => {
-              if (touch.current || busy) { event.preventDefault(); return; }
-              event.dataTransfer.effectAllowed = "move";
-              event.dataTransfer.setData("text/plain", String(item.id));
-              setDragging(item.id);
-            }}
-            onDragEnd={endDrag}
             onKeyDown={(event) => {
               if (busy || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
               event.preventDefault();
