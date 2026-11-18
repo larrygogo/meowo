@@ -372,9 +372,28 @@ fn changed() {
     crate::github::emit_changed();
 }
 
-fn report_auth(key: String, used: Token, ok: bool) {
-    let current = list().into_iter().find(|a| a.key() == key).and_then(|a| token_of(&a));
-    if auth_result_with(&list_path(), &key, &used, current.as_ref(), ok) {
+/// 一次回包的令牌好坏怎么落到清单上（可注入，单测覆盖）。审查指出：401 一次就永久标重登不对——GitLab 没有合并
+/// 权限也回 401。现在：
+/// - 2xx：只有清单里正标着「要重新登录」时才去改（不每个回包都读写文件）；
+/// - 401：已经标过就什么都不做；没标过先用同一个令牌问一次「我是谁」（confirm，不再回报），确认令牌确实被拒才标。
+///
+/// 返回 true = 清单变了（要通知前端）。
+pub(crate) fn report_with(path: &Path, key: &str, used: &Token, current: Option<&Token>, ok: bool, marked: bool, confirm: &dyn Fn() -> bool) -> bool {
+    if ok != marked {
+        // ok 且没标 / 被拒且已标：没有要改的。
+        return false;
+    }
+    if !ok && !confirm() {
+        return false;
+    }
+    auth_result_with(path, key, used, current, ok)
+}
+
+fn report_auth(key: String, used: Token, ok: bool, confirm: &dyn Fn() -> bool) {
+    let account = list().into_iter().find(|a| a.key() == key);
+    let marked = account.as_ref().is_some_and(|a| a.needs_relogin);
+    let current = account.and_then(|a| token_of(&a));
+    if report_with(&list_path(), &key, &used, current.as_ref(), ok, marked, confirm) {
         lock(&CACHE).list = None;
         crate::github::emit_changed();
     }
@@ -482,9 +501,15 @@ impl Forges for Accounts {
         };
         let key = account.key();
         let used = token.clone();
+        let (confirm_host, confirm_user, confirm_api) = (account.host.clone(), account.auth_user.clone(), api_host(platform, &account.host));
         let on_auth = move |ok: bool| {
             if let Some(used) = &used {
-                report_auth(key.clone(), used.clone(), ok);
+                // 确认令牌被拒：用同一个令牌问「我是谁」，只有它也 401 才算。
+                let confirm = || {
+                    let probe = RealForgeHttp { host: confirm_api.clone() };
+                    whoami(&probe, platform, &confirm_host, used, confirm_user.as_deref()).err().as_deref() == Some("gh/not_authed")
+                };
+                report_auth(key.clone(), used.clone(), ok, &confirm);
             }
         };
         build(

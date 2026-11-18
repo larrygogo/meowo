@@ -327,6 +327,8 @@ fn gitlab_合并_钉住头提交_各种拒绝说清楚() {
         gl.merge(".", "gitlab-org/cli", &pr, "merge", &head),
         Err("forge/forbidden: 401 Unauthorized".into())
     );
+    // 回查 /user 不再回报令牌好坏（以前回查成功会紧跟着报一次「好用」，多读写一次清单、多发一次事件）。
+    assert_eq!(flags.lock().unwrap().last(), Some(&false));
     // 令牌真的失效：/user 也 401 → 要重新登录。
     user_ok.store(0, Ordering::SeqCst);
     assert_eq!(gl.merge(".", "gitlab-org/cli", &pr, "merge", &head), Err("gh/not_authed".into()));

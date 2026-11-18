@@ -618,3 +618,36 @@ fn 设备码令牌并发续期_只续一次_不误标重登() {
     assert_eq!(refresh_with(&path2, &vaults, &rejected, "cid", &stored.key(), 1_000), Refresh::Rejected);
     assert!(load_list(&path2)[0].needs_relogin);
 }
+
+/// 审查指出：401 一次就永久标重登。现在 401 先用同一令牌问一次「我是谁」，确认被拒才标；已标过的不再回查；
+/// 好用的回包只在正标着重登时才改清单。
+#[test]
+fn 令牌被拒要回查确认才标重登() {
+    let path = sandbox("confirm");
+    let account = Account { platform: "gitlab".into(), host: "gitlab.com".into(), login: "alice".into(), ..Default::default() };
+    save_list(&path, std::slice::from_ref(&account)).unwrap();
+    let token = Token::secret("glpat-A").unwrap();
+    let asked = AtomicUsize::new(0);
+    let fine = || {
+        asked.fetch_add(1, Ordering::SeqCst);
+        false
+    };
+    let rejected = || {
+        asked.fetch_add(1, Ordering::SeqCst);
+        true
+    };
+    // 没权限的 401（GitLab 合并）：回查 /user 还好用，不标。
+    assert!(!report_with(&path, &account.key(), &token, Some(&token), false, false, &fine));
+    assert!(!load_list(&path)[0].needs_relogin);
+    // 回查也被拒：标。
+    assert!(report_with(&path, &account.key(), &token, Some(&token), false, false, &rejected));
+    assert!(load_list(&path)[0].needs_relogin);
+    // 已经标过：不再回查。
+    let before = asked.load(Ordering::SeqCst);
+    assert!(!report_with(&path, &account.key(), &token, Some(&token), false, true, &rejected));
+    assert_eq!(asked.load(Ordering::SeqCst), before);
+    // 好用的回包：没标时什么都不做，标着时清掉。
+    assert!(!report_with(&path, &account.key(), &token, Some(&token), true, false, &rejected));
+    assert!(report_with(&path, &account.key(), &token, Some(&token), true, true, &rejected));
+    assert!(!load_list(&path)[0].needs_relogin);
+}

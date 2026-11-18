@@ -488,7 +488,7 @@ impl ForgeApi for Gitlab<'_> {
             409 => "gh/head_changed".into(),
             405 | 406 | 422 => self.merge_refused(slug, pr, &message),
             // 没有合并权限时 GitLab 也回 401：令牌还好用（/user 成功）就是权限问题，不标「要重新登录」。
-            401 if self.client.get(&self.api("user")).is_ok() => format!("forge/forbidden: {message}"),
+            401 if self.client.probe(&self.api("user")) == Some(200) => format!("forge/forbidden: {message}"),
             _ => http_error(&resp),
         })
     }

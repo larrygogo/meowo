@@ -286,6 +286,12 @@ impl Client<'_> {
         Ok(json(&resp.body))
     }
 
+    /// 只看状态码的 GET，不回报令牌好坏（「这个 401 是令牌失效还是没权限」的回查用，免得回查本身又改账号状态）。
+    pub(crate) fn probe(&self, url: &str) -> Option<u16> {
+        let req = Req { method: "GET", url, auth: self.auth.as_ref(), body: None, accept: None };
+        self.http.send(&req).ok().map(|r| r.status)
+    }
+
     /// GET，404 回 None（「没有这个 PR」），别的非 2xx 报错。
     pub(crate) fn get_opt(&self, url: &str) -> Result<Option<serde_json::Value>, String> {
         let resp = self.call("GET", url, None)?;
