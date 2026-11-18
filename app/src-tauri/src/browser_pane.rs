@@ -918,6 +918,16 @@ pub(crate) async fn browser_pane_emulate(
     // CDP 每一步要等主线程回调（最长数秒）：放到 blocking 线程上等，不占 async 运行时。
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<BrowserPanes>();
+        // 和 Agent 的浏览器操作同一把页签锁串行：否则人工切设备与 Agent 的 browser_emulate 同时进行时，
+        // 两边的 CDP 交错、记录的目标和实际对不上（独立审查复验指出）。
+        let operation = state
+            .panes
+            .lock()
+            .map_err(|e| e.to_string())?
+            .get(&id)
+            .map(|info| info.operation.clone())
+            .ok_or("browser_pane/not_found")?;
+        let _operation = operation.lock().map_err(|e| e.to_string())?;
         let check = || ensure_human_action_allowed(&state, id);
         if set_emulation(&app, &state, id, next, &check)? {
             webview(&app, id)?.reload().map_err(|e| e.to_string())?;
