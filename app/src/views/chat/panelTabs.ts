@@ -16,7 +16,9 @@ export type PanelTab =
   | { key: string; type: "diff" }
   | { key: string; type: "files" }
   | { key: string; type: "term"; shellId: number | null; cwd: string }
-  | { key: string; type: "browser"; paneId: number | null; url: string; title: string };
+  | { key: string; type: "browser"; paneId: number | null; url: string; title: string }
+  /** Lead 任务（停靠区 Lead 面板的完整版）：内容按会话 cwd 现读，页签本身只记「开着」。 */
+  | { key: string; type: "lead" };
 
 export type PanelTabType = PanelTab["type"];
 
@@ -29,8 +31,8 @@ export type PanelState = {
 
 export const EMPTY_PANEL: PanelState = { tabs: [], active: null, visible: false, expanded: false };
 
-/** 同时只开一个的页签类型：再打开就是切过去。 */
-export const SINGLETON_TYPES: readonly PanelTabType[] = ["diff", "files"];
+/** 同时只开一个的页签类型：再打开就是切过去。Lead 一个会话只有一个任务，开两份只会两处作答。 */
+export const SINGLETON_TYPES: readonly PanelTabType[] = ["diff", "files", "lead"];
 
 let seq = 0;
 export function newTabKey(type: PanelTabType): string {
@@ -42,8 +44,8 @@ export function activeTab(state: PanelState): PanelTab | null {
   return state.tabs.find((tab) => tab.key === state.active) ?? null;
 }
 
-/** 打开改动 / 文件：已经开着就切过去，没开就加在最右边。面板随之显示。 */
-export function openSingleton(state: PanelState, type: "diff" | "files"): PanelState {
+/** 打开改动 / 文件 / Lead：已经开着就切过去，没开就加在最右边。面板随之显示（收起时先展开）。 */
+export function openSingleton(state: PanelState, type: "diff" | "files" | "lead"): PanelState {
   const existing = state.tabs.find((tab) => tab.type === type);
   if (existing) return { ...state, active: existing.key, visible: true };
   const tab: PanelTab = { key: newTabKey(type), type };
@@ -145,6 +147,7 @@ function isTab(value: unknown): value is PanelTab {
   switch (tab.type) {
     case "diff":
     case "files":
+    case "lead":
       return true;
     case "term":
       return typeof tab.cwd === "string";

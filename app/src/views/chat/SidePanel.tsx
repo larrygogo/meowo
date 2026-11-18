@@ -3,6 +3,7 @@ import type { BrowserPaneInfo, GitDiffSummaryDto, RepoChangesDto, ShellTerminalI
 import { pushEscLayer } from "../../escLayers";
 import { useT } from "../../i18n";
 import { BrowserPane } from "./BrowserPane";
+import { LeadPanelTab, type LeadTaskState } from "./LeadPanel";
 import type { ReviewComment } from "./diffComments";
 import { singleRepo } from "./diffShared";
 import { LazyFilesView as FilesView } from "./lazyDiff";
@@ -48,7 +49,11 @@ type Props = {
   onChanged: () => void;
   /** 会话 id：PR 合并后提示清理它的 worktree（见 ForgeBar）。 */
   sessionId?: number | null;
+  /** 这个会话的 Lead 任务（对话窗取一次，和停靠区共用）。不给 = 没接 Lead，「+」菜单也不列。 */
+  lead?: LeadTaskState | null;
 };
+
+const NO_LEAD: LeadTaskState = { task: null, refresh: () => {}, failure: null };
 
 /**
  * 对话窗右侧面板：改动、文件、终端、浏览器同在一排页签里，照 Kimi Code 1.3.1 的面板做
@@ -97,6 +102,8 @@ export const SidePanel = memo(function SidePanel(props: Props) {
     items.push({ key: "browser", label: t.chat.browserNew, icon: ICONS.browser, hint: mod(PANEL_SHORTCUTS.browser), onSelect: () => actions.newBrowser() });
     items.push({ key: "term", label: t.chat.shellNew, icon: ICONS.term, hint: mod(PANEL_SHORTCUTS.term), onSelect: actions.newTerminal });
     if (!open.has("files")) items.push({ key: "files", label: t.chat.filesTab, icon: ICONS.files, hint: mod(PANEL_SHORTCUTS.files), onSelect: actions.openFiles });
+    // Lead 只在这个会话确实有任务时列：没任务的会话开出来只有一句「没有任务」。
+    if (props.lead?.task && !open.has("lead")) items.push({ key: "lead", label: t.chat.leadEntry, icon: ICONS.lead, onSelect: actions.openLead });
     return items;
   };
   const tabMenu = (tab: PanelTab, x: number, y: number) => {
@@ -248,6 +255,7 @@ export const SidePanel = memo(function SidePanel(props: Props) {
           />
         )
         : <p className="side-panel-empty">{t.chat.diffNoRepo}</p>)}
+      {active?.type === "lead" && !collapsed && <LeadPanelTab cwd={cwd} lead={props.lead ?? NO_LEAD} />}
       {active?.type === "files" && (() => {
         // 「文件」跟着「更改」选中的仓库走：worktree 不在工作目录下，不切过去就看不到它的文件。
         // 选的是工作目录所在仓库（或显式选了「工作目录」）就浏览工作目录本身——它可能是仓库的子目录，

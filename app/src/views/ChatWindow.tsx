@@ -55,7 +55,8 @@ import { parseUserText } from "./chat/localCommand";
 import { ChatActionsContext, type ChatActions } from "./chat/chatActions";
 import { rejectedUndoTarget } from "./chat/rejectedRecovery";
 import { anchorFrom, echoItemId, freshAnchor, EchoActionsContext, EchoPhaseContext, outgoingStore, useOutgoingPrompts, type PromptAck } from "./chat/outgoingPrompts";
-import { DockWork } from "./chat/DockWork";
+import { DockWork, leadTabLink } from "./chat/DockWork";
+import { useLeadTask, type LeadTaskState } from "./chat/LeadPanel";
 import { ANCHOR_PX, countsAsUnseen, stickToBottom, useStickToBottom } from "./chat/useStickToBottom";
 import { useSidebarLayout } from "./chat/useSidebarLayout";
 import { pasteImagesNatively, useInterrupt, writeInterruptKeys } from "./chat/terminalInput";
@@ -2106,6 +2107,19 @@ export function ChatWindow() {
   // 走 visible=false 而不是藏 DOM，面板里的浏览器是原生 webview，只有收起态才会把它藏掉。
   const pageCovered = adminOpen || !!newSessionOpen;
   const shownPanelState = useMemo(() => (pageCovered ? { ...panelState, visible: false } : panelState), [pageCovered, panelState]);
+
+  // Lead 任务在这里取一次，停靠区（DockWork）和侧边面板的 Lead 页签共用：两边各自轮询的话，
+  // 一边作答后另一边要等下一拍才对上。只在用得着时取（对话视图，或面板里开着 Lead 页签），
+  // 和原先「停靠区挂着才轮询」一致，终端视图下不白拉。
+  // 手机远程页没有右侧面板：页签状态一概不认，停靠区保持原样、不出「在侧边面板打开」。
+  const openLeadTab = panelActions.openLead;
+  const leadTab = useMemo(() => leadTabLink(panelState, shownPanelState.visible, openLeadTab), [panelState, shownPanelState.visible, openLeadTab]);
+  const leadTabOpen = !!leadTab?.open;
+  const [leadTaskNow, leadRefresh, leadFailure] = useLeadTask(
+    sessionId !== 0 && (view === "chat" || leadTabOpen) ? cwd : null,
+    history ? history.ccSessionId ?? null : undefined,
+  );
+  const leadState = useMemo<LeadTaskState>(() => ({ task: leadTaskNow, refresh: leadRefresh, failure: leadFailure }), [leadTaskNow, leadRefresh, leadFailure]);
 
   const refresh = useCallback(async () => {
     if (sessionId <= 0 || busyRef.current) {
@@ -5139,7 +5153,7 @@ export function ChatWindow() {
       {view === "chat" && sessionId !== 0 && (
         <div className="chat-dock">
           {/* 停靠栏（计划/进度/后台任务）：状态、关闭规则与入口判定见 chat/DockWork。 */}
-          <DockWork sessionId={sessionId} cwd={cwd} ccSessionId={history ? history.ccSessionId ?? null : undefined} items={items} history={history} loading={loading} returnFocusTo={promptInputRef} live={{ activity: turnActivityOf(tone), alive: history?.connected ?? false }} />
+          <DockWork sessionId={sessionId} cwd={cwd} ccSessionId={history ? history.ccSessionId ?? null : undefined} lead={leadState} leadTab={leadTab} items={items} history={history} loading={loading} returnFocusTo={promptInputRef} live={{ activity: turnActivityOf(tone), alive: history?.connected ?? false }} />
           {sideAnswers.length > 0 && (
             <div className="chat-side-answers">
               {sideAnswers.map((entry) => (
@@ -6137,6 +6151,7 @@ export function ChatWindow() {
                 onSelectRoot={setScmRoot}
                 onChanged={refreshChanges}
                 sessionId={sessionId}
+                lead={leadState}
               />
             )}
           </Suspense>

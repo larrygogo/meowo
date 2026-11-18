@@ -878,6 +878,11 @@ export const en: Dict = {
     planEmpty: "Plan mode is on. The plan will show up here",
     // Lead workflow (Lead dock entry + gate cards)
     leadEntry: "Lead",
+    leadOpenInPanel: "Open in side panel",
+    leadInPanelTip: "Open in the side panel. Click to view",
+    leadGateInPanel: "A Lead gate needs your answer in the side panel",
+    leadGateInPanelGo: "Answer",
+    leadTabEmpty: "This session has no Lead task right now",
     leadPhase: (phase: string) => ({ interview: "Interviewing", spec: "Writing spec", design: "Designing", implement: "Implementing", verify: "Verifying", done: "Done", blocked: "Blocked" } as Record<string, string>)[phase] ?? phase,
     leadChecksProgress: (passed: number, total: number) => `Checks ${passed}/${total}`,
     leadChecksEmpty: "No acceptance checks yet",
