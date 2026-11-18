@@ -248,7 +248,7 @@ export const MODE_MARKERS = [
 ];
 
 /// 目录已删除的会话打开后的历史（只读回看）：已结束、进程不在、推得出原项目（门卡给「在 web-app 新开会话」）。
-export const DIR_GONE_HISTORY = { status: "ended", connected: false, ptyManaged: false, pendingReview: null, archived: true, cwdMissing: true, originRoot: "C:/dev/web-app" };
+export const DIR_GONE_HISTORY = { status: "ended", connected: false, ptyManaged: false, endable: false, pendingReview: null, archived: true, cwdMissing: true, originRoot: "C:/dev/web-app" };
 
 /// 「已完成」列表里混着目录已删除的会话（worktree 合并后被清理）：卡片第三行多一枚虚线标签。
 /// 条数要多过一屏——列表是定高的 flex 列，卡片被压缩时标签会溢出到下一张卡上（2026-11-18 手机实拍）。

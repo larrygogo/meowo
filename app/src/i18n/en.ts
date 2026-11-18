@@ -1180,7 +1180,6 @@ export const en: Dict = {
     sendNeedsTakeover: "Running in an external terminal. Taking over stops it.",
     composerGateEnded: "This session has ended. Resume it to continue chatting.",
     dirGoneBanner: "This session's folder has been deleted. You can read the history, but the session can't continue.",
-    dirGoneInput: "Folder deleted. The history is read-only",
     dirGoneNewIn: (name: string) => `New session in ${name}`,
     dirGoneNewInTip: (path: string) => `Start a new session in the original project, ${path}`,
     dirGoneNew: "New session",

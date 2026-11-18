@@ -168,6 +168,11 @@ export function qaFlowMock(scene: string, lang: Lang, chat: (cmd: string) => unk
     if (cmd === "get_live_sessions_page" && kind === "side-error") throw new Error("offline");
     // 「已完成」页混着目录已删除的会话（卡片第三行的虚线标签）。
     if (cmd === "get_live_sessions_page" && kind === "side-gone") return goneSessions(lang);
+    // 目录已删的那条在侧栏里与后端同口径：进程不在、已结束、标着目录已删（没有运行圆点）。
+    if (cmd === "get_live_sessions_page" && kind === "dir-gone") {
+      const rows = chat(cmd) as Array<Record<string, unknown> & { session: { id: number } }>;
+      return rows.map((row) => row.session.id === CHAT_SESSION_ID ? { ...row, connected: false, pending_review: null, cwd_missing: true, session: { ...row.session, status: "ended" } } : row);
+    }
     if (cmd === "search_chat_transcripts") return [
       { sessionId: 2, title: zh ? "修支付回调的重复扣款" : "Fix duplicate charge in payment callback", projectName: "billing", excerpt: zh ? "…回调重试时没带幂等键，同一笔订单被扣了两次，schema 里要加唯一约束…" : "…the retry carried no idempotency key, so the order was charged twice; the schema needs a unique constraint…" },
       { sessionId: 3, title: zh ? "补齐导出接口的单测" : "Add tests for the export API", projectName: "api", excerpt: zh ? "…导出 schema 的字段顺序要固定…" : "…the export schema must keep a stable field order…" },

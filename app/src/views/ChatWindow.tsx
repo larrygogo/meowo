@@ -970,7 +970,10 @@ export function ChatWindow() {
   // 运行日志：发出的消息落进「发送失败」「未确认送达」各记一行（chat/chatDiag，验收 19）。
   useOutgoingDiag(sessionId, provider, outgoing);
   const cwd = history?.cwd ?? launchInfo?.cwd ?? null;
-  const folderOpeners = useFolderOpeners(cwd ?? "", setSendError).options;
+  // 目录已删时一切要读这个目录的东西（改动数胶囊、「更改」「文件」面板、用编辑器打开）都不挂：
+  // 读一个不存在的目录只会拿到报错或空壳。标题、会话信息照常用 cwd 显示它原来在哪。
+  const liveCwd = dirGone ? null : cwd;
+  const folderOpeners = useFolderOpeners(liveCwd ?? "", setSendError).options;
   // 「文件」入口有 cwd 即可用；「改动」入口仅当后端确认 cwd 是 git 仓库时出现。
   // 两个入口共用同一停靠面板，activeTab 保证面板不卸载时也能直达对应页签。
   const [gitSummary, setGitSummary] = useState<GitDiffSummaryDto | null>(null);
@@ -1037,7 +1040,7 @@ export function ChatWindow() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [panelActions]);
-  const diffCwd = cwd;
+  const diffCwd = liveCwd;
   // 改动面板里写的行评论,按会话分开攒着:切去别的会话再回来还在,点「插入输入框」
   // 才拼成一段文字交给用户自己发(发之前还能再改几句)。
   const [reviewComments, setReviewComments] = useState<ReadonlyMap<number, readonly ReviewComment[]>>(new Map());
@@ -4720,8 +4723,8 @@ export function ChatWindow() {
         )}
         archive={history && !history.archived && sessionId > 0 ? { busy: archiving, onClick: () => void toggleArchived() } : null}
         end={history?.endable ? { busy: endingSession, onClick: () => void endSession() } : null}
-        cwd={cwd}
-        prCwd={gitSummary?.isRepo ? cwd : (repoChanges?.[0]?.root ?? cwd)}
+        cwd={liveCwd}
+        prCwd={gitSummary?.isRepo ? liveCwd : (repoChanges?.[0]?.root ?? liveCwd)}
         sessionPrUrl={sessionPrUrl}
         gitSummary={effectiveSummary}
         changesOpen={panelState.visible && panel.active?.type === "diff"}
@@ -4733,7 +4736,7 @@ export function ChatWindow() {
         onTogglePanel={panelActions.toggle}
         panelAgentBusy={!panelState.visible && panel.agentBusy}
         panelWaiting={!panelState.visible && panel.permissionWaiting}
-        info={!remoteUi() && cwd && !panelState.visible ? { open: infoWide ? infoOn : infoFloating, onToggle: toggleInfo } : null}
+        info={!remoteUi() && liveCwd && !panelState.visible ? { open: infoWide ? infoOn : infoFloating, onToggle: toggleInfo } : null}
         onToggleTerminal={() => { const next = view === "terminal" ? "chat" : "terminal"; rememberViewPref(next); setView(next); }}
         onError={setSendError}
         onPullRequest={setTitlePullRequest}
@@ -5253,7 +5256,7 @@ export function ChatWindow() {
             </div>
           )}
           {/* sessionId=0(远程未选会话)没有可发送的对象,composer 整体不渲染。 */}
-          <footer ref={composeRef} className={"chat-compose" + (composerLocked ? " is-locked" : "") + (composerExpanded ? " is-expanded" : "")}>
+          <footer ref={composeRef} className={"chat-compose" + (dirGone ? " is-dir-gone" : "") + (composerLocked ? " is-locked" : "") + (composerExpanded ? " is-expanded" : "")}>
           {(promptLong || composerExpanded) && !compactChrome && (
             <button
               type="button"
@@ -5316,7 +5319,9 @@ export function ChatWindow() {
             >{retiredManaged ? t.chat.managedRetiredOpenCli : externalRunning ? t.chat.terminalTakeover : t.chat.resumeSession}</button>
           </div>}
         </div>}
-        <>
+        {/* 目录已删：门卡就是整块输入区，不留锁住的输入框和那排用不了的控件（对照 Slack/Linear 的归档频道、
+            GitHub 锁定的 issue：只读状态下不显示不能用的控件）。 */}
+        {!dirGone && <>
         {/* 手机上斜杠命令走底部面板（对照 Kimi 的 slashSheet）：面板盖住输入框，所以自带一个搜索框，
             它直接绑在同一份 prompt 上——两边不用同步，选中命令即写回输入框、面板随之收起。
             还在敲 `/查询`、哪怕一条都没命中也不收，否则边打边消失的搜索框没法用。 */}
@@ -5485,8 +5490,6 @@ export function ChatWindow() {
             // Esc 中断的第一下：确认提示写在占位里——此刻输入框是空的，占位正是视线所在。
             escInterruptArmed && stopMode
               ? t.chat.escInterruptArmed
-            : dirGone
-              ? t.chat.dirGoneInput
             // 停用的托管会话：输入框锁着，占位直接说清楚还能怎么继续，别让它看起来能输入。
             : retiredGate
               ? (retiredGate.resumable ? t.chat.managedRetiredInputResumable : t.chat.managedRetiredInputUnbound)
@@ -6134,7 +6137,7 @@ export function ChatWindow() {
           <button type="button" className="chat-send-takeover" onClick={() => setUndoNotice(false)}>{t.chat.slashMenuDismiss}</button>
         </div>}
         {copyNotice && <div className="chat-send-error" role="status"><span>{copyNotice.text}</span></div>}
-        </>
+        </>}
       </footer>
         </div>
       )}
@@ -6143,7 +6146,7 @@ export function ChatWindow() {
           折叠只加 is-collapsed（display:none）不卸载，面板状态原样保留。
           分栏柄落在两张卡之间的缝隙里，拖拽调宽（折叠/最大化时隐藏）。 */}
       {/* 会话信息栏：面板收起时露出来（同 Kimi Code）。够宽停靠，窄了从标题栏按钮弹浮层。 */}
-      {!remoteUi() && cwd && !pageCovered && !panelState.visible && (infoWide ? infoOn : infoFloating) && (
+      {!remoteUi() && liveCwd && !pageCovered && !panelState.visible && (infoWide ? infoOn : infoFloating) && (
         <SessionInfo
           mode={infoWide ? "docked" : "floating"}
           state={panelState}
@@ -6154,7 +6157,7 @@ export function ChatWindow() {
           onClose={infoWide ? undefined : () => setInfoFloating(false)}
         />
       )}
-      {cwd && (panelState.visible || panelState.tabs.length > 0) && (
+      {liveCwd && (panelState.visible || panelState.tabs.length > 0) && (
         <>
           {!remoteUi() && <div
             className={"chat-diff-resizer" + (shownPanelState.visible && !panelState.expanded ? "" : " is-hidden")}
@@ -6178,7 +6181,7 @@ export function ChatWindow() {
             ? (
               // 手机上只有改动一页、恒铺满全屏，收起即回到对话（远程不给文件、终端、浏览器）。
               <GitDiffView
-                cwd={cwd}
+                cwd={liveCwd}
                 summary={gitSummary}
                 repos={repoChanges}
                 width={diffResize.width}
@@ -6204,7 +6207,7 @@ export function ChatWindow() {
                 actions={panelActions}
                 shells={panel.shells}
                 panes={panel.panes}
-                cwd={cwd}
+                cwd={liveCwd}
                 summary={gitSummary}
                 repos={repoChanges}
                 width={shownPanelWidth}

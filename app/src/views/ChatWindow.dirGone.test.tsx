@@ -46,6 +46,8 @@ beforeEach(() => {
     if (command === "shell_terminal_list" || command === "browser_pane_list") return Promise.resolve([]);
     if (command === "start_managed_terminal") return Promise.reject(new Error("stop here"));
     if (command === "open_new_session_window") return Promise.resolve();
+    // 目录还在时这几条会把改动数胶囊、「更改」入口、会话信息栏点亮；目录已删的会话一条都不该发。
+    if (command === "git_diff_summary") return Promise.resolve({ isRepo: true, branch: "feat/x", files: [] });
     return Promise.resolve();
   });
 });
@@ -57,19 +59,48 @@ afterEach(() => {
 });
 
 describe("目录已删除的会话", () => {
-  it("推得出原项目：只读说明 + 「在原项目新开会话」，没有恢复入口，输入框锁住", async () => {
+  it("推得出原项目：只读说明 + 「在原项目新开会话」，没有恢复入口，也没有输入框", async () => {
     history = { cwdMissing: true, originRoot: "C:/w/billing", archived: true };
     render(<ChatWindow />);
     expect(await screen.findByText(zh.chat.dirGoneBanner)).toBeTruthy();
     expect(screen.queryByText(zh.chat.composerGateEnded)).toBeNull();
     expect(screen.queryByRole("button", { name: zh.chat.resumeSession })).toBeNull();
-    const input = document.querySelector(".chat-compose textarea") as HTMLTextAreaElement;
-    expect(input.disabled).toBe(true);
-    expect(input.placeholder).toBe(zh.chat.dirGoneInput);
+    expect(document.querySelector(".chat-compose textarea")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: zh.chat.dirGoneNewIn("billing") }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("open_new_session_window", { cwd: "C:/w/billing", provider: "codex" }));
     // 不在别的目录偷偷恢复：整个过程没有发起过任何启动。
     expect(invoke.mock.calls.some(([command]) => command === "start_managed_terminal" || command === "takeover_managed_terminal")).toBe(false);
+  });
+
+  it("门卡就是整块输入区：不留输入框、+、权限、模型、上下文圈和发送键", async () => {
+    history = { cwdMissing: true, originRoot: "C:/w/billing", contextPct: 18, model: "Opus 5" };
+    render(<ChatWindow />);
+    await screen.findByTestId("compose-dir-gone");
+    const compose = document.querySelector(".chat-compose") as HTMLElement;
+    expect(compose.classList.contains("is-dir-gone")).toBe(true);
+    for (const sel of ["textarea", ".chat-attach-button", ".chat-send-button", ".chat-mode-button", ".chat-model-select"]) {
+      expect(compose.querySelector(sel), sel).toBeNull();
+    }
+    // 门卡里只有说明和那一颗按钮。
+    expect(compose.querySelectorAll("button").length).toBe(1);
+  });
+
+  it("不读已经不在的目录：不查改动数、标题栏没有改动胶囊和面板开关", async () => {
+    history = { cwdMissing: true };
+    render(<ChatWindow />);
+    await screen.findByTestId("compose-dir-gone");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    for (const command of ["git_diff_summary", "git_changes_overview", "list_folder_editors"]) {
+      expect(invoke.mock.calls.some(([c, args]) => c === command && JSON.stringify(args ?? {}).includes("billing-fix")), command).toBe(false);
+    }
+    expect(document.querySelector(".chat-panel-toggle")).toBeNull();
+  });
+
+  it("不当成在跑：库里残留 running、transcript 说有后台子任务，也没有运行条", async () => {
+    history = { cwdMissing: true, status: "running", busySubagents: 2 };
+    render(<ChatWindow />);
+    await screen.findByTestId("compose-dir-gone");
+    expect(document.querySelector(".chat-running")).toBeNull();
   });
 
   it("推不出原项目：给普通的「新建会话」，不拿已经没了的目录去预填", async () => {

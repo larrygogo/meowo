@@ -1360,7 +1360,6 @@ export const zh = {
     composerGateEnded: "会话已结束。恢复后即可继续对话。",
     // 目录已删除的会话（worktree 被清理、目录被手动删了）：只读回看，不给恢复——agent 按目录找会话记录，换目录续不上。
     dirGoneBanner: "这个会话的目录已经删掉了，可以查看历史，不能继续对话。",
-    dirGoneInput: "目录已删除，只能查看历史",
     dirGoneNewIn: (name: string) => `在 ${name} 新开会话`,
     dirGoneNewInTip: (path: string) => `在原项目 ${path} 里新开一个会话`,
     dirGoneNew: "新建会话",
