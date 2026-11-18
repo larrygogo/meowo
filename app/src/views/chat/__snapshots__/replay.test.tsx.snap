@@ -18,7 +18,7 @@ exports[`五家回放：真实会话样本 → 解析 → 归并 → 渲染 > cl
 样本｜claude.7ec5560a
 分隔｜已中断
 样本｜claude.a7bec18a
-工具[interrupted]｜提问｜{"questions":[{"header":"推送通道","multiSelect":false,"options":[{"descript…｜｜已中断
+工具[interrupted]｜提问｜手机推送用哪条通道？Meowo 手机页现在是普通 HTTP，浏览器通知和网页推送都要求 HTTPS，所以要换路。推送触发时机统一是：会话在等审批…｜｜已中断
 样本｜claude.b93ca755
 工具[done]｜搜索｜添加账号|运行中的会话可在切换后 app\\src｜找到 5 条结果｜找到 5 条结果
 样本｜claude.e903be8f
