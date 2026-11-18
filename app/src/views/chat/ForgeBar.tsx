@@ -11,7 +11,10 @@
 ///   记住；没选之前开 PR / 合并不可用。不让用户去终端跑 gh repo set-default（产品标准：别让用户去终端收拾）。
 
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { openSettingsAt } from "../../settingsNav";
 import {
+  GITHUB_CHANGED_EVENT,
   forgeChooseRepo,
   getForgeStatus,
   getPullRequestByUrl,
@@ -92,7 +95,19 @@ export function useForgeStatus(root: string, sessionCwd: string | null, active: 
     const onFocus = () => { if (stale()) load(true); };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onFocus);
+    // 设置里切了 GitHub 连接方式、登录或退出：后端缓存已作废，马上按新的连接重拉。
+    let offChanged: (() => void) | undefined;
+    let disposed = false;
+    if (!remoteUi()) {
+      try {
+        void listen(GITHUB_CHANGED_EVENT, () => load(true))
+          .then((off) => { if (disposed) off(); else offChanged = off; })
+          .catch(() => {});
+      } catch { /* 非 Tauri 环境 */ }
+    }
     return () => {
+      disposed = true;
+      offChanged?.();
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onFocus);
@@ -118,6 +133,24 @@ export function mergeBlock(t: ReturnType<typeof useT>, forge: ForgeStatusDto, pr
   // GitHub 还在算能不能合（UNKNOWN）同「检查在跑」：等一轮再合（定案设计）。
   if (pr.checksSummary === "pending" || pr.mergeable === "UNKNOWN") return t.forge.mergeBlockedPending;
   return null;
+}
+
+/// 看不到 CI 时说为什么、给出路：Meowo 登录方式下没登录（或令牌被拒）、自动方式下没装 gh，都引导去设置 › GitHub
+/// 登录（桌面上；手机远程不放行登录，只说原因）。用的是本机 gh 时文案照旧说 gh 的情况，按钮同样通往设置
+///（在那里可以登录 Meowo，或看到当前方式）。
+export function ConnectionNotice({ forge }: { forge: ForgeStatusDto }) {
+  const t = useT();
+  const connection = forge.connection ?? "gh";
+  const text = connection === "meowo" ? t.forge.meowoUnauthed : forge.gh === "missing" ? t.forge.ghMissing : t.forge.ghUnauthed;
+  const offerSignIn = !remoteUi();
+  return (
+    <div className="scm-notice scm-cleanup" data-testid="forge-connection-notice">
+      <span>{text}</span>
+      {offerSignIn && (
+        <button type="button" className="scm-link-btn" onClick={() => openSettingsAt("github")}>{t.forge.signInGithub}</button>
+      )}
+    </div>
+  );
 }
 
 const isConflict = (pr: PullRequestDto) => pr.mergeable === "CONFLICTING" || pr.mergeState === "DIRTY";
@@ -483,7 +516,7 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
             </button>
           )
       )}
-      {showPr && offGh && <div className="scm-notice">{forge?.gh === "missing" ? t.forge.ghMissing : t.forge.ghUnauthed}</div>}
+      {showPr && offGh && forge && <ConnectionNotice forge={forge} />}
 
       {error && <PanelMessage tone="error" text={error.text} actions={errorActions(error)} onDismiss={() => setError(null)} testId="forge-error" />}
       {notice && (

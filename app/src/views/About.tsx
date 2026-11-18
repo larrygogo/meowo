@@ -22,13 +22,14 @@ import { ExtensionsSection } from "./settings/ExtensionsSection";
 import { loadStoredOpts, saveStoredOpts } from "./useNewSessionForm";
 import { NetworkSection } from "./settings/NetworkSection";
 import { RemoteAccessCard } from "./settings/RemoteAccessCard";
+import { GithubSection } from "./settings/GithubSection";
 import { applySettingsFilter, firstHitControl } from "./settings/searchFilter";
 import { useEscClose } from "../hooks/useEscClose";
 import { displayKeys, KeyCombos, shortcutGroups } from "./chat/WindowModals";
 import { SETTINGS_SECTION_KEY } from "../settingsNav";
 import { Icon } from "../icons/Icon";
 import { icClose, icContrast, icGlobe, icSearch, icSettings } from "../icons/glyphs";
-import { icBot, icCards, icInfo, icKeyboard, icPuzzle, icSmartphone } from "../icons/glyphs.settings";
+import { icBot, icCards, icGitPr, icInfo, icKeyboard, icPuzzle, icSmartphone } from "../icons/glyphs.settings";
 import { busyProps } from "../busyButton";
 
 const REPO = "github.com/larrygogo/meowo";
@@ -39,8 +40,8 @@ const openExt = (url: string) => invoke("open_url", { url }).catch((e) => consol
 
 // 「手机远程」单独成区（用户要求从「网络」里拆出来，对照 Kimi 设置的「远程控制」独立一栏）：
 // 它是一项功能（扫码、配对、推送），不是网络参数；「网络」只留代理。
-type Section = "general" | "sessions" | "appearance" | "shortcuts" | "remote" | "network" | "account" | "extensions" | "about";
-const SECTION_ORDER: Section[] = ["general", "sessions", "appearance", "shortcuts", "remote", "network", "account", "extensions", "about"];
+type Section = "general" | "sessions" | "appearance" | "shortcuts" | "remote" | "network" | "github" | "account" | "extensions" | "about";
+const SECTION_ORDER: Section[] = ["general", "sessions", "appearance", "shortcuts", "remote", "network", "github", "account", "extensions", "about"];
 
 
 // 打开未连接会话用的终端：按平台给不同选项。WKWebView 的 UA 含 "Mac"/"Win"，与 main.tsx 同步判定一致。
@@ -109,6 +110,13 @@ function IconPhone() {
 function IconPuzzle() {
   return (
     <Icon glyph={icPuzzle} size={16} />
+  );
+}
+
+// 拉取请求：GitHub 连接分区管的是 PR 功能连 GitHub 的方式。
+function IconGithub() {
+  return (
+    <Icon glyph={icGitPr} size={16} />
   );
 }
 
@@ -1138,7 +1146,7 @@ export function AboutSection({
 }
 
 function asSection(s: string | null): Section | null {
-  return s === "general" || s === "sessions" || s === "appearance" || s === "shortcuts" || s === "remote" || s === "network" || s === "account" || s === "extensions" || s === "about"
+  return s === "general" || s === "sessions" || s === "appearance" || s === "shortcuts" || s === "remote" || s === "network" || s === "github" || s === "account" || s === "extensions" || s === "about"
     ? s
     : null;
 }
@@ -1209,6 +1217,7 @@ export function About() {
       shortcuts: `${t.settings.nav.shortcuts} ${t.settings.navSearchExtra.shortcuts}`,
       remote: t.settings.nav.remote,
       network: t.settings.nav.network,
+      github: `${t.settings.nav.github} ${t.settings.navSearchExtra.github}`,
       account: `${t.settings.nav.account} ${t.settings.navSearchExtra.account}`,
       extensions: t.settings.nav.extensions,
       about: t.settings.nav.about,
@@ -1298,6 +1307,10 @@ export function About() {
             <IconGlobe />
             <span>{t.settings.nav.network}</span>
           </button>
+          <button className={"nav-item" + (navOn("github") ? " on" : "")} aria-current={navOn("github") ? "page" : undefined} onClick={() => { setQuery(""); pickSec("github"); }}>
+            <IconGithub />
+            <span>{t.settings.nav.github}</span>
+          </button>
           <button className={"nav-item" + (navOn("account") ? " on" : "")} aria-current={navOn("account") ? "page" : undefined} onClick={() => { setQuery(""); pickSec("account"); }}>
             <IconAgent />
             <span>{t.settings.nav.account}</span>
@@ -1356,6 +1369,8 @@ export function About() {
                 <RemoteAccessCard />
               ) : s === "network" ? (
                 <NetworkSection />
+              ) : s === "github" ? (
+                <GithubSection />
               ) : s === "account" ? (
                 <AccountSection />
               ) : s === "extensions" ? (

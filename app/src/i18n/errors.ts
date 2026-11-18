@@ -162,6 +162,14 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "gh/pr_exists", zh: "这个分支已经有 PR 了", en: "This branch already has a PR" },
   { m: "gh/ambiguous_repo", exact: true, zh: "有多个 GitHub 远端，先选仓库", en: "Several GitHub remotes. Choose a repository first." },
   { m: "gh/failed", tail: true, zh: "gh 操作失败", en: "gh failed" },
+  // ── GitHub 连接（github.rs：设备码登录、凭据库）──
+  { m: "github/network", tail: true, zh: "连不上 GitHub，检查网络或代理", en: "Can't reach GitHub. Check the network or proxy." },
+  { m: "github/login_failed", tail: true, zh: "GitHub 登录失败", en: "GitHub sign-in failed" },
+  { m: "github/unauthorized", exact: true, zh: "GitHub 不接受这个登录", en: "GitHub rejected this sign-in" },
+  { m: "github/credential_unsupported", exact: true, zh: "这个系统不支持保存 GitHub 登录", en: "This system can't store the GitHub sign-in" },
+  { m: "github/credential_failed", tail: true, zh: "读写系统凭据库失败", en: "Couldn't access the system credential store" },
+  { m: "github/invalid_mode", exact: true, zh: "未知的连接方式", en: "Unknown connection mode" },
+  { m: "github/failed", tail: true, zh: "GitHub 请求失败", en: "GitHub request failed" },
   { m: "remote/bind_failed", tail: true, zh: "无法监听这个端口", en: "Couldn't listen on this port" },
   // ── 设置落盘（settings.rs save_settings_unlocked）──
   // T-2（2026-11-12）：写盘失败此前是系统原话（「拒绝访问。 (os error 5)」），没主语也没下一步。

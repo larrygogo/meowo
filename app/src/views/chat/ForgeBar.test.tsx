@@ -154,6 +154,35 @@ describe("#20 开 PR", () => {
   });
 });
 
+describe("GitHub 连接（设置 › GitHub）", () => {
+  it("Meowo 登录方式没登录：说明看不到 CI，并引导去设置的 GitHub 分区", async () => {
+    status = forge({ gh: "unauthenticated", connection: "meowo", mergeMethods: [] });
+    renderBar();
+    const notice = await screen.findByTestId("forge-connection-notice");
+    expect(notice.textContent).toContain(zh.forge.meowoUnauthed);
+    fireEvent.click(within(notice).getByRole("button", { name: zh.forge.signInGithub }));
+    await waitFor(() => expect(calls("open_settings").length).toBe(1));
+    expect(localStorage.getItem("meowo-settings-section")).toBe("github");
+  });
+
+  it("手机远程上只说原因，不给登录入口", async () => {
+    remote = true;
+    status = forge({ gh: "unauthenticated", connection: "meowo", mergeMethods: [] });
+    renderBar();
+    const notice = await screen.findByTestId("forge-connection-notice");
+    expect(within(notice).queryByRole("button")).toBeNull();
+  });
+
+  it("关闭：不显示 PR 区块，也不提示装 gh", async () => {
+    status = forge({ gh: "off", connection: "off", mergeMethods: [] });
+    renderBar({ unpushed: 0 });
+    await waitFor(() => expect(calls("git_forge_status").length).toBeGreaterThan(0));
+    expect(screen.queryByTestId("forge-connection-notice")).toBeNull();
+    expect(screen.queryByRole("button", { name: zh.forge.openOnGithub })).toBeNull();
+    expect(screen.queryByRole("button", { name: zh.forge.openPr })).toBeNull();
+  });
+});
+
 describe("#21 CI 检查与轮询", () => {
   it("显示每一项检查的结果", async () => {
     status = forge({
