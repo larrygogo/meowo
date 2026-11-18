@@ -15,8 +15,43 @@ import { ErrorBoundary } from "../ErrorBoundary";
 import { Icon } from "../icons/Icon";
 import { icImage } from "../icons/glyphs.chat";
 
+// 网址里不会出现的字符：中日韩文字、全角标点与括号、中文引号书名号。GFM 的自动链接只在空白处收尾，中文里
+// 网址后面常常紧跟「）」或汉字、中间没有空格，整句会被吞进链接（2026-11-18 用户截图：飞书文档链接连着
+// 「）内容已经都并进来了，要我删掉吗？」一起变成了链接）。真要出现在网址里的这些字符会被百分号编码，截断不会误伤。
+const NOT_IN_URL = /[‘-‟　-〿぀-ヿ㐀-䶿一-鿿가-힯＀-￯]/;
+
+type MdNode = { type: string; value?: string; url?: string; children?: MdNode[] };
+
+/// 把自动识别出来的网址在第一个「网址里不会有的字符」处截断，剩下的还原成普通文字。只动自动链接（链接文字就是
+/// 网址本身）；作者写的 [文字](地址) 不碰。
+export function trimCjkAutolinks(tree: MdNode): void {
+  const walk = (node: MdNode) => {
+    const kids = node.children;
+    if (!kids) return;
+    for (let i = 0; i < kids.length; i++) {
+      const child = kids[i];
+      const text = child.type === "link" && child.children?.length === 1 && child.children[0].type === "text" ? child.children[0].value ?? "" : null;
+      if (text !== null && child.url && (child.url === text || child.url.endsWith(text) || child.url === `mailto:${text}`)) {
+        const cut = text.search(NOT_IN_URL);
+        if (cut > 0) {
+          const head = text.slice(0, cut);
+          const rest = text.slice(cut);
+          child.children = [{ type: "text", value: head }];
+          child.url = child.url.slice(0, child.url.length - text.length) + head;
+          kids.splice(i + 1, 0, { type: "text", value: rest });
+          i += 1;
+          continue;
+        }
+      }
+      walk(child);
+    }
+  };
+  walk(tree);
+}
+const remarkTrimCjkAutolinks = () => (tree: MdNode) => trimCjkAutolinks(tree);
+
 /** 文件面板的 FileMarkdown 复用同一份 remark 插件表——渲染规则两处不分叉。 */
-export const PLUGINS = [remarkGfm];
+export const PLUGINS = [remarkGfm, remarkTrimCjkAutolinks];
 
 /// 超过这个规模的代码块不高亮：hljs 同步跑在渲染路径上，几百 KB 的日志粘贴会卡住
 /// 整窗；纯文本已有滚动限高，大块不上色是可接受的降级。

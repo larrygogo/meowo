@@ -97,3 +97,22 @@ describe("行内代码里的网址和路径", () => {
     expect(container.querySelector("code.chat-md-link-code")).toBeNull();
   });
 });
+
+// 2026-11-18 用户截图：中文里网址后面紧跟全角括号和汉字，整句被吞进了链接。
+describe("自动链接在中文处收尾", () => {
+  it("网址后紧跟「）」和汉字：链接只到网址为止，后面的字照常显示", () => {
+    const { container } = render(<ChatMarkdown text="刚才那份文档（https://reversegame.feishu.cn/docx/QPXpdEzalo3CWmx8od7c3DyBnCe）内容已经都并进来了，要我删掉吗？" />);
+    const links = container.querySelectorAll("a");
+    expect(links).toHaveLength(1);
+    expect(links[0].textContent).toBe("https://reversegame.feishu.cn/docx/QPXpdEzalo3CWmx8od7c3DyBnCe");
+    expect(links[0].getAttribute("href")).toBe("https://reversegame.feishu.cn/docx/QPXpdEzalo3CWmx8od7c3DyBnCe");
+    expect(container.textContent).toContain("）内容已经都并进来了，要我删掉吗？");
+  });
+
+  it("网址后直接跟汉字、中文逗号也收尾；作者自己写的 [文字](地址) 不动", () => {
+    const { container } = render(<ChatMarkdown text={"见 https://example.com/a/b，然后 www.example.org看看。另见 [说明](https://example.com/说明)"} />);
+    const links = [...container.querySelectorAll("a")];
+    expect(links.map((a) => a.textContent)).toEqual(["https://example.com/a/b", "www.example.org", "说明"]);
+    expect(decodeURI(links[2].getAttribute("href") ?? "")).toBe("https://example.com/说明");
+  });
+});
