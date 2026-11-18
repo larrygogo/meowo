@@ -1302,6 +1302,8 @@ export const zh = {
     // 子代理交了结论、它派出的后台活儿还在跑（徽标次行小字）。
     subagentBackgroundRunning: "后台仍在运行",
     subagentDurationSec: (s: number) => `${s} 秒`,
+    // 子任务行的用量，照终端子代理行的写法（↓ 387.8k tokens）。
+    taskTokens: (count: string) => `↓ ${count} tokens`,
     subagentDurationMin: (m: number, s: number) => `${m} 分 ${s} 秒`,
     subagentDurationHour: (h: number, m: number) => `${h} 小时 ${m} 分`,
     subagentLoading: "正在读取子任务记录…",

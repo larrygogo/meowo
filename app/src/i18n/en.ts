@@ -1146,6 +1146,7 @@ export const en: Dict = {
     subagentTallyFailed: (n: number) => `${n} failed`,
     subagentTallyRunning: (n: number) => `${n} running`,
     subagentBackgroundRunning: "Background still running",
+    taskTokens: (count: string) => `↓ ${count} tokens`,
     subagentDurationSec: (s: number) => `${s}s`,
     subagentDurationMin: (m: number, s: number) => `${m}m ${s}s`,
     subagentDurationHour: (h: number, m: number) => `${h}h ${m}m`,

@@ -56,6 +56,12 @@ export const QA_SHOTS = [
   { name: "qa-lead-c-620", scene: "flow-lead-c", sel: ".lead-gate-card", size: W620 },
   { name: "qa-lead-c-panel", scene: "flow-lead-c", sel: ".panel-lead", steps: [["click", ".dock-workbar .ui-pill"]], langs: ["zh", "en"] },
   { name: "qa-queued", scene: "flow-queued", sel: ".chat-queued-turn" },
+  // 会话状态（2026-11-18）：只剩后台子代理在跑时运行条位置的说明与可发送的输入框；子代理面板的
+  // 实时时长与 token（含 SendMessage 续上的那个）；API 卡住等重试时的运行条与侧栏状态点。
+  { name: "qa-bg-only", scene: "flow-bg-only", sel: ".chat-running.is-background" },
+  { name: "qa-subagents-live", scene: "flow-subagents-live", sel: ".panel-tasks .chat-task-time", steps: [["click", ".dock-workbar .ui-pill >> nth=1"], ["tick", 600]] },
+  // 重试行从终端画面里认：先切到终端页让画面落进来，再切回对话页（3 秒内都算新鲜）。
+  { name: "qa-api-stalled", scene: "flow-api-stalled", sel: ".chat-running-verb.is-retry", steps: [["tick", 600], ["key", "Control+2"], ["tick", 900], ["key", "Control+1"], ["tick", 300]] },
   { name: "qa-queued-edit", scene: "flow-queued", sel: ".chat-queue-edit", steps: [["click", ".chat-prompt-queue .chat-queue-tool[aria-label=\"编辑\"] >> nth=0"]] },
   { name: "qa-m-queued", page: "mobile", scene: "mobile-queued", size: PHONE, sel: ".chat-queued-turn" },
   // 悬停第二条：拖拽手柄、发送钮、编辑与取消图标一起亮出来。

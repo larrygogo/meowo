@@ -77,6 +77,13 @@ function compileRetry(source: string): RegExp | null {
   return re;
 }
 
+/// token 数的展示，与 Claude Code 终端同一副写法（2.1.327 包内 `Id()`：en-US 紧凑记数、一位
+/// 小数、小写）：`387.8k`、`1.2m`；不到一千照原样。
+const TOKENS_COMPACT = new Intl.NumberFormat("en-US", { notation: "compact", minimumFractionDigits: 1, maximumFractionDigits: 1 });
+export function fmtTokens(count: number): string {
+  return count >= 1000 ? TOKENS_COMPACT.format(count).toLowerCase() : String(Math.max(0, Math.round(count)));
+}
+
 /// 本地计时的展示：与终端同一副写法（41s / 2m 5s / 1h 3m）。
 export function fmtElapsed(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000));

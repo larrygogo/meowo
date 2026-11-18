@@ -208,6 +208,8 @@ export function qaFlowMock(scene: string, lang: Lang, chat: (cmd: string) => unk
     // 排队场景按真实 Claude 的声明（插件 queue_input = 回车、queue_delivery = next_step）：队首钮说「立即插入当前回合」。
     if (cmd === "agent_chat_ui" && (args as { provider?: string })?.provider === "claude") {
       const ui = patchChatUi(demoChatUi()) as Record<string, unknown>;
+      // 运行条认重试行靠插件声明的正则（与 src/test/agents.ts 的 CLAUDE_RETRY_LINE_PATTERN 同一串）。
+      if (kind === "api-stalled") return { ...ui, retry_line_pattern: String.raw`· (?:Retrying in|retrying, waiting up to|next try in) [^·]{1,60}· attempt (\d+)/(\d+)(?: · [^·]{0,40})?\s*$|Waiting for API response · will retry in ([^·]{1,20}?) · check your network\s*$` };
       return kind === "queued" ? { ...ui, queue_input: "\r", queue_delivery: "next_step" } : ui;
     }
     if (cmd === "lead_task_snapshot" && (kind === "lead" || kind === "lead-panel")) return leadTask(lang);
@@ -225,6 +227,34 @@ export function qaFlowMock(scene: string, lang: Lang, chat: (cmd: string) => unk
         } };
       }
       return { approval: null, question: null };
+    }
+    // 会话状态（2026-11-18）：只剩后台子代理在跑（主回合空闲，可以直接发）、子代理面板的时长与 token
+    // （含被 SendMessage 续上、最初委派不在窗口里的那个）、API 卡住等重试（运行条与侧栏状态点）。
+    if (kind === "bg-only" || kind === "subagents-live" || kind === "api-stalled") {
+      const at = (minutes: number) => new Date(FIXED_NOW - minutes * 60_000).toISOString();
+      const items = [
+        { type: "user_text", id: "bg-u1", timestamp: at(12), text: zh ? "派两个子代理分别复核后端和 SourceControl，结果回来再汇总。" : "Send two subagents to review the backend and SourceControl, then summarize." },
+        { type: "tool_use", id: "bg-a1", timestamp: at(11), name: "Agent", kind: "agent", summary: zh ? "跑 meowo-agent 后端测试" : "Run meowo-agent backend tests",
+          subagent: { description: zh ? "跑 meowo-agent 后端测试" : "Run meowo-agent backend tests", agent_type: "general-purpose", count: 1 } },
+        { type: "tool_result", id: "bg-r1", timestamp: at(11), tool_use_id: "bg-a1", text: "Async agent launched successfully.", is_error: false, subagent: { running: 1, completed: 0, failed: 0, task_id: "a9441de" } },
+        { type: "tool_use", id: "bg-a2", timestamp: at(10), name: "Agent", kind: "agent", summary: zh ? "独立审查设备模拟" : "Review device emulation",
+          subagent: { description: zh ? "独立审查设备模拟" : "Review device emulation", agent_type: "lead-redteam", count: 1 } },
+        { type: "tool_result", id: "bg-r2", timestamp: at(10), tool_use_id: "bg-a2", text: "Async agent launched successfully.", is_error: false, subagent: { running: 1, completed: 0, failed: 0, task_id: "a68568d" } },
+        { type: "tool_result", id: "bg-r2b", timestamp: at(6), tool_use_id: "bg-a2", text: zh ? "Agent「独立审查设备模拟」完成" : "Agent finished", is_error: false, subagent: { running: 0, completed: 1, failed: 0, task_id: "a68568d" } },
+        { type: "tool_use", id: "bg-s1", timestamp: at(3.5), name: "SendMessage", kind: "other", summary: JSON.stringify({ to: "acb4b19", message: zh ? "核对 SourceControl.tsx 的暂存逻辑" : "Check the staging logic in SourceControl.tsx" }) },
+        { type: "tool_result", id: "bg-s1r", timestamp: at(3.47), tool_use_id: "bg-s1", text: "{\"success\":true,\"message\":\"Resuming agent acb4b19\"}", is_error: false, subagent: { running: 1, completed: 0, failed: 0, task_id: "acb4b19" } },
+        { type: "assistant_text", id: "bg-t1", timestamp: at(3), text: zh ? "两个子代理都在后台跑，结果回来我再汇总。" : "Both subagents are running in the background; I'll summarize when they report back." },
+      ];
+      if (cmd === "probe_subagent_states") return { "bg-a1": { status: "unknown", branches: [], tokens: 341_712 }, "bg-a2": { status: "unknown", branches: [], tokens: 26_548 }, acb4b19: { status: "unknown", branches: [], tokens: 540_812 } };
+      if (cmd === "get_chat_history") {
+        if (kind === "api-stalled") return { ...base(), items: items.slice(0, 3), pendingReview: null, status: "running", screenState: "working", busySubagents: 0 };
+        return { ...base(), items, pendingReview: null, status: "waiting", screenState: "idle", busySubagents: 2 };
+      }
+      if (cmd === "managed_terminal_snapshot" && kind === "api-stalled") return { ...termText(["● 我先跑一遍后端测试。", "", "✻ Waiting for API response · will retry in 1m 9s · check your network", "", "────────────────────────", " ❯ ", "────────────────────────"]), active: true, exited: false, exitCode: null };
+      if (cmd === "get_live_sessions_page" && kind === "api-stalled") {
+        const rows = chat(cmd) as Array<Record<string, unknown> & { session: { id: number } }>;
+        return rows.map((row) => row.session.id === CHAT_SESSION_ID ? { ...row, connected: true, screen_state: "working", screen_retry: { kind: "stalled" }, session: { ...row.session, status: "running" } } : row);
+      }
     }
     if (cmd === "managed_terminal_snapshot" && screenKind && SCREENS[screenKind]) {
       const text = SCREENS[screenKind].join("\r\n");

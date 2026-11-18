@@ -1,5 +1,5 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChatItem } from "../../api";
 import { collectBackgroundTasks, filterTasks, hasTaskItems, TasksDockPanel, type BackgroundTask } from "./TasksPanel";
 
@@ -78,6 +78,45 @@ describe("后台任务", () => {
     expect(running[0].startedAt).toBe(Date.parse("2026-11-18T05:25:33.178Z"));
     const done = collectBackgroundTasks([send, resumed, finished], live).subagents;
     expect(done.map((task) => [task.state, task.durationMs])).toEqual([["done", 227_000 - 80]]);
+  });
+
+  // 用户要求（2026-11-18）：运行中的子代理行实时显示已运行时间与已用 token（照终端
+  // 「2m 3s · ↓ 387.8k tokens」），完成的行也显示总 token；面板关着或没有运行中的任务时不起定时器。
+  it("子代理面板：运行中的行每秒走表并显示 token，完成的行显示总时长与总 token", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    try {
+      vi.setSystemTime(Date.parse("2026-11-18T05:27:36Z"));
+      const tasks: BackgroundTask[] = [
+        { id: "toolu_run", name: "核对 SourceControl.tsx", meta: null, state: "run", durationMs: null, sortKey: "2", startedAt: Date.parse("2026-11-18T05:25:33Z"), probeId: "acb4b19" },
+        { id: "toolu_done", name: "独立审查", meta: null, state: "done", durationMs: 30_000, sortKey: "1" },
+      ];
+      const probe = vi.fn(async (ids: string[]) => {
+        expect(ids).toEqual(["acb4b19", "toolu_done"]);
+        return { acb4b19: 540_812, toolu_done: 26_548 };
+      });
+      render(<TasksDockPanel title="子代理" icon={<span />} tasks={tasks} onClose={() => {}} probeTokens={probe} />);
+      await act(async () => { await Promise.resolve(); });
+      const row = (name: string) => screen.getByText(name).closest("li")!.querySelector(".chat-task-time")!.textContent;
+      expect(row("核对 SourceControl.tsx")).toBe("2 分 3 秒 · ↓ 540.8k tokens");
+      expect(row("独立审查")).toBe("30 秒 · ↓ 26.5k tokens");
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(row("核对 SourceControl.tsx")).toBe("2 分 4 秒 · ↓ 540.8k tokens");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("没有运行中的任务时不起走表定时器；拿不到 token 的不显示数字", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const tasks: BackgroundTask[] = [{ id: "d", name: "已完成的", meta: null, state: "done", durationMs: 5_000, sortKey: "1" }];
+      render(<TasksDockPanel title="子代理" icon={<span />} tasks={tasks} onClose={() => {}} probeTokens={async () => ({})} />);
+      await act(async () => { await Promise.resolve(); });
+      expect(vi.getTimerCount()).toBe(0);
+      expect(screen.getByText("已完成的").closest("li")!.querySelector(".chat-task-time")!.textContent).toBe("5 秒");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("「最近」= 全部运行中 + 最近结束的 5 条，结束的按完成时刻倒序", () => {

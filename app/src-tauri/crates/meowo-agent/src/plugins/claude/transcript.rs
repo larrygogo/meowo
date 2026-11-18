@@ -2108,8 +2108,11 @@ impl SubagentSpec for ClaudeSubagents {
     fn locate_streams(&self, main_transcript: &Path, tool_use_id: &str) -> Vec<SubagentStream> {
         // 常规委派靠 meta 的 toolUseId 直连;连不上再试 forked skill(那条路没有外键,
         // 得回主链捞出 `/<skill> <args>` 去对 meta 的 description,见 locate_forked)。
+        // 最后按子代理 id 直接找 `agent-<id>.jsonl`：被 SendMessage 续上的子代理，最初那次
+        // 委派可能不在对话页已加载的窗口里，面板手里只有它的 agentId（task_id）。
         Self::locate_one(main_transcript, tool_use_id)
             .or_else(|| Self::locate_forked(main_transcript, tool_use_id))
+            .or_else(|| Self::locate_by_agent_id(main_transcript, tool_use_id))
             .map(|path| {
                 vec![SubagentStream {
                     label: None,
@@ -2124,6 +2127,10 @@ impl SubagentSpec for ClaudeSubagents {
 
     fn parse_stream_line(&self, line: &str) -> Vec<TranscriptEvent> {
         parse_events(line, true)
+    }
+
+    fn stream_tokens(&self, stream: &Path) -> Option<u64> {
+        stream_tokens_cached(stream)
     }
 
     /// 后台任务的**启动回执**:`Agent` 现版本默认异步,立即回一句
@@ -2217,6 +2224,66 @@ fn stopped_task_id(output: &str) -> Option<String> {
         .and_then(|x| x.as_str())
         .filter(|s| !s.is_empty())
         .map(str::to_string)
+}
+
+/// 一条侧车流的 token 用量（口径见 `SubagentProbeDto::tokens`）：最近一条 assistant 的输入
+/// （input + cache_creation + cache_read）+ 每条回复的 output 累加。CC 把一次回复按内容块拆成
+/// 几行落盘，每行带同一个 message.id 与同一份 usage，故 output 按 message.id 去重取最后一次。
+/// 没有任何 usage 返回 None。
+pub(crate) fn stream_tokens(content: &str) -> Option<u64> {
+    let mut latest_input: Option<u64> = None;
+    let mut outputs: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    let mut anonymous = 0u64;
+    for line in content.lines() {
+        if !line.contains("\"usage\"") || !line.contains("\"assistant\"") {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if v.get("type").and_then(|x| x.as_str()) != Some("assistant") {
+            continue;
+        }
+        let Some(usage) = v.pointer("/message/usage") else {
+            continue;
+        };
+        let g = |k: &str| usage.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+        latest_input =
+            Some(g("input_tokens") + g("cache_creation_input_tokens") + g("cache_read_input_tokens"));
+        match v.pointer("/message/id").and_then(|x| x.as_str()) {
+            Some(id) => {
+                outputs.insert(id.to_string(), g("output_tokens"));
+            }
+            None => anonymous += g("output_tokens"),
+        }
+    }
+    latest_input.map(|input| input + outputs.values().sum::<u64>() + anonymous)
+}
+
+/// [`stream_tokens`] 带缓存：面板开着时每几秒问一次，侧车可达数 MB——文件没变（长度与
+/// 修改时间都相同）就直接回上次的数。
+fn stream_tokens_cached(stream: &Path) -> Option<u64> {
+    use std::sync::{Mutex, OnceLock};
+    type Key = (u64, Option<std::time::SystemTime>);
+    type Cache = std::collections::HashMap<PathBuf, (Key, Option<u64>)>;
+    static CACHE: OnceLock<Mutex<Cache>> =
+        OnceLock::new();
+    let meta = std::fs::metadata(stream).ok()?;
+    let key: Key = (meta.len(), meta.modified().ok());
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some((seen, tokens)) = cache.lock().ok()?.get(stream) {
+        if *seen == key {
+            return *tokens;
+        }
+    }
+    let tokens = stream_tokens(&std::fs::read_to_string(stream).ok()?);
+    if let Ok(mut cache) = cache.lock() {
+        if cache.len() > 256 {
+            cache.clear();
+        }
+        cache.insert(stream.to_path_buf(), (key, tokens));
+    }
+    tokens
 }
 
 /// SendMessage 把一个**已结束**的子代理续上时的回执(CC 2.1.317 实拍):
@@ -2327,6 +2394,16 @@ fn launch_agent_id(output: &str) -> Option<String> {
 }
 
 impl ClaudeSubagents {
+    /// 按子代理 id（Agent 启动回执里的 agentId）找侧车：`subagents/agent-<id>.jsonl`。
+    /// id 只收字母数字，防止拼出目录外的路径。
+    fn locate_by_agent_id(main_transcript: &Path, agent_id: &str) -> Option<PathBuf> {
+        if agent_id.is_empty() || !agent_id.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return None;
+        }
+        let stream = Self::stream_dir(main_transcript)?.join(format!("agent-{agent_id}.jsonl"));
+        stream.is_file().then_some(stream)
+    }
+
     fn locate_one(main_transcript: &Path, tool_use_id: &str) -> Option<PathBuf> {
         let dir = Self::stream_dir(main_transcript)?;
         for entry in std::fs::read_dir(&dir).ok()?.flatten() {
@@ -3497,6 +3574,26 @@ mod tests {
     /// 实拍形态（2026-11-18 本机 transcript，脱敏）：synthetic 的 Connection lost 结束回合，
     /// 一秒后用户发了新消息（文字 + 图片），随后只有 thinking 与工具调用。用户一开口错误就该
     /// 消失（新回合起跑到出第一条 thinking 可能隔几分钟），新回合里再出错照样标红。
+    /// 子代理用量对齐 Claude Code 终端的「↓ N tokens」：最近一条的输入（含缓存）+ 各条输出
+    /// 累加；同一回复拆成多行落盘时按 message.id 只算一次（样本照本机侧车行形态，脱敏）。
+    #[test]
+    fn stream_tokens_matches_tui_formula() {
+        let line = |id: &str, input: u64, cache_read: u64, cache_write: u64, output: u64| format!(
+            r#"{{"isSidechain":true,"type":"assistant","message":{{"id":"{id}","role":"assistant","content":[{{"type":"text","text":"x"}}],"usage":{{"input_tokens":{input},"cache_creation_input_tokens":{cache_write},"cache_read_input_tokens":{cache_read},"output_tokens":{output}}}}}}}"#
+        );
+        let content = [
+            r#"{"isSidechain":true,"type":"user","message":{"role":"user","content":"去查一下"}}"#.to_string(),
+            line("msg_1", 3, 0, 12_000, 400),
+            // 同一回复的第二个内容块：同 id，不重复计 output。
+            line("msg_1", 3, 0, 12_000, 400),
+            line("msg_2", 1, 12_000, 2_000, 900),
+        ]
+        .join("\n");
+        // 最近输入 1 + 12000 + 2000 = 14001；输出 400 + 900 = 1300。
+        assert_eq!(super::stream_tokens(&content), Some(15_301));
+        assert_eq!(super::stream_tokens("{\"type\":\"user\"}"), None);
+    }
+
     #[test]
     fn analyze_new_prompt_after_error_clears_error_until_next_error() {
         let error = r#"{"type":"assistant","isSidechain":false,"timestamp":"2026-11-18T04:35:18.645Z","message":{"model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"API Error: Connection lost mid-response. The response above may be incomplete."}]}}"#;
