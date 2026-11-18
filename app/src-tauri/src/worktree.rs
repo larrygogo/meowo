@@ -159,25 +159,24 @@ fn git_repo(common: &Path, args: &[&str]) -> std::io::Result<std::process::Outpu
     command("git").arg(git_dir).args(args).output()
 }
 
-/// 真实的 `gh pr view`。不走 git.rs 的 60s 缓存：删除前要的是此刻的状态。
+/// 真实的 `gh pr view`。不走 git.rs 的 60s 缓存：删除前要的是此刻的状态。经 forge 的连接分派
+/// （设置里的 GitHub 连接：本机 gh / Meowo 登录 / 关闭），关闭或没装时按「查不了」走本地判定。
 pub(crate) fn gh_pr_lookup(dir: &Path) -> PrLookup {
-    let out = match command("gh")
-        .current_dir(dir)
-        .args(["pr", "view", "--json", "number,state,headRefOid"])
-        .output()
-    {
-        Ok(out) => out,
-        Err(_) => return PrLookup::Unavailable,
+    gh_pr_lookup_with(&crate::forge::connected_gh, dir)
+}
+
+pub(crate) fn gh_pr_lookup_with(gh: crate::forge::GhExec, dir: &Path) -> PrLookup {
+    let Some(out) = gh(&dir.to_string_lossy(), &["pr", "view", "--json", "number,state,headRefOid"]) else {
+        return PrLookup::Unavailable;
     };
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr).to_lowercase();
-        return if err.contains("no pull requests found") {
+    if out.timed_out || out.code != Some(0) {
+        return if out.stderr.to_lowercase().contains("no pull requests found") {
             PrLookup::NoPr
         } else {
             PrLookup::Unavailable
         };
     }
-    parse_pr_view(&String::from_utf8_lossy(&out.stdout)).unwrap_or(PrLookup::Unavailable)
+    parse_pr_view(&out.stdout).unwrap_or(PrLookup::Unavailable)
 }
 
 fn parse_pr_view(json: &str) -> Option<PrLookup> {

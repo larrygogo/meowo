@@ -1115,3 +1115,6 @@ fn 目标判定_fork_工作流_认_gh_set_default_head_带_fork_owner() {
 mod badge;
 
 mod title_pr;
+
+// Meowo 登录模式的内置 gh（forge/builtin.rs）。
+mod builtin;

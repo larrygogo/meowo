@@ -1956,6 +1956,39 @@ button.stab {
 }
 .remote-copy:hover { background: var(--fill-selected-hover); }
 
+/* 设置 › GitHub（GithubSection）。一次性代码大号等宽、可整段选中；头像用首字母（CSP 不放行远程图片）。 */
+.github-active { font-size: var(--text-sm); color: var(--cc-text-dim); text-align: right; overflow-wrap: anywhere; }
+.github-code {
+  margin: var(--sp-8) 0 var(--sp-4);
+  font-family: var(--cc-mono);
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  line-height: 1.2;
+  color: var(--cc-text);
+  user-select: all;
+}
+.github-actions { display: flex; flex-wrap: wrap; gap: var(--sp-8); margin-top: var(--sp-10); }
+/* 账号行右侧的「重新登录」「退出登录」一起折行，不拆成上下两处。 */
+.github-row-actions { flex: none; display: flex; gap: var(--sp-8); }
+.github-waiting { display: flex; align-items: center; gap: var(--sp-6); margin-top: var(--sp-10); }
+.github-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--cc-text-dim); animation: github-pulse var(--dur-pulse) var(--ease-in-out) infinite; }
+@keyframes github-pulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .github-dot { animation: none; } }
+.github-avatar {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--fill-selected);
+  color: var(--cc-text);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.github-warn { color: var(--cc-warn-text); }
+
 .settings-subtitle {
   margin: var(--sp-24) 0 var(--sp-4);
   color: var(--cc-text-dim);
