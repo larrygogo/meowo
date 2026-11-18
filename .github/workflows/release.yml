@@ -56,6 +56,8 @@ jobs:
             echo "::error::发布说明不存在: $notes（tag 与文件名同规，先补再发）"
             exit 1
           fi
+          # 读者是用户（更新窗口、Release、官网都显示它）：长度和开发者内容按 docs/release-notes/README.md 检查。
+          node scripts/check-release-notes.mjs "$notes"
 
       # GITHUB_TOKEN 推的 tag 不会再触发别的 workflow（GitHub 对 token 事件不级联），
       # 且本 workflow 已不监听 tag push，不会自触发。
