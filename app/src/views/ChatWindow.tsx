@@ -185,6 +185,9 @@ const EMPTY_MARKERS: string[] = [];
 
 /** 终端就绪等待超过这么多秒才上横幅（之前只有发送钮转圈，见横幅处注释）。 */
 const TERMINAL_WAIT_NOTICE_S = 20;
+/// 屏幕卡答完后压住「去终端处理」兜底卡的最长时间（见 screenAnswered）。transcript 推送一般 1 秒内
+/// 就把 pendingReview 清掉；过了这个时间还没清，多半是终端真的还在等，放出兜底卡。
+const SCREEN_ANSWER_GRACE_MS = 4_000;
 /// 主列（标题栏 + 消息区 + 输入区）矮于这个高度（按 100% 缩放计）算「矮窗」，卡片走紧凑排法。
 /// 580 取自实测：620×760、1280×800@100% 主列 712/752 不算矮；620×480 是 432、1280×800@150% 折合 501。
 const SHORT_MAIN_HEIGHT = 580;
@@ -2399,10 +2402,21 @@ export function ChatWindow() {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useApprovalChannel 的 useState setter 与 ref，引用稳定
   }, [watchedQuestion, structuredQuestion, dismissedQuestion, sessionId, history, items]);
 
+  // 屏幕卡（终端里的审批框、菜单）刚在对话页答完：按键已写进终端，但 transcript 的 pendingReview
+  // 要慢一拍才清。这段空档里卡片已收、pendingReview 还在，会冒出一张「去终端处理」的兜底卡闪一下
+  // （2026-11-18 用户实拍：Kimi 每张授权卡点完都闪一次）。与 brokerOwnsReview 同理压住兜底，
+  // 但屏幕通道没有 broker 的了结信号，再加一个上限：超时仍未清空就放出兜底，免得真卡住时看不到卡。
+  const [screenAnswered, setScreenAnswered] = useState(false);
+  useEffect(() => {
+    if (!screenAnswered) return;
+    const timer = window.setTimeout(() => setScreenAnswered(false), SCREEN_ANSWER_GRACE_MS);
+    return () => window.clearTimeout(timer);
+  }, [screenAnswered]);
+  useEffect(() => { setScreenAnswered(false); }, [sessionId]);
   useEffect(() => {
     // transcript 的 pendingReview 比 broker 的实时状态慢一拍。只有历史状态确实清空后，
     // 才重新启用“去终端处理”的兼容提示，避免 GUI 审批完成时闪一下旧提示。
-    if (!history?.pendingReview) setBrokerOwnsReview(false);
+    if (!history?.pendingReview) { setBrokerOwnsReview(false); setScreenAnswered(false); }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useApprovalChannel 的 useState setter 与 ref，引用稳定
   }, [history?.pendingReview]);
 
@@ -4083,7 +4097,7 @@ export function ChatWindow() {
   // 手机端 history.pendingReview 往往比 broker 结构化审批早到一拍。立即渲染 RemoteTerminalKeys
   // 会先闪一张终端按键卡，再换成正常审批卡（2026-11-16 用户两张实拍）。给接收通道一个短交接窗；
   // 超过窗口仍没有结构化卡，才展示真正的终端兜底。
-  const terminalFallbackCandidate = view === "chat" && !terminalAttention && !approval && !brokerOwnsReview
+  const terminalFallbackCandidate = view === "chat" && !terminalAttention && !approval && !brokerOwnsReview && !screenAnswered
     && !!terminalReview && history?.ptyManaged !== false;
   const terminalFallbackKey = terminalFallbackCandidate && remoteUi() ? `${sessionId}:${terminalReview}` : null;
   const [terminalFallbackReadyKey, setTerminalFallbackReadyKey] = useState<string | null>(null);
@@ -4135,6 +4149,7 @@ export function ChatWindow() {
         terminalMenuSeenRef.current = false;
         setTerminalMenuOpen(false);
         setTerminalAttention(null);
+        setScreenAnswered(true);
         // 模型平时由 Stop hook 落库，而 `/model` 切换不产生 Stop——不主动刷一次的话，
         // 对话页和贴纸会一直挂着旧模型直到下一条消息跑完。CLI 要一会儿才把新模型写进
         // 会话日志，故稍等再读。
@@ -4158,7 +4173,7 @@ export function ChatWindow() {
       void typeAnswerIntoTerminal(sessionId, flow, reason)
         .then((outcome) => {
           if (!isCurrentOperation()) return;
-          if (outcome === "sent") { setTerminalAttention(null); return; }
+          if (outcome === "sent") { setTerminalAttention(null); setScreenAnswered(true); return; }
           // 没进入等输入的状态：说明没有写进终端，审批框还在，卡片留着让用户重试或直接拒绝。
           logChatEvent(sessionId, { kind: "card_unrecognized", reason: "typed_answer_not_ready", detail: { what: "deny_reason" } });
           setSendError(t.chat.denyReasonNotSent, { terminal: true });
