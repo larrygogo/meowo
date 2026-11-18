@@ -194,8 +194,56 @@ pub(crate) struct RealHttp;
 
 impl Http for RealHttp {
     fn send(&self, req: &Request) -> Result<Response, String> {
-        follow_redirects(&raw_send, req)
+        follow_redirects(
+            &|r: &Request| {
+                // 不许去的主机直接拒，不重试。
+                if !allowed_url(r.url) {
+                    return Err("github/host_not_allowed".into());
+                }
+                with_retry(&raw_send, r, &std::thread::sleep)
+            },
+            req,
+        )
     }
+}
+
+/// 传输层失败（连不上、TLS 握手失败或 EOF、DNS 临时失败、超时，还没收到任何回包）后的重试间隔。
+/// 经 TUN 代理上网时到 GitHub 的握手偶发失败，gh / git push 也一样，重试即成功（leader 安装版实测）。
+const RETRY_DELAYS: [Duration; 3] = [Duration::from_millis(500), Duration::from_secs(1), Duration::from_secs(2)];
+
+/// 能不能安全重发：读（GET / HEAD）、GraphQL 查询（不是 mutation）、设备码申请与令牌轮询。
+/// 写操作（建 PR、合并、评论、评审、入队等 REST 写与 GraphQL mutation）不重发：可能已经生效、只是回包丢了，
+/// 重发会重复建 PR、重复评论。
+pub(crate) fn retry_safe(req: &Request) -> bool {
+    if matches!(req.method, "GET" | "HEAD") || req.url == DEVICE_CODE_URL || req.url == TOKEN_URL {
+        return true;
+    }
+    if req.url == format!("{API}/graphql") {
+        if let Some(Body::Json(body)) = &req.body {
+            let query = body.get("query").and_then(|q| q.as_str()).unwrap_or_default().trim_start();
+            return !query.starts_with("mutation");
+        }
+    }
+    false
+}
+
+/// 传输层失败时有限重试（只对 [`retry_safe`] 的请求）：最多再试 3 次，间隔 0.5s / 1s / 2s；收到任何回包
+///（含 4xx / 5xx）都不重试。全部失败才报，带上最后一次的原因。
+pub(crate) fn with_retry(raw: &dyn Fn(&Request) -> Result<Response, String>, req: &Request, sleep: &dyn Fn(Duration)) -> Result<Response, String> {
+    let first = match raw(req) {
+        Ok(resp) => return Ok(resp),
+        Err(e) if !retry_safe(req) => return Err(e),
+        Err(e) => e,
+    };
+    let mut last = first;
+    for delay in RETRY_DELAYS {
+        sleep(delay);
+        match raw(req) {
+            Ok(resp) => return Ok(resp),
+            Err(e) => last = e,
+        }
+    }
+    Err(format!("{last} (retried {} times)", RETRY_DELAYS.len()))
 }
 
 /// GraphQL 带上 gh 一直带的预览头：mergeStateStatus 早年是预览字段。2026-11-18 用 gh 2.96 实测 cli/cli，

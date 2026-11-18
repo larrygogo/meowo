@@ -515,3 +515,80 @@ fn 重定向_跳数有上限() {
     assert_eq!(follow_redirects(&raw, &req).unwrap_err(), "github/too_many_redirects");
     assert_eq!(count.load(Ordering::SeqCst), 6);
 }
+
+// ═══ 传输层失败重试（leader 安装版：TUN 代理下 TLS 握手偶发 EOF）═══
+
+/// 先回 fails 次传输错误，之后成功；记下调用次数与睡眠。
+fn flaky(fails: usize, calls: &AtomicUsize) -> impl Fn(&Request) -> Result<Response, String> + '_ {
+    move |_: &Request| {
+        let n = calls.fetch_add(1, Ordering::SeqCst);
+        if n < fails {
+            Err("https://github.com/login/device/code: Connection Failed: tls connection init failed: unexpected end of file".into())
+        } else {
+            Ok(Response { status: 200, body: "{}".into(), ..Default::default() })
+        }
+    }
+}
+
+#[test]
+fn 重试_读与设备码请求_传输失败后退避重试() {
+    let token = Token::new("gho_x").unwrap();
+    let query = Body::Json(serde_json::json!({ "query": "query($id:ID!){node(id:$id){id}}", "variables": {} }));
+    let safe: Vec<Request> = vec![
+        Request { method: "GET", url: "https://api.github.com/user", token: Some(&token), body: None },
+        Request { method: "POST", url: DEVICE_CODE_URL, token: None, body: Some(Body::Form(vec![("client_id", "c".into())])) },
+        Request { method: "POST", url: TOKEN_URL, token: None, body: Some(Body::Form(vec![("client_id", "c".into())])) },
+        Request { method: "POST", url: "https://api.github.com/graphql", token: Some(&token), body: Some(query) },
+    ];
+    for req in &safe {
+        let calls = AtomicUsize::new(0);
+        let slept = Mutex::new(Vec::new());
+        let resp = with_retry(&flaky(2, &calls), req, &|d| slept.lock().unwrap().push(d)).unwrap();
+        assert_eq!(resp.status, 200, "{}", req.url);
+        assert_eq!(calls.load(Ordering::SeqCst), 3, "{}", req.url);
+        assert_eq!(*slept.lock().unwrap(), [Duration::from_millis(500), Duration::from_secs(1)]);
+    }
+}
+
+#[test]
+fn 重试_全部失败才报_带原因() {
+    let calls = AtomicUsize::new(0);
+    let slept = Mutex::new(Vec::new());
+    let req = Request { method: "POST", url: DEVICE_CODE_URL, token: None, body: None };
+    let err = with_retry(&flaky(99, &calls), &req, &|d| slept.lock().unwrap().push(d)).unwrap_err();
+    assert!(err.contains("unexpected end of file") && err.contains("retried 3 times"), "{err}");
+    assert_eq!(calls.load(Ordering::SeqCst), 4);
+    assert_eq!(*slept.lock().unwrap(), [Duration::from_millis(500), Duration::from_secs(1), Duration::from_secs(2)]);
+    // 设备码申请失败的提示仍带原因。
+    let http = Script::new(vec![Err(err)]);
+    assert!(request_code(&http, "cid").unwrap_err().contains("unexpected end of file"));
+}
+
+#[test]
+fn 重试_写操作只发一次() {
+    let token = Token::new("gho_x").unwrap();
+    let mutation = Body::Json(serde_json::json!({ "query": "mutation($input:EnqueuePullRequestInput!){enqueuePullRequest(input:$input){mergeQueueEntry{id}}}" }));
+    let writes: Vec<Request> = vec![
+        Request { method: "POST", url: "https://api.github.com/repos/o/r/pulls", token: Some(&token), body: Some(Body::Json(serde_json::json!({}))) },
+        Request { method: "PUT", url: "https://api.github.com/repos/o/r/pulls/1/merge", token: Some(&token), body: None },
+        Request { method: "POST", url: "https://api.github.com/repos/o/r/issues/1/comments", token: Some(&token), body: None },
+        Request { method: "POST", url: "https://api.github.com/graphql", token: Some(&token), body: Some(mutation) },
+    ];
+    for req in &writes {
+        let calls = AtomicUsize::new(0);
+        assert!(with_retry(&flaky(1, &calls), req, &|_| panic!("写操作不许等待重试")).is_err(), "{}", req.url);
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "{} 只能发一次", req.url);
+    }
+}
+
+#[test]
+fn 重试_收到回包就不重试() {
+    let calls = AtomicUsize::new(0);
+    let raw = |_: &Request| {
+        calls.fetch_add(1, Ordering::SeqCst);
+        Ok(Response { status: 502, ..Default::default() })
+    };
+    let req = Request { method: "GET", url: "https://api.github.com/user", token: None, body: None };
+    assert_eq!(with_retry(&raw, &req, &|_| {}).unwrap().status, 502);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
