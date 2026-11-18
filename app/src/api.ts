@@ -141,6 +141,9 @@ import type { ForgeStatusDto } from "./generated/contracts/ForgeStatusDto";
 import type { GithubConnectionDto } from "./generated/contracts/GithubConnectionDto";
 import type { GithubDeviceCodeDto } from "./generated/contracts/GithubDeviceCodeDto";
 import type { GithubAccountDto } from "./generated/contracts/GithubAccountDto";
+import type { ForgeAccountDto } from "./generated/contracts/ForgeAccountDto";
+import type { ForgeAccountsDto } from "./generated/contracts/ForgeAccountsDto";
+import type { ForgeDeviceCodeDto } from "./generated/contracts/ForgeDeviceCodeDto";
 import type { GitJobDto } from "./generated/contracts/GitJobDto";
 import type { MergeResultDto } from "./generated/contracts/MergeResultDto";
 import type { PushResultDto } from "./generated/contracts/PushResultDto";
@@ -1046,6 +1049,35 @@ export function githubLoginCancel(): Promise<void> {
 }
 export function githubLogout(): Promise<GithubConnectionDto> {
   return invoke("github_logout");
+}
+
+// ═══ 代码托管账号（设置 › 代码托管账号，后端 forge_accounts.rs）═══
+// GitHub 企业版、GitLab、Gitea / Forgejo、Bitbucket Cloud 的账号：平台 + 主机 + 账号名。令牌只在后端的系统凭据库里。
+// 账号变了后端发 GITHUB_CHANGED_EVENT（PR 区块、侧栏角标与设置页一起重拉）。
+
+/** 平台：github（企业版）/ gitlab / gitea（含 Forgejo、Codeberg）/ bitbucket。 */
+export type ForgePlatform = "github" | "gitlab" | "gitea" | "bitbucket";
+export type { ForgeAccountDto, ForgeAccountsDto, ForgeDeviceCodeDto };
+/** gitlab.com 设备码登录结束。取消不发。 */
+export const FORGE_LOGIN_EVENT = "forge-login-finished";
+export type ForgeLoginFinished = { state: "ok" | "expired" | "denied" | "error"; error: string | null };
+
+export function forgeAccounts(): Promise<ForgeAccountsDto> {
+  return invoke("forge_accounts");
+}
+/** 用个人访问令牌添加（后端先用令牌问一次「我是谁」）。user：Bitbucket 的 Atlassian 邮箱。 */
+export function forgeAccountAdd(platform: ForgePlatform, host: string, token: string, user?: string | null): Promise<ForgeAccountsDto> {
+  return invoke("forge_account_add", { platform, host, token, user: user ?? null });
+}
+export function forgeAccountRemove(platform: string, host: string): Promise<ForgeAccountsDto> {
+  return invoke("forge_account_remove", { platform, host });
+}
+/** gitlab.com 设备码登录：要一次性代码，结果经 FORGE_LOGIN_EVENT 推回来。 */
+export function forgeLoginStart(): Promise<ForgeDeviceCodeDto> {
+  return invoke("forge_login_start");
+}
+export function forgeLoginCancel(): Promise<void> {
+  return invoke("forge_login_cancel");
 }
 
 /** 「文件」页签：列出 cwd 下 rel 目录的直接子条目（目录在前，后端已排序并跳过 .git）。 */

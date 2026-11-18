@@ -22,7 +22,7 @@ import { ExtensionsSection } from "./settings/ExtensionsSection";
 import { loadStoredOpts, saveStoredOpts } from "./useNewSessionForm";
 import { NetworkSection } from "./settings/NetworkSection";
 import { RemoteAccessCard } from "./settings/RemoteAccessCard";
-import { GithubSection } from "./settings/GithubSection";
+import { ForgeAccountsSection } from "./settings/ForgeAccountsSection";
 import { applySettingsFilter, firstHitControl } from "./settings/searchFilter";
 import { useEscClose } from "../hooks/useEscClose";
 import { displayKeys, KeyCombos, shortcutGroups } from "./chat/WindowModals";
@@ -113,7 +113,7 @@ function IconPuzzle() {
   );
 }
 
-// 拉取请求：GitHub 连接分区管的是 PR 功能连 GitHub 的方式。
+// 拉取请求：代码托管账号分区管的是 PR / MR 功能连各平台的方式（github.com 的连接方式与其他平台的账号）。
 function IconGithub() {
   return (
     <Icon glyph={icGitPr} size={16} />
@@ -1370,7 +1370,7 @@ export function About() {
               ) : s === "network" ? (
                 <NetworkSection />
               ) : s === "github" ? (
-                <GithubSection />
+                <ForgeAccountsSection />
               ) : s === "account" ? (
                 <AccountSection />
               ) : s === "extensions" ? (

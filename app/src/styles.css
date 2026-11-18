@@ -1989,6 +1989,27 @@ button.stab {
 }
 .github-warn { color: var(--cc-warn-text); }
 
+/* 设置 › 代码托管账号（ForgeAccountsSection）。平台图标与 GitHub 账号的首字母头像同一尺寸、同一中性底。 */
+.forge-first-caption { margin-top: 0; }
+.forge-mark {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-md);
+  background: var(--fill-selected);
+  color: var(--cc-text);
+}
+/* 添加账号的表单：标签在上、输入框占满一行（主机名与令牌都长，左右排会把输入框挤到一两个字宽）。 */
+.forge-add .row.forge-field { flex-direction: column; align-items: stretch; gap: var(--sp-6); }
+.forge-field .ns-input { width: 100%; }
+.forge-field-note { -webkit-line-clamp: unset; }
+.forge-token-link { font-size: inherit; }
+.forge-add .row.forge-actions { gap: var(--sp-8); }
+.forge-actions .forge-alt { margin-right: auto; }
+.row.forge-add-row { justify-content: flex-end; }
+
 .settings-subtitle {
   margin: var(--sp-24) 0 var(--sp-4);
   color: var(--cc-text-dim);

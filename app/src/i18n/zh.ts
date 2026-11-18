@@ -7,6 +7,22 @@ import statusVocab from "./statusVocab.json";
 // 下文凡是状态词都引用 vocab，不再写字面量（statusVocab.test.ts 扫描）。
 const vocab = statusVocab.zh;
 
+/** 一个代码托管平台的叫法（「更改」面板、侧栏、标题栏按平台换词）。 */
+export type ForgeWord = {
+  /** 平台名（GitHub、GitLab、Gitea、Bitbucket；codeberg.org 显示 Codeberg）。 */
+  name: string;
+  /** 短叫法：PR / MR。 */
+  pr: string;
+  /** 「打开 …」后面的长叫法，前后空格按语言写好（中文：「 Pull Request 」「合并请求 」）。 */
+  openLead: string;
+  /** 编号前缀：GitHub「#」，GitLab「!」。 */
+  num: string;
+  /** 「…有失败」「…还在跑」前面的检查叫法（中文：「CI 」「流水线」）。 */
+  ciLead: string;
+  /** 没有任何检查时的说明。 */
+  noCi: string;
+};
+
 export const zh = {
   // BCP-47 locale：日期/时刻格式化走 Intl（12/24 小时制、月日顺序随语言），不再手拼。
   locale: "zh-CN",
@@ -1829,9 +1845,9 @@ export const zh = {
   settings: {
     // account 分区实际内容是账号/配额/登录/安装/中转——曾叫「Agent」，想「看额度还剩多少」
     // 「退出登录」的用户猜不到该点它（key 名 account 与显示名分裂也是自证）。
-    nav: { general: "通用", sessions: "会话", appearance: "外观", shortcuts: "快捷键", remote: "手机远程", network: "网络", github: "GitHub", account: "账号与用量", extensions: "扩展", about: "关于" },
+    nav: { general: "通用", sessions: "会话", appearance: "外观", shortcuts: "快捷键", remote: "手机远程", network: "网络", github: "代码托管账号", account: "账号与用量", extensions: "扩展", about: "关于" },
     // 设置搜索额外匹配的词（不显示）：导航名为排版改短后，旧名里的词仍要能搜到对应分区。
-    navSearchExtra: { shortcuts: "键盘", account: "账号 用量", github: "PR gh 登录" },
+    navSearchExtra: { shortcuts: "键盘", account: "账号 用量", github: "GitHub PR gh 登录 GitLab MR Gitea Forgejo Codeberg Bitbucket 企业版 令牌" },
     searchPlaceholder: "搜索设置…",
     searchNoResults: "没有匹配的设置项",
     searchClear: "清除搜索",
@@ -2108,6 +2124,93 @@ export const zh = {
     denied: "已在 GitHub 上拒绝授权。",
     loginFailed: (e: string) => `登录没有完成：${e}`,
     note: "Meowo 登录使用 GitHub 设备码授权，权限与 gh 默认一致（repo、read:org）。",
+  },
+  // 代码托管平台的叫法（forgeWords.ts 按平台取）。GitLab 是合并请求（MR），编号写 !12，检查叫流水线。
+  forgeWords: {
+    github: { name: "GitHub", pr: "PR", openLead: " Pull Request ", num: "#", ciLead: "CI ", noCi: "这个仓库没配 CI" },
+    gitlab: { name: "GitLab", pr: "MR", openLead: "合并请求 ", num: "!", ciLead: "流水线", noCi: "这个项目没有流水线" },
+    gitea: { name: "Gitea", pr: "PR", openLead: " Pull Request ", num: "#", ciLead: "CI ", noCi: "这个仓库没配 CI" },
+    bitbucket: { name: "Bitbucket", pr: "PR", openLead: " Pull Request ", num: "#", ciLead: "构建", noCi: "这个仓库没配构建" },
+  } as Record<"github" | "gitlab" | "gitea" | "bitbucket", ForgeWord>,
+  // 按平台换词的文案（GitHub 仍用 forge.* 的原句，两边一致由 forgeWords.test 核对）。
+  forgeP: {
+    sessionPrs: (w: ForgeWord) => `本会话的 ${w.pr}`,
+    branchPr: (w: ForgeWord) => `当前分支的 ${w.pr}`,
+    dismissPrTip: (w: ForgeWord) => `不再列出这个 ${w.pr}`,
+    openPr: (w: ForgeWord) => `开 ${w.pr}`,
+    openOnSite: (w: ForgeWord) => `在 ${w.name} 打开`,
+    prFormTitle: (w: ForgeWord, base: string) => `开 ${w.pr} 到 ${base}`,
+    prCreate: (w: ForgeWord) => `创建 ${w.pr}`,
+    prCreated: (w: ForgeWord, n: number) => `已创建 ${w.pr} ${w.num}${n}`,
+    mergeTitle: (w: ForgeWord, n: number) => `合并 ${w.pr} ${w.num}${n}`,
+    mergeBlockedFail: (w: ForgeWord) => `${w.ciLead}有失败，不能合并`,
+    mergeBlockedPending: (w: ForgeWord) => `${w.ciLead}还在跑，跑完再合并`,
+    mergeBlockedDraft: (w: ForgeWord) => `草稿 ${w.pr}，标为就绪后才能合并`,
+    merged: (w: ForgeWord) => `${w.pr} 已合并`,
+    repoNeedsChoice: (w: ForgeWord) => `有多个 ${w.name} 远端，先选仓库`,
+    repoAt: (w: ForgeWord, slug: string) => `${w.pr} 开在 ${slug}`,
+    repoPickTitle: (w: ForgeWord) => `${w.pr} 开在哪个仓库`,
+    commentConfirm: (w: ForgeWord) => `确认提交到 ${w.name}`,
+    monitorStart: (w: ForgeWord) => `监控此 ${w.pr}`,
+    reviewLoading: (w: ForgeWord) => `正在读取 ${w.pr}…`,
+    prOpenTip: (w: ForgeWord, n: number, title: string) => `打开${w.openLead}${w.num}${n}${title ? `：${title}` : ""}`,
+    sidebarPr: (w: ForgeWord, n: number, state: string) => `${w.pr} ${w.num}${n} ${state}`,
+    // 认得出平台、但设置里还没有这台主机的账号（不发请求）。
+    noAccount: (w: ForgeWord) => `添加 ${w.name} 账号后，可以在这里看 ${w.pr} 和检查`,
+    addAccount: (w: ForgeWord) => `去设置添加 ${w.name} 账号`,
+    // 账号的令牌被拒（撤销、过期、权限收回）。
+    relogin: (w: ForgeWord) => `${w.name} 账号的令牌已失效，看不到检查`,
+    reloginAction: "去设置重新添加",
+    // GitLab 的合并方式由项目设置决定，API 只能选要不要压缩。
+    gitlabMethods: { merge: "按项目设置合并", squash: "压缩成一个提交后合并" } as Record<string, string>,
+  },
+  // 设置 › 代码托管账号（ForgeAccountsSection）：github.com 沿用 GitHub 连接方式，其余平台按主机加账号。
+  forgeAccounts: {
+    githubCaption: "GitHub（github.com）",
+    othersCaption: "其他平台",
+    empty: "还没有其他平台的账号",
+    emptyDesc: "仓库在 GitLab、Gitea、Forgejo、Bitbucket 或 GitHub 企业版上时，添加对应主机的账号，就能在 Meowo 里看合并请求和检查、合并、评论。",
+    add: "添加账号",
+    addTitle: "添加代码托管账号",
+    platform: "平台",
+    platformNames: { gitlab: "GitLab", gitea: "Gitea / Forgejo", bitbucket: "Bitbucket", github: "GitHub 企业版" } as Record<string, string>,
+    host: "主机",
+    hostPlaceholder: { gitlab: "gitlab.com 或自管实例的域名", gitea: "codeberg.org 或自建实例的域名", bitbucket: "bitbucket.org", github: "github.example.com" } as Record<string, string>,
+    hostFixed: "只支持 Bitbucket Cloud",
+    deviceTitle: "用浏览器登录",
+    deviceDesc: "在 gitlab.com 上授权 Meowo，不用自己生成令牌。",
+    deviceStart: "用浏览器登录",
+    useToken: "改用访问令牌",
+    useDevice: "改用浏览器登录",
+    token: "访问令牌",
+    tokenPlaceholder: "粘贴令牌",
+    email: "Atlassian 账号邮箱",
+    emailPlaceholder: "you@example.com",
+    scopes: {
+      gitlab: "个人访问令牌勾选 api 权限。",
+      gitea: "访问令牌给 repository、issue 读写与 user 读权限。",
+      bitbucket: "创建带权限的 API token，应用选 Bitbucket，勾选 read:user、read:repository、read:pullrequest、write:pullrequest。App password 已停用。",
+      github: "经典令牌勾选 repo。细粒度令牌给 Pull requests 与 Contents 读写。",
+    } as Record<string, string>,
+    createToken: "去生成令牌",
+    verify: "验证并添加",
+    verifying: "正在验证…",
+    cancel: "取消",
+    tokenDesc: (vault: string) => `访问令牌保存在${vault}。`,
+    oauthDesc: (vault: string) => `浏览器登录，令牌保存在${vault}。`,
+    reloginDesc: "令牌已失效或被撤销，请重新添加。",
+    readd: "重新添加",
+    signOut: "退出",
+    signOutConfirm: (platform: string, host: string) => `退出后，Meowo 会删掉保存在本机的 ${host} 令牌。令牌在 ${platform} 上仍然有效，不再使用时请到 ${platform} 撤销。`,
+    codeLabel: "在 GitLab 上输入这个代码",
+    codeHint: (minutes: number) => `打开 GitLab 的授权页输入代码并授权，代码 ${minutes} 分钟内有效。`,
+    copyAndOpen: "复制代码并打开 GitLab",
+    waiting: "等待在 GitLab 上授权…",
+    expired: "代码已过期，请重新登录。",
+    denied: "已在 GitLab 上拒绝授权。",
+    loginFailed: (e: string) => `登录没有完成：${e}`,
+    unsupported: "这个系统没有可用的凭据库，不能保存令牌。",
+    note: "Meowo 按仓库远端的主机选用账号。令牌只保存在系统凭据库里。",
   },
   relay: {
     title: "API 中转",

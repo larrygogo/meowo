@@ -14,15 +14,18 @@ import type { ChatItem } from "../../api";
 export const SessionPrsContext = createContext<readonly string[]>([]);
 
 /// 属于这个仓库的会话 PR，最新在前；排除面板已经按分支显示的那个和用户收起的。repoUrl 形如 https://github.com/o/r。
-export function sessionPrsInRepo(urls: readonly string[], repoUrl: string | null | undefined, shown: string | null | undefined, dismissed: readonly string[] = [], limit = 3): string[] {
+/// segment：仓库首页之后 PR 链接的路径段（GitLab 是 `/-/merge_requests/`，见 forgeWords.prPathSegment）。
+export function sessionPrsInRepo(urls: readonly string[], repoUrl: string | null | undefined, shown: string | null | undefined, dismissed: readonly string[] = [], limit = 3, segment = "/pull/"): string[] {
   if (!repoUrl) return [];
-  const prefix = repoUrl.replace(/\/+$/, "").toLowerCase() + "/pull/";
+  const prefix = repoUrl.replace(/\/+$/, "").toLowerCase() + segment;
   return urls.filter((url) => url.toLowerCase().startsWith(prefix) && url !== shown && !dismissed.includes(url)).reverse().slice(0, limit);
 }
 
-const GH_PR = /(?:^|[\s;&|(`"'])gh(?:\.exe)?\s+pr\s+(\S+)/i;
+// gh pr …、glab mr …（GitLab）、tea pr / pulls …（Gitea / Forgejo）。
+const GH_PR = /(?:^|[\s;&|(`"'])(?:gh(?:\.exe)?\s+pr|glab(?:\.exe)?\s+mr|tea(?:\.exe)?\s+(?:pr|pulls?))\s+(\S+)/i;
 const LISTING = new Set(["list", "status"]);
-const PR_URL = /https:\/\/[^\s/"'<>()]+\/[^\s/"'<>()]+\/[^\s/"'<>()]+\/pull\/\d+(?![\d/])/g;
+// GitHub `/o/r/pull/N`、Gitea `/o/r/pulls/N`、Bitbucket `/w/r/pull-requests/N`、GitLab `/组…/r/-/merge_requests/N`。
+const PR_URL = /https:\/\/[^\s/"'<>()]+\/[^\s/"'<>()]+\/[^\s/"'<>()]+\/(?:pull|pulls|pull-requests)\/\d+(?![\d/])|https:\/\/[^\s/"'<>()]+(?:\/[^\s/"'<>()]+){2,}\/-\/merge_requests\/\d+(?![\d/])/g;
 
 /// 按最近一次出现的先后排好，最新的在最后。同一个 PR 只出现一次。
 export function sessionPullRequestUrls(items: readonly ChatItem[]): string[] {
