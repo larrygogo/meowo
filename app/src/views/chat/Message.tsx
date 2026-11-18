@@ -25,13 +25,13 @@ import { busyProps } from "../../busyButton";
 
 export function MessageCopyButton({ text, className = "chat-message-copy" }: { text: string; className?: string }) {
   const t = useT();
-  const { shown: copied, flash: flashCopied } = useFlash();
+  const { shown: copied, flash: flashCopied, fx: copiedFx } = useFlash();
   const copy = () => {
     void copyPlainText(text).then((ok) => { if (ok) flashCopied(); });
   };
   const label = copied ? t.chat.messageCopied : t.chat.copyMessage;
   return (
-    <button type="button" className={className + " fb-press" + (copied ? " fb-flash" : "")} aria-label={label} data-tip={label} onClick={copy}>
+    <button type="button" className={className + " fb-press" + copiedFx} aria-label={label} data-tip={label} onClick={copy}>
       {copied ? (
         <Icon glyph={icCheck} size={14} />
       ) : (

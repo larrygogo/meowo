@@ -47,9 +47,9 @@ export function SettingsError({ error, onDismiss, preformatted, action }: {
  *  读屏经常驻的 role=status 播报（动态插入的 live region 读屏常不念，所以容器常驻、只换内容）。 */
 export const useSavedFlash = useFlash;
 
-export function SavedNote({ shown }: { shown: boolean }) {
+export function SavedNote({ shown, fx = "" }: { shown: boolean; fx?: string }) {
   const t = useT();
-  return <span className={"settings-saved" + (shown ? " fb-flash" : "")} role="status">{shown ? t.settings.saved : ""}</span>;
+  return <span className={"settings-saved" + fx} role="status">{shown ? t.settings.saved : ""}</span>;
 }
 
 export function Switch({ checked, onChange, disabled, label }: { checked: boolean; onChange: () => void; disabled?: boolean; label: string }) {

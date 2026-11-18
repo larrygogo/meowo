@@ -1091,7 +1091,7 @@ export function FilesView({ cwd, live = false, reveal = null, onRevealed }: {
     savePref(TREE_WIDTH_KEY, String(next));
   };
   const [wrap, toggleWrap] = useWrapPref();
-  const { shown: copied, flash: flashCopied } = useFlash();
+  const { shown: copied, flash: flashCopied, fx: copiedFx } = useFlash();
   // 目录清单与文件文本都按 rel 路径缓存：折叠/回退再展开不重复拉取。
   const [dirs, setDirs] = useState<Map<string, FetchEntry<DirEntryDto[]>>>(new Map());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -1535,7 +1535,7 @@ export function FilesView({ cwd, live = false, reveal = null, onRevealed }: {
             {codeView && (
               <button
                 type="button"
-                className={"chat-diff-iconbtn fb-press" + (copied ? " fb-flash" : "")}
+                className={"chat-diff-iconbtn fb-press" + copiedFx}
                 aria-label={copied ? t.chat.codeCopied : t.chat.filesCopyAll}
                 data-tip={copied ? t.chat.codeCopied : t.chat.filesCopyAll}
                 onClick={() => {

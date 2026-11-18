@@ -193,7 +193,7 @@ function useCodeWrap(): boolean {
 function CopyablePre({ children }: { children?: ReactNode }) {
   const t = useT();
   const preRef = useRef<HTMLPreElement>(null);
-  const { shown: copied, flash: done } = useFlash();
+  const { shown: copied, flash: done, fx: copiedFx } = useFlash();
   const wrap = useCodeWrap();
   // 换行钮只在真的有横向溢出（或已开换行、要能关回去）时出现：短代码块挂一个点了没变化的
   // 按钮只是噪声。框图不给——它的对齐靠一行不断，换行就散架。
@@ -257,7 +257,7 @@ function CopyablePre({ children }: { children?: ReactNode }) {
             {wrap ? t.chat.codeUnwrap : t.chat.codeWrap}
           </button>
         )}
-        <button type="button" className={"chat-md-pre-copy fb-press" + (copied ? " fb-flash" : "")} onClick={copy}>{copied ? t.chat.codeCopied : t.chat.codeCopy}</button>
+        <button type="button" className={"chat-md-pre-copy fb-press" + copiedFx} onClick={copy}>{copied ? t.chat.codeCopied : t.chat.codeCopy}</button>
       </div>
       {/* 横向溢出时代码块是可滚动区域，键盘用户要能 Tab 进来用方向键滚（axe scrollable-region-focusable，
           验收 #23）。不溢出时不进 Tab 序，免得每个短代码块都多停一下。 */}
@@ -284,7 +284,7 @@ export function tableToMarkdown(table: HTMLTableElement): string {
 function CopyableTable({ children }: { children?: ReactNode }) {
   const t = useT();
   const tableRef = useRef<HTMLTableElement>(null);
-  const { shown: copied, flash: flashCopied } = useFlash();
+  const { shown: copied, flash: flashCopied, fx: copiedFx } = useFlash();
   const copy = async () => {
     const table = tableRef.current;
     if (!table) return;
@@ -306,7 +306,7 @@ function CopyableTable({ children }: { children?: ReactNode }) {
   return (
     <div className="chat-md-table">
       <table ref={tableRef}>{children}</table>
-      <button type="button" className={"chat-md-table-copy fb-press" + (copied ? " fb-flash" : "")} onClick={() => void copy()}>
+      <button type="button" className={"chat-md-table-copy fb-press" + copiedFx} onClick={() => void copy()}>
         {copied ? t.chat.codeCopied : t.chat.tableCopy}
       </button>
     </div>

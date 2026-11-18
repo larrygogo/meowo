@@ -65,3 +65,22 @@ describe("成功提示不再各写各的时长", () => {
     expect(hits).toEqual([]);
   });
 });
+
+describe("显示期间再次触发重播回弹", () => {
+  it("fx 在两次 flash 之间换成另一个关键帧类，hide 后为空", () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useFlash());
+    expect(result.current.fx).toBe("");
+    act(() => result.current.flash());
+    const first = result.current.fx;
+    act(() => { vi.advanceTimersByTime(1000); });
+    act(() => result.current.flash());
+    const second = result.current.fx;
+    expect(first).toContain("fb-flash");
+    expect(second).toContain("fb-flash");
+    expect(second).not.toBe(first);
+    act(() => result.current.hide());
+    expect(result.current.fx).toBe("");
+    vi.useRealTimers();
+  });
+});

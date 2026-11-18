@@ -104,7 +104,7 @@ export function ForgeAccountList() {
   const [notice, setNotice] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState<"add" | "device" | "remove" | null>(null);
-  const { shown: copied, flash: flashCopied } = useFlash();
+  const { shown: copied, flash: flashCopied, fx: copiedFx } = useFlash();
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -223,7 +223,7 @@ export function ForgeAccountList() {
         <div className="row-desc is-full">{f.codeHint(minutesLeft(code.expiresAt, Date.now()))}</div>
         <div className="github-actions">
           <button type="button" className="sbtn btn-primary" onClick={() => { void copy(code); void openLink(code.verificationUriComplete ?? code.verificationUri).catch(() => {}); }}>{f.copyAndOpen}</button>
-          <button type="button" className={"sbtn fb-press" + (copied ? " fb-flash" : "")} onClick={() => void copy(code)}>{copied ? f.copied : f.copyCode}</button>
+          <button type="button" className={"sbtn fb-press" + copiedFx} onClick={() => void copy(code)}>{copied ? f.copied : f.copyCode}</button>
           <button type="button" className="sbtn" onClick={cancelDevice}>{f.cancel}</button>
         </div>
         <div className="row-desc github-waiting" role="status"><span className="github-dot" aria-hidden />{f.waiting}</div>

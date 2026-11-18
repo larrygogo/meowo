@@ -18,8 +18,8 @@ const rule = (css: string, selector: string) => {
 const tokenIn = (body: string, name: string) => body.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1]?.trim();
 
 describe("U1 暗色字重降一档", () => {
-  // 根元素默认是深色：字重四档写在带 --ind-face 的那个 :root 块末尾。
-  const darkBlock = styles.slice(styles.indexOf("--ind-face: #000;"), styles.indexOf("}", styles.indexOf("--ind-face: #000;")));
+  // 深色值写在与终端页签共用的深色块（:where(.chat-window.is-terminal), :root）：浅色主题下终端页签仍是深底，也取这组。
+  const darkBlock = rule(styles, ":where(.chat-window.is-terminal), :root");
   const light = rule(styles, ':root[data-theme="light"]');
   const names = ["--fw-regular", "--fw-medium", "--fw-semibold", "--fw-bold"];
   it("深色（根元素默认）每档都比浅色低，浅色是 400/500/600/700", () => {
@@ -41,6 +41,13 @@ describe("U1 暗色字重降一档", () => {
       expect(hits, name).toEqual([]);
     }
   });
+  it("终端页签（恒深底）在浅色主题下也取深色字重，并让页签内文字重新按本档继承", () => {
+    expect(darkBlock).not.toBe("");
+    expect(tokenIn(darkBlock, "--fw-regular")).toBe("370");
+    expect(tokenIn(darkBlock, "font-weight")).toBe("var(--fw-regular)");
+    // 浅色值只写在根元素上，碰不到 .chat-window.is-terminal 自己重定义的那组
+    expect(styles).not.toMatch(/\.is-terminal[^{]*\{[^}]*--fw-regular:\s*400/);
+  });
   it("灵动岛恒黑，字重钉回 400 档，不吃深色降档", () => {
     const island = rule(styles, ".isl-stage, .island-shell, .isl-strip");
     expect(tokenIn(island, "--fw-regular")).toBe("400");
@@ -58,9 +65,26 @@ describe("U2 断行", () => {
     const added = [...styles.matchAll(/text-wrap:\s*(pretty|balance)/g)].length;
     expect(added).toBe(2); // 改版前就有的两处 balance，不再新增简写
   });
+  const reset = (styles.match(/:where\(([^)]*)\) \{ text-wrap-style: auto; \}/)?.[1] ?? "").split(/,\s*/);
   it("代码、终端、表格、输入框退回 auto", () => {
-    const reset = styles.match(/:where\(([^)]*)\) \{ text-wrap-style: auto; \}/)?.[1] ?? "";
-    for (const sel of ["pre", "code", "table", "textarea", "input", ".xterm"]) expect(reset.split(/,\s*/)).toContain(sel);
+    for (const sel of ["pre", "code", "table", "textarea", "input", ".xterm", ".chat-diff-text", ".chat-tool-code"]) expect(reset).toContain(sel);
+  });
+  it("每条 white-space: pre / pre-wrap 的规则要么在等宽内容里退回 auto，要么登记为正文", () => {
+    // 保留换行的正文（消息气泡、思考、提问、提示），pretty 对它们有用；其余都是代码、日志、终端画面。
+    const PROSE = new Set([".app-confirm p > span", ".chat-queued-bubble", ".sa-toast > span", ".chat-sidebar-error.is-multiline span",
+      ".chat-diff-text > .chat-diff-cmt", ".pr-comment p, .pr-event p", ".pr-confirm-body", ".chat-text", ".chat-reasoning div",
+      ".chat-tool-out", ".chat-approval-prewrap", ".chat-side-answer-body", ".up-notes-body"]);
+    // 规则写在这些元素或它们的后代上，已由退回列表覆盖（text-wrap-style 继承）。
+    const covered = (selector: string) => /(^|[\s>(,])(pre|code)\b/.test(selector)
+      || reset.some((sel) => sel.startsWith(".") && selector.includes(sel))
+      || selector === ".chat-tool-src"; // 只出现在 .chat-tool-code 里（ToolPreview / ToolActivity）
+    const missing: string[] = [];
+    for (const css of [styles, mobile]) for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (!/white-space:\s*(pre|pre-wrap|break-spaces)\b/.test(m[2])) continue;
+      const selector = m[1].trim().replace(/\s+/g, " ");
+      if (!PROSE.has(selector) && !covered(selector)) missing.push(selector);
+    }
+    expect(missing).toEqual([]);
   });
 });
 
@@ -71,6 +95,15 @@ describe("U3 即时反馈回弹", () => {
     expect(flash).toMatch(/var\(--dur-slow\) var\(--ease-spring\)/);
     const slow = Number(tokenIn(styles, "--dur-slow")?.replace("s", ""));
     expect(slow * 1000).toBeLessThanOrEqual(300);
+  });
+  it("2.5 秒内再次触发能重播：交替用两个同样的关键帧", () => {
+    expect(rule(styles, ".fb-flash.fb-flash-alt")).toMatch(/animation-name: fb-pop-alt/);
+    expect(styles).toMatch(/@keyframes fb-pop-alt \{ from \{ scale: 0\.92; \} to \{ scale: 1; \} \}/);
+  });
+  it("按钮自身的按下缩放不与 .fb-press 叠加", () => {
+    expect(styles).toMatch(/:is\([^)]*\.sbtn\)\.fb-press:active \{ transform: none; \}/);
+    // 且写在 .sbtn:active 的 scale(.98) 之后（同特异度，后写的赢）
+    expect(styles.lastIndexOf(".fb-press:active { transform: none; }")).toBeGreaterThan(styles.indexOf('.sbtn:active:not(:disabled, [aria-disabled="true"]) { transform: scale(0.98); }'));
   });
   it("减少动效时关闭", () => {
     const block = styles.slice(styles.indexOf(".fb-press:active { scale: none; }") - 60, styles.indexOf(".fb-press:active { scale: none; }") + 80);

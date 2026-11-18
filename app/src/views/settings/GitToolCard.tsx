@@ -19,7 +19,7 @@ export function GitToolCard() {
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState<"check" | "save" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const { shown: saved, flash: flashSaved, hide: hideSaved } = useFlash();
+  const { shown: saved, flash: flashSaved, hide: hideSaved, fx: savedFx } = useFlash();
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -95,7 +95,7 @@ export function GitToolCard() {
               <div className="row-desc is-full forge-field-note">{g.identityNote}</div>
             </div>
             <div className="row forge-actions">
-              {saved && <span className="row-desc git-tool-saved fb-flash" role="status">{g.saved}</span>}
+              {saved && <span className={"row-desc git-tool-saved" + savedFx} role="status">{g.saved}</span>}
               <button type="button" className="sbtn btn-primary" data-testid="git-identity-save" aria-disabled={busy !== null || !dirty || undefined}
                 aria-busy={busy === "save" || undefined} onClick={save}>
                 {busy === "save" ? g.saving : g.save}

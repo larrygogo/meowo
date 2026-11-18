@@ -146,6 +146,18 @@
      输入框、分隔线、表格、代码块、按钮仍用细线：那是可用性需要（看得出哪里能输入、哪里是格子）。 */
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.24), 0 2px 8px -2px rgba(0, 0, 0, 0.28);
   --edge-float: inset 0 0 0 var(--hairline) rgba(255, 255, 255, 0.06);
+  /* 字重四档（U1，2026-11-18）：这里是深色值，浅色块还原成 400/500/600/700。放在与终端页签共用的深色块里：
+     终端页签不论主题恒为深底，浅色主题下也取这组（下面的 font-weight 让页签里没写字重的文字重新按本档继承）。
+     浅字压深底会「晕开」（irradiation：亮笔画在暗底上视觉上变粗），中文细笔画更明显，
+     所以深色下按可变字体数值整体降一档。Inter Variable 与 Noto Sans SC Variable 的 wght 轴都是 100–900，
+     任意数值直接取到。取值由 flow-states / chat 深色截图对比定（progress.md U1）。
+     JetBrains Mono 只打包了 400/700 两个静态字重，代码块与终端里的等宽字实际不降档。
+     灵动岛恒黑、不随主题，在 .isl-stage 作用域里钉回浅色那组。 */
+  --fw-regular: 370;
+  --fw-medium: 460;
+  --fw-semibold: 560;
+  --fw-bold: 660;
+  font-weight: var(--fw-regular);
 }
 
 :root {
@@ -256,15 +268,6 @@
      默认（elevated）深浅主题都是黑色小屏；flat 风格按主题重定义（见 flat 段）——
      两者必须同色，否则环形错觉破功、环中心浮出一块异色。 */
   --ind-face: #000;
-  /* 字重四档（U1，2026-11-18）：根元素默认是深色，这里是深色值；浅色块还原成 400/500/600/700。
-     浅字压深底会「晕开」（irradiation：亮笔画在暗底上视觉上变粗），中文细笔画更明显，
-     所以深色下按可变字体数值整体降一档。Inter Variable 与 Noto Sans SC Variable 的 wght 轴都是 100–900，
-     任意数值直接取到。取值由 flow-states / chat 深色截图对比定（progress.md U1）。
-     灵动岛恒黑、不随主题，在 .isl-stage 作用域里钉回浅色那组。 */
-  --fw-regular: 370;
-  --fw-medium: 460;
-  --fw-semibold: 560;
-  --fw-bold: 660;
 }
 
 /* ===== Kimi 式设计变量（全应用唯一一套）=====
@@ -536,7 +539,7 @@ html, body {
    不支持的内核（旧 WebKit）忽略这两条，退回普通断行。 */
 html, body { text-wrap-style: pretty; }
 :where(h1, h2, h3, h4, h5, h6, .sec-title, .app-confirm strong) { text-wrap-style: balance; }
-:where(pre, code, kbd, samp, table, textarea, input, .xterm, .chat-diff-text) { text-wrap-style: auto; }
+:where(pre, code, kbd, samp, table, textarea, input, .xterm, .chat-diff-text, .chat-tool-code, .pr-patch, .lead-evidence-command, .chat-compose-gate-tail, .chat-remote-screen, .wt-setup-log, .wt-trust-script) { text-wrap-style: auto; }
 /* pretty 在 Chromium 上不把中文「字 + 句号」当孤行；对话正文的段尾四个字由 ChatMarkdown 的 keepCjkTail 包成一组不折行。 */
 .chat-md-keep { white-space: nowrap; }
 /* 即时反馈的回弹（U3，2026-11-18）：复制、导出这类按钮按下缩到 .92，成功那一刻（.fb-flash，
@@ -546,7 +549,10 @@ html, body { text-wrap-style: pretty; }
    减少动效时整段关掉：按下不缩、出现不弹。 */
 .fb-press:active { scale: 0.92; }
 .fb-flash { animation: fb-pop var(--dur-slow) var(--ease-spring); }
+/* 显示期间再次成功（2.5 秒内连点两次）：useFlash 交替挂 .fb-flash-alt，换一个同样的关键帧名，回弹重播。 */
+.fb-flash.fb-flash-alt { animation-name: fb-pop-alt; }
 @keyframes fb-pop { from { scale: 0.92; } to { scale: 1; } }
+@keyframes fb-pop-alt { from { scale: 0.92; } to { scale: 1; } }
 @media (prefers-reduced-motion: reduce) {
   .fb-press:active { scale: none; }
   .fb-flash { animation: none; }
@@ -8144,6 +8150,8 @@ button.btn-primary:is(:disabled, [aria-disabled="true"]) { opacity: 1; backgroun
 @media (prefers-reduced-motion: reduce) {
   :is(.btn-primary, .btn-secondary, .btn-ghost):is(button, a):active:not(:disabled), .ns-btn:active:not(:disabled), .sbtn:active:not(:disabled, [aria-disabled="true"]) { transform: none; }
 }
+/* 复制、导出这类即时反馈按钮按下走 .fb-press 的 scale .92；这里的 .98 再叠上去会缩到约 .90，去掉叠加（U3）。 */
+:is(.btn-primary, .btn-secondary, .btn-ghost, .ns-btn, .sbtn).fb-press:active { transform: none; }
 /* 进行中只标 aria-disabled 的主按钮（busyButton.ts；做空第一轮 #4，2026-11-12）：上面的悬停/按下规则只排除 :disabled，
    这里把悬停底色与按下缩放压回禁用态，长相与 disabled 一致。 */
 button.btn-primary[aria-disabled="true"]:is(:hover, :active) { background: var(--fill-selected); transform: none; }

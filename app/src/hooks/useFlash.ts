@@ -14,10 +14,13 @@ export const FEEDBACK_MS = 2500;
  */
 export function useFlash(ms: number = FEEDBACK_MS) {
   const [shown, setShown] = useState(false);
+  // 每次 flash 翻一次：显示期间再触发（2.5 秒内连点两次复制），换成另一个同样的关键帧名让回弹重播一遍。
+  const [pulse, setPulse] = useState(0);
   const timer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
   const flash = useCallback(() => {
     setShown(true);
+    setPulse((value) => value + 1);
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => setShown(false), ms);
   }, [ms]);
@@ -25,5 +28,7 @@ export function useFlash(ms: number = FEEDBACK_MS) {
     window.clearTimeout(timer.current);
     setShown(false);
   }, []);
-  return { shown, flash, hide };
+  /** 挂到反馈元素 className 末尾的回弹类（含前导空格），没在显示时是空串。 */
+  const fx = shown ? (pulse % 2 === 0 ? " fb-flash fb-flash-alt" : " fb-flash") : "";
+  return { shown, flash, hide, fx };
 }
