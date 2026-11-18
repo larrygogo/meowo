@@ -23,12 +23,11 @@ function task(over: Partial<LeadTaskDto> = {}): LeadTaskDto {
 }
 
 describe("Lead 检查项", () => {
-  it("有证据、待实测或豁免说明的条目才是带 aria-expanded 的按钮，点按（键盘回车同此）展开后 aria-expanded=true", () => {
+  it("有证据的条目是带 aria-expanded 的按钮，点按（键盘回车同此）展开后 aria-expanded=true", () => {
     const evidence = { command: "bunx vitest run", result: "12 passed", revision: "r1", reference: "progress.md", limitations: "无" };
     render(<LeadPanel task={task({ checks: [
       { id: "1", check: "测试全过", passes: false, waived: null, leader: false, blocked: null, evidence: [evidence] },
       { id: "2", check: "手机能用", passes: false, waived: null, leader: false, blocked: null },
-      { id: "4", check: "真机实测", passes: false, waived: null, leader: false, blocked: "要真机" },
     ] })} onClose={() => {}} />);
     const row = screen.getByRole("button", { name: /测试全过/ });
     expect(row.getAttribute("aria-expanded")).toBe("false");
@@ -37,8 +36,34 @@ describe("Lead 检查项", () => {
     expect(row.getAttribute("aria-expanded")).toBe("true");
     expect(row.className).toContain("is-open");
     expect(screen.getByText("bunx vitest run")).toBeTruthy();
-    // 待实测说明也算可展开的内容（收起时说明只露一行）。
-    expect(screen.getByRole("button", { name: /真机实测/ }).getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("说明（待实测、豁免原因）短、放得下时直接全文显示、不可点；真的被折叠截断了才是可展开的按钮", () => {
+    // jsdom 不排版：scrollHeight / clientHeight 都是 0，等于「放得下」。这里让写着「很长」的说明量出来溢出。
+    const proto = HTMLElement.prototype;
+    const scroll = Object.getOwnPropertyDescriptor(proto, "scrollHeight");
+    const client = Object.getOwnPropertyDescriptor(proto, "clientHeight");
+    Object.defineProperty(proto, "scrollHeight", { configurable: true, get(this: HTMLElement) { return this.classList.contains("lead-check-note") && this.textContent?.includes("很长") ? 40 : 18; } });
+    Object.defineProperty(proto, "clientHeight", { configurable: true, get() { return 18; } });
+    try {
+      render(<LeadPanel task={task({ checks: [
+        { id: "4", check: "真机实测", passes: false, waived: null, leader: false, blocked: "要真机" },
+        { id: "5", check: "旧接口", passes: false, waived: null, leader: false, blocked: "很长的原因：要等上游发版之后在三种系统上各跑一遍完整的回归，再对照用量" },
+      ] })} onClose={() => {}} />);
+      // 修复前（7f7a6cee）有说明就是按钮，短说明点开什么也没多。
+      expect(screen.queryByRole("button", { name: /真机实测/ })).toBeNull();
+      const short = screen.getByText("真机实测").closest(".lead-check")!;
+      expect(short.className).toContain("is-static");
+      expect(short.textContent).toContain("要真机");
+      const long = screen.getByRole("button", { name: /旧接口/ });
+      expect(long.getAttribute("aria-expanded")).toBe("false");
+      expect(long.querySelector(".lead-check-caret")).toBeTruthy();
+      fireEvent.click(long);
+      expect(long.getAttribute("aria-expanded")).toBe("true");
+    } finally {
+      if (scroll) Object.defineProperty(proto, "scrollHeight", scroll);
+      if (client) Object.defineProperty(proto, "clientHeight", client);
+    }
   });
 
   it("没有可展开内容的条目不是按钮：不可聚焦、没有展开态和箭头、悬停不变色（修复前每行都是按钮，点开是空的）", () => {
@@ -65,8 +90,8 @@ describe("Lead 检查项", () => {
     render(<LeadPanel task={task()} onClose={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "已通过与豁免 · 2" }));
     for (const name of ["已通过", "未通过", "已豁免"]) expect(screen.getByRole("img", { name })).toBeTruthy();
-    // 可展开的行：按钮的可访问名里带上状态，读屏一次就知道这条过没过。
-    expect(screen.getByRole("button", { name: /已豁免.*旧机型/ })).toBeTruthy();
+    // 短豁免说明的行是静态行，状态图标与说明都在同一行里。
+    expect(screen.getByText("旧机型").closest(".lead-check")?.querySelector('[role="img"]')?.getAttribute("aria-label")).toBe("已豁免");
     // 静态行：状态图标就在同一行里。
     expect(screen.getByText("测试全过").closest(".lead-check")?.querySelector('[role="img"]')?.getAttribute("aria-label")).toBe("已通过");
   });

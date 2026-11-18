@@ -1119,6 +1119,7 @@ export const zh = {
     leadProgressLatest: "最新",
     leadProgressCount: (count: number) => `${count} 条`,
     leadProgressUndated: "未注明日期",
+    leadProgressEarlier: "更早的记录",
     leadEarlierInFile: (file: string) => `更早的记录在 ${file} 里`,
     tasksBackground: "后台 Bash",
     tasksSubagents: vocab.concept.subagent,

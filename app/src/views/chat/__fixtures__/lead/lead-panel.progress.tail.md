@@ -1,0 +1,72 @@
+进入实施
+- 实施：worktree 在 workspace/meowo-lead-panel（分支 feat/lead-workflow，基于 origin/main v0.8.1）
+  - reporter 新增 `lead` 子命令（session/claim/stop/wait），Python 版场景已移植成 Rust 测试（还没跑）；新增 gate.json 的读取、作答（核对 id 和状态、原子写入、重复提交幂等）和快照
+  - 移植时发现两个旧 bug 并修复：相对路径认领不到；Edit 工具的路径里有空格会截断
+  - 协议加了 LeadTaskDto 等结构；app 加 lead_task_snapshot / answer_lead_gate 两个命令，远程桥放行（先过 ensure_session_dir）；api.ts 已同步
+  - 探针第 1 次无效：信任屏默认停在 "No, exit"，探针按了回车。已修正（先下移再回车），重跑中
+  - 构建环境：worktree 需要从主检出目录复制 binaries/（已被 gitignore），并建空的 dist、dist-mobile 目录
+- 探针第 2 次无效：按方向键过信任屏不稳，光标被拉回 "No"。第 3 次用 pretrust_workspace 也无效：它只对 Kimi 生效，Claude 的信任记录在 ~/.claude.json，且有多个进程同时改写，探针不碰它。第 4 次改为把探针目录放在已信任目录（主检出 target/）下面，验证信任会不会从父目录继承
+- 已写好：Meowo 版 SKILL.md（关卡改为写 gate.json，不用 AskUserQuestion）；一键安装/卸载（带托管标记，不覆盖用户同名文件，接管 Python 初版，Meowo 启动整理 hook 时不会误删）；有关卡在等时阻止休眠（设置项 keep_awake_for_lead_gate，默认开）；设置页 Lead 分组；前端 LeadPanel、LeadGateCard 和 vitest
+- 还没编译和测试过（构建目录被探针占用）
+- 证据 #1：`cargo test -p meowo-reporter lead`，8 条全部通过（Python 版的全部场景，外加关卡、快照、wait 的测试）。测试抓到 2 个真 bug：解析中文 progress.md 行时按字节切片会 panic；hook 遇到 panic 时退出码不是 0。已修复：改用安全切片，入口用 catch_unwind 兜底
+- 前端 vitest：LeadPanel 9 条加 DockWork 4 条，全部通过
+- 发版说明草稿：docs/release-notes/draft-lead-workflow.md（中文为正文，附英文版）
+- 证据：
+  - cargo clippy --workspace --all-targets：零警告（macOS 专属代码本机编译不到，要靠 CI）
+  - cargo test --workspace：全部通过（1200 多条），新增的 lead / install_tests / power / remote 桥臂测试都在其中
+  - bunx tsc --noEmit：通过；bun run test：108 个文件、1262 条测试全部通过（含 i18n 中英奇偶测试）
+  - #2：install_tests 3 条，覆盖：安装后再卸载与原始 JSON 等价；不覆盖用户自己的 skill 和同名文件；接管 Python 初版；Meowo 启动整理 hook 时不会误删 lead 条目
+  - #13：remote 的白名单和样例 payload 测试通过；snapshot 拒绝 active 指向 ../../etc
+  - #14：power 判定单测通过；设置项默认打开
+  - #8：后端关卡巡检把 pending_review 写成 gate，前后端都按"待处理"显示（activity.test.ts）；通知复用 watch.rs 的 pending 指纹链路，文案已加。还差一次实际运行的截图
+- 中途修复：Session 结构里没有 pending_review 字段，新增 store.pending_review_of；clippy 报的 3 条警告
+- 探针第 4 次无效：信任不随父目录继承；而且方向键序列里的 ESC 会被当成"Esc 取消"，导致选了 No、Claude 直接退出（屏幕上的残留 "B\" 就是这么来的）。第 5 次改为：工作目录用已信任、且没有 .lead 的 proxy-tester，hook 通过 --settings 单独加载，临时文件和 board.db 全放在临时目录，不往任何仓库写东西
+- #7 实现：answer_lead_gate 写完答复后，如果归属会话的 claude 进程已经不在（托管终端没开，外部终端里也没在跑），就用 start_managed_resume_sized 把会话恢复成托管终端；SessionStart 上的 wait 发现已作答，会立刻唤醒。恢复失败不影响作答本身。clippy 通过
+- 证据 #12：探针第 5 次通过。交互式 TUI 下首轮 READY 用时 4s；后台 asyncRewake Stop hook 睡 90s 后以 exit 2 退出，模型在 101.6s 被唤醒，并写出只有读到 stderr 才可能知道的正序暗号 PURPLE-42（Claude Code 2.1.319，Windows）。送达主路径确定为 asyncRewake，不需要退回"后端往终端打字"
+- 证据 #3：真机脚本 nopy_probe.sh。PATH 去掉 python 后（command -v python 找不到），用 worktree 编译的 meowo-reporter 跑 claude -p：
+  - 注入生效：agent 答出 SPEC 暗号 GREEN-17
+  - 认领生效：.owner 和登记表都写入了
+  - 第 1 次运行**没拦住**，查出真 bug：判断"本轮是否推进过任务"时只认 `/.lead/`，Bash 写相对路径 `.lead/…` 时漏掉。修复后重跑：拦截 1 次，agent 随后把 phase 改为 blocked 并写明原因（唯一的验收项要 leader 亲自看），正确停下
+  - 顺带修复：登记表路径带 Windows 的 `\?\` 前缀
+- 注意：shell heredoc 会把 `\` 吞成 `\`，含反斜杠的代码一律用 Edit/Write 写
+- 关卡端到端探针（tests/probe_lead_gate.rs，挂起 2 分钟版本）：以 transcript 为准，两段都确实唤醒了
+  - 第一段：挂起 120s 后用 answer_gate 作答（远程桥臂调用的就是这个函数），agent 被唤醒，回复"选择=2"
+  - 第二段：再挂一个关卡，杀掉 claude，作答后 --resume，SessionStart 上的 wait 唤醒 agent，回复"选择=1"
+  - **发现真 bug**：同一个答复被连续唤醒了两次。原因是 agent 醒来后没把关卡标成 consumed，下一次 Stop 的 wait 又看到 answered。agent 如果一直不消费，就会变成死循环。修复：用 .delivered 记录已送达的关卡 id，Stop 时同一个答复只唤醒一次；SessionStart（新起的进程）例外，再送一次。已加单测；探针也改为从 transcript 断言"每个答复恰好唤醒一次"
+- 30 分钟版本（验收 #6）后台跑着
+- 实现做空审查（第 1 轮）：3 高、5 中、5 低。已修：
+  - H1：wait 只唤醒归属会话（去掉按 cwd 兜底）
+  - H2：等待者改为后来者接管（不再靠父进程是否存活来判断；Windows 上父进程是 bash 存根）
+  - H3：识别出 Python 初版（~/.claude/lead/hook.py 存在）时，备份同名文件后接管，并迁移旧登记表
+  - M1：只有状态真的变化才刷新看板；以数据库为准清理残留的 gate 标记（新增 store.sessions_with_pending_review）。会话已 ended 时标不上待处理（set_pending_review 的条件），列为已知限制
+  - M2：对话窗的降级审批卡、发送软拦、注意力横幅都排除 gate
+  - M3：快照读取失败时保留上一次的数据（加了假时钟测试）
+  - M4：项目内所有任务的关卡都可见；作答时按 gate id 找任务
+  - M5：wait 读取失败要连续 5 次才退出
+  - L2：启动时如果已安装就重装一遍（更新 reporter 路径和 skill）
+  - L3：settings.json 根节点不是对象时拒绝修改
+  - L4：注入的路径去掉 `\?\` 前缀
+  - L5：超过 24 小时的关卡不再阻止休眠
+  - L1（宿主写死了 ~/.claude）：留给第二期，按插件能力改造
+- 无 Python 真机脚本放进仓库：scripts/probe-lead-nopython.sh
+- 复核：clippy 零警告；cargo test --workspace 全部通过；tsc 通过；vitest 109 个文件、1264 条全部通过（另有 errors 对账测试抓到一个失效的错误码 lead/no_task，已删除）
+- 截图（#8 的一部分）：用 demo 页面加临时 mock（mock 没有提交，已还原），在无头 Chrome 里截图，图存在任务目录 lead-gate-desktop.png 和 lead-gate-narrow.png。Meowo 面板浏览器本身是 Tauri webview，__TAURI_INTERNALS__ 只读，mock 装不上；Chrome 扩展没连上，所以改用无头 Chrome
+  - 截图暴露并修复了 3 个问题：摘要被截断却没有"展开全部"（原来按字数判断，改为按实际溢出）；审批卡给 strong 加的标题圆点误加到了摘要的加粗文字上；展开钮被审批卡的按钮样式盖掉，收起处半行字被齐刷刷切掉（加了渐隐）
+  - 窄屏下卡片右边被裁，但 demo 自带的审批卡也一样被裁，说明是 demo 外框的宽度问题。真手机走的是 mobile.html，需要 leader 在真机上看（并入 #11）
+  - 桌面通知没有实际触发过（要启动真的 Meowo，会和用户正在用的实例共用 ~/.meowo），#8 只算部分完成
+- 证据 #6：probe_lead_gate 30 分钟版本。关卡挂起 1800s 后用 answer_gate 作答（远程桥臂 answer_lead_gate 调的就是它），transcript 显示 agent 被唤醒、回复"选择=2"，**恰好一次**。远程 HTTP 层本身没有在真机上走（不能启动真 Meowo），桥臂由 remote 的样例 payload 测试覆盖
+- 30 分钟版本的第二段被探针自己判错：抓屏误判成"已唤醒"后提前杀掉了进程。transcript 里能看到 SessionStart:resume 的 asyncRewake 已经把"选择 1"送到了模型，只是模型还没来得及回复。探针改为一律按 transcript 判断，并用最新的 reporter 重跑 2 分钟版本做回归
+- 回归（最新 reporter，2 分钟版本，按 transcript 判断）：第一段"选择=2"恰好 1 次；第二段（杀进程 → 作答 → --resume）"选择=1"恰好 1 次。测试通过
+- #7 状态：关卡卡片读的是 gate.json，Meowo 重启后自然还在；"进程不在时作答 → 恢复会话 → SessionStart 唤醒"这条机制已经真机验证。但"Meowo 后端发现进程不在后自动恢复托管终端"（resume_owner_if_gone）只做了编译和代码审查，没有真机跑过（要启动真 Meowo）。因此 #7 不标通过，交给 leader 决定
+- 实现做空审查（第 2 轮，也是最后一轮）：确认第 1 轮的修复有效（后来者接管、每个答复只唤醒一次，都实际起进程验证过）。新发现并已修复：
+  - H1：会话离线时看板标不上、也不发通知 → 巡检线程对离线会话的挂起关卡直接发手机推送（每个关卡一次）。离线时的桌面通知没做，列为已知限制
+  - M1：无关会话的 SessionStart 也注入了答复 → 只注入给归属会话
+  - M2：会话恢复失败时界面没有任何提示 → Lead 入口显示"已答复·等 agent 接手"
+  - M4：dev 构建启动时把 lead hook 改指到 target/debug → 走现有的 auto_wire_enabled 门
+  - M6：手机上的意见框小于 16px，iOS 会整页放大 → remote-ui 下固定为 16px
+  - L1：登记表写入改为原子操作；L5：作答时校验选项
+- 交给 leader 决定：M5（关掉开关时是否恢复被接管的 Python 初版）、M7（宿主写死了 ~/.claude，是否留到第二期）
+- 已知限制（没有修）：M3（安装器杀掉外部终端会话的等待进程后，要等用户在终端再发一句才会送达；界面上有"已答复·等 agent 接手"提示）、L2（被遗弃的关卡在看板上没有过期）、L3（同一会话里聊天时可能重复通知）、L4（会话在 worktree 里启动时看不到 Lead 面板）、L6（手机每 4 秒轮询完整快照）
+- 最终复核：clippy 零警告；cargo test --workspace 1294 条 0 失败；tsc 通过；vitest 109 个文件、1264 条全部通过
+- 进入关卡 C
+- 2026-11-09 关卡 C 验收通过（M5 不恢复初版、M7 留第二期）。PR：https://github.com/larrygogo/meowo/pull/149

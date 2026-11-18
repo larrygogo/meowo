@@ -8,13 +8,21 @@ import { fileURLToPath } from "node:url";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { visibleText } from "../../test/visibleText";
-import { LeadDecisions, LeadProgress } from "./LeadNotes";
-import { LEAD_TAIL_LIMIT, leadTailTruncated, parseLeadDecisions, parseLeadProgress, type LeadDecision } from "./leadNotesParse";
+import { LeadDecisions, LeadProgress, resetLeadProgressOpen } from "./LeadNotes";
+import { LEAD_TAIL_LIMIT, leadTailTruncated, parseLeadDecisions, parseLeadProgress, type LeadDecision, type LeadProgressLog } from "./leadNotesParse";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  resetLeadProgressOpen();
+});
 
 const here = dirname(fileURLToPath(import.meta.url));
 const sample = (name: string) => readFileSync(join(here, "__fixtures__/lead", name), "utf8");
+/// 截断后的文本里每一行可见内容（去掉第一行可能的半句、phase 行与 # 总标题）。日期在旧格式里被提到节头，比对时去掉。
+const visibleLines = (text: string) => text.split(/\r?\n/).slice(1)
+  .map((l) => l.trim().replace(/^[-*+]\s+\d{4}-\d{2}-\d{2}[\s：:，,]*/, "").replace(/^##\s+(?:\d{4}-\d{2}-\d{2}\s*)?/, ""))
+  .filter((l) => l && !/^phase\s*:/i.test(l) && !/^#\s/.test(l));
+const shown = (log: LeadProgressLog) => log.sections.map((s) => [s.date, s.title, s.body].join("\n")).join("\n");
 const cards = (text: string) => parseLeadDecisions(text).entries.filter((e): e is Extract<LeadDecision, { kind: "card" }> => e.kind === "card");
 
 describe("决定：解析真实 decisions.md", () => {
@@ -87,6 +95,30 @@ describe("决定：解析真实 decisions.md", () => {
     expect(entries.some((e) => e.body.includes("# 决定"))).toBe(false);
   });
 
+  it("「leader 原话」只认括号里写在「leader：」「原话」之后的引号；agent 引用的界面文案留在说明里", () => {
+    const zh = cards("## D2 默认模式（2026-11-18，agent 决定，沿用界面文案「自动」）\n- 要点\n");
+    expect(zh[0]).toMatchObject({ quotes: [], meta: "agent 决定，沿用界面文案「自动」" });
+    const en = cards('## D2 Default mode (2026-11-18, agent decided, keep the "Auto" label)\n- x\n');
+    expect(en[0]).toMatchObject({ quotes: [], meta: 'agent decided, keep the "Auto" label' });
+    const mixed = cards("## D3 改名（2026-11-18，leader：「叫代码托管」，沿用旧文案「账号」）\n");
+    expect(mixed[0]).toMatchObject({ quotes: ["叫代码托管"], meta: "沿用旧文案「账号」" });
+    expect(cards("## D2 看过安装包（2026-11-19，原话「还可以」）\n")[0]).toMatchObject({ quotes: ["还可以"], meta: null });
+  });
+
+  it("旧版决定表截断后表头没了：五列的行按列数还原成卡，半行原样保留，不会 0 条", () => {
+    const text = sample("lead-providers.decisions.grown.tail.md");
+    expect([...text].length).toBe(LEAD_TAIL_LIMIT);
+    expect(text).toContain("\r\n");
+    const log = parseLeadDecisions(text);
+    expect(log.truncated).toBe(true);
+    const list = log.entries.filter((e) => e.kind === "card");
+    expect(list.length).toBeGreaterThan(10);
+    expect(list.every((c) => c.kind === "card" && c.date?.startsWith("2026-11-"))).toBe(true);
+    // 每一行表格的决策文字都还在。
+    const rows = text.split(/\r?\n/).slice(1).filter((l) => l.startsWith("| 2026"));
+    for (const row of rows) expect(list.some((c) => c.kind === "card" && c.title === row.split("|")[2].trim())).toBe(true);
+  });
+
   it("渲染：原话在引文块里、带「leader 原话」标签，与要点分开；Markdown 交给 ChatMarkdown", () => {
     render(<LeadDecisions text={sample("multi-forge.decisions.md")} />);
     const d3 = screen.getByRole("heading", { name: "取消本机 gh" }).closest(".lead-decision")!;
@@ -105,43 +137,103 @@ describe("决定：解析真实 decisions.md", () => {
 describe("进度：解析真实 progress.md", () => {
   it("按节倒序：最新一节在最前，节标题拆成日期与小标题，节内条目保持原顺序", () => {
     const log = parseLeadProgress(sample("multi-forge.progress.tail.md"));
-    expect(log.sections.map((s) => s.title)).toEqual([
+    expect(log.sections.filter((s) => !s.earlier).map((s) => s.title)).toEqual([
       "验证（lead）", "复核修正（取消 gh 之后）", "取消 gh（D3）、gitlab.com 只用令牌（D4）、设置「代码托管」分区（D5）",
       "复核第二轮修复（feat/multi-forge，基于 f9585035，已 push 到 bfaab13f）",
     ]);
-    expect(log.sections.every((s) => s.date === "2026-11-18")).toBe(true);
+    expect(log.sections.filter((s) => !s.earlier).every((s) => s.date === "2026-11-18")).toBe(true);
     const latest = log.sections[0];
     expect(latest.items).toBe(6);
     expect(latest.body.indexOf("独立复核三轮")).toBeLessThan(latest.body.indexOf("leader 接受 C-20261118-multi-forge-1"));
   });
 
-  it("尾部截断在节中间：半截的节整节不显示，末尾说明更早的记录在 progress.md", () => {
+  it("尾部截断在节中间：只去掉第一行的半句，半截的节单独成「更早的记录」，内容一行不丢", () => {
     const text = sample("multi-forge.progress.tail.md");
     expect([...text].length).toBe(LEAD_TAIL_LIMIT);
     const log = parseLeadProgress(text);
     expect(log.truncated).toBe(true);
-    // 被截的那节（独立审查问题修复 + Gitee）连同它的 ### 子标题都不出现。
-    expect(log.sections.some((s) => s.body.includes("### Gitee（gitee.com）"))).toBe(false);
-    expect(log.sections.at(-1)?.body.startsWith("- A 8abcee2c")).toBe(true);
-    // 截在表格中间（ui-polish）：半张表不显示。
+    // 修复前（7f7a6cee）这一节整节被丢（62 行里丢 27 行，独立复核实测）。
+    const earlier = log.sections.at(-1)!;
+    expect(earlier).toMatchObject({ earlier: true, title: null });
+    expect(earlier.body).toContain("### Gitee（gitee.com）");
+    expect(earlier.body).toContain("9. 真机核对自证（d04bd1fd）");
+    // 第一行是半句（「01 先用同一令牌回查…」），只丢它。
+    expect(earlier.body.startsWith("8. 叫法与截图")).toBe(true);
+    expect(visibleLines(text).every((line) => shown(log).includes(line))).toBe(true);
+    // 截在表格中间（ui-polish）：半张表留在「更早的记录」里。
     const ui = parseLeadProgress(sample("ui-polish.progress.tail.md"));
     expect(ui.truncated).toBe(true);
-    expect(ui.sections.map((s) => s.title)).toEqual(["复核返工（agent）", "验证（主会话）"]);
-    expect(ui.sections.some((s) => s.body.includes("| 手机 |"))).toBe(false);
-    render(<LeadProgress text={text} />);
+    expect(ui.sections.map((s) => s.earlier ? "更早" : s.title)).toEqual(["复核返工（agent）", "验证（主会话）", "更早"]);
+    expect(ui.sections.at(-1)!.body).toContain("| 手机 | u5-m-settings .remote-usage-logo | Claude |");
+    expect(visibleLines(sample("ui-polish.progress.tail.md")).every((line) => shown(ui).includes(line))).toBe(true);
+    render(<LeadProgress text={text} slug="t-trunc" />);
     expect(screen.getByText("更早的记录在 progress.md 里")).toBeTruthy();
-    expect(screen.queryByText(/独立审查问题修复/)).toBeNull();
+    expect(screen.getByText("更早的记录", { selector: ".lead-entry-title" })).toBeTruthy();
   });
 
-  it("截断判断：不满 6000 字、或开头是 phase 行 / 总标题的都不算截断", () => {
+  it("截断：CRLF 换行、旧格式（无节标题）也不丢内容，日期能从条目推就推", () => {
+    const crlf = sample("multi-forge.progress.crlf.tail.md");
+    expect(crlf).toContain("\r\n");
+    expect([...crlf].length).toBe(LEAD_TAIL_LIMIT);
+    const log = parseLeadProgress(crlf);
+    expect(log.truncated).toBe(true);
+    expect(log.sections[0].title).toBe("验证（lead）");
+    expect(log.sections.some((s) => s.body.includes("\r"))).toBe(false);
+    expect(visibleLines(crlf).every((line) => shown(log).includes(line))).toBe(true);
+    // 旧格式截断（20261109-lead-panel：修复前 73 行只剩 1 条）。
+    const old = sample("lead-panel.progress.tail.md");
+    const oldLog = parseLeadProgress(old);
+    expect(oldLog.truncated).toBe(true);
+    expect(visibleLines(old).every((line) => shown(oldLog).includes(line))).toBe(true);
+    expect(oldLog.sections.length).toBeGreaterThan(1);
+    // 推不出日期的前半节：日期位写「更早的记录」。
+    const synthetic = parseLeadProgress("录\n- 前一天的条目\n- 2026-11-10 记录\n" + "- 补充\n".repeat(1500));
+    expect(synthetic.sections.at(-1)).toMatchObject({ earlier: true, date: null, body: "- 前一天的条目" });
+  });
+
+  it("截断点恰在完整的节标题、表格行行首：这一行不丢", () => {
+    // 尾部 6000 字正好从「## 2026-11-01 前」开始（修复前一律丢第一行，这一节的标题就没了）。
+    const head = "## 2026-11-01 前\n";
+    const rest = "\n## 2026-11-02 完整节\n- a\n\n## 2026-11-03 最新\n- b\n";
+    const tail = head + "x".repeat(LEAD_TAIL_LIMIT - [...head].length - [...rest].length) + rest;
+    expect([...tail].length).toBe(LEAD_TAIL_LIMIT);
+    const log = parseLeadProgress(tail);
+    expect(log.truncated).toBe(true);
+    expect(log.sections.map((s) => s.title)).toEqual(["最新", "完整节", "前"]);
+    // 决定表截在行首：表头没了，五列的行按旧版决定表的列还原成卡。
+    const row = "| 2026-11-13 | 保留 TUI | leader 原话「我觉得还是得保留TUI」 | leader | — |\n";
+    const rows = row.repeat(Math.ceil(LEAD_TAIL_LIMIT / [...row].length));
+    const cut = [...rows].slice(-LEAD_TAIL_LIMIT).join("");
+    const atRow = cut.slice(cut.indexOf("\n") + 1);
+    const list = parseLeadDecisions(atRow).entries;
+    expect(list.length).toBeGreaterThan(10);
+    expect(list[0]).toMatchObject({ kind: "card", title: "保留 TUI", date: "2026-11-13", quotes: ["我觉得还是得保留TUI"] });
+  });
+
+  it("截断点落在代码块里：从第一个围栏反推开闭，代码照样是代码，不会 0 节", () => {
+    const body = "phase: implement\n\n## 2026-11-01 旧节\n```\n" + "x\n".repeat(3500) + "```\n\n## 2026-11-02 中间节\n- a\n\n## 2026-11-03 最新节\n- b\n";
+    const text = [...body].slice(-LEAD_TAIL_LIMIT).join("");
+    const log = parseLeadProgress(text);
+    expect(log.truncated).toBe(true);
+    expect(log.sections.map((s) => s.earlier ? "更早" : s.title)).toEqual(["最新节", "中间节", "更早"]);
+    expect(log.sections.at(-1)!.body.startsWith("```\n")).toBe(true);
+    expect(log.sections.at(-1)!.items).toBe(0);
+  });
+
+  it("截断判断：不满 6000 字、开头是 phase 行 / 总标题 / 顶层条目的都不算截断；认不出结构时原样显示，绝不返回空", () => {
     expect(leadTailTruncated("phase: done\n- a")).toBe(false);
     const full = "phase: done\n" + "- 记录\n".repeat(1500);
     expect([...full].length).toBeGreaterThanOrEqual(LEAD_TAIL_LIMIT);
     expect(leadTailTruncated(full)).toBe(false);
     expect(leadTailTruncated("录\n" + "- 记录\n".repeat(1500))).toBe(true);
-    // 整份都在一节里、截断后找不到节开头：不显示半截内容，只留「更早的记录」说明。
+    // 无标题的 decisions.md 恰好 6000 字：开头是完整条目，不误判截断，第一条也不丢。
+    const dec = [...("- D1：第一条决定正文。\n" + "- D9：填充\n".repeat(2000))].slice(0, LEAD_TAIL_LIMIT).join("");
+    expect(leadTailTruncated(dec)).toBe(false);
+    expect(parseLeadDecisions(dec).entries.at(-1)).toMatchObject({ id: "D1", body: "第一条决定正文。" });
     const log = parseLeadProgress("录\n" + "x".repeat(LEAD_TAIL_LIMIT));
-    expect(log).toEqual({ sections: [], truncated: true });
+    expect(log.truncated).toBe(true);
+    expect(log.sections).toHaveLength(1);
+    expect(log.sections[0].body).toBe("x".repeat(LEAD_TAIL_LIMIT));
   });
 
   it("旧格式（没有节标题、条目带日期）：按日期分组，不写日期的条目跟着上一组", () => {
@@ -180,9 +272,9 @@ describe("进度：解析真实 progress.md", () => {
   });
 
   it("渲染：最新一节标「最新」并默认展开；旧节收起只显示条数，点开才看正文", () => {
-    render(<LeadProgress text={sample("multi-forge.progress.tail.md")} />);
+    render(<LeadProgress text={sample("multi-forge.progress.tail.md")} slug="t-render" />);
     const heads = screen.getAllByRole("button");
-    expect(heads).toHaveLength(4);
+    expect(heads).toHaveLength(5);
     expect(heads[0].getAttribute("aria-expanded")).toBe("true");
     expect(heads[0].textContent).toContain("最新");
     expect(heads[0].textContent).toContain("验证（lead）");
@@ -199,6 +291,40 @@ describe("进度：解析真实 progress.md", () => {
     fireEvent.click(heads[0]);
     expect(heads[0].getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByText(visibleText(/^独立复核三轮/))).toBeNull();
+  });
+
+  it("折叠状态按节记住：切页签重挂、数据刷新、追加新节都不乱跳；新节默认展开", () => {
+    const v1 = "phase: verify\n## 2026-11-17 第一节\n- 一\n\n## 2026-11-18 第二节\n- 二";
+    const { unmount } = render(<LeadProgress text={v1} slug="t-fold" />);
+    const second = () => screen.getByRole("button", { name: /第二节/ });
+    const first = () => screen.getByRole("button", { name: /第一节/ });
+    expect(second().getAttribute("aria-expanded")).toBe("true");
+    // 用户收起最新一节、展开旧的一节。
+    fireEvent.click(second());
+    fireEvent.click(first());
+    expect(second().getAttribute("aria-expanded")).toBe("false");
+    expect(first().getAttribute("aria-expanded")).toBe("true");
+    // 切到别的页签再切回来（组件重挂）：状态还在。
+    unmount();
+    const view = render(<LeadProgress text={v1} slug="t-fold" />);
+    expect(second().getAttribute("aria-expanded")).toBe("false");
+    expect(first().getAttribute("aria-expanded")).toBe("true");
+    // agent 追加了新的一节：新节默认展开，用户收起的那节保持收起，展开的那节保持展开。
+    view.rerender(<LeadProgress text={v1 + "\n\n## 2026-11-19 第三节\n- 三"} slug="t-fold" />);
+    expect(screen.getByRole("button", { name: /第三节/ }).getAttribute("aria-expanded")).toBe("true");
+    expect(second().getAttribute("aria-expanded")).toBe("false");
+    expect(first().getAttribute("aria-expanded")).toBe("true");
+    // 没碰过的最新一节被新节顶下去后也不自己收起。
+    cleanup();
+    render(<LeadProgress text={v1} slug="t-fold-2" />);
+    cleanup();
+    render(<LeadProgress text={v1 + "\n\n## 2026-11-19 第三节\n- 三"} slug="t-fold-2" />);
+    expect(second().getAttribute("aria-expanded")).toBe("true");
+    // 别的任务不受影响。
+    cleanup();
+    render(<LeadProgress text={v1} slug="t-fold-3" />);
+    expect(second().getAttribute("aria-expanded")).toBe("true");
+    expect(first().getAttribute("aria-expanded")).toBe("false");
   });
 
   it("子标题、表格、代码块、链接经 ChatMarkdown 正常渲染", () => {

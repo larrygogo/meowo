@@ -951,6 +951,7 @@ export const en: Dict = {
     leadProgressLatest: "Latest",
     leadProgressCount: (count: number) => `${count} ${count === 1 ? "item" : "items"}`,
     leadProgressUndated: "Undated",
+    leadProgressEarlier: "Earlier entries",
     leadEarlierInFile: (file: string) => `Earlier entries are in ${file}`,
     tasksBackground: "Background Bash",
     tasksSubagents: "Subtasks",

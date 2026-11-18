@@ -149,6 +149,72 @@ const CHECK_ICONS = {
   blocked: <Icon glyph={icClock} size={14} />,
 };
 
+type LeadCheck = LeadTaskDto["checks"][number];
+
+/// 验收的一行。有可展开的内容才是按钮：有证据，或正文 / 说明（待实测、豁免原因）真的被折叠截断了
+///（收起时正文两行、说明一行，按实际是否溢出判断，同关卡卡片的「展开全部」）。
+/// 原先每行都是 <button aria-expanded>，没有证据的点开是空的（leader 2026-11-19：「无论条目展开有没有内容都可以展开」）；
+/// 短说明也做成按钮，点开没有新东西（独立复核）。其余是普通的一行字：不可聚焦、没有展开态与箭头、悬停不变色。
+function LeadCheckRow({ check: c, index, open, onToggle }: { check: LeadCheck; index: number; open: boolean; onToggle: () => void }) {
+  const t = useT();
+  const state = c.passes ? "pass" : c.waived ? "waived" : c.blocked && !c.leader ? "blocked" : "pending";
+  const label = state === "pass" ? t.chat.leadCheckPass : state === "waived" ? t.chat.leadCheckWaived
+    : state === "blocked" ? t.chat.leadCheckBlocked : t.chat.leadCheckPending;
+  const note = state === "waived" ? t.chat.leadCheckWaivedReason(c.waived ?? "") : state === "blocked" ? t.chat.leadCheckBlockedReason(c.blocked ?? "") : null;
+  const hasEvidence = !!c.evidence?.length;
+  const textRef = useRef<HTMLSpanElement>(null);
+  const noteRef = useRef<HTMLSpanElement>(null);
+  const [clipped, setClipped] = useState(false);
+  // 宽度会变（面板拉宽拉窄、手机横竖屏），挂 ResizeObserver 跟着重量。展开时不量：全文摊开了，量出来总是不溢出。
+  useLayoutEffect(() => {
+    if (open) return;
+    const els = [textRef.current, noteRef.current].filter((el): el is HTMLSpanElement => !!el);
+    const measure = () => setClipped(els.some((el) => el.scrollHeight > el.clientHeight + 1));
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    for (const el of els) observer.observe(el);
+    return () => observer.disconnect();
+  }, [open, c.check, note, hasEvidence, clipped]);
+  const expandable = hasEvidence || clipped;
+  const isOpen = expandable && open;
+  const inner = (
+    <>
+      <span className="lead-check-mark" role="img" aria-label={label}>{CHECK_ICONS[state]}</span>
+      <span className="lead-check-id">{c.id || index + 1}</span>
+      <span className="lead-check-body">
+        <span ref={textRef} className="lead-check-text">{c.check}</span>
+        {note && <span ref={noteRef} className={"lead-check-note" + (state === "blocked" ? " is-blocked" : "")}>{note}</span>}
+        {hasEvidence && <span className="lead-check-note">{t.chat.leadEvidenceCount(c.evidence!.length)}</span>}
+      </span>
+      {expandable && <span className="lead-check-caret" aria-hidden="true">›</span>}
+    </>
+  );
+  return (
+    <>
+      {/* 可展开的行靠 <button aria-expanded>：原先是 <li onClick>，键盘到不了、读屏不知道能展开（调研 i11）。
+          图标 role="img" 才让 aria-label 生效。 */}
+      {expandable ? (
+        <button type="button" className={"lead-check is-" + state + (isOpen ? " is-open" : "")}
+          aria-expanded={isOpen} title={note ? `${c.check}\n${note}` : c.check} onClick={onToggle}>
+          {inner}
+        </button>
+      ) : <div className={"lead-check is-static is-" + state}>{inner}</div>}
+      {isOpen && c.evidence?.map((evidence, i) => (
+        <div key={i} className="lead-check-evidence">
+          <p className="lead-check-note">{t.chat.leadReviewRevision(evidence.revision)}</p>
+          <dl>
+            <dt>{t.chat.leadEvidenceCommand}</dt><dd className="lead-evidence-command"><code>{evidence.command}</code></dd>
+            <dt>{t.chat.leadEvidenceResult}</dt><dd>{evidence.result}</dd>
+            <dt>{t.chat.leadEvidenceReference}</dt><dd>{evidence.reference}</dd>
+            <dt>{t.chat.leadEvidenceLimitations}</dt><dd>{evidence.limitations}</dd>
+          </dl>
+        </div>
+      ))}
+    </>
+  );
+}
+
 const LEAD_SECTIONS = ["checks", "spec", "decisions", "progress"] as const;
 
 /// 流程阶段，顺序即 skill 的 1→6。blocked / unknown 不在条上，单独标。
@@ -294,55 +360,13 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose, onOpenInPanel,
             ? <div className="chat-tasks-empty">{t.chat.leadChecksEmpty}</div>
             : (
               <ul className="lead-checks">
-                {visibleChecks.map((c, index) => {
-                  const state = c.passes ? "pass" : c.waived ? "waived" : c.blocked && !c.leader ? "blocked" : "pending";
-                  const label = state === "pass" ? t.chat.leadCheckPass : state === "waived" ? t.chat.leadCheckWaived
-                    : state === "blocked" ? t.chat.leadCheckBlocked : t.chat.leadCheckPending;
-                  // 有可展开的内容才是按钮：证据、待实测原因、豁免原因（收起时说明只露一行、正文两行，展开看全）。
-                  // 原先每行都是 <button aria-expanded>，没有证据的点开是空的（leader 2026-11-19：「无论条目展开有没有内容都可以展开」）。
-                  // 没有内容的行是普通的一行字：不可聚焦、没有展开态与箭头、悬停不变色，正文不截断。
-                  const expandable = !!c.evidence?.length || state === "waived" || state === "blocked";
-                  const isOpen = expandable && open.has(c.id);
-                  const inner = (
-                    <>
-                      <span className="lead-check-mark" role="img" aria-label={label}>{CHECK_ICONS[state]}</span>
-                      <span className="lead-check-id">{c.id || index + 1}</span>
-                      <span className="lead-check-body">
-                        <span className="lead-check-text">{c.check}</span>
-                        {state === "waived" && <span className="lead-check-note">{t.chat.leadCheckWaivedReason(c.waived ?? "")}</span>}
-                        {state === "blocked" && <span className="lead-check-note is-blocked">{t.chat.leadCheckBlockedReason(c.blocked ?? "")}</span>}
-                        {!!c.evidence?.length && <span className="lead-check-note">{t.chat.leadEvidenceCount(c.evidence.length)}</span>}
-                      </span>
-                      {expandable && <span className="lead-check-caret" aria-hidden="true">›</span>}
-                    </>
-                  );
-                  return (
-                    // 可展开的行靠 <button aria-expanded>：原先是 <li onClick>，键盘到不了、读屏不知道能展开（调研 i11）。
-                    // 图标 role="img" 才让 aria-label 生效。
-                    <li key={c.id}>
-                      {(index === 0 || group(visibleChecks[index - 1]) !== group(c)) && <div className="lead-check-group">{groupLabels[group(c)]}</div>}
-                      {expandable ? (
-                        <button type="button" className={"lead-check is-" + state + (isOpen ? " is-open" : "")}
-                          aria-expanded={isOpen}
-                          title={state === "waived" ? `${c.check}\n${t.chat.leadCheckWaivedReason(c.waived ?? "")}` : c.check}
-                          onClick={() => setOpen((prev) => { const next = new Set(prev); if (next.has(c.id)) next.delete(c.id); else next.add(c.id); return next; })}>
-                          {inner}
-                        </button>
-                      ) : <div className={"lead-check is-static is-" + state}>{inner}</div>}
-                      {isOpen && c.evidence?.map((evidence, index) => (
-                        <div key={index} className="lead-check-evidence">
-                          <p className="lead-check-note">{t.chat.leadReviewRevision(evidence.revision)}</p>
-                          <dl>
-                            <dt>{t.chat.leadEvidenceCommand}</dt><dd className="lead-evidence-command"><code>{evidence.command}</code></dd>
-                            <dt>{t.chat.leadEvidenceResult}</dt><dd>{evidence.result}</dd>
-                            <dt>{t.chat.leadEvidenceReference}</dt><dd>{evidence.reference}</dd>
-                            <dt>{t.chat.leadEvidenceLimitations}</dt><dd>{evidence.limitations}</dd>
-                          </dl>
-                        </div>
-                      ))}
-                    </li>
-                  );
-                })}
+                {visibleChecks.map((c, index) => (
+                  <li key={c.id}>
+                    {(index === 0 || group(visibleChecks[index - 1]) !== group(c)) && <div className="lead-check-group">{groupLabels[group(c)]}</div>}
+                    <LeadCheckRow check={c} index={index} open={open.has(c.id)}
+                      onToggle={() => setOpen((prev) => { const next = new Set(prev); if (next.has(c.id)) next.delete(c.id); else next.add(c.id); return next; })} />
+                  </li>
+                ))}
                 {settledCount > 0 && <li>
                   <button type="button" className="lead-check-toggle" aria-expanded={showSettled} onClick={() => setShowSettled((value) => !value)}>
                     {t.chat.leadSettledCount(settledCount)}<span className="lead-check-caret" aria-hidden="true">›</span>
@@ -355,7 +379,7 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose, onOpenInPanel,
           <div className="chat-plan-doc">
             {section === "spec"
               ? <div className="chat-md"><ChatMarkdown text={task.spec || t.chat.leadSectionEmpty} /></div>
-              : section === "decisions" ? <LeadDecisions text={task.decisions} /> : <LeadProgress text={task.progress} />}
+              : section === "decisions" ? <LeadDecisions text={task.decisions} /> : <LeadProgress text={task.progress} slug={task.slug} />}
           </div>
         )}
       </div>

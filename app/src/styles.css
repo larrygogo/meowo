@@ -6068,11 +6068,11 @@ button.scm-check-name:hover { text-decoration: underline; }
 /* 检查项是 <button>（键盘可展开）：去掉按钮外观，撑满整行、左对齐，与原 <li> 观感一致。 */
 button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; font: inherit; font-size: var(--text-sm); line-height: 1.55; text-align: left; cursor: pointer; }
 button.lead-check:hover { background: var(--fill-hover); }
-/* 没有可展开内容的行（无证据、无待实测 / 豁免说明）：普通的一行字，不留箭头列、不截断正文、悬停不变色（2026-11-19）。 */
+/* 没有可展开内容的行（无证据、正文与说明都没被折叠截断）：普通的一行字，不留箭头列、悬停不变色（2026-11-19）。
+   折叠行数与按钮行相同：是否截断按同一套行数量，静态行本来就放得下，折叠不藏字。 */
 .lead-check.is-static { grid-template-columns: 16px auto minmax(0, 1fr); cursor: default; }
-.lead-check.is-static .lead-check-text { display: block; -webkit-line-clamp: unset; }
-/* 可展开的行收起时说明只露一行，展开看全。 */
-button.lead-check:not(.is-open) .lead-check-note { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; }
+/* 收起时说明只露一行，展开看全。 */
+.lead-check:not(.is-open) .lead-check-note { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; }
 .lead-check-mark { display: grid; place-items: center; height: 1.55em; color: var(--cc-text-faint); }
 .lead-check.is-pass { color: var(--cc-text-faint); }
 .lead-check.is-pass .lead-check-mark { color: var(--cc-ok-text); }
@@ -6100,13 +6100,13 @@ button.lead-check:not(.is-open) .lead-check-note { display: -webkit-box; -webkit
 .lead-check.is-open .lead-check-text { display: block; -webkit-line-clamp: unset; }
 .lead-notes { padding: var(--sp-4) var(--sp-4) var(--sp-16); }
 .lead-note-body { min-width: 0; color: var(--cc-text-dim); font-size: var(--text-sm); line-height: 1.65; }
-.lead-note-body p { margin: 0 0 var(--sp-8); }
+.lead-note-body.chat-md p { margin: 0 0 var(--sp-8); }
 .lead-note-body > :last-child, .lead-note-body p:last-child { margin-bottom: 0; }
 .lead-note-body pre { max-width: 100%; overflow-x: auto; }
 /* 要点列表：面板窄，缩进收到一档；嵌在决定卡 / 时间线的 <ol> 里，浏览器会把实心点换成空心圈，钉回实心。 */
-.lead-note-body :is(ul, ol) { margin: 0 0 var(--sp-8); padding-left: var(--sp-16); }
-.lead-note-body ul { list-style: disc; }
-.lead-note-body li { margin: var(--sp-2) 0; }
+.lead-note-body.chat-md :is(ul, ol) { margin: 0 0 var(--sp-8); padding-left: var(--sp-16); }
+.lead-note-body.chat-md ul { list-style: disc; }
+.lead-note-body.chat-md li { margin: var(--sp-2) 0; }
 .lead-note-body table { width: 100%; max-width: 100%; border-spacing: 0; border-collapse: collapse; color: var(--cc-text-dim); font-size: var(--text-xs); line-height: 1.55; }
 .lead-note-body th, .lead-note-body td { padding: var(--sp-6) var(--sp-8); border-bottom: var(--hairline) solid var(--line); text-align: left; vertical-align: top; }
 .lead-note-body th { background: var(--fill-hover); color: var(--cc-text); font-weight: var(--fw-semibold); }
@@ -6132,6 +6132,8 @@ button.lead-check:not(.is-open) .lead-check-note { display: -webkit-box; -webkit
 .lead-entry:last-child::before { display: none; }
 .lead-timeline-marker { position: relative; z-index: var(--z-raised); width: 11px; height: 11px; margin-top: 9px; border: 2px solid var(--cc-panel-raised); border-radius: 50%; background: var(--cc-text-faint); box-shadow: 0 0 0 1px var(--line); }
 .lead-entry.is-latest .lead-timeline-marker { background: var(--cc-accent); }
+/* 「更早的记录」（截断后开头那半节）：空心圆点，和完整的节区分。 */
+.lead-entry.is-earlier .lead-timeline-marker { background: var(--cc-panel-raised); }
 .lead-timeline-content { min-width: 0; }
 .lead-entry-head { display: flex; flex-direction: column; gap: var(--sp-2); width: 100%; margin: 0; padding: var(--sp-6) var(--sp-8); border: 0; border-radius: var(--radius-md); background: transparent; color: inherit; font: inherit; text-align: left; }
 button.lead-entry-head { cursor: pointer; }
