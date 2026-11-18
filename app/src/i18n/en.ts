@@ -671,6 +671,8 @@ export const en: Dict = {
     slashSheetSearch: "Search commands",
     slashSheetEmpty: "No matching commands",
     workingRetry: (attempt: number, max: number) => `Request failed. Retrying (${attempt}/${max})…`,
+    sidebarRetryStalled: "No response from the API. Waiting to retry. Check your network.",
+    workingStalled: (retryIn: string) => `No response from the API. Retrying in ${retryIn}. Check your network.`,
     inputLabel: "Send a message to the Agent",
     runningSend: {
       insert: {

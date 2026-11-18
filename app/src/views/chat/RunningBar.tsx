@@ -136,7 +136,10 @@ export function RunningBar({ store, turnStartedAt, override, fallbackVerb, activ
   const retrySnap = store.getRetry();
   const retry = retrySnap && now - retrySnap.at < CLI_STATUS_FRESH_MS ? retrySnap : null;
   // 自动重试压过一切说法（对照 Kimi 的 turnRetry 优先）：这是此刻「为什么没动静」的真正答案。
-  const verb = retry ? t.chat.workingRetry(retry.attempt, retry.max) : override ?? fresh?.verb ?? fallbackVerb;
+  // 「API 无响应、等待重试」此前不认（没有次数），运行条只说「工作中…」，看不出卡在网络上。
+  const verb = retry?.kind === "stalled" ? t.chat.workingStalled(retry.retryIn)
+    : retry ? t.chat.workingRetry(retry.attempt, retry.max)
+    : override ?? fresh?.verb ?? fallbackVerb;
   const detail = fresh ? fresh.detail : turnStartedAt !== null ? fmtElapsed(now - turnStartedAt) : null;
   // 不是 live region：动词每几秒换一个（Pondering / Cogitating…）、活动行每次工具调用都换，
   // 放在 polite 区里读屏会被连续打断（调研 i10，与 G-16 状态点播报风暴同类）。
@@ -145,7 +148,7 @@ export function RunningBar({ store, turnStartedAt, override, fallbackVerb, activ
     <div className="chat-running">
       <div className="chat-running-line">
         <SnakeSpinner />
-        <span className="chat-running-verb">{verb}</span>
+        <span className={"chat-running-verb" + (retry ? " is-retry" : "")}>{verb}</span>
         {/* 统计每秒都在变：不进读屏播报，否则活区每秒念一遍。 */}
         {detail && <span className="chat-running-detail" aria-hidden="true">({detail})</span>}
       </div>

@@ -598,9 +598,14 @@ impl AgentPlugin for Claude {
     /// retrying, waiting up to 1m · attempt 2/10`、`Auto mode check unavailable · next try in
     /// 5s · attempt 2/10 · esc to interrupt`。只认带「上限」的三种；容量排队的 `next try in …
     /// · attempt 3`（无上限）是在等空位，不是失败，不算。锚在行尾，正文里引用的半句不会命中。
+    ///
+    /// 第四种是「请求发出后迟迟没有回应」（2.1.327 包内 `kind==="stalled"` 分支，用户实拍
+    /// 2026-11-18）：`✻ Waiting for API response · will retry in 1m 9s · check your network`。
+    /// 它没有次数上限，倒计时在捕获组 3。此前不认这一行，对话页只显示普通的「工作中…」，
+    /// 看不出其实卡在网络上。
     fn retry_line_pattern(&self) -> Option<&'static str> {
         Some(
-            r"· (?:Retrying in|retrying, waiting up to|next try in) [^·]{1,60}· attempt (\d+)/(\d+)(?: · [^·]{0,40})?\s*$",
+            r"· (?:Retrying in|retrying, waiting up to|next try in) [^·]{1,60}· attempt (\d+)/(\d+)(?: · [^·]{0,40})?\s*$|Waiting for API response · will retry in ([^·]{1,20}?) · check your network\s*$",
         )
     }
     /// `/effort <档位>`（immediate 命令，成功回 `Set effort level to <level> (…): …`）。

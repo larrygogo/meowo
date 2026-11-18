@@ -1066,6 +1066,10 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     // (is-off)已表达「不活跃」,再叠一个灰点是噪声。
     const tone = liveSessionTone(item);
     const showDot = tone === "running" || tone === "pending" || tone === "waiting" || tone === "error";
+    // 回合在跑、屏幕上却挂着自动重试（请求出错 / API 无响应）：与对话页运行条同一句话，
+    // 点换成警示色——不是在正常干活（实拍 2026-11-18：TUI 红字等待重试，侧栏只是普通绿点）。
+    const retry = tone === "running" ? item.screen_retry : null;
+    const retryLabel = retry ? (retry.kind === "stalled" ? t.chat.sidebarRetryStalled : t.chat.workingRetry(retry.attempt, retry.max)) : null;
     // 待授权徽标优先于状态点：授权在等用户决策，比「在跑/待处理」都紧急；
     // 且不依附 connected——离线会话恢复的 agent 同样可能来要权限。
     const awaitingApproval = approvalAwaitingIds.has(item.session.id);
@@ -1212,7 +1216,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           {awaitingApproval
             ? <i className="chat-sidebar-dot is-approval" role="img" aria-label={t.vocab.request.approval} data-tip={t.vocab.request.approval} />
             : showDot
-              ? <i className={`chat-sidebar-dot is-${tone}`} role="img" aria-label={sessionStatusLabel(t, tone)} data-tip={sessionStatusLabel(t, tone)} />
+              ? <i className={`chat-sidebar-dot is-${tone}` + (retryLabel ? " is-retrying" : "")} role="img" aria-label={retryLabel ?? sessionStatusLabel(t, tone)} data-tip={retryLabel ?? sessionStatusLabel(t, tone)} />
               // 未读点（对照 Kimi 的 unread-dot）：回合结束时你没在看；当前会话不显示（正在看就是已读）。
               : item.unread && item.session.id !== activeId && (
                 <i className="chat-sidebar-unread" role="img" aria-label={t.chat.unread} data-tip={t.chat.unread} />

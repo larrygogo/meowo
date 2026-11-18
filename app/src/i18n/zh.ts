@@ -7,6 +7,21 @@ import statusVocab from "./statusVocab.json";
 // 下文凡是状态词都引用 vocab，不再写字面量（statusVocab.test.ts 扫描）。
 const vocab = statusVocab.zh;
 
+/** CLI 倒计时「1m 9s」「45s」「1h 3m」→「1 分 09 秒」「45 秒」「1 小时 3 分」；认不出照原样。 */
+function zhCountdown(text: string): string {
+  const parts = text.trim().split(/\s+/);
+  const got: Record<string, number> = {};
+  for (const part of parts) {
+    const match = /^(\d+)([hms])$/.exec(part);
+    if (!match) return `${text} `;
+    got[match[2]] = Number(match[1]);
+  }
+  const { h, m, s } = got;
+  if (h !== undefined) return `${h} 小时${m !== undefined ? ` ${m} 分` : ""}`;
+  if (m !== undefined) return `${m} 分${s !== undefined ? ` ${String(s).padStart(2, "0")} 秒` : ""}`;
+  return s !== undefined ? `${s} 秒` : `${text} `;
+}
+
 export const zh = {
   // BCP-47 locale：日期/时刻格式化走 Intl（12/24 小时制、月日顺序随语言），不再手拼。
   locale: "zh-CN",
@@ -761,6 +776,10 @@ export const zh = {
     slashSheetEmpty: "没有匹配的命令",
     // 自动重试优先于一切说法：此刻「没动静」的真正原因（重试不落对话记录，只在终端画面上）
     workingRetry: (attempt: number, max: number) => `请求失败，正在重试（第 ${attempt}/${max} 次）`,
+    // 请求发出后迟迟没回应、等倒计时重发（CLI 原文「Waiting for API response · will retry in 1m 9s ·
+    // check your network」）。倒计时照 CLI 的「1m 9s」换成「1 分 09 秒」，认不出就原样放。
+    sidebarRetryStalled: "API 无响应，等待重试，检查网络",
+    workingStalled: (retryIn: string) => `API 无响应，${zhCountdown(String(retryIn))}后重试，检查网络`,
     inputLabel: "发送消息给 Agent",
     // 回合在跑时发消息会怎样，按后端声明的能力分三种去向（chat/sendCopy.ts）。同一种去向的占位
     //（发之前的许诺）与回执（发之后的说法）写在一起、共用一个动词：此前 Kimi 没声明送达时机，

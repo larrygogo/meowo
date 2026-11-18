@@ -38,10 +38,14 @@ export function parseCliStatus(screen: string, pattern: string): CliStatus | nul
   return null;
 }
 
-export type CliRetry = { attempt: number; max: number };
+/// 两种自动重试：请求出错按次数重试（第几次/上限）；请求发出后迟迟没回应、倒计时到了再重发
+/// （`retryIn` 是 CLI 原样的倒计时，如「1m 9s」）。
+export type CliRetry =
+  | { kind: "attempt"; attempt: number; max: number }
+  | { kind: "stalled"; retryIn: string };
 
 /// 「请求失败、正在自动重试」那一行（正则由插件经 `ChatUi.retry_line_pattern` 下发，
-/// 捕获组 1 = 第几次、2 = 上限）。只看屏幕底部一截：重试行画在输入框上方的 spinner 区，
+/// 捕获组 1 = 第几次、2 = 上限；或捕获组 3 = 「API 无响应」的重试倒计时）。只看屏幕底部一截：重试行画在输入框上方的 spinner 区，
 /// 正文里恰好引用到的同款文字在更上面——宁可少报，不把引用当成正在发生的重试。
 const RETRY_SCAN_LINES = 12;
 
@@ -52,9 +56,10 @@ export function parseCliRetry(screen: string, pattern: string): CliRetry | null 
   for (let index = lines.length - 1; index >= Math.max(0, lines.length - RETRY_SCAN_LINES); index -= 1) {
     const match = re.exec(lines[index]);
     if (!match) continue;
+    if (match[3]) return { kind: "stalled", retryIn: match[3].trim() };
     const attempt = Number(match[1]);
     const max = Number(match[2]);
-    if (Number.isFinite(attempt) && Number.isFinite(max) && max > 0) return { attempt, max };
+    if (Number.isFinite(attempt) && Number.isFinite(max) && max > 0) return { kind: "attempt", attempt, max };
   }
   return null;
 }

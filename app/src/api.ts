@@ -252,6 +252,12 @@ export type LiveSession = Omit<LiveSessionDto, "session" | "todos" | "column" | 
    * 但它非零时，卡片环与分组都按「运行中」处理——后台委派还在独立干活，不该催人。
    */
   busy_subagents: number;
+  /**
+   * 屏幕上正挂着的自动重试（后端 detect.rs retry_note，与对话页运行条同一串正则）：
+   * attempt = 请求出错按次数重试；stalled = 请求发出后迟迟没回应，等倒计时重发。
+   * 缺省/null = 没有在重试，或非托管会话（读不到屏幕）。
+   */
+  screen_retry?: { kind: "attempt"; attempt: number; max: number } | { kind: "stalled" } | null;
   /** 回合结束时用户没在看这个会话（后端 watch 标记，打开即清）。可选：旧后端不带。 */
   unread?: boolean;
   /** 最近一条 AI 正文的轻推预览（清洗+截断），hover 卡片时速览；无正文回合为 null。 */
