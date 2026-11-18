@@ -260,6 +260,9 @@ function argsSummary(args: Record<string, unknown>): string {
     const value = args[key];
     if (typeof value === "string" && value.trim()) return value.trim();
   }
+  // 提问类工具（如 AskUserQuestion）的参数是 questions 数组：显示第一个问题。
+  const first = Array.isArray(args.questions) ? (args.questions[0] as Record<string, unknown> | undefined) : undefined;
+  if (first && typeof first.question === "string" && first.question.trim()) return first.question.trim();
   return Object.values(args)
     .filter((value): value is string | number | boolean => ["string", "number", "boolean"].includes(typeof value) && String(value).trim() !== "")
     .map(String)
