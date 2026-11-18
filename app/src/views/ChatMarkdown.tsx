@@ -22,7 +22,7 @@ import { icImage } from "../icons/glyphs.chat";
 // 「）内容已经都并进来了，要我删掉吗？」一起变成了链接）。真要出现在网址里的这些字符会被百分号编码，截断不会误伤。
 const NOT_IN_URL = /[‘-‟　-〿぀-ヿ㐀-䶿一-鿿가-힯＀-￯]/;
 
-type MdNode = { type: string; value?: string; url?: string; children?: MdNode[] };
+type MdNode = { type: string; value?: string; url?: string; children?: MdNode[]; data?: { hName?: string; hProperties?: Record<string, unknown> } };
 
 /// 把自动识别出来的网址在第一个「网址里不会有的字符」处截断，剩下的还原成普通文字。只动自动链接（链接文字就是
 /// 网址本身）；作者写的 [文字](地址) 不碰。
@@ -52,8 +52,35 @@ export function trimCjkAutolinks(tree: MdNode): void {
 }
 const remarkTrimCjkAutolinks = () => (tree: MdNode) => trimCjkAutolinks(tree);
 
+/// 段尾不留孤字（U2，2026-11-18）：中文段落末行常只剩「难。」这样一个字加句号。样式表里的 text-wrap-style: pretty
+/// 在 Chromium / WebView2 上只处理「末行只有一个词」，中文的「字 + 标点」它不当孤行（progress.md 有实测），
+/// 所以在这里把段落最后 KEEP_TAIL 个字（含标点）包进一个不折行的 span：它们只能一起换行，末行至少四个字。
+/// 只改结构不加字符——复制、读屏拿到的文字不变；只动段落末尾那段纯文字，末尾是链接、代码、带空格的西文时不碰。
+const KEEP_TAIL = 4;
+const CJK_CHAR = /[㐀-鿿豈-﫿]/;
+export function keepCjkTail(tree: MdNode): void {
+  const walk = (node: MdNode) => {
+    if (node.type === "paragraph") {
+      const kids = node.children ?? [];
+      const last = kids[kids.length - 1];
+      if (last?.type === "text" && last.value) {
+        const chars = [...last.value];
+        const tail = chars.slice(-KEEP_TAIL).join("");
+        if (chars.length > KEEP_TAIL + 1 && !/\s/.test(tail) && CJK_CHAR.test(tail)) {
+          last.value = chars.slice(0, -KEEP_TAIL).join("");
+          kids.push({ type: "emphasis", data: { hName: "span", hProperties: { className: ["chat-md-keep"] } }, children: [{ type: "text", value: tail }] });
+        }
+      }
+      return;
+    }
+    node.children?.forEach(walk);
+  };
+  walk(tree);
+}
+const remarkKeepCjkTail = () => (tree: MdNode) => keepCjkTail(tree);
+
 /** 文件面板的 FileMarkdown 复用同一份 remark 插件表——渲染规则两处不分叉。 */
-export const PLUGINS = [remarkGfm, remarkTrimCjkAutolinks];
+export const PLUGINS = [remarkGfm, remarkTrimCjkAutolinks, remarkKeepCjkTail];
 
 /// 超过这个规模的代码块不高亮：hljs 同步跑在渲染路径上，几百 KB 的日志粘贴会卡住
 /// 整窗；纯文本已有滚动限高，大块不上色是可接受的降级。

@@ -537,6 +537,8 @@ html, body {
 html, body { text-wrap-style: pretty; }
 :where(h1, h2, h3, h4, h5, h6, .sec-title, .app-confirm strong) { text-wrap-style: balance; }
 :where(pre, code, kbd, samp, table, textarea, input, .xterm, .chat-diff-text) { text-wrap-style: auto; }
+/* pretty 在 Chromium 上不把中文「字 + 句号」当孤行；对话正文的段尾四个字由 ChatMarkdown 的 keepCjkTail 包成一组不折行。 */
+.chat-md-keep { white-space: nowrap; }
 /* 即时反馈的回弹（U3，2026-11-18）：复制、导出这类按钮按下缩到 .92，成功那一刻（.fb-flash，
    由 useFlash 的 shown 挂上）用带一点过冲的 --ease-spring 弹回 1，0.26s 播完，不超过 300ms。
    用独立的 scale 属性、不写 transform / transition：各按钮已有的 transform 定位与 transition
