@@ -4,6 +4,6 @@
 # 仍是 CRLF。这里显式钉死，不依赖各人的 git 配置。
 LICENSE text eol=lf
 
-# Lead 面板的真实样例按后端尾部截断后的原样存（正好 6000 字），换行改成 CRLF 会改变字数，
+# Lead 面板的真实样例按后端尾部截断后的原样存（正好 6000 字，原文件是 CRLF），换行一转字数就变，
 # 截断判断的测试就不再是「后端给的那份」。
-app/src/views/chat/__fixtures__/lead/*.md text eol=lf
+app/src/views/chat/__fixtures__/lead/*.md -text
