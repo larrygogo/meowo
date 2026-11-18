@@ -40,6 +40,8 @@ pub(crate) use badge::sidebar_git_badges_for;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod drill;
 
 /// push 的超时：大仓库首推、慢网络留足余量，又不至于让按钮无限转。
 const PUSH_TIMEOUT: Duration = Duration::from_secs(120);
@@ -556,10 +558,10 @@ pub(crate) async fn git_set_identity(cwd: String, name: String, email: String) -
 
 // ═══ 平台接口的状态与缓存 ═══
 
-/// 内置实现的失败输出是不是「令牌被拒」（它照 gh 的写法回 `HTTP 401: Bad credentials`）。
+/// 内置实现的失败输出是不是「令牌被拒」（它回 `HTTP 401: Bad credentials` 或没令牌时的 `HTTP 401: not signed in`）。
 pub(crate) fn says_unauthed(out: &CmdOut) -> bool {
     let low = out.both().to_lowercase();
-    low.contains("gh auth login") || low.contains("http 401") || low.contains("bad credentials")
+    low.contains("http 401") || low.contains("bad credentials")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -668,7 +670,7 @@ pub(crate) fn map_checks(rollup: Option<&serde_json::Value>) -> (Vec<PrCheckDto>
     (checks, summary.to_string())
 }
 
-/// `gh pr view --json <PR_FIELDS>` → DTO（含检查）。
+/// 内置实现 `pr view --json <PR_FIELDS>` 的输出（字段与 forge/fixtures 的实录同形）→ DTO（含检查）。
 pub(crate) fn parse_pr_full(json: &str) -> Option<PullRequestDto> {
     let mut pr = crate::git::parse_pull_request(json)?;
     let v: serde_json::Value = serde_json::from_str(json).ok()?;
@@ -685,8 +687,7 @@ pub(crate) fn parse_pr_full(json: &str) -> Option<PullRequestDto> {
 }
 
 /// 查一个分支（或 PR 号）的 PR。Ok(None) = 没有 PR；Err = 查不了（没登录、断网），调用方保留上一次的结果。
-/// 知道 owner/repo 就显式带 `--repo`：fork + upstream 两个远端又没设 gh default repo 时，gh 不带它会
-/// 报 set-default（做空审查实测）。带了 --repo 的 `gh pr view` 不再看当前分支，必须把分支名作参数。
+/// 知道 owner/repo 就显式给出仓库，并把分支名作参数（不靠「当前目录的当前分支」去猜，fork 工作流下猜错过）。
 fn find_pr(forge: &dyn ForgeApi, dir: &str, slug: Option<&str>, target: &Target) -> Result<Option<PullRequestDto>, String> {
     forge.find(dir, slug, target)
 }
@@ -728,11 +729,11 @@ impl GhRemote {
 /// PR 在哪个仓库开、head 在哪个仓库（单点判定，见 [`resolve_gh_repo`]）。
 #[derive(Debug, Clone, Default)]
 struct GhRepo {
-    /// PR 所在仓库（gh 的 `--repo`）。没有 GitHub 远端时 None。
+    /// PR 所在仓库。没有认得出平台的远端时 None。
     base: Option<GhRemote>,
     /// head 分支所在仓库（推送远端）。和 base 不同就是 fork：`--head <owner>:<分支>`。
     head: Option<GhRemote>,
-    /// 多个 GitHub 远端、又没用 gh repo set-default 定过时，界面上可选的远端。
+    /// 多个认得出平台的远端时，界面上可选的远端。
     choices: Vec<GhRemote>,
     /// 还没选：查状态先按 origin 看，开 PR / 合并返回 `gh/ambiguous_repo`，不静默挑一个。
     needs_choice: bool,
@@ -742,8 +743,8 @@ impl GhRepo {
     fn slug(&self) -> Option<&str> {
         self.base.as_ref().map(|b| b.slug.as_str())
     }
-    /// gh 认的 head 写法：同仓库是分支名，fork 是 `<fork owner>:<分支>`（`gh pr create --head`、
-    /// `gh pr view <owner>:<分支>` 都认这个写法）。
+    /// head 的写法：同仓库是分支名，fork 是 `<fork owner>:<分支>`（GitHub REST 建 PR 的 `head` 与内置实现按分支找 PR
+    /// 都认这个写法）。
     fn head_ref(&self, branch: &str) -> String {
         match (&self.base, &self.head) {
             (Some(base), Some(head)) if base.slug != head.slug => format!("{}:{branch}", head.owner()),
@@ -951,7 +952,7 @@ pub(crate) fn save_merge_method(path: &Path, slug: &str, method: &str) {
     save_pref(path, "lastMergeMethod", slug, method);
 }
 
-/// 用户在界面上选的 PR 所在远端（多个 GitHub 远端、没用 gh repo set-default 定过时）。
+/// 用户在界面上选的 PR 所在远端（多个认得出平台的远端时）。
 fn chosen_remote(path: &Path, common: &str) -> Option<String> {
     read_pref(path, "repoRemote", common)
 }
@@ -1032,7 +1033,7 @@ impl RepoInfo {
     fn head_branch(&self) -> Option<&str> {
         self.target.as_ref().map(|t| t.branch.as_str()).or(self.branch.as_deref())
     }
-    /// gh 认的 head（fork 时带 owner）。
+    /// head 的写法（fork 时带 owner）。
     fn head_ref(&self) -> Option<String> {
         self.head_branch().map(|b| self.gh.head_ref(b))
     }
@@ -1226,7 +1227,7 @@ pub(crate) fn pr_create_with(
     if info.gh.needs_choice {
         return Err("gh/ambiguous_repo".into());
     }
-    // 远端不是 GitHub（企业版、ssh 别名）时不带 --repo，交给 gh 自己按远端认（同以前）。
+    // PR 所在仓库（usable 已确认认得出平台、有账号，这里一定有）。
     let slug = info.gh.slug().map(str::to_string);
     let base = base.map(str::trim).filter(|b| !b.is_empty()).map(str::to_string).or(info.base.clone()).ok_or("gh/failed: no base")?;
     let summary = crate::git::git_diff_summary_blocking(dir)?;
@@ -1338,9 +1339,9 @@ pub(crate) fn pr_merge_with(ctx: &Ctx, cwd: &str, number: u32, method: &str, exp
     }
     let said_queue = merged?;
     save_merge_method(&ctx.prefs, &base.key(), method);
-    // 仓库开了合并队列时 gh 回的是「will be added to the merge queue」，PR 还是 OPEN：不能说已合并。
-    // 只认 gh 的这句原话：合并成功后 GitHub 有延迟，立刻 view 常常还是 OPEN，以前据此标「已入队」并记进
-    // queued 缓存，之后刷新一直挂着「在队列里」（做空审查）。gh 没说排队就按已合并处理；这次 view 不进
+    // 仓库开了合并队列时内置实现改为入队，回「will be added to the merge queue」，PR 还是 OPEN：不能说已合并。
+    // 只认这句：合并成功后 GitHub 有延迟，立刻 view 常常还是 OPEN，以前据此标「已入队」并记进
+    // queued 缓存，之后刷新一直挂着「在队列里」（做空审查）。没说排队就按已合并处理；这次 view 不进
     // PR 缓存（上面已作废），下一次刷新以服务器为准。别的平台没有合并队列，merge 恒回 false。
     let after = find_pr(forge.as_ref(), dir, Some(&slug), &target).ok().flatten();
     let queued = said_queue && !after.as_ref().is_some_and(|p| p.state == "merged");
@@ -1358,8 +1359,8 @@ pub(crate) async fn gh_pr_merge(cwd: String, number: u32, method: String, expect
         .map_err(|e| e.to_string())?
 }
 
-/// 多个 GitHub 远端、没用 gh repo set-default 定过时，用户在界面上选 PR 开在哪个远端的仓库（不推用户去终端跑
-/// gh repo set-default）。按公共 .git 目录记在 forge.json，同一仓库的各 worktree 共用这个选择。
+/// 多个认得出平台的远端时，用户在界面上选 PR 开在哪个远端的仓库。按公共 .git 目录记在 forge.json，同一仓库的
+/// 各 worktree 共用这个选择。
 pub(crate) fn choose_repo_with(prefs: &Path, cwd: &str, remote: &str, env: GitEnv, forges: &dyn Forges) -> Result<(), String> {
     let dir = existing_dir(cwd)?;
     let (common_dir, git_dir) = git_dirs(dir, env).ok_or("worktree/not_repo")?;

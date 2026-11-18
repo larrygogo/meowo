@@ -516,7 +516,7 @@ describe("「更改」面板列出本会话的 PR", () => {
     localStorage.removeItem("meowo-dismissed-prs");
   });
 
-  it("会话里没动过 PR：面板和以前一样，不出这一块、不多问 gh", async () => {
+  it("会话里没动过 PR：面板和以前一样，不出这一块、不多查 PR", async () => {
     status = forge({ pr: pr() });
     render(<ForgeBar repo={repo()} sessionCwd="C:/w/meowo" sessionId={7} active onChanged={() => {}} />);
     await screen.findByTestId("scm-pr");

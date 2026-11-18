@@ -15,6 +15,6 @@ cwd: string,
  */
 additions: number, deletions: number, files: number, 
 /**
- * 当前分支的 PR。没装 gh、没登录、没有 PR、或窗口隐藏且缓存里没有时为 None。
+ * 当前分支的 PR。没账号、令牌失效、没有 PR、或窗口隐藏且缓存里没有时为 None。
  */
 pr?: SidebarPrBadgeDto, };

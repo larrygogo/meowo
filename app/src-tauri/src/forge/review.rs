@@ -1,5 +1,5 @@
-//! PR / MR 阅读、评论与持久监控。经统一的平台接口（forge/api.rs）：GitHub 的 gh 调用继承 forge 的注入点与
-//! 超时，GitLab / Gitea / Bitbucket 走各自的接口。
+//! PR / MR 阅读、评论与持久监控。经统一的平台接口（forge/api.rs）：GitHub 走内置实现（REST / GraphQL），
+//! GitLab / Gitea / Bitbucket / Gitee 走各自的接口，都用设置里的账号。
 
 use super::*;
 use meowo_protocol::ipc::{PrCommentDto, PrFileDto, PrMonitorDto, PrMonitorEventDto, PrReviewDto, QueueDraftDto};
@@ -154,7 +154,7 @@ pub(crate) async fn pr_monitor_set(state: tauri::State<'_, crate::AppState>, cwd
     let db = state.db_path.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let store = crate::open_store(&db).map_err(|e| e.to_string())?;
-        // 停止是纯本地操作；离线、无 gh 或 PR 已消失都不能把用户困在监控里。
+        // 停止是纯本地操作；离线、没账号或 PR 已消失都不能把用户困在监控里。
         if !enabled {
             if let Some(key) = key {
                 disable_pr_monitor(&store, &key, session_id)?;

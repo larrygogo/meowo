@@ -497,3 +497,126 @@ fn pr_ready_草稿转可评审_已就绪不再发变更() {
     assert!(out.code == Some(0) && out.stdout.contains("already"));
     assert_eq!(api.calls().iter().filter(|c| query_of(&c.2).contains("markPullRequestReadyForReview")).count(), 1);
 }
+
+// ═══ 真机写路径（G7）═══
+//
+// 默认 #[ignore]，不要随手跑：会在 larrygogo/meowo 上建 PR、评论、合并。只对临时分支操作：G7_BASE / G7_HEAD 是事先从
+// main 推上去的临时分支，G7_HEAD_SHA 是 head 的提交号。令牌见 forge/tests.rs 的 live_token（环境变量或 Meowo 存在
+// 凭据库里的 github.com 账号），只在内存里，绝不打印。
+// 依次：建草稿 PR → 读回 → 再建一次（已存在，带回链接）→ 评论 → 转可评审 → 头提交不符的合并被拒 → 正确合并
+//（squash 进临时 base）→ 读回已合并 → 清理（删两个临时分支）。
+// 「取消gh」之后去掉了与本机 gh 的逐字段对照（改由 pr_view_按号_各实录样例逐字段同形 用实录保证同形），写步骤照旧。
+// 运行：$env:G7_BASE=…; $env:G7_HEAD=…; $env:G7_HEAD_SHA=…; cargo test -p meowo-app --lib live_写路径_g7 -- --ignored --nocapture
+#[test]
+#[ignore]
+fn live_写路径_g7() {
+    let token = super::live_token();
+    let base = std::env::var("G7_BASE").expect("G7_BASE");
+    let head = std::env::var("G7_HEAD").expect("G7_HEAD");
+    let sha = std::env::var("G7_HEAD_SHA").expect("G7_HEAD_SHA");
+    assert!(base.starts_with("meowo-g7-base-") && head.starts_with("meowo-g7-head-"), "只许对临时分支操作");
+    let slug = "larrygogo/meowo";
+    let prefs = std::env::temp_dir().join("meowo-live-none.json");
+    let builtin = Builtin { http: &crate::github::RealHttp, token: Some(&token), on_auth: &|_| {}, prefs: &prefs, ends: crate::forge::builtin::Endpoints::github_com() };
+    let dir = std::env::temp_dir();
+    let dir = dir.to_string_lossy();
+    // 输出里只有 GitHub 的回话，没有令牌（send 的错误文案不带请求头）；这里再保险一次。
+    let secret = token.expose().to_string();
+    let show = |step: &str, out: &CmdOut| {
+        let text = format!("[{step}] 退出码 {:?}\n  stdout: {}\n  stderr: {}", out.code, tail(&out.stdout, 3), tail(&out.stderr, 3));
+        println!("{}", text.replace(&secret, "***"));
+    };
+    let flaky = |out: &CmdOut| out.both().contains("error connecting") || out.both().contains("EOF") || out.both().contains("TLS") || out.timed_out;
+    // 读：传输失败重试几次。
+    let read = |args: &[&str]| {
+        for _ in 0..5 {
+            let out = builtin.run(&dir, args);
+            if !flaky(&out) {
+                return out;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+        builtin.run(&dir, args)
+    };
+    // 写操作只发一次；传输失败（回包可能丢了）先读回确认有没有生效，确认没生效才重发。
+    let write = |step: &str, args: &[&str], took_effect: &dyn Fn() -> bool| -> CmdOut {
+        for attempt in 0..6 {
+            let out = builtin.run(&dir, args);
+            if !flaky(&out) {
+                show(step, &out);
+                return out;
+            }
+            println!("[{step}] 第 {} 次传输失败", attempt + 1);
+            if took_effect() {
+                println!("[{step}] 读回确认已生效（回包丢失）");
+                return CmdOut { code: Some(0), stdout: "（回包丢失，读回确认已生效）".into(), ..Default::default() };
+            }
+        }
+        panic!("[{step}] 一直连不上");
+    };
+    let view = |number: &str| {
+        let out = read(&["pr", "view", number, "--repo", slug, "--json", PR_FIELDS]);
+        parse_pr_full(&out.stdout).unwrap_or_else(|| panic!("forge 能解析：{}", tail(&out.both(), 3)))
+    };
+    let find_pr = || {
+        let out = read(&["pr", "view", &head, "--repo", slug, "--json", "number,url"]);
+        (out.code == Some(0)).then(|| serde_json::from_str::<Value>(&out.stdout).unwrap())
+    };
+
+    let title = format!("Meowo G7 自测，可忽略（{head}）");
+    let create = ["pr", "create", "--title", &title, "--body", "Meowo 内置实现写路径验证（G7），由临时分支发起，验证后合进临时分支并删除。", "--base", &base, "--head", &head, "--draft", "--repo", slug];
+    let out = write("pr create --draft", &create, &|| find_pr().is_some());
+    assert_eq!(out.code, Some(0));
+    let found = find_pr().expect("建好的 PR 读得回");
+    let url = found["url"].as_str().unwrap().to_string();
+    let number = found["number"].to_string();
+    println!("PR {url}");
+    if out.stdout.starts_with("https://") {
+        assert_eq!(out.stdout.trim(), url, "pr create 输出的就是 PR 链接");
+    }
+
+    let pr = view(&number);
+    assert_eq!((pr.state.as_str(), pr.head_oid.as_deref()), ("draft", Some(sha.as_str())));
+
+    let again = write("再建一次（已存在）", &create, &|| false);
+    assert_eq!(again.code, Some(1));
+    assert!(again.both().contains("already exists") && again.both().contains(&url), "forge 要从这里抠出链接");
+
+    let marker = "Meowo G7 自测评论（内置实现）";
+    let has_comment = || read(&["pr", "view", &number, "--repo", slug, "--json", "comments"]).stdout.contains(marker);
+    let out = write("pr comment", &["pr", "comment", &number, "--repo", slug, "--body", marker], &has_comment);
+    assert_eq!(out.code, Some(0));
+    assert!(has_comment(), "评论读得回");
+
+    let is_ready = || read(&["pr", "view", &number, "--repo", slug, "--json", "isDraft"]).stdout.contains("\"isDraft\":false");
+    let out = write("pr ready", &["pr", "ready", &number, "--repo", slug], &is_ready);
+    assert_eq!(out.code, Some(0));
+    assert!(is_ready());
+
+    let wrong = "0000000000000000000000000000000000000000";
+    let out = write("头提交不符的合并", &["pr", "merge", &number, "--squash", "--match-head-commit", wrong, "--repo", slug], &|| false);
+    assert_eq!(out.code, Some(1));
+    println!("  forge 归类：{}", classify_gh_failure(&out, None));
+
+    let is_merged = || read(&["pr", "view", &number, "--repo", slug, "--json", "state"]).stdout.contains("MERGED");
+    // GitHub 刚转可评审时可能还在算能不能合：「不可合并」时等一会儿再试。
+    let mut merged = false;
+    for _ in 0..10 {
+        let out = write("pr merge --squash", &["pr", "merge", &number, "--squash", "--match-head-commit", &sha, "--repo", slug], &is_merged);
+        if out.code == Some(0) {
+            merged = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(3));
+    }
+    assert!(merged, "合并没成功");
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    assert_eq!(view(&number).state, "merged");
+
+    // 清理：删两个临时分支（REST DELETE /repos/{slug}/git/refs/heads/{分支}）。404 = 已经没了，也算清理完。
+    for branch in [&head, &base] {
+        let out = write(&format!("删临时分支 {branch}"), &["api", &format!("repos/{slug}/git/refs/heads/{branch}"), "-X", "DELETE"], &|| false);
+        assert!(out.code == Some(0) || out.both().contains("404"), "删 {branch}：{}", tail(&out.both(), 2));
+    }
+    println!("G7_PR_NUMBER={number}");
+}

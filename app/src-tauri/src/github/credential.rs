@@ -1,6 +1,6 @@
 //! 令牌的存放处：系统凭据库。Windows 凭据管理器（CredWriteW / CredReadW / CredDeleteW，普通凭据，
-//! 只有当前 Windows 用户读得到），macOS 登录钥匙串（/usr/bin/security）。别的平台不支持 Meowo 登录，
-//! 设置页给出说明，PR 功能照旧可以用本机 gh。
+//! 只有当前 Windows 用户读得到），macOS 登录钥匙串（/usr/bin/security）。别的平台存不了令牌，
+//! 设置页给出说明，不能添加代码托管账号。
 
 use super::Token;
 

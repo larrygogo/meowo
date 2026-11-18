@@ -2,9 +2,8 @@
 //!
 //! - 公共主机内置：github.com、gitlab.com、bitbucket.org、codeberg.org（Forgejo，按 Gitea 接口）。
 //! - 自建实例（GitHub 企业版、GitLab 自管、Gitea / Forgejo）：用户在设置里添加账号时声明「主机 + 平台」，
-//!   之后这台主机的远端才认（[`Forges::platform`]）。没声明的主机照旧当作「不是 GitHub」：push 照常，
-//!   标题栏仍可交给本机 gh（gh 自己认得企业版）。
-//! - github.com 不走账号表：沿用设置里的「GitHub 连接方式」（本机 gh / Meowo 登录 / 关闭）。
+//!   之后这台主机的远端才认（[`Forges::platform`]）。没声明的主机当作「认不出平台」：push 照常，不查 PR。
+//! - github.com 与其他平台一样要有账号（github.rs 存的设备码登录或令牌）才发请求；Meowo 不调用本机 gh。
 //!
 //! 只认主机名，不认路径前缀（装在子路径下的自管 GitLab，如 `https://host/gitlab/group/repo`，本轮不支持）。
 
@@ -230,7 +229,7 @@ pub(crate) fn web_base(host: &str) -> String {
     format!("https://{host}")
 }
 
-/// 「在网页上新建 PR / MR」的链接（没装 gh、没账号时开 PR 打开它）。head_owner：fork 时 head 所在仓库的 owner。
+/// 「在网页上新建 PR / MR」的链接（没账号时开 PR 打开它）。head_owner：fork 时 head 所在仓库的 owner。
 pub(crate) fn compare_url(platform: Platform, host: &str, slug: &str, base: &str, head: &str, head_owner: Option<&str>) -> String {
     let repo = format!("{}/{slug}", web_base(host));
     let enc = |s: &str| url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>();

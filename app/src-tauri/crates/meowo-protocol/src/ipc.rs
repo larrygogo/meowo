@@ -985,7 +985,7 @@ fn is_false(b: &bool) -> bool {
 }
 
 /// 当前分支的 Pull Request（对话页标题栏，对照 Kimi 的「打开 Pull Request」与状态标记）。
-/// 由 `gh pr view` 取得；没装 gh / 没登录 / 分支没有 PR 时命令返回 None，前端不显示。
+/// 经设置里的账号向平台查；没账号 / 令牌失效 / 分支没有 PR 时命令返回 None，前端不显示。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
@@ -1118,8 +1118,8 @@ pub struct PrReviewDto {
     pub monitor: Option<PrMonitorDto>,
 }
 
-/// 「更改」面板的 GitHub 区块（`git_forge_status`）：gh 能不能用、开 PR 的默认值、当前分支的 PR 与检查。
-/// gh 不可用时只有 `compare_url`（前端开 PR 改为打开 GitHub 网页），不显示 CI、不能在应用里合并。
+/// 「更改」面板的 PR / MR 区块（`git_forge_status`）：有没有账号、开 PR 的默认值、当前分支的 PR 与检查。
+/// 没账号时只有 `compare_url`（前端开 PR 改为打开网页），不显示 CI、不能在应用里合并。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
@@ -1196,7 +1196,7 @@ pub struct SidebarGitBadgeDto {
     pub additions: u32,
     pub deletions: u32,
     pub files: u32,
-    /// 当前分支的 PR。没装 gh、没登录、没有 PR、或窗口隐藏且缓存里没有时为 None。
+    /// 当前分支的 PR。没账号、令牌失效、没有 PR、或窗口隐藏且缓存里没有时为 None。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub pr: Option<SidebarPrBadgeDto>,

@@ -11,6 +11,7 @@ const OPEN_FOLDS = ["eval", "document.querySelectorAll('.turn-fold:not(.is-open)
 const MODEL_BTN = ".chat-compose .chat-model-select .chat-model-button";
 // 设置窗里把「其他平台」那张卡 / 添加表单滚进视口。
 const FORGE_SCROLL = "document.querySelector('[data-testid=forge-accounts]')?.scrollIntoView({ block: 'start' })";
+const FORGE_ACTIONS_SCROLL = "document.querySelector('[data-testid=forge-device-start]')?.scrollIntoView({ block: 'end' })";
 const FORGE_ADD_SCROLL = "document.querySelector('[data-testid=forge-add]')?.scrollIntoView({ block: 'start' })";
 
 export const QA_SHOTS = [
@@ -207,8 +208,12 @@ export const QA_SHOTS = [
   { name: "qa-set-hosting-tall", scene: "settingswin-github", params: "fa=list", size: [900, 1100], sel: "[data-testid=forge-accounts] .forge-mark", langs: ["zh", "en"] },
   { name: "qa-set-git-missing", scene: "settingswin-github", params: "git=missing", size: SETTINGS, sel: "[data-testid=git-tool-missing]", langs: ["zh", "en"] },
   { name: "qa-set-forge-list", scene: "settingswin-github", params: "fa=list", size: SETTINGS, sel: "[data-testid=forge-accounts] .forge-mark", steps: [["eval", FORGE_SCROLL]], langs: ["zh", "en"] },
-  { name: "qa-set-forge-add-github", scene: "settingswin-github", size: SETTINGS, sel: "[data-testid=forge-add]", steps: [["eval", FORGE_SCROLL], ["click", "[data-testid=forge-empty] button"], ["eval", FORGE_ADD_SCROLL]], langs: ["zh", "en"] },
+  { name: "qa-set-forge-add-github", scene: "settingswin-github", size: SETTINGS, sel: "[data-testid=forge-device-start]", steps: [["eval", FORGE_SCROLL], ["click", "[data-testid=forge-empty] button"], ["eval", FORGE_ACTIONS_SCROLL]], langs: ["zh", "en"] },
   { name: "qa-set-forge-add-github-token", scene: "settingswin-github", size: SETTINGS, sel: "[data-testid=forge-token]", steps: [["eval", FORGE_SCROLL], ["click", "[data-testid=forge-empty] button"], ["click", "[data-testid=forge-use-token]"], ["eval", FORGE_ADD_SCROLL]], langs: ["zh", "en"] },
+  // 900 宽：设置窗拉宽后的同三种状态（浏览器登录、改用令牌、设备码进行中）。
+  { name: "qa-set-forge-add-github-900", scene: "settingswin-github", size: [900, 700], sel: "[data-testid=forge-device-start]", steps: [["eval", FORGE_SCROLL], ["click", "[data-testid=forge-empty] button"], ["eval", FORGE_ACTIONS_SCROLL]], langs: ["zh", "en"] },
+  { name: "qa-set-forge-add-github-token-900", scene: "settingswin-github", size: [900, 700], sel: "[data-testid=forge-token]", steps: [["eval", FORGE_SCROLL], ["click", "[data-testid=forge-empty] button"], ["click", "[data-testid=forge-use-token]"], ["eval", FORGE_ADD_SCROLL]], langs: ["zh", "en"] },
+  { name: "qa-set-forge-device-900", scene: "settingswin-github", params: "fa=device", size: [900, 700], sel: "[data-testid=forge-code]", steps: [["eval", FORGE_SCROLL]], langs: ["zh", "en"] },
   { name: "qa-set-forge-add", scene: "settingswin-github", size: SETTINGS, sel: "[data-testid=forge-add]", steps: [["eval", FORGE_SCROLL], ["click", "[data-testid=forge-empty] button"], ["click", "[data-testid=forge-add] [role=radio] >> nth=1"], ["eval", FORGE_ADD_SCROLL]], langs: ["zh", "en"] },
   { name: "qa-set-forge-add-bitbucket", scene: "settingswin-github", size: SETTINGS, sel: "[data-testid=forge-add]", steps: [["eval", FORGE_SCROLL], ["click", "[data-testid=forge-empty] button"], ["click", "[data-testid=forge-add] [role=radio] >> nth=3"], ["eval", FORGE_ADD_SCROLL]] },
   { name: "qa-set-forge-device", scene: "settingswin-github", params: "fa=device", size: SETTINGS, sel: "[data-testid=forge-code]", steps: [["eval", FORGE_SCROLL]], langs: ["zh", "en"] },

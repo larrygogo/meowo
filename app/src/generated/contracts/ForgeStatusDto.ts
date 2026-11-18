@@ -4,8 +4,8 @@ import type { PrDefaultsDto } from "./PrDefaultsDto";
 import type { PullRequestDto } from "./PullRequestDto";
 
 /**
- * 「更改」面板的 GitHub 区块（`git_forge_status`）：gh 能不能用、开 PR 的默认值、当前分支的 PR 与检查。
- * gh 不可用时只有 `compare_url`（前端开 PR 改为打开 GitHub 网页），不显示 CI、不能在应用里合并。
+ * 「更改」面板的 PR / MR 区块（`git_forge_status`）：有没有账号、开 PR 的默认值、当前分支的 PR 与检查。
+ * 没账号时只有 `compare_url`（前端开 PR 改为打开网页），不显示 CI、不能在应用里合并。
  */
 export type ForgeStatusDto = { 
 /**

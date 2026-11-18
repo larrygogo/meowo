@@ -2101,7 +2101,9 @@ mod tests {
             "forge_account_remove",
             "forge_login_start",
             "forge_login_cancel",
-            // 代码托管 › Git：改全局提交身份只在桌面做（写的是这台电脑的 ~/.gitconfig）。
+            // 设置 › 代码托管 › Git 的改身份命令：手机上没有设置窗，用不到它。手机端改提交身份照旧走白名单里的
+            // git_set_identity（提交报 git/identity 时的就地对话框），两者写的都是这台电脑的全局 user.name / user.email，
+            // 用同一套校验（git_tool::validate），所以不开第二个入口。
             "git_identity_set",
             "create_profile",
             "rename_profile",

@@ -22,7 +22,7 @@ use meowo_protocol::ipc::{PrReviewDto, PullRequestDto};
 /// 按什么找 PR。
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Target<'a> {
-    /// 按 head 分支。`qualified`：gh 的写法（fork 是 `<owner>:<分支>`，同仓库只是分支名）；`head_slug`：fork 时
+    /// 按 head 分支。`qualified`：head 的写法（fork 是 `<owner>:<分支>`，同仓库只是分支名）；`head_slug`：fork 时
     /// head 所在仓库的路径（GitLab 要按源项目区分同名分支）。
     Branch {
         qualified: &'a str,
@@ -33,7 +33,7 @@ pub(crate) enum Target<'a> {
 }
 
 impl Target<'_> {
-    /// gh 命令行的位置参数。
+    /// 内置实现（照 gh 子命令组织的内部调用约定）的位置参数。
     pub(crate) fn gh_arg(&self) -> String {
         match self {
             Target::Branch { qualified, .. } => qualified.to_string(),
@@ -48,7 +48,7 @@ pub(crate) struct NewPr<'a> {
     pub(crate) title: &'a str,
     pub(crate) body: &'a str,
     pub(crate) base: &'a str,
-    /// gh 的 head 写法（fork 带 owner）。
+    /// head 的写法（fork 带 owner）。
     pub(crate) head: &'a str,
     /// head 的分支名。
     pub(crate) branch: &'a str,
@@ -207,7 +207,7 @@ impl ForgeApi for GhForge<'_> {
         if !out.ok() {
             return Err(self.fail(&out, Some(&pr.url)));
         }
-        // 仓库开了合并队列时 gh 回的是「will be added to the merge queue」，PR 还是 OPEN。
+        // 仓库开了合并队列时内置实现改为入队，回「will be added to the merge queue」，PR 还是 OPEN。
         Ok(out.both().to_lowercase().contains("merge queue"))
     }
 

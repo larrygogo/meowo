@@ -2,7 +2,7 @@
 //! （`git config --global user.name / user.email`）。leader 2026-11-18：「把 git 工具和 git 平台都放在这里」，
 //! 只做这两项，不做别的 git 配置。
 //!
-//! Meowo 起 git 一律是 `Command::new("git")`（git.rs、forge.rs、worktree.rs），按 PATH 找；这里按同样的顺序
+//! Meowo 起 git 一律是 `Command::new("git")`（git.rs、forge.rs、worktree.rs）；这里按标准库同样的查找顺序
 //! 找出那一个，显示给用户。找不到时设置页说明影响（提交、推送、改动列表、PR 都用不了）并给下载链接。
 //! 命令都是 async + spawn_blocking（app/src-tauri/CLAUDE.md 线程纪律：起子进程不进主线程）。
 
@@ -42,44 +42,54 @@ fn real_run(args: &[&str]) -> Result<Out, String> {
     })
 }
 
-/// 按 PATH 找程序（与 `Command::new("git")` 同序：PATH 里从前往后，Windows 上试 PATHEXT 的扩展名）。
-pub(crate) fn find_on_path(
+/// `Command::new("git")` 实际会起的那个程序，按 Rust 标准库的查找顺序（std `sys/pal/windows/process.rs` 的
+/// `resolve_exe`，Rust 1.58 起）：
+/// - Windows：名字没带扩展名只补 `.exe`（不看 PATHEXT，`git.cmd` / `git.bat` 不会被起）；依次找本程序所在目录、
+///   系统目录（System32）、16 位系统目录（System）、Windows 目录，最后是 PATH。不找当前目录。
+/// - 其他系统：execvp 的规矩，只在 PATH 里按顺序找。
+///
+/// dirs_before_path：PATH 之前先找的目录（Windows 上是上面四个，其他系统为空）。
+pub(crate) fn resolve_program(
     name: &str,
+    dirs_before_path: &[PathBuf],
     path_var: &str,
-    exts: &[&str],
+    windows: bool,
     is_file: &dyn Fn(&Path) -> bool,
 ) -> Option<PathBuf> {
-    let sep = if cfg!(windows) { ';' } else { ':' };
-    path_var
+    let file = if windows && Path::new(name).extension().is_none() {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    };
+    let sep = if windows { ';' } else { ':' };
+    let from_path = path_var
         .split(sep)
-        .map(str::trim)
+        .map(|d| d.trim().trim_matches('"'))
         .filter(|d| !d.is_empty())
-        .find_map(|dir| {
-            let dir = Path::new(dir.trim_matches('"'));
-            std::iter::once(String::new())
-                .chain(exts.iter().map(|e| e.to_ascii_lowercase()))
-                .map(|ext| dir.join(format!("{name}{ext}")))
-                .find(|p| is_file(p))
-        })
+        .map(PathBuf::from);
+    dirs_before_path
+        .iter()
+        .cloned()
+        .chain(from_path)
+        .map(|dir| dir.join(&file))
+        .find(|p| is_file(p))
 }
 
 fn real_path() -> Option<PathBuf> {
     let path = std::env::var("PATH").unwrap_or_default();
-    let exts: Vec<String> = if cfg!(windows) {
-        std::env::var("PATHEXT")
-            .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into())
-            .split(';')
-            .filter(|e| !e.is_empty())
-            .map(str::to_string)
-            .collect()
-    } else {
-        Vec::new()
-    };
-    // Windows 上不带扩展名的同名文件（Git 的 sh 脚本）不是 Command::new 会起的程序：只认带扩展名的。
-    let exts: Vec<&str> = exts.iter().map(String::as_str).collect();
-    find_on_path("git", &path, &exts, &|p| {
-        p.is_file() && (!cfg!(windows) || p.extension().is_some())
-    })
+    let mut before = Vec::new();
+    if cfg!(windows) {
+        if let Some(dir) = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(Path::to_path_buf))
+        {
+            before.push(dir);
+        }
+        if let Some(root) = std::env::var_os("SystemRoot").map(PathBuf::from) {
+            before.extend([root.join("System32"), root.join("System"), root.clone()]);
+        }
+    }
+    resolve_program("git", &before, &path, cfg!(windows), &|p| p.is_file())
 }
 
 /// `git version 2.47.1.windows.1` → `2.47.1.windows.1`。
@@ -219,21 +229,64 @@ mod tests {
         assert_eq!(parse_version("usage: git"), None);
     }
 
+    /// 与 `Command::new("git")` 一致：Windows 只认 git.exe（PATH 里排在前面的 git.cmd 不算），先找程序目录与系统目录
+    /// 再找 PATH；其他系统只按 PATH 找不带扩展名的 git。
     #[test]
-    fn 按_path_顺序找_windows_试扩展名() {
-        let files = ["/b/git.exe", "/c/git"];
+    fn 找的是_command_new_实际会起的那个_git() {
+        let files = [
+            "/a/git.cmd",
+            "/b/git.exe",
+            "/c/git",
+            "/app/git.exe",
+            "/win/System32/git.exe",
+        ];
         let is = |p: &Path| files.iter().any(|f| Path::new(f) == p);
-        let sep = if cfg!(windows) { ";" } else { ":" };
-        let path = ["/a", "/b", "/c"].join(sep);
+        let win = ["/a", "/b", "/c"].join(";");
         assert_eq!(
-            find_on_path("git", &path, &[".EXE"], &is),
-            Some(PathBuf::from("/b/git.exe"))
+            resolve_program("git", &[], &win, true, &is),
+            Some(PathBuf::from("/b/git.exe")),
+            "不按 PATHEXT 认 git.cmd"
+        );
+        let before = [PathBuf::from("/app"), PathBuf::from("/win/System32")];
+        assert_eq!(
+            resolve_program("git", &before, &win, true, &is),
+            Some(PathBuf::from("/app/git.exe")),
+            "程序目录先于 PATH"
         );
         assert_eq!(
-            find_on_path("git", &path, &[], &is),
+            resolve_program("git", &before[1..], &win, true, &is),
+            Some(PathBuf::from("/win/System32/git.exe")),
+            "系统目录先于 PATH"
+        );
+        assert_eq!(
+            resolve_program("git", &[], "/a;\"/c\"", true, &is),
+            None,
+            "只有 git.cmd 和不带扩展名的 git：Command::new 起不来"
+        );
+        let unix = ["/a", "/c", "/b"].join(":");
+        assert_eq!(
+            resolve_program("git", &[], &unix, false, &is),
             Some(PathBuf::from("/c/git"))
         );
-        assert_eq!(find_on_path("git", "", &[".EXE"], &is), None);
+        assert_eq!(resolve_program("git", &[], "", false, &is), None);
+    }
+
+    /// 真的对照一次：找出来的路径要和 `Command::new("git")` 实际起的是同一个程序（版本输出一致）。
+    #[test]
+    fn 显示的路径与实际执行的是同一个_git() {
+        let Some(path) = real_path() else { return };
+        let version = |cmd: &mut Command| {
+            cmd.arg("--version")
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        };
+        assert_eq!(
+            version(&mut Command::new(&path)),
+            version(&mut Command::new("git")),
+            "{}",
+            path.display()
+        );
     }
 
     #[test]

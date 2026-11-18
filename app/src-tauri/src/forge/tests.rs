@@ -1302,6 +1302,40 @@ fn 目标判定_fork_工作流_不读_gh_resolved_选了上游后_head_带_fork_
     assert_eq!((body["base"].as_str(), body["head"].as_str()), (Some("main"), Some("larrygogo:meowo/drill")), "{body}");
 }
 
+// ═══ 真机演练用（#[ignore] 的测试共用；令牌只在内存里，绝不打印）═══
+
+/// 真机演练的 github.com 令牌：环境变量 MEOWO_GITHUB_TOKEN（或 GH_TOKEN），没有就读 Meowo 自己存在系统凭据库里的
+/// github.com 账号。Meowo 不调用本机 gh，所以不再从 `gh auth token` 拿。
+pub(super) fn live_token() -> crate::github::Token {
+    for key in ["MEOWO_GITHUB_TOKEN", "GH_TOKEN"] {
+        if let Some(token) = std::env::var(key).ok().and_then(|t| crate::github::Token::new(t.trim())) {
+            return token;
+        }
+    }
+    crate::github::token().expect("没有 github.com 令牌：设 MEOWO_GITHUB_TOKEN，或先在 Meowo 设置里添加 github.com 账号")
+}
+
+/// 真机演练的账号：github.com = 真 HTTP + 令牌上的内置实现，其他主机没有账号。
+pub(super) struct LiveGithub(pub(super) crate::github::Token);
+
+impl Forges for LiveGithub {
+    fn platform(&self, host: &str) -> Option<Platform> {
+        platform::public_platform(host)
+    }
+    fn open(&self, host: &str) -> Option<Box<dyn ForgeApi + '_>> {
+        (platform::host_name(host) == platform::GITHUB_COM).then(|| {
+            Box::new(super::builtin::forge(
+                Box::new(crate::github::RealHttp),
+                super::builtin::Endpoints::github_com(),
+                Some(self.0.clone()),
+                GhState::Ok,
+                std::env::temp_dir().join("meowo-live-forge.json"),
+                Box::new(|_| {}),
+            )) as Box<dyn ForgeApi>
+        })
+    }
+}
+
 // 侧栏 PR / CI 与改动数的节流（UI 优化 #54），单独一个文件。
 mod badge;
 

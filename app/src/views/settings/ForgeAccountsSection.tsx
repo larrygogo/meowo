@@ -252,7 +252,7 @@ export function ForgeAccountList() {
           {(FIXED_HOST.has(d.platform) || d.platform === "github") && <div className="row-desc is-full forge-field-note">{f.hostFixed[d.platform]}</div>}
         </div>
         {device ? (
-          <div className="row">
+          <div className="row forge-device-row">
             <div className="row-text">
               <div className="row-label">{f.deviceTitle}</div>
               <div className="row-desc is-full">{f.deviceDesc}</div>

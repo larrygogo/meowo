@@ -49,7 +49,7 @@ pub(crate) struct DiffCache {
     url_prs: Mutex<HashMap<String, (Instant, Option<PullRequestDto>)>>,
 }
 
-/// 一个目录的 PR 去向：缓存键、PR 所在仓库、head（gh 的写法、分支名、fork 时 head 所在仓库）。
+/// 一个目录的 PR 去向：缓存键、PR 所在仓库、head（`<owner>:<分支>` 写法、分支名、fork 时 head 所在仓库）。
 #[derive(Clone)]
 struct PrWhere {
     key: String,
