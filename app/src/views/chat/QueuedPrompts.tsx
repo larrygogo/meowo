@@ -7,9 +7,19 @@ import { useT } from "../../i18n";
 import type { Attachment } from "./drafts";
 import { busyProps } from "../../busyButton";
 
+/** 按乐观顺序重排「等待中」的几条：其余状态（投递中、失败）留在原位，只在 held 的格子里换人。 */
+export function applyHeldOrder(items: readonly QueuedPromptDto[], order: readonly number[] | null): readonly QueuedPromptDto[] {
+  if (!order) return items;
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const queue = order.filter((id) => byId.get(id)?.state === "held");
+  if (queue.length !== items.filter((item) => item.state === "held").length) return items;
+  let next = 0;
+  return items.map((item) => (item.state === "held" ? byId.get(queue[next++])! : item));
+}
+
 export function QueuedPrompts({
   sessionId,
-  items,
+  items: incoming,
   busy,
   onDeliver,
   onRetry,
@@ -41,7 +51,13 @@ export function QueuedPrompts({
   const stackRef = useRef<HTMLElement>(null);
   const touch = useRef<{ pointerId: number; id: number; x: number; y: number; startY: number; moved: boolean; target: { id: number; after: boolean } | null } | null>(null);
   const frame = useRef<number | null>(null);
-  const heldKey = items.filter((item) => item.state === "held").map((item) => item.id).join(",");
+  const heldKey = incoming.filter((item) => item.state === "held").map((item) => item.id).join(",");
+  // 落点吸附（U7，2026-11-18）：松手那一刻就按新顺序摆好，不等后端回执。此前松手后拖动态立刻清掉、
+  // 列表却要等 promptQueueReorder 往返加 onChanged 重读才换位，中间一两帧条目弹回原处再跳到新位置。
+  // 后端的新顺序一到（heldKey 变了）就以它为准；排序被拒或出错时撤回乐观顺序。
+  const [optimistic, setOptimistic] = useState<number[] | null>(null);
+  useEffect(() => { setOptimistic(null); }, [sessionId, heldKey]);
+  const items = applyHeldOrder(incoming, optimistic);
   const cancelTouch = () => {
     touch.current = null;
     if (frame.current != null) cancelAnimationFrame(frame.current);
@@ -99,9 +115,11 @@ export function QueuedPrompts({
   const heldIds = items.filter((item) => item.state === "held").map((item) => item.id);
   const reorder = async (ids: number[]) => {
     if (ids.every((id, index) => id === heldIds[index])) return;
+    setOptimistic(ids);
     try {
-      if (!await promptQueueReorder(sessionId, ids)) onError("queue/not_reorderable");
+      if (!await promptQueueReorder(sessionId, ids)) { setOptimistic(null); onError("queue/not_reorderable"); }
     } catch (error) {
+      setOptimistic(null);
       onError(error);
     } finally {
       onChanged();
