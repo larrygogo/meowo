@@ -562,6 +562,8 @@ export const zh = {
     batchDoneToast: (n: number) => `已标记完成 ${n} 个会话`,
     batchReopenedToast: (n: number) => `已将 ${n} 个会话恢复为进行中`,
     batchFailedSuffix: (n: number) => `，${n} 个失败`,
+    // 批量恢复进行中时跳过目录已删的会话（放回去也续不上，后端同样会拒绝）。
+    batchSkippedGone: (n: number) => `，${n} 个目录已删除的会话留在已完成`,
     undo: "撤销",
     open: "打开会话",
   },

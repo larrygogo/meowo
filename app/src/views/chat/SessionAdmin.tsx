@@ -160,9 +160,11 @@ function WorkspacePicker({ options, value, onChange }: {
 
 /// 选中项记下的两件事：是否已完成（批量按钮按它分别计数），是否在干活（标记完成前要不要确认，S-1）。
 /// cwd：执行前现取状态时按工作区缩小查询范围（做空第二轮 N5）。
-type Picked = { done: boolean; working: boolean; cwd: string | null };
+/// gone：目录已删（cwd_missing），不能放回进行中——单条按钮置灰，批量恢复时跳过并在结果里说。
+type Picked = { done: boolean; working: boolean; cwd: string | null; gone: boolean };
 const pickOf = (row: LiveSession): Picked => ({
   done: row.archived,
+  gone: row.archived && row.cwd_missing === true,
   cwd: row.cwd,
   working: markDoneEndsWork(liveSessionTone(row)),
 });
@@ -300,6 +302,9 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
   };
   const openIds = [...selected].filter(([, pick]) => !pick.done).map(([id]) => id);
   const doneIds = [...selected].filter(([, pick]) => pick.done).map(([id]) => id);
+  // 目录已删的不发注定失败的请求（后端 apply_archived 会拒绝）：批量恢复只发其余的，跳过几个写进结果。
+  const reopenIds = [...selected].filter(([, pick]) => pick.done && !pick.gone).map(([id]) => id);
+  const goneSkipped = doneIds.length - reopenIds.length;
 
   /// 执行前按 id 现取「是否在干活」（做空第一轮 #6，2026-11-12）：勾选时记下的 working、表格那一页的行
   /// 都是加载那刻的快照，勾完会话开跑，批量标记完成就不弹确认直接结束了进程。这里重拉「进行中」
@@ -331,18 +336,18 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
   /// 会弹两个确认、写两遍。ref 防重入（state 要等下一次渲染才生效），state 给按钮挂 aria-disabled（busyProps）。
   const busyRef = useRef(false);
   const [batching, setBatching] = useState(false);
-  const batch = async (ids: number[], done: boolean, undoable = true, snapshot: ReadonlyMap<number, Picked> = new Map()) => {
+  const batch = async (ids: number[], done: boolean, undoable = true, snapshot: ReadonlyMap<number, Picked> = new Map(), skippedGone = 0) => {
     if (busyRef.current) return;
     busyRef.current = true;
     setBatching(true);
     try {
-      await runBatch(ids, done, undoable, snapshot);
+      await runBatch(ids, done, undoable, snapshot, skippedGone);
     } finally {
       busyRef.current = false;
       setBatching(false);
     }
   };
-  const runBatch = async (ids: number[], done: boolean, undoable: boolean, snapshot: ReadonlyMap<number, Picked>) => {
+  const runBatch = async (ids: number[], done: boolean, undoable: boolean, snapshot: ReadonlyMap<number, Picked>, skippedGone: number) => {
     if (done && undoable) {
       const working = await liveWorking(ids, snapshot);
       if (!(await confirmMarkDone(working.map((value) => ({ working: value })), t))) return;
@@ -364,7 +369,7 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
     load(applied, page, pageSize);
     const head = done ? t.admin.batchDoneToast(succeeded.length) : t.admin.batchReopenedToast(succeeded.length);
     setToast({
-      text: head + (failed > 0 ? t.admin.batchFailedSuffix(failed) : ""),
+      text: head + (failed > 0 ? t.admin.batchFailedSuffix(failed) : "") + (skippedGone > 0 ? t.admin.batchSkippedGone(skippedGone) : ""),
       // 失败的带上首个原因（formatBackendError），原先只有「N 个失败」看不出为什么。
       reason: failed > 0 ? formatBackendError(firstError, t.locale) || undefined : undefined,
       undo: undoable && succeeded.length > 0 ? () => { setToast(null); void batch(succeeded, !done, false); } : null,
@@ -433,7 +438,9 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
               <button type="button" className="sa-batch-link" onClick={() => { setSelected(new Map()); setAllMatching(false); }}>{t.admin.clearSelection}</button>
               <span className="sa-batch-spacer" />
               {openIds.length > 0 && <button type="button" className="sa-btn-q" {...busyProps(batching, () => void batch(openIds, true, true, selected))}>{t.admin.markDoneCount(openIds.length)}</button>}
-              {doneIds.length > 0 && <button type="button" className="sa-btn-q" {...busyProps(batching, () => void batch(doneIds, false))}>{t.admin.reopenCount(doneIds.length)}</button>}
+              {doneIds.length > 0 && (reopenIds.length > 0
+                ? <button type="button" className="sa-btn-q" {...busyProps(batching, () => void batch(reopenIds, false, true, new Map(), goneSkipped))}>{t.admin.reopenCount(reopenIds.length)}</button>
+                : <button type="button" className="sa-btn-q" disabled title={t.chat.dirGoneNoReopen}>{t.admin.reopenCount(0)}</button>)}
             </div>
           )}
           <div className={"sa-table-card" + (loading && rows ? " is-loading" : "")}>
@@ -503,6 +510,19 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
                             <button type="button" className="sa-icon-btn" aria-label={t.admin.open} data-tip={t.admin.open} onClick={() => onOpen(row.session.id)}>
                               <Icon glyph={icArrowUpRight} size={14} />
                             </button>
+                            {/* 目录已删的已完成会话：「恢复进行中」置灰，提示里写原因（不发注定失败的请求）。 */}
+                            {row.archived && row.cwd_missing ? (
+                              <button
+                                type="button"
+                                className="sa-icon-btn"
+                                aria-label={t.chat.dirGoneNoReopen}
+                                data-tip={t.chat.dirGoneNoReopen}
+                                aria-disabled="true"
+                                data-testid="admin-reopen-gone"
+                              >
+                                <Icon glyph={icUndo} size={14} />
+                              </button>
+                            ) : (
                             <button
                               type="button"
                               className="sa-icon-btn"
@@ -514,6 +534,7 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
                                 ? <Icon glyph={icUndo} size={14} />
                                 : <Icon glyph={icCircleCheck} size={14} />}
                             </button>
+                            )}
                           </span>
                         </td>
                       </tr>

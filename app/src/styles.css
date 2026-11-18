@@ -3883,6 +3883,9 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 .sa-act { display: flex; align-items: center; gap: 2px; }
 .sa-icon-btn { width: 26px; height: 26px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); cursor: pointer; }
 .sa-icon-btn:hover { color: var(--cc-text); background: var(--fill-hover); }
+/* 置灰（目录已删的会话不能放回进行中）：aria-disabled 而非 disabled，悬停提示照样出得来、读屏能聚焦到。 */
+.sa-icon-btn[aria-disabled="true"] { opacity: .4; cursor: default; }
+.sa-icon-btn[aria-disabled="true"]:hover { color: var(--cc-text-dim); background: transparent; }
 .sa-state { display: flex; align-items: center; justify-content: center; padding: 40px var(--sp-16); }
 .sa-empty { color: var(--cc-text-faint); font-size: var(--text-sm); }
 .sa-pager { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--sp-10); margin-top: var(--sp-10); }

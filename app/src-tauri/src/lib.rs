@@ -2316,6 +2316,7 @@ mod tests {
         let origin = base.join("repo");
         std::fs::create_dir_all(origin.join(".git")).unwrap();
         let gone = base.join("repo-wt-gone").to_string_lossy().into_owned();
+        std::fs::create_dir_all(base.join("somewhere-else")).unwrap();
         let elsewhere = base.join("somewhere-else/x").to_string_lossy().into_owned();
         let path = base.join("board.db");
         let store = meowo_store::Store::open(&path).unwrap();

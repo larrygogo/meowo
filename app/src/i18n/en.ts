@@ -467,6 +467,7 @@ export const en: Dict = {
     batchDoneToast: (n: number) => `Marked ${n} session${n === 1 ? "" : "s"} done`,
     batchReopenedToast: (n: number) => `Reopened ${n} session${n === 1 ? "" : "s"}`,
     batchFailedSuffix: (n: number) => `, ${n} failed`,
+    batchSkippedGone: (n: number) => `, ${n} with a deleted folder stayed in Done`,
     undo: "Undo",
     open: "Open session",
   },

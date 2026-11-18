@@ -22,6 +22,7 @@ vi.mock("./ManagedTerminal", () => ({ ManagedTerminal: () => <div>PTY</div> }));
 vi.mock("./chat/SidePanel", () => ({ SidePanel: () => null }));
 
 import { ChatWindow } from "./ChatWindow";
+import { savePanel } from "./chat/panelTabs";
 import { zh } from "../i18n/zh";
 
 const SESSION = 94;
@@ -93,7 +94,20 @@ describe("目录已删除的会话", () => {
     for (const command of ["git_diff_summary", "git_changes_overview", "list_folder_editors"]) {
       expect(invoke.mock.calls.some(([c, args]) => c === command && JSON.stringify(args ?? {}).includes("billing-fix")), command).toBe(false);
     }
+    // 交互能力表、动态模式清单、面板终端：都要带着已删的目录去问后端，一条都不该发。
+    for (const command of ["agent_chat_ui", "agent_dynamic_mode_choices", "shell_terminal_open"]) {
+      expect(invoke.mock.calls.some(([c]) => c === command), command).toBe(false);
+    }
     expect(document.querySelector(".chat-panel-toggle")).toBeNull();
+  });
+
+  it("上次开着的面板终端页签不在已删的目录里补开 shell", async () => {
+    savePanel(SESSION, { tabs: [{ key: "term-1", type: "term", shellId: null, cwd: "C:/w/billing-fix" }], active: "term-1", visible: true, expanded: false });
+    history = { cwdMissing: true };
+    render(<ChatWindow />);
+    await screen.findByTestId("compose-dir-gone");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(invoke.mock.calls.some(([c]) => c === "shell_terminal_open")).toBe(false);
   });
 
   it("不当成在跑：库里残留 running、transcript 说有后台子任务，也没有运行条", async () => {

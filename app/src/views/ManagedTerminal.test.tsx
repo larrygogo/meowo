@@ -1787,3 +1787,34 @@ describe("ManagedTerminal", () => {
     expect(gridRef.current!()).toEqual({ cols: 80, rows: 24 });
   });
 });
+
+// 目录已删除的会话（ChatWindow 的 dirGone）：终端页封面只写说明，不给「恢复会话」——在原目录启动注定失败。
+// 真实组件，只把 xterm 换成上面的哑实现。
+describe("ManagedTerminal 目录已删除", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    invoke.mockImplementation((command: string) => {
+      if (command === "managed_terminal_snapshot") return Promise.resolve({ ...noPty, sessionId: 164 });
+      return Promise.resolve();
+    });
+    global.ResizeObserver = class {
+      observe = vi.fn();
+      disconnect = vi.fn();
+    } as unknown as typeof ResizeObserver;
+  });
+  afterEach(cleanup);
+
+  it("封面只有说明，没有启动按钮，也不发起启动", async () => {
+    const { zh } = await import("../i18n/zh");
+    render(<ManagedTerminal sessionId={164} status="ended" dirGone />);
+    expect(await screen.findByText(zh.chat.dirGoneBanner)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: zh.chat.terminalStart })).toBeNull();
+    expect(invoke.mock.calls.some(([command]) => command === "start_managed_terminal")).toBe(false);
+  });
+
+  it("目录还在的已结束会话：照常给「恢复会话」", async () => {
+    const { zh } = await import("../i18n/zh");
+    render(<ManagedTerminal sessionId={164} status="ended" />);
+    expect(await screen.findByRole("button", { name: zh.chat.terminalStart })).toBeTruthy();
+  });
+});

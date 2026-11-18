@@ -981,7 +981,8 @@ export function ChatWindow() {
   // 模型见 chat/panelTabs.ts，状态与动作见 chat/usePanel.ts）。
   // 会话已结束（库里 ended 且进程不在了）：面板不再补开它旧的终端和浏览器。
   const sessionEnded = history?.status === "ended" && !history?.connected;
-  const panel = usePanel(sessionId, cwd, setSendError, sessionEnded);
+  // 目录已删时不给面板目录、也不补开终端：不会在一个不存在的目录里起 shell（shell_terminal_open）。
+  const panel = usePanel(sessionId, liveCwd, setSendError, sessionEnded, dirGone);
   const panelActions = panel.actions;
   const panelState = panel.state;
   // 会话信息栏（chat/SessionInfo）：面板收起时露出来。开关全局一份、默认开（同 Kimi）；
@@ -1270,11 +1271,12 @@ export function ChatWindow() {
     ?.launch_options?.some((option) => option.switch === "dialog");
   useEffect(() => {
     setDynamicModeChoices([]);
-    if (!provider || !wantsDynamicModes) return;
+    // 目录已删：输入区整块换成门卡，没有模式菜单可用，也不拿已删的目录去问 agent。
+    if (!provider || !wantsDynamicModes || dirGone) return;
     let cancelled = false;
     agentDynamicModeChoices(provider, cwd).then((value) => { if (!cancelled) setDynamicModeChoices(value ?? []); }).catch(() => {});
     return () => { cancelled = true; };
-  }, [provider, cwd, wantsDynamicModes]);
+  }, [provider, cwd, wantsDynamicModes, dirGone]);
   const permissionOption = (provider
     ? agentsForOptions
         ?.find((agent) => agent.id === provider)
@@ -1349,7 +1351,8 @@ export function ChatWindow() {
   // 换会话/换 provider/换 cwd 仍立即查。
   const chatUiProbeRef = useRef({ key: "", at: 0 });
   useEffect(() => {
-    if (!provider) return;
+    // 目录已删：对话页只读，用不到交互能力表，也不拿已删的目录去探 agent。
+    if (!provider || dirGone) return;
     let stale = false;
     let timer = 0;
     const key = `${provider}\0${cwd ?? ""}\0${sessionId}`;
@@ -1362,7 +1365,7 @@ export function ChatWindow() {
     if (wait > 0) timer = window.setTimeout(fetchUi, wait);
     else fetchUi();
     return () => { stale = true; window.clearTimeout(timer); };
-  }, [provider, cwd, sessionId, runtimeCapabilityProbe]);
+  }, [provider, cwd, sessionId, runtimeCapabilityProbe, dirGone]);
 
   // 启动阻塞属于会话状态，不属于终端视图。即使用户从未打开终端 tab，也先用轻量增量
   // snapshot 探测 PTY；发现活跃 PTY 后在屏幕外挂载 xterm，还原 ANSI 当前屏并持续识别选择器。

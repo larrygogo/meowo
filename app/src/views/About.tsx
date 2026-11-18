@@ -642,7 +642,7 @@ const ARCHIVED_PAGE = 30;
 
 /** 已归档会话管理。看板不再有「已归档」tab（归档 = 从看板彻底收纳走），这里是唯一入口：
  *  游标分页动态加载，唯一操作是放回看板。 */
-function ArchivedSessions() {
+export function ArchivedSessions() {
   const t = useT();
   // null = 尚未加载完成，与「真空」区分。
   const [items, setItems] = useState<LiveSession[] | null>(null);
@@ -652,7 +652,8 @@ function ArchivedSessions() {
   // 用户分不清「没有归档」和「没加载出来」。
   const [loadFailed, setLoadFailed] = useState(false);
   // 放回看板失败标记：乐观移除后重取首页会把该项拉回，但失败本身也要有一行提示。
-  const [actionFailed, setActionFailed] = useState(false);
+  // 值是给用户看的原因（formatBackendError 映射过的后端错误；映射不出时用通用句）。
+  const [actionFailed, setActionFailed] = useState<string | null>(null);
   const loadPage = useCallback((after: PageCursor | null) => {
     setLoadingMore(true);
     getLiveSessionsPage("archived", null, after, ARCHIVED_PAGE)
@@ -675,10 +676,10 @@ function ArchivedSessions() {
   useEffect(() => loadPage(null), [loadPage]);
   const unarchive = (id: number) => {
     // 乐观移除；失败重取首页拉回（与看板同款语义）。看板经 board-changed 自行刷新。
-    setActionFailed(false);
+    setActionFailed(null);
     setItems((prev) => prev?.filter((s) => s.session.id !== id) ?? prev);
-    void setArchived(id, false).catch(() => {
-      setActionFailed(true);
+    void setArchived(id, false).catch((error) => {
+      setActionFailed(formatBackendError(error, t.locale) || t.settings.unarchiveFailed);
       loadPage(null);
     });
   };
@@ -707,9 +708,11 @@ function ArchivedSessions() {
                 <div className="row-desc">
                   {[folderName(item.cwd), fmtAgo(item.session.last_event_at, t)].filter(Boolean).join(" · ")}
                 </div>
+                {/* 目录已删：放回进行中也续不上（后端同样会拒绝），按钮置灰，原因写在行里——不发注定失败的请求。 */}
+                {item.cwd_missing && <div className="row-desc" data-testid="archived-dir-gone">{t.chat.dirGoneNoReopen}</div>}
               </div>
               <div className="archived-actions">
-                <button type="button" className="sbtn" onClick={() => unarchive(item.session.id)}>
+                <button type="button" className="sbtn" disabled={item.cwd_missing === true} title={item.cwd_missing ? t.chat.dirGoneNoReopen : undefined} onClick={() => unarchive(item.session.id)}>
                   {t.sticker.unarchive}
                 </button>
               </div>
@@ -724,7 +727,7 @@ function ArchivedSessions() {
           )}
         </div>
       </div>
-      {actionFailed && <div className="sec-hint proxy-err" role="alert">{t.settings.unarchiveFailed}</div>}
+      {actionFailed && <div className="sec-hint proxy-err" role="alert">{actionFailed}</div>}
     </>
   );
 }
