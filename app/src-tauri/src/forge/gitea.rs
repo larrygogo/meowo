@@ -76,10 +76,12 @@ pub(crate) fn map_pull(pr: &Value, checks: Vec<PrCheckDto>) -> Option<PullReques
         ("closed", _) => "closed",
         _ => return None,
     };
-    // Gitea 只给 mergeable 一个布尔：草稿时也会是 false，那时不当冲突。
+    // Gitea 只给 mergeable 一个布尔，不给状态：models/issues/pull.go 的 Mergeable() 在「还在检查冲突」「有冲突」「检查出错」
+    // 「草稿（WIP）」时都回 false，区分不了。所以 false 不当冲突，按「还不知道」（合并按钮说稍后再试）；真有冲突时
+    // 合并接口回 409，再归为 gh/merge_conflict。草稿另有 DRAFT。
     let mergeable = pr.get("mergeable").and_then(|m| m.as_bool());
-    let conflict = state == "open" && mergeable == Some(false);
-    let (mergeable, merge_state) = merge_fields(conflict, mergeable.is_none(), draft, false);
+    let unknown = mergeable != Some(true) && !draft && state == "open";
+    let (mergeable, merge_state) = merge_fields(false, unknown, draft, false);
     Some(PullRequestDto {
         number,
         state: state.into(),

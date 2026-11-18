@@ -531,6 +531,12 @@ fn gitea_pr_映射_相对链接拼主机_草稿不当冲突() {
         (wip.state.as_str(), wip.mergeable.as_deref(), wip.merge_state.as_deref()),
         ("draft", Some("MERGEABLE"), Some("DRAFT"))
     );
+    // mergeable=false 也可能是服务端还在检查（Gitea models/issues/pull.go Mergeable()：Checking、Conflict、Error、WIP 都回
+    // false，API 不给 status）。区分不了就当「还不知道」，不当冲突（审查指出）；真有冲突时合并会回 409 再归类。
+    let mut checking = fixture("gitea_pull_15303.json");
+    checking["mergeable"] = false.into();
+    let pr = gitea::map_pull(&checking, Vec::new()).unwrap();
+    assert_eq!((pr.mergeable.as_deref(), pr.merge_state.as_deref()), (Some("UNKNOWN"), Some("UNKNOWN")));
     // 状态取值（Forgejo swagger 的 CommitStatusState）。
     for (s, want) in [
         ("success", "pass"),
