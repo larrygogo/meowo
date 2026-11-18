@@ -9,6 +9,9 @@ const SETTINGS = [620, 460];
 // 已结束回合的过程块默认收起：点开才看得到里面的工具行。
 const OPEN_FOLDS = ["eval", "document.querySelectorAll('.turn-fold:not(.is-open) > .turn-fold-head').forEach((b) => b.click())"];
 const MODEL_BTN = ".chat-compose .chat-model-select .chat-model-button";
+// 设置窗里把「其他平台」那张卡 / 添加表单滚进视口。
+const FORGE_SCROLL = "document.querySelector('[data-testid=forge-accounts]')?.scrollIntoView({ block: 'start' })";
+const FORGE_ADD_SCROLL = "document.querySelector('[data-testid=forge-add]')?.scrollIntoView({ block: 'start' })";
 
 export const QA_SHOTS = [
   // ── 输入框：斜杠菜单、@ 补全 ──
@@ -195,6 +198,16 @@ export const QA_SHOTS = [
   { name: "qa-set-github-code", scene: "settingswin-github", params: "gh=code", size: SETTINGS, sel: ".github-code", langs: ["zh", "en"] },
   { name: "qa-set-github-signedin", scene: "settingswin-github", params: "gh=signedin", size: SETTINGS, sel: ".github-avatar", langs: ["zh", "en"] },
   { name: "qa-set-github-relogin", scene: "settingswin-github", params: "gh=relogin", size: SETTINGS, sel: ".github-warn" },
+  // 代码托管账号（github.com 之外的平台）：账号列表（含令牌失效）、添加（令牌、Bitbucket、gitlab.com 浏览器登录）、
+  // 设备码进行中。设置窗只有 460 高，先把那张卡滚进视口。
+  { name: "qa-set-forge-list", scene: "settingswin-github", params: "fa=list", size: SETTINGS, sel: "[data-testid=forge-accounts] .forge-mark", steps: [["eval", FORGE_SCROLL]], langs: ["zh", "en"] },
+  { name: "qa-set-forge-add", scene: "settingswin-github", size: SETTINGS, sel: "[data-testid=forge-add]", steps: [["eval", FORGE_SCROLL], ["click", "[data-testid=forge-empty] button"], ["eval", FORGE_ADD_SCROLL]], langs: ["zh", "en"] },
+  { name: "qa-set-forge-add-bitbucket", scene: "settingswin-github", size: SETTINGS, sel: "[data-testid=forge-add]", steps: [["eval", FORGE_SCROLL], ["click", "[data-testid=forge-empty] button"], ["click", "[data-testid=forge-add] [role=radio] >> nth=2"], ["eval", FORGE_ADD_SCROLL]] },
+  { name: "qa-set-forge-add-device", scene: "settingswin-github", params: "fa=adddevice", size: SETTINGS, sel: "[data-testid=forge-add]", steps: [["eval", FORGE_SCROLL], ["click", "[data-testid=forge-empty] button"], ["eval", FORGE_ADD_SCROLL]] },
+  { name: "qa-set-forge-device", scene: "settingswin-github", params: "fa=device", size: SETTINGS, sel: "[data-testid=forge-code]", steps: [["eval", FORGE_SCROLL]], langs: ["zh", "en"] },
+  // 仓库在 gitlab.com：MR !42、流水线一项失败；没加账号时引导去设置添加。
+  { name: "qa-panel-gitlab", scene: "panel-changes", params: "forge=gitlab", size: W620, sel: "[data-testid=scm-pr]", langs: ["zh", "en"] },
+  { name: "qa-panel-gitlab-noaccount", scene: "panel-changes", params: "forge=noaccount", size: W620, sel: "[data-testid=forge-connection-notice]", langs: ["zh", "en"] },
   // 查看非 active 账号只换用量视图：账号名、按下态和非 active 用量都要入镜。
   { name: "qa-set-profile-usage", scene: "settingswin-account", size: SETTINGS, sel: ".usage-card-title", steps: [["click", '[data-testid="profile-usage-claude-work"]']], langs: ["zh", "en"] },
   { name: "qa-set-dropdown-sessions", scene: "settingswin-sessions", size: SETTINGS, sel: ".dd-menu", steps: [["click", ".dd > .dd-btn >> nth=1"]] },

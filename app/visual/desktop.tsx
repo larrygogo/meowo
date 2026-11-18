@@ -168,6 +168,25 @@ async function boot(): Promise<React.ReactNode> {
           return { ...status, pr: { ...status.pr, state: "merged" } };
         }
       }
+      // ?forge=gitlab：仓库在 gitlab.com，MR !42 带流水线（一项失败）；?forge=noaccount：认得出 GitLab 但没加账号。
+      const forgeKind = q.get("forge");
+      if (forgeKind && cmd === "git_forge_status") {
+        const status = scmMock(cmd) as Record<string, unknown>;
+        const base = { ...status, forge: "gitlab", forgeHost: "gitlab.com", repoUrl: "https://gitlab.com/example/web-app", mergeMethods: ["merge", "squash"], lastMergeMethod: null,
+          compareUrl: "https://gitlab.com/example/web-app/-/merge_requests/new?merge_request%5Bsource_branch%5D=refactor%2Flogin-schema&merge_request%5Btarget_branch%5D=main" };
+        if (forgeKind === "noaccount") return { ...base, gh: "no_account", pr: null };
+        return { ...base, pr: {
+          number: 42, state: "open", url: "https://gitlab.com/example/web-app/-/merge_requests/42", title: lang === "zh" ? "重构登录页表单校验" : "Refactor login form validation",
+          baseRef: "main", headRef: "refactor/login-schema", headOid: "deadbeef", mergeable: "MERGEABLE", mergeState: "BLOCKED", forge: "gitlab",
+          checks: [
+            { name: "lint", workflow: "test", state: "pass", url: null },
+            { name: "unit", workflow: "test", state: "fail", url: null },
+            { name: "e2e", workflow: "test", state: "pending", url: null },
+            { name: "deploy-review", workflow: "deploy", state: "skipped", url: null },
+          ],
+          checksSummary: "fail",
+        } };
+      }
       return checkpointSceneMock(cmd) ?? reviewSceneMock(cmd) ?? scmMock(cmd) ?? panel(cmd, args) ?? chat(cmd);
     });
     installMocks("chat");
@@ -440,6 +459,19 @@ async function boot(): Promise<React.ReactNode> {
           credentialSupported: true,
           pending: gh === "code" ? { userCode: "WDJB-MJHT", verificationUri: "https://github.com/login/device", expiresAt: Date.now() + 15 * 60_000 } : null,
         };
+      }
+      // 代码托管账号：?fa=list（三个账号，一个令牌失效）/ device（gitlab.com 设备码进行中）/ adddevice（打包了 GitLab
+      // 应用，添加时先给浏览器登录）；缺省没有账号。
+      if (cmd === "forge_accounts") {
+        const fa = q.get("fa");
+        const accounts = fa === "list" ? [
+          { platform: "gitlab", host: "gitlab.com", login: "alice", name: "Alice Chen", needsRelogin: false, oauth: true },
+          { platform: "gitea", host: "codeberg.org", login: "carol", name: null, needsRelogin: false, oauth: false },
+          { platform: "bitbucket", host: "bitbucket.org", login: "dave", name: "Dave", needsRelogin: false, oauth: false },
+          { platform: "github", host: "github.corp.example", login: "bob", name: null, needsRelogin: true, oauth: false },
+        ] : [];
+        const pending = fa === "device" ? { platform: "gitlab", host: "gitlab.com", userCode: "0A44L90H", verificationUri: "https://gitlab.com/oauth/device", verificationUriComplete: null, expiresAt: Date.now() + 5 * 60_000 } : null;
+        return { accounts, credentialSupported: true, gitlabDevice: fa === "device" || fa === "adddevice", pending };
       }
       if (cmd === "remote_access_info") {
         return {

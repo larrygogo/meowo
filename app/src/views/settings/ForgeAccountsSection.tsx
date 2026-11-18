@@ -32,7 +32,7 @@ import { busyProps } from "../../busyButton";
 import { Icon, type Glyph } from "../../icons/Icon";
 import { icForgeBitbucket, icForgeGitea, icForgeGithub, icForgeGitlab } from "../../icons/glyphs.settings";
 import { GithubSection, minutesLeft } from "./GithubSection";
-import { Segmented, SettingsError } from "./widgets";
+import { SettingsError } from "./widgets";
 
 const IS_MAC = typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent);
 const PLATFORMS: ForgePlatform[] = ["gitlab", "gitea", "bitbucket", "github"];
@@ -185,10 +185,8 @@ export function ForgeAccountList() {
       <span className="forge-mark" aria-hidden><Icon glyph={platformGlyph(account.platform)} size={16} /></span>
       <div className="row-text">
         <div className="row-label">{account.name ? `${account.name} · ${account.login}` : account.login}</div>
-        <div className={"row-desc is-full" + (account.needsRelogin ? " github-warn" : "")}>
-          {`${f.platformNames[account.platform] ?? account.platform} · ${account.host}`}
-          {account.needsRelogin ? ` · ${f.reloginDesc}` : ` · ${account.oauth ? f.oauthDesc(vault) : f.tokenDesc(vault)}`}
-        </div>
+        <div className="row-desc is-full">{`${f.platformNames[account.platform] ?? account.platform} · ${account.host}`}</div>
+        {account.needsRelogin && <div className="row-desc is-full github-warn">{f.reloginDesc}</div>}
       </div>
       <div className="github-row-actions">
         {account.needsRelogin && (
@@ -221,10 +219,9 @@ export function ForgeAccountList() {
     const canVerify = !!cleanHost(d.host) && !!d.token.trim();
     return (
       <div className="forge-add" data-testid="forge-add">
-        <div className="row github-mode-row">
-          <div className="row-text"><div className="row-label">{f.platform}</div></div>
-          <Segmented value={d.platform} label={f.platform} onChange={pickPlatform}
-            options={PLATFORMS.map((p) => ({ value: p, label: f.platformNames[p] ?? p }))} />
+        <div className="row forge-field">
+          <div className="row-label" id="forge-platform-label">{f.platform}</div>
+          <PlatformPicker value={d.platform} labelledBy="forge-platform-label" names={f.platformNames} onChange={pickPlatform} />
         </div>
         <div className="row forge-field">
           <label className="row-label" htmlFor="forge-host">{f.host}</label>
@@ -240,6 +237,7 @@ export function ForgeAccountList() {
               <div className="row-desc is-full">{f.deviceDesc}</div>
             </div>
             <div className="github-row-actions">
+              <button type="button" className="sbtn" onClick={() => setDraft(null)}>{f.cancel}</button>
               <button type="button" className="sbtn" onClick={() => setDraft({ ...d, method: "token" })}>{f.useToken}</button>
               <button type="button" className="sbtn btn-primary" {...busyProps(busy === "device", startDevice)}>{busy === "device" ? t.github.signingIn : f.deviceStart}</button>
             </div>
@@ -303,8 +301,37 @@ export function ForgeAccountList() {
           </div>
         )}
       </div>
-      <div className="sec-hint">{f.note}</div>
+      <div className="sec-hint">{f.note}{accounts.length > 0 ? ` ${f.tokenDesc(vault)}` : ""}</div>
       <SettingsError preformatted error={error} onDismiss={() => setError(null)} />
     </>
+  );
+}
+
+/// 选平台：两列四块，每块是平台图标 + 名字（四段的分段控件在 620 宽的设置窗里放不下，名字会被截断）。
+/// 语义是单选（radiogroup / radio），选中只用底色区分；方向键在四块之间移动并选中，同分段控件。
+function PlatformPicker({ value, names, labelledBy, onChange }: {
+  value: ForgePlatform;
+  names: Record<string, string>;
+  labelledBy: string;
+  onChange: (p: ForgePlatform) => void;
+}) {
+  return (
+    <div className="forge-platforms" role="radiogroup" aria-labelledby={labelledBy}>
+      {PLATFORMS.map((p, i) => (
+        <button key={p} type="button" role="radio" aria-checked={p === value} tabIndex={p === value ? 0 : -1}
+          className="forge-platform" onClick={() => onChange(p)}
+          onKeyDown={(e) => {
+            const step = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+            if (!step) return;
+            e.preventDefault();
+            const next = (i + step + PLATFORMS.length) % PLATFORMS.length;
+            onChange(PLATFORMS[next]);
+            e.currentTarget.parentElement?.querySelectorAll<HTMLElement>("[role=radio]")[next]?.focus();
+          }}>
+          <span className="forge-mark" aria-hidden><Icon glyph={platformGlyph(p)} size={16} /></span>
+          <span className="forge-platform-name">{names[p] ?? p}</span>
+        </button>
+      ))}
+    </div>
   );
 }

@@ -2179,7 +2179,7 @@ export const zh = {
     hostFixed: "只支持 Bitbucket Cloud",
     deviceTitle: "用浏览器登录",
     deviceDesc: "在 gitlab.com 上授权 Meowo，不用自己生成令牌。",
-    deviceStart: "用浏览器登录",
+    deviceStart: "登录 GitLab",
     useToken: "改用访问令牌",
     useDevice: "改用浏览器登录",
     token: "访问令牌",

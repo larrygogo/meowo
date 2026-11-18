@@ -1919,7 +1919,7 @@ export const en: Dict = {
     hostFixed: "Bitbucket Cloud only",
     deviceTitle: "Sign in with a browser",
     deviceDesc: "Authorize Meowo on gitlab.com. No need to create a token yourself.",
-    deviceStart: "Sign in with a browser",
+    deviceStart: "Sign in to GitLab",
     useToken: "Use an access token instead",
     useDevice: "Sign in with a browser instead",
     token: "Access token",

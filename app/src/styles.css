@@ -2003,7 +2003,30 @@ button.stab {
 }
 /* 添加账号的表单：标签在上、输入框占满一行（主机名与令牌都长，左右排会把输入框挤到一两个字宽）。 */
 .forge-add .row.forge-field { flex-direction: column; align-items: stretch; gap: var(--sp-6); }
-.forge-field .ns-input { width: 100%; }
+/* 列方向的 flex 里不能沿用 .ns-input 的 flex: 1（基准 0 会把高度压没），按内容高。 */
+.forge-field .ns-input { flex: none; width: 100%; }
+.forge-platforms { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-8); }
+.forge-platform {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-10);
+  min-width: 0;
+  padding: var(--sp-6) var(--sp-10) var(--sp-6) var(--sp-6);
+  border-radius: var(--radius-md);
+  border: var(--hairline) solid var(--cc-border);
+  background: transparent;
+  color: var(--cc-text-dim);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-in-out);
+}
+.forge-platform:hover { background: var(--fill-hover); color: var(--cc-text); }
+.forge-platform[aria-checked="true"] { background: var(--fill-selected); border-color: transparent; color: var(--cc-text); font-weight: 500; }
+.forge-platform .forge-mark { width: 28px; height: 28px; background: transparent; }
+.forge-platform-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .forge-field-note { -webkit-line-clamp: unset; }
 .forge-token-link { font-size: inherit; }
 .forge-add .row.forge-actions { gap: var(--sp-8); }
