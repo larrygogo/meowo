@@ -1543,7 +1543,10 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
               // 未读排在出错之后、等待/运行之前（对照 Kimi 分组汇总：审批 > 提问 > 失败 > 未读）：
               // 组折起来时行上的未读点看不见，组头只剩一个黄/绿点，「跑完了你还没看」就丢了。
               // 当前会话不算（正在看就是已读，与行上的未读点同口径）。
-              const unread = (!tone || TONE_RANK[tone] < TONE_RANK.error)
+              // 组展开时会话行就在下面，组头点要和行上的点同一个优先级（待授权 > 状态 > 未读），否则同一个会话
+              // 行上是琥珀色「等待」、组头却是青柠色「未读」（2026-11-18 用户截图：「这里颜色不一致」）。
+              // 折起来时行看不见，才让未读压过等待/运行。
+              const unread = (isFolded ? (!tone || TONE_RANK[tone] < TONE_RANK.error) : !showDot)
                 && group.items.some((item) => item.unread && item.session.id !== activeId);
               const groupDot = approval
                 ? <i className="chat-sidebar-dot is-approval" role="img" aria-label={t.vocab.request.approval} data-tip={t.vocab.request.approval} />
