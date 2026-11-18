@@ -6,7 +6,7 @@ import type { ForgeStatusDto, GitDiffSummaryDto, PullRequestDto, RepoChangesDto 
 import { formatBackendError } from "../../i18n/errors";
 import { zh } from "../../i18n/zh";
 import { en } from "../../i18n/en";
-import { ForgeBar, FORGE_POLL_MS } from "./ForgeBar";
+import { clearForgeCaches, ForgeBar, FORGE_POLL_MS } from "./ForgeBar";
 import { ArchivedWorktreePrompt } from "../../worktreeCleanup";
 import { SESSION_ARCHIVED_EVENT } from "../../hooks/useSessionActions";
 
@@ -67,6 +67,7 @@ beforeEach(() => {
   });
 });
 afterEach(() => {
+  clearForgeCaches();
   cleanup();
   vi.useRealTimers();
   Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });

@@ -10,11 +10,18 @@ import { languageForPath } from "../highlight";
 import { copyPlainText } from "../clipboard";
 import { Icon } from "../../../icons/Icon";
 import { icCopy } from "../../../icons/glyphs.chat";
+import { RevealChangeContext } from "../panelReveal";
 
 /// Edit/Write 工具：收起时只有摘要行；展开后是「文件 + 增删 + 复制」卡片头与着色 diff。
 export const EditTool = memo(function EditTool({ item, result }: { item: ToolUseItem; result?: ToolResultItem }) {
   const t = useT();
   const cwd = useContext(ChatCwdContext);
+  // 展开卡头的文件路径可点：跳到右侧面板「更改」里这个文件的 diff。手机远程页没有面板，路径保持纯文字。
+  const reveal = useContext(RevealChangeContext);
+  const pathView = (label: string, target: string) => reveal
+    ? <button type="button" className="chat-edit-card-path is-link" data-tip={t.chat.revealInChanges} aria-label={`${t.chat.revealInChanges} ${label}`}
+      onClick={() => reveal(target)}>{label}</button>
+    : <span className="chat-edit-card-path">{label}</span>;
   const { detail, path, patch, delta, files } = editOutcome(item, result);
   // 「写入」还是「编辑」由后端的类别定（codex 只新建文件的补丁也是写入）。
   const kind = item.kind === "write" ? "write" : "edit";
@@ -46,7 +53,7 @@ export const EditTool = memo(function EditTool({ item, result }: { item: ToolUse
           {multi ? files.map((file) => (
             <div className="chat-edit-card" key={file.path}>
               <div className="chat-edit-card-head">
-                <span className="chat-edit-card-path">{relativize(file.path, cwd).replace(/\\/g, "/")}</span>
+                {pathView(relativize(file.path, cwd).replace(/\\/g, "/"), file.path)}
                 {deltaOf(file.delta)}
                 <button type="button" className="chat-edit-card-copy" aria-label={t.chat.codeCopy} data-tip={t.chat.codeCopy} onClick={() => void copyPlainText(file.path)}>
                   <Icon glyph={icCopy} size={12} />
@@ -58,7 +65,7 @@ export const EditTool = memo(function EditTool({ item, result }: { item: ToolUse
           )) : (
             <div className="chat-edit-card">
               <div className="chat-edit-card-head">
-                <span className="chat-edit-card-path">{toolSummary(item, cwd)}</span>
+                {files[0] ? pathView(toolSummary(item, cwd), files[0].path) : <span className="chat-edit-card-path">{toolSummary(item, cwd)}</span>}
                 {deltaView}
                 <button type="button" className="chat-edit-card-copy" aria-label={t.chat.codeCopy} data-tip={t.chat.codeCopy} onClick={() => void copyPlainText(path)}>
                   <Icon glyph={icCopy} size={12} />
