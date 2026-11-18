@@ -70,7 +70,7 @@ import { QueuedPrompts, queueAttachments } from "./chat/QueuedPrompts";
 import { SessionPrsContext, sessionPullRequestUrls } from "./chat/sessionPrs";
 import { usePromptQueue } from "./chat/usePromptQueue";
 import { BottomSheet, SheetOnPhone } from "./chat/BottomSheet";
-import { runningActivityView, RunningBar, SnakeSpinner, TurnAnnouncer, useCliStatusStore } from "./chat/RunningBar";
+import { liveToolActivity, runningActivityView, RunningBar, SnakeSpinner, TurnAnnouncer, useCliStatusStore } from "./chat/RunningBar";
 import { ModelPicker, readStarred, type ModelPickerItem } from "./chat/ModelPicker";
 import { currentPresetId } from "./chat/modelLabels";
 import { ModelMenu, effortLabel } from "./chat/ModelMenu";
@@ -601,9 +601,11 @@ export function ChatWindow() {
   toneRef.current = tone;
   // 运行条：压缩中的哨兵顶替首行动词；真实命令才进次行（空值/哨兵不占次行）。
   const compactingNow = history?.currentActivity === COMPACTING_ACTIVITY;
-  const runningActivity = history?.currentActivity && !compactingNow
-    ? runningActivityView(history.currentActivity, t.chat.compacting, t.chat.running)
-    : null;
+  // 次行优先取 transcript 里还没回执的那条调用（正在跑的那一步）；记录给不出时退回 hook 值
+  // ——hook 只在工具跑完时写，长命令跑着时它是上一条已完成的命令（见 liveToolActivity）。
+  const liveTool = useMemo(() => liveToolActivity(items), [items]);
+  const runningActivity = compactingNow ? null
+    : liveTool ?? (history?.currentActivity ? runningActivityView(history.currentActivity, t.chat.compacting, t.chat.running) : null);
   const cliStatusStore = useCliStatusStore();
   // 换会话清掉上一个会话的状态行，别让它在新会话的运行条上活 3 秒。
   useEffect(() => { cliStatusStore.set(null); cliStatusStore.setRetry(null); }, [sessionId, cliStatusStore]);
