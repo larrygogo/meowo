@@ -1,4 +1,5 @@
 import { memo, useContext, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useFlash } from "../../hooks/useFlash";
 import { createPortal } from "react-dom";
 import { pushEscLayer } from "../../escLayers";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -24,17 +25,13 @@ import { busyProps } from "../../busyButton";
 
 export function MessageCopyButton({ text, className = "chat-message-copy" }: { text: string; className?: string }) {
   const t = useT();
-  const [copied, setCopied] = useState(false);
+  const { shown: copied, flash: flashCopied, fx: copiedFx } = useFlash();
   const copy = () => {
-    void copyPlainText(text).then((ok) => {
-      if (!ok) return;
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
-    });
+    void copyPlainText(text).then((ok) => { if (ok) flashCopied(); });
   };
   const label = copied ? t.chat.messageCopied : t.chat.copyMessage;
   return (
-    <button type="button" className={className} aria-label={label} data-tip={label} onClick={copy}>
+    <button type="button" className={className + " fb-press" + copiedFx} aria-label={label} data-tip={label} onClick={copy}>
       {copied ? (
         <Icon glyph={icCheck} size={14} />
       ) : (
@@ -393,7 +390,7 @@ function ReasoningBlock({ item, nextStamp = null, live = false }: { item: Extrac
   }
 
   return (
-    <details className="chat-reasoning" {...reasoningDetails}>
+    <details className="chat-reasoning" data-enter-id={item.id} {...reasoningDetails}>
       <summary>
         <span className="chat-reasoning-icon" aria-hidden="true">
           <Icon glyph={icLightbulb} size={16} />
@@ -435,7 +432,7 @@ function TurnErrorCard({ item, latest }: { item: Extract<ChatItem, { type: "turn
     : NETWORK_ERROR_LABELS.has(item.label) ? t.chat.turnErrorNetworkHint
     : null;
   return (
-    <article className="chat-message is-turn-error" role="alert">
+    <article className="chat-message is-turn-error" role="alert" data-enter-id={item.id}>
       <div className="chat-turn-error-label">
         <Icon glyph={icAlert} size={14} />
         {/* 标签是后端写的中文 sentinel，英文界面要经 errorLabels 翻译（看板卡片同一张表）。 */}
@@ -724,7 +721,7 @@ function MessageBody({ item, nextStamp = null, latest = false, compactSummary = 
   }
   if (item.type === "assistant_text" || item.type === "assistant_delta") {
     return (
-      <article className="chat-message is-assistant">
+      <article className="chat-message is-assistant" data-enter-id={item.id}>
         <div className="chat-text chat-md"><ChatMarkdown text={item.text} /></div>
       </article>
     );

@@ -7,6 +7,7 @@ import { ChatWindow } from "./ChatWindow";
 import { zh } from "../i18n/zh";
 import { chatUi, descriptors } from "../test/agents";
 import { terminalAttention } from "../terminalAttention";
+import { visibleText } from "../test/visibleText";
 
 describe("ChatWindow", () => {
   /** 手打 `/add-dir "<path>"`（7T-4 尾，用户实拍）：claude 的 /add-dir 不剥引号，成对引号会
@@ -67,7 +68,7 @@ describe("ChatWindow", () => {
     const fold = document.querySelector<HTMLButtonElement>(".turn-fold-head");
     if (fold?.getAttribute("aria-expanded") === "false") fireEvent.click(fold);
     // 思考过程恒为收起的一行（用户对照 Kimi 定），内容仍在 DOM 里供点开。
-    const reasoning = screen.getByText("先检查现有协议").closest("details");
+    const reasoning = screen.getByText(visibleText("先检查现有协议")).closest("details");
     expect(reasoning?.hasAttribute("open")).toBe(false);
     // 每条工具调用独立成行（Kimi 式扁平行），不再有分组卡片；有回执的调用默认收起。
     const activity = screen.getAllByText("运行终端")[0].closest("details");
@@ -145,7 +146,7 @@ describe("ChatWindow", () => {
       fireEvent(details, new Event("toggle"));
     };
     toggle(true);
-    expect(await screen.findByText("子任务的结论")).toBeTruthy();
+    expect(await screen.findByText(visibleText("子任务的结论"))).toBeTruthy();
     // 嵌套时间线沿用同一套渲染：里面的工具调用也是扁平行。
     expect(document.querySelector(".chat-subagent .chat-flat-steps .chat-tool")).toBeTruthy();
 
@@ -503,7 +504,7 @@ describe("ChatWindow", () => {
     });
     render(<ChatWindow />);
     expect(await screen.findByText("帮我修这个 bug")).toBeTruthy();
-    expect(screen.getByText("我先复现一下")).toBeTruthy();
+    expect(screen.getByText(visibleText("我先复现一下"))).toBeTruthy();
     expect(screen.queryByText("Agent 已开始工作，对话内容马上出现")).toBeNull();
   });
 

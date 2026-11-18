@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@t
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LeadGateDto, LeadTaskDto } from "../../api";
 import { zh } from "../../i18n/zh";
+import { visibleText } from "../../test/visibleText";
 
 const snapshot = vi.fn<(cwd: string, session?: string | null) => Promise<LeadTaskDto | null>>();
 const answer = vi.fn<(cwd: string, gateId: string, choice: string, note: string, version?: string) => Promise<void>>();
@@ -705,7 +706,7 @@ it("决策与进度按条目展示且保留原始内容", async () => {
   })} onClose={() => {}} />);
   fireEvent.click(screen.getByRole("tab", { name: "决策" }));
   expect(screen.getByRole("heading", { name: "D-17（publication-2）" })).toBeTruthy();
-  expect(screen.getByText("采用显式发布，保留旧答复。")).toBeTruthy();
+  expect(screen.getByText(visibleText("采用显式发布，保留旧答复。"))).toBeTruthy();
   expect(screen.getByRole("heading", { name: "D-18" })).toBeTruthy();
   expect(screen.getByText("继续验证。")).toBeTruthy();
   fireEvent.click(screen.getByRole("tab", { name: "进度" }));

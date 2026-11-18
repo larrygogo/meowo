@@ -6,6 +6,7 @@ import { emptyComposerFrame, invoke, saveDialog, eventListeners, b64utf8, respon
 import { ChatWindow } from "./ChatWindow";
 import { zh } from "../i18n/zh";
 import { chatUi, descriptors } from "../test/agents";
+import { visibleText } from "../test/visibleText";
 
 describe("ChatWindow", () => {
   /**
@@ -861,7 +862,7 @@ describe("ChatWindow", () => {
       return Promise.resolve();
     });
     render(<ChatWindow />);
-    expect(await screen.findByText("当前段的回答")).toBeTruthy();
+    expect(await screen.findByText(visibleText("当前段的回答"))).toBeTruthy();
     // 滚离底部:jsdom 的滚动度量恒 0,直接定义出「视口 500、内容 2000、停在顶部」。
     const scroller = document.querySelector(".chat-scroll") as HTMLElement;
     Object.defineProperty(scroller, "scrollHeight", { value: 2000, configurable: true });

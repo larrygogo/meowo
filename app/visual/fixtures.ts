@@ -45,9 +45,9 @@ export function longItems(lang: "zh" | "en", ts: string): unknown[] {
   return [
     { type: "user_text", id: "vx-u1", timestamp: ts, text: user },
     { type: "assistant_text", id: "vx-a1", timestamp: ts, text: md },
-    { type: "tool_use", id: "vx-t1", timestamp: ts, name: "Bash", summary: "cd packages/frontend && npx vitest run src/components/LoginForm.test.tsx --reporter=verbose" },
+    { type: "tool_use", id: "vx-t1", timestamp: ts, name: "Bash", kind: "run", summary: "cd packages/frontend && npx vitest run src/components/LoginForm.test.tsx --reporter=verbose" },
     { type: "tool_result", id: "vx-r1", timestamp: ts, tool_use_id: "vx-t1", text: testOut, is_error: false },
-    { type: "tool_use", id: "vx-t2", timestamp: ts, name: "Read", summary: "packages/frontend/src/components/authentication/forms/LoginFormWithValidation.tsx" },
+    { type: "tool_use", id: "vx-t2", timestamp: ts, name: "Read", kind: "read", summary: "packages/frontend/src/components/authentication/forms/LoginFormWithValidation.tsx" },
     { type: "tool_result", id: "vx-r2", timestamp: ts, tool_use_id: "vx-t2", text: "error: ENOENT no such file or directory", is_error: true },
     { type: "assistant_text", id: "vx-a2", timestamp: ts, text: para },
   ];

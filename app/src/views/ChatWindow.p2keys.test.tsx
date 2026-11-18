@@ -30,6 +30,7 @@ vi.mock("./chat/SidePanel", () => ({ SidePanel: () => null }));
 
 import { ChatWindow } from "./ChatWindow";
 import { zh } from "../i18n/zh";
+import { visibleText } from "../test/visibleText";
 
 type Row = { id: number; title: string; status?: string; pending?: string | null; errored?: boolean };
 let rows: Row[] = [];
@@ -131,7 +132,7 @@ describe("Ctrl+F 在当前内容里找字（二期 #8）", () => {
 
   it("对话视图 Ctrl+F 打开对话内搜索，不去聚焦侧栏搜会话", async () => {
     render(<ChatWindow />);
-    await screen.findByText("这里有一段可以搜的正文");
+    await screen.findByText(visibleText("这里有一段可以搜的正文"));
     fireEvent.keyDown(window, { key: "f", code: "KeyF", ctrlKey: true });
     expect(await screen.findByRole("search")).toBeTruthy();
     await new Promise((r) => requestAnimationFrame(() => r(null)));
@@ -142,7 +143,7 @@ describe("Ctrl+F 在当前内容里找字（二期 #8）", () => {
     // 侧栏收起：旧实现会先把它展开再聚焦搜索框。
     localStorage.setItem("meowo-chat-sidebar-collapsed", "1");
     render(<ChatWindow />);
-    await screen.findByText("这里有一段可以搜的正文");
+    await screen.findByText(visibleText("这里有一段可以搜的正文"));
     expect(sidebarSearch()).toBeNull();
     fireEvent.keyDown(window, { key: "F", code: "KeyF", ctrlKey: true, shiftKey: true });
     expect(await screen.findByRole("search")).toBeTruthy();
@@ -152,7 +153,7 @@ describe("Ctrl+F 在当前内容里找字（二期 #8）", () => {
 
   it("终端视图里焦点不在 xterm 上时，Ctrl+F 打开终端找字", async () => {
     render(<ChatWindow />);
-    await screen.findByText("这里有一段可以搜的正文");
+    await screen.findByText(visibleText("这里有一段可以搜的正文"));
     fireEvent.keyDown(window, { key: "2", code: "Digit2", ctrlKey: true });
     await screen.findByLabelText("xterm");
     (document.activeElement as HTMLElement | null)?.blur();

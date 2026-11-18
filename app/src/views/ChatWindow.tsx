@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction, useLayoutEffect } from "react";
+import { FEEDBACK_MS } from "../hooks/useFlash";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 // 文件拖入走 Tauri 的 drag-drop 事件(webview 原生 drop 被拦截,DOM 拿不到 File;
@@ -331,7 +332,7 @@ export function ChatWindow() {
   const [copyNotice, setCopyNotice] = useState<{ text: string; long?: boolean } | null>(null);
   useEffect(() => {
     if (!copyNotice) return;
-    const timer = window.setTimeout(() => setCopyNotice(null), copyNotice.long ? 5000 : 2500);
+    const timer = window.setTimeout(() => setCopyNotice(null), copyNotice.long ? 5000 : FEEDBACK_MS);
     return () => window.clearTimeout(timer);
   }, [copyNotice]);
   // 发出的消息（空闲态回显 + 运行中插话回执）：生命周期与对账在 chat/outgoingPrompts，

@@ -4,6 +4,7 @@
 // 也不随请求发出），手机端首次打开即存 localStorage 并清掉 hash。开关/端口经 set_settings
 // 落盘后由后端 remote::apply 热生效；token 由 remote_access_info 惰性生成（首次开启才产生）。
 import { useCallback, useEffect, useState } from "react";
+import { useFlash } from "../../hooks/useFlash";
 import { renderSVG } from "uqr";
 import { regenerateRemoteToken, remoteAccessInfo, testBarkPush, type RemoteAccessInfo, type RemoteBindMode } from "../../api";
 import { appConfirm } from "../../confirm";
@@ -52,7 +53,7 @@ function PortInput({ value, onCommit, conflict }: {
           if (e.key === "Enter") commit();
         }}
       />
-      <SavedNote shown={saved.shown} />
+      <SavedNote shown={saved.shown} fx={saved.fx} />
       {invalid
         ? <div className="proxy-err remote-port-err" role="alert">{t.remote.portInvalid}</div>
         : conflict && <div className="proxy-err remote-port-err" role="alert">{conflict}</div>}
@@ -104,7 +105,7 @@ function BarkPushRow({ value, paused, onCommit, onTogglePaused }: {
             // T-5：回车提交、焦点留在框里（同 PortInput）。
             onKeyDown={(e) => { if (e.key === "Enter") commit(); }}
           />
-          <SavedNote shown={saved.shown} />
+          <SavedNote shown={saved.shown} fx={saved.fx} />
           {/* 测试进行中不用 disabled：焦点就在这颗钮上，disabled 会把焦点踢到 body（第三轮焦点准则）。
               test() 自己拦重复点击。 */}
           <button type="button" className="remote-copy" disabled={!text.trim()} aria-disabled={status?.kind === "testing" || undefined} onClick={test}>
@@ -127,7 +128,7 @@ export function RemoteAccessCard() {
   const [settings, patch, patchError, clearPatchError] = useSettingsState();
   const [info, setInfo] = useState<RemoteAccessInfo | null>(null);
   const [selectedIp, setSelectedIp] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const { shown: copied, flash: flashCopied, fx: copiedFx } = useFlash();
 
   const refresh = useCallback(() => {
     remoteAccessInfo()
@@ -197,10 +198,7 @@ export function RemoteAccessCard() {
     if (!url) return;
     void navigator.clipboard
       ?.writeText(url)
-      .then(() => {
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 1500);
-      })
+      .then(flashCopied)
       .catch(() => {});
   };
 
@@ -267,7 +265,7 @@ export function RemoteAccessCard() {
               )}
               {/* 地址不明文上屏(那串 token 又长又吵还含凭据),只给复制按钮;二维码即是地址本体。 */}
               <div className="remote-url-row">
-                <button type="button" className="remote-copy" onClick={copy}>
+                <button type="button" className={"remote-copy fb-press" + copiedFx} onClick={copy}>
                   {copied ? t.remote.copied : t.remote.copy}
                 </button>
                 {/* 换发即吊销:apply 比对 token 差异重启 server,已配对手机全部 401 回配对页。

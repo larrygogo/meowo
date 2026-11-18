@@ -288,7 +288,7 @@ async function boot(): Promise<React.ReactNode> {
       }
       if (cmd === "get_subagent_transcript") {
         return [{ label: null, items: [
-          { type: "tool_use", id: "sa-t1", timestamp: ts, name: "Grep", summary: "loginSchema" },
+          { type: "tool_use", id: "sa-t1", timestamp: ts, name: "Grep", kind: "search", summary: "loginSchema" },
           { type: "tool_result", id: "sa-r1", timestamp: ts, tool_use_id: "sa-t1", text: "4 matches", is_error: false },
           { type: "assistant_text", id: "sa-a1", timestamp: ts, text: lang === "zh" ? "边界情况都覆盖到了，只有加号别名没测。" : "Edge cases are covered except plus aliases." },
         ] }];

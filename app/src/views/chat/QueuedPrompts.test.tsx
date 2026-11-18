@@ -82,6 +82,32 @@ describe("排队消息拖拽排序（对照 Kimi Code 客户端）", () => {
     expect(promptQueueReorder).not.toHaveBeenCalled();
   });
 
+  // U7：松手即按新顺序摆好，不等后端回执再跳；排序被拒时撤回原顺序。
+  const order = () => [...document.querySelectorAll(".chat-queue-body")].map((el) => el.textContent);
+  it("松手后不等后端回执，当帧就按新顺序摆放（无拖尾、不弹回）", async () => {
+    let settle: (ok: boolean) => void = () => {};
+    vi.mocked(promptQueueReorder).mockReturnValue(new Promise<boolean>((resolve) => { settle = resolve; }));
+    renderQueue(three());
+    const handles = touchRows();
+    touchEvent(handles[2], "pointerdown", 250, "mouse");
+    touchEvent(handles[2], "pointermove", 20, "mouse");
+    touchEvent(handles[2], "pointerup", 20, "mouse");
+    expect(order()).toEqual(["三", "一", "二"]);
+    settle(true);
+    await waitFor(() => expect(promptQueueReorder).toHaveBeenCalledWith(42, [3, 1, 2]));
+    expect(order()).toEqual(["三", "一", "二"]);
+  });
+  it("排序被拒时撤回乐观顺序", async () => {
+    vi.mocked(promptQueueReorder).mockResolvedValue(false);
+    const props = renderQueue(three());
+    const handles = touchRows();
+    touchEvent(handles[2], "pointerdown", 250, "mouse");
+    touchEvent(handles[2], "pointermove", 20, "mouse");
+    touchEvent(handles[2], "pointerup", 20, "mouse");
+    await waitFor(() => expect(props.onError).toHaveBeenCalledWith("queue/not_reorderable"));
+    expect(order()).toEqual(["一", "二", "三"]);
+  });
+
   function touchRows() {
     const handles = grips();
     for (const handle of handles) Object.defineProperty(handle, "setPointerCapture", { value: vi.fn(), configurable: true });

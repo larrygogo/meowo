@@ -104,7 +104,7 @@ function UrlInput({
           if (e.key === "Enter") commit();
         }}
       />
-      <SavedNote shown={saved.shown} />
+      <SavedNote shown={saved.shown} fx={saved.fx} />
       {error && <div className="proxy-err remote-port-err" role="alert">{t.settings.saveFailed(error)}</div>}
     </>
   );

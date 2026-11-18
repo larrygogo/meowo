@@ -1,4 +1,4 @@
-import { memo, useContext, useRef } from "react";
+import { memo, useContext, useLayoutEffect, useRef } from "react";
 import { type ChatItem } from "../../api";
 import { collectSubagentReceipts } from "../../chat/reducer";
 import { useT } from "../../i18n";
@@ -24,6 +24,7 @@ import { ReplyFold, TurnFold } from "./TurnFold";
 import { FoldScopeContext, foldScope } from "./foldMemory";
 import { isSubagentDelegation, type ToolResultItem } from "./shared";
 import { liveTurnStart, SessionAliveContext, TurnLiveContext, type TurnActivity } from "./toolState";
+import { markEntering, trackEntering, type EnterTrack } from "./enterMotion";
 
 type SubagentOutcomeInfo = NonNullable<ToolResultItem["subagent"]>;
 
@@ -122,6 +123,14 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
   const { outcomes, settledAt, finishedTs, results } = collectSubagentReceipts(items);
   const cacheRef = useRef<BlockCache | null>(null);
   const cache = cacheRef.current;
+  // 实时追加的条目渐显一次（U6，判法见 enterMotion）。放在提交后的 layout effect 里比对：
+  // 渲染期改 ref 在严格模式的二次渲染下会把「新」吞掉；layout effect 又赶在首帧绘制前挂上类，不闪一帧清晰的。
+  const enterRef = useRef<EnterTrack | null>(null);
+  useLayoutEffect(() => {
+    const { track, entering } = trackEntering(enterRef.current, sessionId, items);
+    enterRef.current = track;
+    if (entering.length > 0) markEntering(document, entering);
+  }, [sessionId, items]);
   let reuse: BlockRec[] = [];
   // 当前回合的起点：最后一条开启回合的用户消息，或最后一条中断分隔（见 liveTurnStart）。
   // 回合中途送进去的话不算：agent 读到后接着干同一回合。以前把它当回合边界，运行中的回复一遇插话就被当成
