@@ -140,7 +140,8 @@ const ITEMS: Item[] = [
   { before: "网络 · 按 Agent 覆盖", field: "proxy.per_agent", sec: "general", label: zh.proxy.perAgent },
   { before: "网络 · 默认代理 · 自定义地址", field: "proxy.url", sec: "general", label: "代理地址框", query: "代理",
     find: () => (document.querySelector<HTMLInputElement>('.main-sec[data-sec="general"] input[value="http://127.0.0.1:7890"]')?.closest<HTMLElement>(".row") ?? null) },
-  { before: "网络 · 按 Agent 覆盖 · Codex 的模式", field: "proxy.per_agent.codex.mode", sec: "general", label: "Codex" },
+  { before: "网络 · 按 Agent 覆盖 · Codex 的模式", field: "proxy.per_agent.codex.mode", sec: "general", label: "Codex 代理模式", query: "Codex",
+    find: () => Array.from(document.querySelectorAll<HTMLElement>('.main-sec[data-sec="general"] .proxy-agent-name')).find((el) => el.textContent === "Codex")?.closest<HTMLElement>(".row") ?? null },
   { before: "网络 · 按 Agent 覆盖 · Codex 的自定义地址", field: "proxy.per_agent.codex.url", sec: "general", label: "Codex 代理地址框", query: "网络",
     find: () => (document.querySelector<HTMLInputElement>('.main-sec[data-sec="general"] input[value="http://10.0.0.2:8080"]')?.closest<HTMLElement>(".row") ?? null) },
   // ── 改前「代码托管」（本次未改，只验位置与搜索） ──
@@ -275,10 +276,10 @@ describe("分区结构", () => {
   });
 });
 
-describe("搜旧分区名「网络」与「代理」：代理地址与各 Agent 行都在（审查 2026-11-19 第 1 条）", () => {
+describe("搜旧分区名「网络」与「代理」：只出代理这一组，地址与各 Agent 行都在（审查 2026-11-19 第 1 条）", () => {
   const urlRow = (value: string) => document.querySelector<HTMLInputElement>(`.main-sec[data-sec="general"] input[value="${value}"]`)?.closest(".row") ?? null;
-  for (const q of ["网络", "代理", "network"]) {
-    it(`搜「${q}」：网络代理、地址框、各 Agent 单独设置与各家行都可见`, async () => {
+  for (const q of ["网络", "代理", "network", "proxy"]) {
+    it(`搜「${q}」：网络代理、地址框、各 Agent 单独设置与各家行可见，通用页其余卡片隐藏`, async () => {
       render(<About />);
       const input = await screen.findByPlaceholderText(zh.settings.searchPlaceholder);
       fireEvent.change(input, { target: { value: q } });
@@ -286,8 +287,16 @@ describe("搜旧分区名「网络」与「代理」：代理地址与各 Agent 
       expect(shown(rowIn("general", zh.proxy.mode)!)).toBe(true);
       expect(shown(urlRow("http://127.0.0.1:7890")!)).toBe(true);
       expect(shown(rowIn("general", zh.proxy.perAgent)!)).toBe(true);
-      for (const name of ["Claude Code", "Codex"]) expect(shown(rowIn("general", name)!), name).toBe(true);
+      // 按 .proxy-agent-name 找：通用页 Lead 组里也有一行「Codex」（其他 CLI），那一行理应被滤掉。
+      const agentRow = (name: string) => Array.from(document.querySelectorAll('.main-sec[data-sec="general"] .proxy-agent-name')).find((el) => el.textContent === name)?.closest(".row") ?? null;
+      for (const name of ["Claude Code", "Codex"]) expect(shown(agentRow(name)!), name).toBe(true);
       expect(shown(urlRow("http://10.0.0.2:8080")!)).toBe(true);
+      // 搜索词挂在「网络代理」这一行上，不挂在分区名上：通用页别的卡片不跟着出来。
+      for (const label of [zh.settings.language, zh.settings.autoUpdate, zh.settings.chatFeature, zh.settings.leadWorkflow]) {
+        const row = rowIn("general", label)!;
+        expect(shown(row), label).toBe(false);
+        expect(shown(row.closest(".row-card")!), label).toBe(false);
+      }
     });
   }
 

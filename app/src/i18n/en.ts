@@ -1625,7 +1625,7 @@ export const en: Dict = {
   },
   settings: {
     nav: { general: "General", appearance: "Appearance", notify: "Notifications", sessions: "Sessions", account: "Agents", github: "Code hosting", remote: "Phone access", shortcuts: "Shortcuts", about: "About" },
-    navSearchExtra: { general: "network proxy 网络 代理", shortcuts: "keyboard shortcuts", notify: "alerts push sound", account: "accounts usage extensions skills MCP commands plugins hooks", github: "Git commit identity user.name user.email GitHub pull request sign in GitLab merge request Gitea Forgejo Codeberg Bitbucket Gitee Enterprise token account" },
+    navSearchExtra: { shortcuts: "keyboard shortcuts", notify: "alerts push sound", account: "accounts usage extensions skills MCP commands plugins hooks", github: "Git commit identity user.name user.email GitHub pull request sign in GitLab merge request Gitea Forgejo Codeberg Bitbucket Gitee Enterprise token account" },
     searchPlaceholder: "Search settings…",
     searchClear: "Clear search",
     searchNoResults: "No matching settings",
@@ -1754,6 +1754,7 @@ export const en: Dict = {
   },
   proxy: {
     mode: "Network proxy",
+    searchExtra: "network proxy 网络 代理",
     modeDesc: "Agents, usage and updates",
     off: "Direct",
     system: "Follow system",

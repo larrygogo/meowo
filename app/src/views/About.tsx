@@ -1149,8 +1149,7 @@ export function About() {
     const body = bodyRef.current;
     if (!body) return;
     const navLabels: Record<Section, string> = {
-      // 「网络」分区并进了通用：旧分区名和「代理」都要能把通用页（含代理地址、各 Agent 行）整页搜出来。
-      general: `${t.settings.nav.general} ${t.settings.navSearchExtra.general}`,
+      general: t.settings.nav.general,
       appearance: t.settings.nav.appearance,
       notify: `${t.settings.nav.notify} ${t.settings.navSearchExtra.notify}`,
       sessions: t.settings.nav.sessions,

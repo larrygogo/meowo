@@ -263,6 +263,9 @@ export function ProxyRows({ expandAll = false, onError }: { expandAll?: boolean;
           <div className="row-text">
             <div className="row-label">{t.proxy.mode}</div>
             <div className="row-desc">{t.proxy.modeDesc}</div>
+            {/* 不显示、只供设置搜索：搜旧分区名「网络」或英文 network / proxy 时命中这一行，整组子行随它显示，
+                通用页其余卡片照常滤掉（挂在分区名上会把整页都带出来，代理又在页尾，窄窗要滚三张卡才看得到）。 */}
+            <span className="chat-sronly" aria-hidden="true">{t.proxy.searchExtra}</span>
           </div>
           <Segmented value={globalMode} options={modeOptions} onChange={changeGlobalMode} label={t.proxy.mode} />
         </div>

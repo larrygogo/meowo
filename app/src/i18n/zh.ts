@@ -1887,7 +1887,7 @@ export const zh = {
     // 「退出登录」的用户猜不到该点它（key 名 account 与显示名分裂也是自证）。
     nav: { general: "通用", appearance: "外观", notify: "通知", sessions: "会话", account: "Agent", github: "代码托管", remote: "手机远程", shortcuts: "快捷键", about: "关于" },
     // 设置搜索额外匹配的词（不显示）：导航名为排版改短后，旧名里的词仍要能搜到对应分区。
-    navSearchExtra: { general: "网络 代理 network proxy", shortcuts: "键盘", notify: "提醒 推送 提示音", account: "账号 用量 扩展 技能 MCP 命令 插件 钩子", github: "Git 提交身份 user.name user.email GitHub PR 登录 GitLab MR Gitea Forgejo Codeberg Bitbucket Gitee 企业版 令牌 账号" },
+    navSearchExtra: { shortcuts: "键盘", notify: "提醒 推送 提示音", account: "账号 用量 扩展 技能 MCP 命令 插件 钩子", github: "Git 提交身份 user.name user.email GitHub PR 登录 GitLab MR Gitea Forgejo Codeberg Bitbucket Gitee 企业版 令牌 账号" },
     searchPlaceholder: "搜索设置…",
     searchNoResults: "没有匹配的设置项",
     searchClear: "清除搜索",
@@ -2028,6 +2028,8 @@ export const zh = {
   },
   proxy: {
     mode: "网络代理",
+    // 「网络代理」这一行的隐藏搜索词：原「网络」分区并进通用后，旧名与英文词都要能搜到这一组（只出这一组）。
+    searchExtra: "网络 代理 network proxy",
     modeDesc: "Agent、用量与更新都走它",
     off: "直连",
     system: "跟随系统",
