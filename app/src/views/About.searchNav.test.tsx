@@ -17,10 +17,10 @@ vi.mock("@tauri-apps/api/app", () => ({ getVersion: vi.fn(() => Promise.resolve(
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ close: () => Promise.resolve(), show: () => Promise.resolve(), setFocus: () => Promise.resolve() }) }));
 vi.mock("../useUpdate", () => ({ useUpdate: () => ({ status: "idle", version: null }) }));
 vi.mock("../useShowWhenReady", () => ({ useShowWhenReady: () => {} }));
-// 搜索态会挂载全部分区；联网与多窗口相关的三个分区和本条无关，换成空壳。
+// 搜索态会挂载全部分区；联网与多窗口相关的几块和本条无关，换成空壳。
 vi.mock("./settings/AccountSection", () => ({ AccountSection: () => null }));
-vi.mock("./settings/ExtensionsSection", () => ({ ExtensionsSection: () => null }));
-vi.mock("./settings/NetworkSection", () => ({ NetworkSection: () => null }));
+// 网络代理并进了通用页（ProxyRows）、扩展并进了 Agent 页（AccountSection 里），一并换成空壳。
+vi.mock("./settings/NetworkSection", () => ({ ProxyRows: () => null }));
 vi.mock("./settings/RemoteAccessCard", () => ({ RemoteAccessCard: () => null }));
 
 import { About } from "./About";

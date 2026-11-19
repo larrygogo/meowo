@@ -47,7 +47,7 @@ bun run visual:compare <基线目录> <新目录>
 | `chat-long` | 同上，滚到表格/代码块处并展开工具组（长输出、报错工具卡） | 620 / 1280 / 2560 |
 | `panel-changes` | 右侧面板「更改」：仓库、提交框、推送、PR 与 CI、文件清单 | 620 / 1280 / 2560 |
 | `panel-diff` | 「更改」里点开 `LoginForm.tsx` 的 diff | 620 / 1280 / 2560 |
-| `settings-<分区>` | 设置窗九个分区：`general` `sessions` `appearance` `shortcuts` `remote`（开着，带二维码）`network`（自定义代理）`account`（带多账号列表）`extensions` `about` | 620 / 1280 / 2560 |
+| `settings-<分区>` | 设置窗九个分区：`general`（`?proxy=custom` 拍自定义代理）`appearance` `notify`（`?notify=off` 拍总开关关闭）`sessions` `account`（带多账号列表）`extensions`（Agent 页的扩展段）`github` `remote`（开着，带二维码）`shortcuts` `about` | 620 / 1280 / 2560 |
 | `settings-search` / `-noresults` | 设置搜索：有命中（各分区平铺）/ 无结果 | 620 / 1280 / 2560 |
 | `onboarding` | 引导页第一步（拉宽拉高的压力测试） | 620 / 1280 / 2560 |
 | `newsession-page` / `-page-wt` | 对话窗里的新建会话页（只搭主列容器，不含侧栏与标题栏）；`-wt` 勾上「在新 worktree 里开」 | 620 / 1280 / 2560 |

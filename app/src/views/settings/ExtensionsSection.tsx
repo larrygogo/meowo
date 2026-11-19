@@ -1,8 +1,11 @@
 /// 设置 › 扩展（对照 Kimi 的「插件」页）：各 agent 在用户级装了哪些技能、MCP 服务、
 /// 自定义命令、子代理、插件、钩子。只读——增删改别家工具的配置有写坏的风险，这一版只看。
 ///
-/// 和账号页一样一次只看一个 agent（顶部下拉切换、记住上次选的）：每家几十个技能摞在一起
-/// 要滚很久。位置与扫描规则在后端 meowo_agent::extensions。
+/// 和账号页一样一次只看一个 agent：每家几十个技能摞在一起要滚很久。位置与扫描规则在后端
+/// meowo_agent::extensions。
+///
+/// 设置页精简（2026-11-19）后它不再独占分区，而是 Agent 页的一段：传 agent 时用 Agent 页顶部那个
+/// 共用的选择器，自己不再画下拉（此前账号页和扩展页各有一个同样的 Agent 下拉）。不传时保留独立用法。
 import { useCallback, useEffect, useState } from "react";
 import { listAgentExtensions, revealPathInFileManager } from "../../api";
 import type { AgentExtensionsDto } from "../../generated/contracts/AgentExtensionsDto";
@@ -35,7 +38,7 @@ function ownCount(groups: ExtensionGroupDto[], kind: ExtensionKind): number {
   return groups.filter((g) => g.kind === kind).reduce((sum, g) => sum + g.items.filter((i) => !i.managed).length, 0);
 }
 
-export function ExtensionsSection() {
+export function ExtensionsSection({ agent }: { agent?: string } = {}) {
   const t = useT();
   const [list, setList] = useState<AgentExtensionsDto[] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -73,7 +76,9 @@ export function ExtensionsSection() {
   if (!list) return null;
   if (list.length === 0) return <div className="sec-hint">{t.extensions.noAgents}</div>;
 
-  const cur = list.find((a) => a.provider === picked) ?? list[0];
+  const cur = agent !== undefined ? list.find((a) => a.provider === agent) : (list.find((a) => a.provider === picked) ?? list[0]);
+  // 共用选择器选中了一个没装的 agent：后端只扫已装的，这里如实说，不拿别家的清单顶替。
+  if (!cur) return <div className="sec-hint">{t.extensions.notInstalled}</div>;
   const groups = cur.groups
     .filter((g) => g.items.length > 0)
     .sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind));
@@ -87,7 +92,7 @@ export function ExtensionsSection() {
   return (
     <>
       <SettingsError error={error} onDismiss={() => setError(null)} />
-      <div className="account-agent-switch">
+      {agent === undefined && <div className="account-agent-switch">
         {/* 一次只渲染当前 agent：别家的名字挂一行读屏隐藏文本，设置搜索搜「codex」也能命中本页
             （同账号页的 7S-4 做法；搜索的行级过滤只认 .row）。 */}
         <div className="row chat-sronly" aria-hidden="true">{list.map((a) => a.displayName).join(" ")}</div>
@@ -103,7 +108,7 @@ export function ExtensionsSection() {
           })}
           onChange={pick}
         />
-      </div>
+      </div>}
       <div className="ext-summary">
         <span>{summary || t.extensions.empty}</span>
         <button type="button" className="ext-link" onClick={() => reveal(dataParent, dataName)}>{t.extensions.openDataDir}</button>

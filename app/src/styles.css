@@ -2376,6 +2376,25 @@ button.stab {
 .row-col:has(+ .row-sub) { padding-bottom: var(--sp-6); }
 .row-sub:not(:has(+ .row-sub)) { padding-bottom: var(--sp-12); }
 .row-head { display: flex; align-items: center; gap: var(--sp-13); }
+/* 通用 › 网络代理：地址行、系统代理提示、SOCKS 告警、「各 Agent 单独设置」都是「网络代理」名下的 .row-sub
+   （设置搜索按组显隐），但视觉上照旧：地址框贴卡片左内边距、紧跟表头（上内边距 0），
+   「各 Agent 单独设置」仍是一行普通设置（通栏分隔线、常规内边距）；只有各 Agent 的行缩进一级。 */
+.row.row-sub.proxy-flat { padding-left: var(--sp-16); }
+.row.row-sub.proxy-flat.proxy-url-row { padding-top: 0; padding-bottom: var(--sp-12); }
+.row.row-sub.proxy-sub-head { padding: var(--sp-12) var(--sp-16); border-top: var(--hairline) solid var(--cc-border); }
+.proxy-sub-head .row-label { font-weight: var(--fw-medium); }
+/* 设置 › 通知的事件矩阵（NotifySection）：每个事件一行、两列开关（系统通知 / 灵动岛弹出），表头行写列名。
+   列宽固定、列名与开关都靠列的右缘：最右一列开关的右缘与上面卡片里开关的右缘是同一条线（620 宽实测 572），
+   列名右缘与开关右缘对齐。不居中：「灵动岛弹出」比开关宽 22px，居中又要对齐右缘时列名会顶到卡片边上
+   （760 宽实拍离卡片右边只剩 4px）。事件行不缩进（它们是表格的行，不是表头的子项），行间不画线。 */
+.notify-cols { flex: none; display: flex; gap: var(--sp-12); }
+.notify-col, .notify-cell { width: 64px; display: flex; justify-content: flex-end; }
+.notify-col { font-size: var(--text-xs); font-weight: var(--fw-semibold); line-height: 1.4; color: var(--cc-text-dim); text-align: right; white-space: nowrap; }
+/* 桌面通知关着：系统通知这一列整列置灰（开关自身 disabled 的 0.4 透明度），列名跟着变淡。 */
+.notify-col.is-off { color: var(--cc-text-faint); }
+.notify-matrix .row.notify-matrix-head { padding-top: var(--sp-12); padding-bottom: var(--sp-4); }
+.notify-matrix .row.row-sub { padding: var(--sp-6) var(--sp-16); }
+.notify-matrix .row-sub:not(:has(+ .row-sub)) { padding-bottom: var(--sp-12); }
 .row-val { flex: none; font-size: var(--text-sm); font-weight: var(--fw-semibold); color: var(--cc-text); font-variant-numeric: tabular-nums; }
 /* 不写 outline:none：键盘模态下的全局 :focus-visible 兜底环就是它的焦点指示
    （曾经无条件裸关 outline 且无替代——Tab 到滑杆上零反馈，方向键调值不知道焦点在哪）。 */
@@ -3250,6 +3269,11 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
    紧凑胶囊则按钮与菜单宽度自然接近。给个 min-width 让短名字也不至于缩成一小坨、切换时少抖。 */
 .account-agent-switch {
   display: flex;
+  /* Agent 页：左边 Agent 选择器，右边「账号与用量 / 扩展」分段（设置页精简 2026-11-19，两段共用一个选择器）。 */
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--sp-8);
   margin-bottom: var(--sp-12);
 }
 .account-agent-switch .dd-btn {

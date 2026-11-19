@@ -18,10 +18,10 @@ import type { Dict } from "../i18n/zh";
 import { SETTINGS_DEFAULTS, useSettingsState } from "./settings/state";
 import { Switch, Segmented, SwatchPicker, FontSizeSlider, SettingsError, SavedNote, useSavedFlash } from "./settings/widgets";
 import { Dropdown } from "./menu";
-import { AccountSection } from "./settings/AccountSection";
-import { ExtensionsSection } from "./settings/ExtensionsSection";
+import { AccountSection, type AgentView } from "./settings/AccountSection";
+import { NotifySection } from "./settings/NotifySection";
 import { loadStoredOpts, saveStoredOpts } from "./useNewSessionForm";
-import { NetworkSection } from "./settings/NetworkSection";
+import { ProxyRows } from "./settings/NetworkSection";
 import { RemoteAccessCard } from "./settings/RemoteAccessCard";
 import { CodeHostingSection } from "./settings/ForgeAccountsSection";
 import { applySettingsFilter, firstHitControl } from "./settings/searchFilter";
@@ -29,8 +29,8 @@ import { useEscClose } from "../hooks/useEscClose";
 import { displayKeys, KeyCombos, shortcutGroups } from "./chat/WindowModals";
 import { SETTINGS_SECTION_KEY } from "../settingsNav";
 import { Icon } from "../icons/Icon";
-import { icClose, icContrast, icGlobe, icSearch, icSettings } from "../icons/glyphs";
-import { icBot, icCards, icGitPr, icInfo, icKeyboard, icPuzzle, icSmartphone } from "../icons/glyphs.settings";
+import { icClose, icContrast, icSearch, icSettings } from "../icons/glyphs";
+import { icBell, icBot, icCards, icGitPr, icInfo, icKeyboard, icSmartphone } from "../icons/glyphs.settings";
 import { busyProps } from "../busyButton";
 
 const REPO = "github.com/larrygogo/meowo";
@@ -39,10 +39,12 @@ const SITE = "meowo.io";
 const SITE_URL = "https://meowo.io";
 const openExt = (url: string) => invoke("open_url", { url }).catch((e) => console.error("[about] 打开链接失败：", url, e));
 
-// 「手机远程」单独成区（用户要求从「网络」里拆出来，对照 Kimi 设置的「远程控制」独立一栏）：
-// 它是一项功能（扫码、配对、推送），不是网络参数；「网络」只留代理。
-type Section = "general" | "sessions" | "appearance" | "shortcuts" | "remote" | "network" | "github" | "account" | "extensions" | "about";
-const SECTION_ORDER: Section[] = ["general", "sessions", "appearance", "shortcuts", "remote", "network", "github", "account", "extensions", "about"];
+// 分区按「用户要找的事」分（设置页精简 2026-11-19，对照 macOS 系统设置 / Linear / Raycast 的分组）：
+// 「网络」整页只有代理一项，并进通用；「扩展」和账号各有一个同样的 Agent 下拉，并进 Agent 页（id 沿用
+// account，外部入口 openSettingsAt("account") 不用改）；四个提醒事件、提示音、任务栏、手机推送原来散在
+// 通用 / 外观 / 手机远程三处，集中成「通知」。「手机远程」仍单独成区（对照 Kimi「远程控制」）。
+export type Section = "general" | "appearance" | "notify" | "sessions" | "account" | "github" | "remote" | "shortcuts" | "about";
+const SECTION_ORDER: Section[] = ["general", "appearance", "notify", "sessions", "account", "github", "remote", "shortcuts", "about"];
 
 
 // 打开未连接会话用的终端：按平台给不同选项。WKWebView 的 UA 含 "Mac"/"Win"，与 main.tsx 同步判定一致。
@@ -100,17 +102,17 @@ function IconKeyboard() {
   );
 }
 
-// 地球：网络/代理。
+// 手机：手机远程。
 function IconPhone() {
   return (
     <Icon glyph={icSmartphone} size={16} />
   );
 }
 
-// 拼图块：扩展（技能 / MCP / 插件）。
-function IconPuzzle() {
+// 铃铛：通知。
+function IconBell() {
   return (
-    <Icon glyph={icPuzzle} size={16} />
+    <Icon glyph={icBell} size={16} />
   );
 }
 
@@ -118,12 +120,6 @@ function IconPuzzle() {
 function IconGithub() {
   return (
     <Icon glyph={icGitPr} size={16} />
-  );
-}
-
-function IconGlobe() {
-  return (
-    <Icon glyph={icGlobe} size={16} />
   );
 }
 
@@ -182,6 +178,11 @@ export function LeadProviderRows({ onInstalledChange }: { onInstalledChange?: (i
     return () => { lifecycle.active = false; };
   }, [reload]);
   useAgentListRefresh(reload);
+  // 切去终端装好 CLI 再切回来是常见用法：窗口聚焦就重查，不用找「刷新」。
+  useEffect(() => {
+    window.addEventListener("focus", reload);
+    return () => window.removeEventListener("focus", reload);
+  }, [reload]);
   useEffect(() => { onInstalledChange?.((rows ?? []).some((row) => row.installed)); }, [rows, onInstalledChange]);
   const change = async (row: LeadProviderInstallationDto, enabled: boolean) => {
     if (busyRef.current) return;
@@ -200,16 +201,20 @@ export function LeadProviderRows({ onInstalledChange }: { onInstalledChange?: (i
     }
   };
   return <>
-    <div className="row"><div className="row-text"><div className="row-desc">{t.settings.leadProvidersDesc}</div></div>
+    {/* 表头行：「其他 CLI」+ 一句说明 + 刷新；各家是它名下的 .row-sub（设置搜索按组显隐）。 */}
+    <div className="row">
+      <div className="row-text">
+        <div className="row-label">{t.settings.leadProviders}</div>
+        <div className="row-desc">{t.settings.leadProvidersDesc}</div>
+      </div>
       <button type="button" className="sbtn" {...busyProps(busy !== null, reload)}>{t.settings.leadRefresh}</button>
     </div>
-    <SettingsError error={error} onDismiss={() => setError(null)} preformatted />
-    {rows === null && !error && <div className="row"><div className="row-desc">{t.settings.leadLoading}</div></div>}
+    {rows === null && !error && <div className="row row-sub"><div className="row-text"><div className="row-desc">{t.settings.leadLoading}</div></div></div>}
     {(rows ?? []).map((row) => {
       const key = JSON.stringify([row.provider, row.profileId]);
       const title = row.profileId ? `${row.name} · ${row.profileName ?? row.profileId}` : row.name;
       const status = row.managed ? row.installed ? row.automaticContinue ? t.settings.leadInstalled : t.settings.leadInstalledNoContinue : t.settings.leadNeedsConfiguration : t.settings.leadNotInstalled;
-      return <div className="row" key={key}>
+      return <div className="row row-sub" key={key}>
         <div className="row-text"><div className="row-label">{title}</div><div className="row-desc">{status}</div>
           {row.automaticContinue && (row.notes ?? []).map((note) => <div className="row-desc" key={note}>{formatBackendError(note, t.locale)}</div>)}
           {row.reason && <div className="row-desc">{formatBackendError(row.reason, t.locale)}</div>}
@@ -218,16 +223,21 @@ export function LeadProviderRows({ onInstalledChange }: { onInstalledChange?: (i
         {!row.installed && <button type="button" className="sbtn" disabled={!row.configured || !row.supported} {...busyProps(busy !== null, () => void change(row, true))} aria-label={`${t.settings.leadInstall} ${title}`}>{busy === key ? t.settings.leadWorking : row.managed ? t.settings.leadRepair : t.settings.leadInstall}</button>}
       </div>;
     })}
+    {/* 放在各家行之后：夹在表头和子行之间会断开设置搜索的分组。 */}
+    <SettingsError error={error} onDismiss={() => setError(null)} preformatted />
   </>;
 }
 
-// 通用：应用级设置（语言、自启、更新、通知）。会话与卡片的行为在 SessionsSection。
-export function GeneralSection() {
+// 通用：应用级设置（语言、自启、更新、网络代理、运行、Lead）。通知搬去了「通知」分区，
+// 会话与卡片的行为在 SessionsSection。
+export function GeneralSection({ searching = false }: { searching?: boolean } = {}) {
   const t = useT();
   const [autostart, setAutostart] = useState(false);
   // autostart 是独立 invoke（不走 patch）：失败曾静默回滚，开关弹回去零解释。
   const [autostartErr, setAutostartErr] = useState(false);
   const [settings, patch, patchError, clearPatchError] = useSettingsState();
+  // 代理保存失败（ProxyRows 经 onError 交上来）：和同页其他失败放同一处。
+  const [proxyError, setProxyError] = useState<string | null>(null);
   // dev 下开机自启会注册调试二进制(开机连不上 dev server → 白屏)，故禁用此开关，仅安装版可用。
   const autostartDisabled = import.meta.env.DEV;
   useEffect(() => {
@@ -243,25 +253,13 @@ export function GeneralSection() {
       setAutostartErr(true);
     });
   };
-  const notifyOn = settings?.notifications_enabled ?? true;
-  // macOS 系统层通知授权：被用户在系统设置拒绝后通知静默不弹，而本开关照常可开——
-  // 挂载时查一次（IS_MAC 门控，非 macOS 无此命令也不发 invoke），denied 时在开关旁给
-  // 「打开系统设置」直达（T-6 permission_denied 同款范式）。
-  const [sysNotifyDenied, setSysNotifyDenied] = useState(false);
-  useEffect(() => {
-    if (!IS_MAC) return;
-    invoke<string>("notification_authorization_status")
-      .then((s) => setSysNotifyDenied(s === "denied"))
-      .catch(() => {});
-  }, []);
-  const flashOn = settings?.attention_flash_enabled ?? true;
   const autoUpdateOn = settings?.auto_update_enabled ?? true;
   const chatOn = settings?.chat_enabled ?? true;
   const keepAwakeOn = settings?.keep_awake_while_running ?? true;
   const browserAgentOn = settings?.browser_agent ?? true;
   const leadAwakeOn = settings?.keep_awake_for_lead_gate ?? true;
-  const toggleLeadAwake = () => patch({ keep_awake_for_lead_gate: !leadAwakeOn });
   const [leadOn, setLeadOn] = useState<boolean | null>(null);
+  // 其他 CLI 里有一家装着 Lead 也算「有关卡」：和改前一样，两者都没装时不给「有关卡待拍板时」这一行。
   const [providerLeadOn, setProviderLeadOn] = useState(false);
   const [leadError, setLeadError] = useState<string | null>(null);
   useEffect(() => {
@@ -275,18 +273,10 @@ export function GeneralSection() {
       .then(() => setLeadOn(next))
       .catch((e) => setLeadError(formatBackendError(e, t.locale)));
   };
-  const toggleKeepAwake = () => patch({ keep_awake_while_running: !keepAwakeOn });
-  const notifyKinds = settings?.notify_kinds ?? SETTINGS_DEFAULTS.notify_kinds;
-  const soundOn = settings?.notification_sound ?? true;
-  const toggleSound = () => patch({ notification_sound: !soundOn });
-  const toggleNotify = () => patch({ notifications_enabled: !notifyOn });
-  const toggleFlash = () => patch({ attention_flash_enabled: !flashOn });
-  const toggleAutoUpdate = () => patch({ auto_update_enabled: !autoUpdateOn });
-  const toggleChat = () => patch({ chat_enabled: !chatOn });
   return (
     <>
-      {/* 分组（对照 Kimi 设置的「通用 / 通知」分节）：此前八个不相干的开关挤在一张卡里，
-          找一项得从头扫到尾。贴纸专属的「点击穿透」挪去外观页的「贴纸」组。 */}
+      {/* 第一张卡是「装好就很少再动」的应用级设置；网络代理原先独占「网络」分区，并进来占一行
+          （设置页精简 2026-11-19，对照 macOS 系统设置把网络放进通用这类低频项的做法）。 */}
       <div className="row-card">
         <div className="row">
           <div className="row-text">
@@ -311,7 +301,7 @@ export function GeneralSection() {
             <div className="row-label">{t.settings.autoUpdate}</div>
             <div className="row-desc">{t.settings.autoUpdateDesc}</div>
           </div>
-          <Switch checked={autoUpdateOn} onChange={toggleAutoUpdate} label={t.settings.autoUpdate} />
+          <Switch checked={autoUpdateOn} onChange={() => patch({ auto_update_enabled: !autoUpdateOn })} label={t.settings.autoUpdate} />
         </div>
       </div>
 
@@ -324,16 +314,8 @@ export function GeneralSection() {
             <div className="row-label">{t.settings.chatFeature}</div>
             <div className="row-desc">{t.settings.chatFeatureDesc}</div>
           </div>
-          <Switch checked={chatOn} onChange={toggleChat} label={t.settings.chatFeature} />
+          <Switch checked={chatOn} onChange={() => patch({ chat_enabled: !chatOn })} label={t.settings.chatFeature} />
         </div>
-        {/* 运行时防止休眠（对照 Kimi「防止休眠」，见 power.rs）。Linux 后端未实装，不给无效开关。 */}
-        {(IS_WIN || IS_MAC) && <div className="row">
-          <div className="row-text">
-            <div className="row-label">{t.settings.keepAwake}</div>
-            <div className="row-desc">{t.settings.keepAwakeDesc}</div>
-          </div>
-          <Switch checked={keepAwakeOn} onChange={toggleKeepAwake} label={t.settings.keepAwake} />
-        </div>}
         <div className="row">
           <div className="row-text">
             <div className="row-label">{t.settings.browserAgent}</div>
@@ -341,9 +323,30 @@ export function GeneralSection() {
           </div>
           <Switch checked={browserAgentOn} onChange={() => patch({ browser_agent: !browserAgentOn })} label={t.settings.browserAgent} />
         </div>
+        {/* 「防止电脑休眠」一组（对照 Kimi「防止休眠」，见 power.rs）：此前「运行时防止休眠」在运行组、
+            「关卡待拍板时防止休眠」藏在 Lead 组且只在装了 Lead 后才出现，同一件事分两处。合成表头 + 两个子开关，
+            字段不变。Linux 后端未实装，不给无效开关。 */}
+        {(IS_WIN || IS_MAC) && <>
+          <div className="row row-col">
+            <div className="row-text">
+              <div className="row-label">{t.settings.keepAwakeGroup}</div>
+              <div className="row-desc">{t.settings.keepAwakeGroupDesc}</div>
+            </div>
+          </div>
+          <div className="row row-sub">
+            <div className="row-text"><div className="row-label">{t.settings.keepAwakeRunning}</div></div>
+            <Switch checked={keepAwakeOn} onChange={() => patch({ keep_awake_while_running: !keepAwakeOn })} label={`${t.settings.keepAwakeGroup} · ${t.settings.keepAwakeRunning}`} />
+          </div>
+          {/* 显示条件与改前一致（main：装了 Lead 才出现）：没装时这一组只剩一个子开关。 */}
+          {(leadOn || providerLeadOn) && <div className="row row-sub">
+            <div className="row-text"><div className="row-label">{t.settings.keepAwakeLeadGate}</div></div>
+            <Switch checked={leadAwakeOn} onChange={() => patch({ keep_awake_for_lead_gate: !leadAwakeOn })} label={`${t.settings.keepAwakeGroup} · ${t.settings.keepAwakeLeadGate}`} />
+          </div>}
+        </>}
       </div>
 
-      {/* Lead 工作流（2026-11-09）：开关状态以「是否真的装着」为准。 */}
+      {/* Lead 工作流（2026-11-09）：开关状态以「是否真的装着」为准。Claude Code 是开关，其他 CLI 一家一行
+          装 / 卸，表头行带「刷新」。此前那一行只有一段说明和一颗孤零零的「刷新」，看不出是在管什么。 */}
       <div className="sec-caption">{t.settings.leadGroup}</div>
       <div className="row-card">
         <div className="row">
@@ -355,65 +358,13 @@ export function GeneralSection() {
           <Switch checked={!!leadOn} onChange={toggleLead} label={t.settings.leadWorkflow} />
         </div>
         <LeadProviderRows onInstalledChange={setProviderLeadOn} />
-        {(IS_WIN || IS_MAC) && (leadOn || providerLeadOn) && <div className="row">
-          <div className="row-text">
-            <div className="row-label">{t.settings.leadKeepAwake}</div>
-            <div className="row-desc">{t.settings.leadKeepAwakeDesc}</div>
-          </div>
-          <Switch checked={leadAwakeOn} onChange={toggleLeadAwake} label={t.settings.leadKeepAwake} />
-        </div>}
       </div>
 
-      <div className="sec-caption">{t.settings.notifyGroup}</div>
+      {/* 网络代理放在通用页最后（审查 2026-11-19）：首屏留给语言、自启、更新和「运行」组；
+          代理是装好后很少再动的一项，自定义地址和各 Agent 的单独设置都挂在它名下。 */}
+      <div className="sec-caption">{t.settings.networkGroup}</div>
       <div className="row-card">
-        <div className="row">
-          <div className="row-text">
-            <div className="row-label">{t.settings.notify}</div>
-            <div className="row-desc">{t.settings.notifyDesc}</div>
-          </div>
-          <Switch checked={notifyOn} onChange={toggleNotify} label={t.settings.notify} />
-        </div>
-        {/* 按种类开关（二期 #6）：与灵动岛的提醒开关同一组种类、同一份文案，各存各的。
-            总开关关着时不给，免得勾着却什么也不弹。 */}
-        {notifyOn && <>
-          <div className="row row-col">
-            <div className="row-text">
-              <div className="row-label">{t.settings.notifyKinds}</div>
-            </div>
-          </div>
-          <AlertKindSwitches
-            caption={t.settings.notifyKinds}
-            value={notifyKinds}
-            onChange={(next) => patch({ notify_kinds: next })}
-          />
-        </>}
-        {/* 提示音只在通知开着时有意义：通知关了就不给这一行，免得开着它却什么也听不到。 */}
-        {notifyOn && <div className="row">
-          <div className="row-text">
-            <div className="row-label">{t.settings.notifySound}</div>
-            <div className="row-desc">{t.settings.notifySoundDesc}</div>
-          </div>
-          <Switch checked={soundOn} onChange={toggleSound} label={t.settings.notifySound} />
-        </div>}
-        {/* 系统层授权被拒时，应用内开关再开也是静默——必须在此处可见并给出直达入口。 */}
-        {IS_MAC && sysNotifyDenied && (
-          <div className="row">
-            <div className="row-text">
-              <div className="row-desc">{t.settings.notifySystemDenied}</div>
-            </div>
-            <button type="button" className="sbtn" onClick={() => { invoke("open_notification_settings").catch(() => {}); }}>
-              {t.settings.openSystemSettings}
-            </button>
-          </div>
-        )}
-        {/* 任务栏闪烁仅 Windows 有效(macOS 由菜单栏徽章承担同一职责),别的平台不显示无效开关。 */}
-        {IS_WIN && <div className="row">
-          <div className="row-text">
-            <div className="row-label">{t.settings.attentionFlash}</div>
-            <div className="row-desc">{t.settings.attentionFlashDesc}</div>
-          </div>
-          <Switch checked={flashOn} onChange={toggleFlash} label={t.settings.attentionFlash} />
-        </div>}
+        <ProxyRows expandAll={searching} onError={setProxyError} />
       </div>
       {/* T-6（2026-11-12 走查）：此前是单独一套红字、没有 ×，与下一行 SettingsError 两种样式（7S-7 漏的一处）。
           失败时开关已弹回原值，「重试」就是再拨一次。 */}
@@ -424,6 +375,7 @@ export function GeneralSection() {
         onDismiss={() => setAutostartErr(false)}
       />
       <SettingsError preformatted error={patchError} onDismiss={clearPatchError} />
+      <SettingsError preformatted error={proxyError} onDismiss={() => setProxyError(null)} />
     </>
   );
 }
@@ -545,7 +497,20 @@ export function SessionsSection() {
             onChange={(v: SessionOpenIn) => patch({ session_open_in: v })}
           />
         </div>
-        {/* 包 5：「在新 worktree 里开」建在哪、分支名用什么开头。 */}
+        {showTermRow && (
+          <div className="row">
+            <div className="row-text">
+              <div className="row-label">{t.settings.resumeTerm}</div>
+              <div className="row-desc">{t.settings.resumeTermDesc}</div>
+            </div>
+            <Dropdown value={resumeTerm} options={termOptions} onChange={changeResumeTerm} />
+          </div>
+        )}
+      </div>
+
+      {/* 包 5：「在新 worktree 里开」建在哪、分支名用什么开头——两项管同一件事，成一组（设置页精简 2026-11-19）。 */}
+      <div className="sec-caption">{t.settings.worktreeGroup}</div>
+      <div className="row-card">
         <div className="row">
           <div className="row-text">
             <div className="row-label">{t.wtnew.settingsLocation}</div>
@@ -580,21 +545,13 @@ export function SessionsSection() {
           />
           <SavedNote shown={prefixSaved.shown} fx={prefixSaved.fx} />
         </div>
-        {showTermRow && (
-          <div className="row">
-            <div className="row-text">
-              <div className="row-label">{t.settings.resumeTerm}</div>
-              <div className="row-desc">{t.settings.resumeTermDesc}</div>
-            </div>
-            <Dropdown value={resumeTerm} options={termOptions} onChange={changeResumeTerm} />
-          </div>
-        )}
       </div>
 
-      {/* 原「卡片」组：「对话预览」「打开方式」只有已下线的贴纸在读（UI 调研 shell #2，拨了没反应），
-          关卡 A 定案删掉，字段留在 settings.json 照常读写；侧栏 ⋯ 仍用卡片菜单，组名改叫「会话列表」。
-          浏览器那项和卡片无关，挪去通用分区「运行」组。 */}
-      <div className="sec-caption">{t.settings.cardsGroup}</div>
+      {/* 「列表」组：原「会话列表」（只剩会话菜单一行）和「已完成会话」（只有去会话管理一行）两个单行分组合并。
+          「对话预览」「打开方式」只有已下线的贴纸在读（UI 调研 shell #2），关卡 A 定案删掉，字段留在 settings.json 照常读写。
+          已完成会话：开着对话功能时只给一个入口，去会话管理页（预选「已完成」）——那里能按工作区、时间筛，
+          批量恢复；轻量模式没有对话窗可去，留着原来的列表（自带分组标题），否则没处把会话恢复成进行中。 */}
+      <div className="sec-caption">{t.settings.listGroup}</div>
       <div className="row-card">
         <div className="row">
           <div className="row-text">
@@ -610,29 +567,20 @@ export function SessionsSection() {
             onChange={(v: CardMenuMode) => patch({ card_menu_mode: v })}
           />
         </div>
-      </div>
-      <SettingsError preformatted error={patchError} onDismiss={clearPatchError} />
-      {/* 已完成会话：开着对话功能时只给一个入口，去会话管理页（预选「已完成」）——那里能按工作区、
-          时间筛，批量恢复；设置里再摆一份简陋的列表是两处管同一件事（用户确认）。轻量模式没有
-          对话窗可去，留着原来的列表，否则没处把会话恢复成进行中。 */}
-      {chatOn ? (
-        <>
-          <div className="sec-caption">{t.settings.archivedSessions}</div>
-          <div className="row-card">
-            <div className="row">
-              <div className="row-text">
-                <div className="row-label">{t.settings.archivedInAdmin}</div>
-                <div className="row-desc">{t.settings.archivedInAdminDesc}</div>
-              </div>
-              <button type="button" className="sbtn" onClick={() => void invoke("open_session_admin").catch(() => {})}>
-                {t.settings.archivedOpenAdmin}
-              </button>
+        {chatOn && (
+          <div className="row">
+            <div className="row-text">
+              <div className="row-label">{t.settings.archivedSessions}</div>
+              <div className="row-desc">{t.settings.archivedInAdminDesc}</div>
             </div>
+            <button type="button" className="sbtn" onClick={() => void invoke("open_session_admin").catch(() => {})}>
+              {t.settings.archivedOpenAdmin}
+            </button>
           </div>
-        </>
-      ) : (
-        <ArchivedSessions />
-      )}
+        )}
+      </div>
+      {!chatOn && <ArchivedSessions />}
+      <SettingsError preformatted error={patchError} onDismiss={clearPatchError} />
     </>
   );
 }
@@ -741,34 +689,6 @@ const themeOptions = (t: Dict): { value: ThemeMode; label: string }[] => [
 ];
 const ISLAND_COMPACT_STYLES: IslandCompactStyle[] = ["counts", "focus", "minimal"];
 const ISLAND_ALERT_SECONDS = [4, 6, 10];
-const ISLAND_ALERT_KINDS = ["waiting", "approval", "question", "error"] as const;
-
-/// 一组「哪些事提醒你」的开关：灵动岛的提醒与系统通知共用（二期 #6），种类和文案只有一份。
-/// caption 给了就作为开关的无障碍名前缀，两组同屏时读屏分得清是哪一组。
-function AlertKindSwitches({ value, onChange, caption }: { value: readonly string[]; onChange: (next: string[]) => void; caption?: string }) {
-  const t = useT();
-  return (
-    <>
-      {ISLAND_ALERT_KINDS.map((kind) => {
-        const label = t.settings.islandAlertKinds[kind];
-        return (
-          // row-sub：表头行（「通知这些事」/「自动弹出提醒」）名下的子开关。样式上缩进、不加粗，
-          // 设置搜索按它把表头和子行当一组（见 settings/searchFilter.ts）。
-          <div className="row row-sub" key={kind}>
-            <div className="row-text">
-              <div className="row-label">{label}</div>
-            </div>
-            <Switch
-              checked={value.includes(kind)}
-              onChange={() => onChange(value.includes(kind) ? value.filter((k) => k !== kind) : [...value, kind])}
-              label={caption ? `${caption} · ${label}` : label}
-            />
-          </div>
-        );
-      })}
-    </>
-  );
-}
 
 const stickerStyleOptions = (t: Dict): { value: StickerStyle; label: string }[] => [
   { value: "elevated", label: t.settings.styleElevated },
@@ -847,7 +767,6 @@ function AppearanceSection() {
   const islandCompact = settings?.island_compact ?? SETTINGS_DEFAULTS.island_compact;
   const islandStrip = settings?.island_strip ?? SETTINGS_DEFAULTS.island_strip;
   const islandAutoStrip = settings?.island_auto_strip ?? SETTINGS_DEFAULTS.island_auto_strip;
-  const islandAlerts = settings?.island_alerts ?? SETTINGS_DEFAULTS.island_alerts;
   const islandAlertSeconds = settings?.island_alert_seconds ?? SETTINGS_DEFAULTS.island_alert_seconds;
   const stickerColor = settings?.sticker_color ?? SETTINGS_DEFAULTS.sticker_color;
   const termFont = settings?.terminal_font_size ?? SETTINGS_DEFAULTS.terminal_font_size;
@@ -946,13 +865,8 @@ function AppearanceSection() {
               label={t.settings.islandAlertSeconds}
             />
           </div>
-          <div className="row row-col">
-            <div className="row-text">
-              <div className="row-label">{t.settings.islandAlerts}</div>
-              <div className="row-desc">{t.settings.islandAlertsDesc}</div>
-            </div>
-          </div>
-          <AlertKindSwitches value={islandAlerts} onChange={(next) => patch({ island_alerts: next })} />
+          {/* 「自动弹出提醒」四个事件搬去「通知」页的矩阵（灵动岛弹出那一列，字段仍是 island_alerts）；
+              「提醒停留」管的是岛自己的样子，留在这里。 */}
         </div>
       </>}
 
@@ -1007,8 +921,8 @@ function AppearanceSection() {
           />
         </div>
       </div>
+      {/* 页脚「更改即时生效」删了：拨了就变，界面自己已经说明了（设置页精简 2026-11-19）。 */}
       <SettingsError preformatted error={patchError} onDismiss={clearPatchError} />
-      <div className="sec-hint">{t.settings.appearanceHint}</div>
     </>
   );
 }
@@ -1148,10 +1062,22 @@ export function AboutSection({
   );
 }
 
-function asSection(s: string | null): Section | null {
-  return s === "general" || s === "sessions" || s === "appearance" || s === "shortcuts" || s === "remote" || s === "network" || s === "github" || s === "account" || s === "extensions" || s === "about"
-    ? s
-    : null;
+const NAV_ICONS: Record<Section, () => React.JSX.Element> = {
+  general: IconGear, appearance: IconAppearance, notify: IconBell, sessions: IconCards, account: IconAgent,
+  github: IconGithub, remote: IconPhone, shortcuts: IconKeyboard, about: IconInfo,
+};
+
+/** 记住的 / 外部入口给的分区 id → 新结构里的位置。旧 id 不能落空白页：「网络」并进了通用，
+ *  「扩展」成了 Agent 页的一段（localStorage 里可能还存着改版前停留的分区）。 */
+export function resolveSection(raw: string | null): { sec: Section; agentView?: AgentView } | null {
+  switch (raw) {
+    case "general": case "appearance": case "notify": case "sessions": case "github": case "remote": case "shortcuts": case "about":
+      return { sec: raw };
+    case "account": return { sec: "account", agentView: "account" };
+    case "extensions": return { sec: "account", agentView: "extensions" };
+    case "network": return { sec: "general" };
+    default: return null;
+  }
 }
 
 export function About() {
@@ -1159,9 +1085,16 @@ export function About() {
   // 窗口以 visible:false 创建（window.rs），首帧渲染后再显示，消除打开瞬间的白框闪烁。
   useShowWhenReady();
   // 分区记忆：每次开窗回 general 让最常改的分区（外观/Agent）永远多点一次。
-  const [sec, setSec] = useState<Section>(() => {
-    try { return asSection(localStorage.getItem(SETTINGS_SECTION_KEY)) ?? "general"; } catch { return "general"; }
+  const [initial] = useState(() => {
+    try { return resolveSection(localStorage.getItem(SETTINGS_SECTION_KEY)); } catch { return null; }
   });
+  const [sec, setSec] = useState<Section>(initial?.sec ?? "general");
+  // Agent 页当前看哪一段。记在同一个分区键里（extensions = Agent 页的扩展段），重开窗口回到原处。
+  const [agentView, setAgentView] = useState<AgentView>(initial?.agentView ?? "account");
+  const pickAgentView = (view: AgentView) => {
+    setAgentView(view);
+    try { localStorage.setItem(SETTINGS_SECTION_KEY, view === "extensions" ? "extensions" : "account"); } catch { /* 隐私模式禁写 */ }
+  };
   // S-2：访问过的分区保持挂载（hidden 隐藏代替卸载）——此前 main-body 带 key={sec} 整树
   // 重挂，每次切回账号分区都重发联网配额查询、切回会话分区重拉归档首页。未访问的分区
   // 仍不挂载：开窗就把配额/agent 名单全查一遍是白付的启动成本。
@@ -1169,17 +1102,19 @@ export function About() {
   const pickSec = (next: Section) => {
     setSec(next);
     setVisited((prev) => (prev.has(next) ? prev : new Set(prev).add(next)));
-    try { localStorage.setItem(SETTINGS_SECTION_KEY, next); } catch { /* 隐私模式禁写 */ }
+    const stored = next === "account" && agentView === "extensions" ? "extensions" : next;
+    try { localStorage.setItem(SETTINGS_SECTION_KEY, stored); } catch { /* 隐私模式禁写 */ }
   };
   // 别的窗口经 openSettingsAt 指定分区时，设置窗若已开着只会被聚焦——跟着 storage 事件切过去
   // （出错卡的「去登录」要直达账号页，落在上次停留的分区等于让人再找一遍）。
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
       if (event.key !== SETTINGS_SECTION_KEY) return;
-      const next = asSection(event.newValue);
+      const next = resolveSection(event.newValue);
       if (next) {
-        setSec(next);
-        setVisited((prev) => (prev.has(next) ? prev : new Set(prev).add(next)));
+        setSec(next.sec);
+        if (next.agentView) setAgentView(next.agentView);
+        setVisited((prev) => (prev.has(next.sec) ? prev : new Set(prev).add(next.sec)));
       }
     };
     window.addEventListener("storage", onStorage);
@@ -1213,16 +1148,15 @@ export function About() {
   useEffect(() => {
     const body = bodyRef.current;
     if (!body) return;
-    const navLabels: Record<string, string> = {
+    const navLabels: Record<Section, string> = {
       general: t.settings.nav.general,
-      sessions: t.settings.nav.sessions,
       appearance: t.settings.nav.appearance,
-      shortcuts: `${t.settings.nav.shortcuts} ${t.settings.navSearchExtra.shortcuts}`,
-      remote: t.settings.nav.remote,
-      network: t.settings.nav.network,
-      github: `${t.settings.nav.github} ${t.settings.navSearchExtra.github}`,
+      notify: `${t.settings.nav.notify} ${t.settings.navSearchExtra.notify}`,
+      sessions: t.settings.nav.sessions,
       account: `${t.settings.nav.account} ${t.settings.navSearchExtra.account}`,
-      extensions: t.settings.nav.extensions,
+      github: `${t.settings.nav.github} ${t.settings.navSearchExtra.github}`,
+      remote: t.settings.nav.remote,
+      shortcuts: `${t.settings.nav.shortcuts} ${t.settings.navSearchExtra.shortcuts}`,
       about: t.settings.nav.about,
     };
     const apply = () => {
@@ -1286,42 +1220,15 @@ export function About() {
           {/* 搜索态点分区 = 清词并跳转（搜索结果已把各分区平铺，点导航即退出搜索）。
               搜索态不高亮任何一项（navOn）：右侧是各分区平铺的结果或「没有匹配」，
               这时还亮着进搜索前的那一项，和右侧内容对不上（实拍 settingswin-noresults）。 */}
-          <button className={"nav-item" + (navOn("general") ? " on" : "")} aria-current={navOn("general") ? "page" : undefined} onClick={() => { setQuery(""); pickSec("general"); }}>
-            <IconGear />
-            <span>{t.settings.nav.general}</span>
-          </button>
-          <button className={"nav-item" + (navOn("sessions") ? " on" : "")} aria-current={navOn("sessions") ? "page" : undefined} onClick={() => { setQuery(""); pickSec("sessions"); }}>
-            <IconCards />
-            <span>{t.settings.nav.sessions}</span>
-          </button>
-          <button className={"nav-item" + (navOn("appearance") ? " on" : "")} aria-current={navOn("appearance") ? "page" : undefined} onClick={() => { setQuery(""); pickSec("appearance"); }}>
-            <IconAppearance />
-            <span>{t.settings.nav.appearance}</span>
-          </button>
-          <button className={"nav-item" + (navOn("shortcuts") ? " on" : "")} aria-current={navOn("shortcuts") ? "page" : undefined} onClick={() => { setQuery(""); pickSec("shortcuts"); }}>
-            <IconKeyboard />
-            <span>{t.settings.nav.shortcuts}</span>
-          </button>
-          <button className={"nav-item" + (navOn("remote") ? " on" : "")} aria-current={navOn("remote") ? "page" : undefined} onClick={() => { setQuery(""); pickSec("remote"); }}>
-            <IconPhone />
-            <span>{t.settings.nav.remote}</span>
-          </button>
-          <button className={"nav-item" + (navOn("network") ? " on" : "")} aria-current={navOn("network") ? "page" : undefined} onClick={() => { setQuery(""); pickSec("network"); }}>
-            <IconGlobe />
-            <span>{t.settings.nav.network}</span>
-          </button>
-          <button className={"nav-item" + (navOn("github") ? " on" : "")} aria-current={navOn("github") ? "page" : undefined} onClick={() => { setQuery(""); pickSec("github"); }}>
-            <IconGithub />
-            <span>{t.settings.nav.github}</span>
-          </button>
-          <button className={"nav-item" + (navOn("account") ? " on" : "")} aria-current={navOn("account") ? "page" : undefined} onClick={() => { setQuery(""); pickSec("account"); }}>
-            <IconAgent />
-            <span>{t.settings.nav.account}</span>
-          </button>
-          <button className={"nav-item" + (navOn("extensions") ? " on" : "")} aria-current={navOn("extensions") ? "page" : undefined} onClick={() => { setQuery(""); pickSec("extensions"); }}>
-            <IconPuzzle />
-            <span>{t.settings.nav.extensions}</span>
-          </button>
+          {SECTION_ORDER.filter((item) => item !== "about").map((item) => {
+            const NavIcon = NAV_ICONS[item];
+            return (
+              <button key={item} className={"nav-item" + (navOn(item) ? " on" : "")} aria-current={navOn(item) ? "page" : undefined} onClick={() => { setQuery(""); pickSec(item); }}>
+                <NavIcon />
+                <span>{t.settings.nav[item]}</span>
+              </button>
+            );
+          })}
           <button className={"nav-item" + (navOn("about") ? " on" : "")} aria-current={navOn("about") ? "page" : undefined} onClick={() => { setQuery(""); pickSec("about"); }}>
             <IconInfo />
             <span>{t.settings.nav.about}</span>
@@ -1361,23 +1268,21 @@ export function About() {
                   看左栏高亮；搜索结果平铺各分区时它也是分隔。 */}
               <h1 className="sec-title">{t.settings.nav[s]}</h1>
               {s === "general" ? (
-                <GeneralSection />
-              ) : s === "sessions" ? (
-                <SessionsSection />
+                <GeneralSection searching={searching} />
               ) : s === "appearance" ? (
                 <AppearanceSection />
-              ) : s === "shortcuts" ? (
-                <ShortcutsSection />
-              ) : s === "remote" ? (
-                <RemoteAccessCard />
-              ) : s === "network" ? (
-                <NetworkSection />
+              ) : s === "notify" ? (
+                <NotifySection />
+              ) : s === "sessions" ? (
+                <SessionsSection />
+              ) : s === "account" ? (
+                <AccountSection view={agentView} onViewChange={pickAgentView} showAll={searching} />
               ) : s === "github" ? (
                 <CodeHostingSection />
-              ) : s === "account" ? (
-                <AccountSection />
-              ) : s === "extensions" ? (
-                <ExtensionsSection />
+              ) : s === "remote" ? (
+                <RemoteAccessCard />
+              ) : s === "shortcuts" ? (
+                <ShortcutsSection />
               ) : (
                 <AboutSection status={status} newVersion={newVersion} />
               )}

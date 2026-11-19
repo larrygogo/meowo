@@ -3,12 +3,13 @@
 // 过滤粒度：
 // - 行：`.row`（设置项行）与 `.usage-sticker-row`（账号卡深处的「在贴纸显示配额」——
 //   埋在已登录账号卡里，经搜索可达即可，不必挪位）——标题+说明文本命中即保留；
-// - 组：表头行 + 紧跟其后的 `.row-sub` 子行（「通知这些事」和它管的四个开关）同进退——
+// - 组：表头行 + 紧跟其后的 `.row-sub` 子行（通知矩阵的列头和四个事件、「防止电脑休眠」和两个子开关）同进退——
 //   表头命中带出全部子行，只有子行命中则带上表头，都没命中才一起隐藏；
 // - 卡：`.row-card` 自身文本命中（如 agent 名「kimi」）整卡保留；否则有命中行才保留；
 // - 分组标题 `.sec-caption`：跟随其后（到下一个标题前）卡片的可见性；
 // - 分区 `.main-sec`：导航名命中（如「外观」）整区保留，否则无可见行/卡时整区隐藏；
 // - 页标题 `.sec-title`：跟随分区——搜索结果把各分区平铺，标题正好当分隔；
+// - 包着卡片的容器（扩展段的 .ext-group）：跟随里面卡片；
 // - 其余直挂内容（.sec-hint / 外观预览 / 关于页脚等）：搜索时让位。
 //
 // 显示切换一律走 style.display 而不是 hidden 属性：.row 等类的 display:flex 会盖掉
@@ -98,6 +99,11 @@ export function applySettingsFilter(body: HTMLElement, q: string, navLabels: Rec
         // 而通往别家的唯一入口正是这个切换器，搜索时把它一并藏掉就成了死路——
         // 分区还在就留着它。
         setDisplay(kid, secVisible);
+      } else if (kid.querySelector(".row-card")) {
+        // 包着「分组标题 + 卡片」的容器（Agent 页扩展段的 .ext-group）：跟随里面卡片的可见性。
+        // 此前一律当提示让位，扩展里的技能、MCP 名字永远搜不出来。
+        const shown = navHit || Array.from(kid.querySelectorAll<HTMLElement>(".row-card")).some((c) => c.style.display !== "none");
+        setDisplay(kid, shown);
       } else {
         setDisplay(kid, false);
       }

@@ -1,4 +1,5 @@
-// 设置页「网络」分区：代理（全局默认 + 按 Agent 覆盖）。
+// 设置页「通用」里的网络代理（全局默认 + 按 Agent 覆盖）。原先独占一个「网络」分区、整页只有这一项，
+// 设置页精简（2026-11-19）把它并进通用页第一张卡：默认代理一行，各 Agent 的单独设置折在下面一行里。
 //
 // 这个分区的**核心难点是如实**：三家 CLI 的代理能力差得很远，UI 不能假装它们一样（2026-07 复核）——
 //
@@ -31,7 +32,7 @@ import { useT } from "../../i18n";
 import { useTauriEvent } from "../../hooks/useTauriEvent";
 import { useAgentListRefresh } from "../../useAgents";
 import { SETTINGS_DEFAULTS, useSettingsState } from "./state";
-import { Segmented, Switch, SettingsError, SavedNote, useSavedFlash } from "./widgets";
+import { Segmented, SavedNote, useSavedFlash } from "./widgets";
 import { Dropdown } from "../menu";
 
 /// 每个模型行的模式，比全局多一个「跟随默认」（= per_agent 里没有该条目）。
@@ -110,11 +111,17 @@ function UrlInput({
   );
 }
 
-export function NetworkSection() {
+/// 代理的几行，放进调用方的卡片里（通用页第一张卡）。保存失败经 onError 交给调用方，和同页其他
+/// 设置的失败提示放在同一处（卡片里塞不下吸底的错误块）。expandAll：设置搜索时把各 Agent 的行全展开，
+/// 否则折起来的行搜不到。
+export function ProxyRows({ expandAll = false, onError }: { expandAll?: boolean; onError?: (error: string | null) => void }) {
   const t = useT();
   const [settings, patch] = useSettingsState();
+  const setErr = (e: string | null) => onError?.(e ? t.settings.saveFailed(e) : null);
+  // 各 Agent 单独设置默认折起：大多数人只设一个默认代理，五家各一行会把通用页撑过一屏。
+  // 已经有单独设置的，首次打开就展开，免得人以为设置丢了。
+  const [openState, setOpenState] = useState<boolean | null>(null);
   const [agents, setAgents] = useState<AgentDescriptor[]>([]);
-  const [err, setErr] = useState<string | null>(null);
   // 各模型（以及全局，键 ""）当前**生效**的代理串。system 模式下这是唯一能看到
   // 「环境变量里到底是什么」的地方——只显示 mode 对用户毫无信息量。
   const [effective, setEffective] = useState<Record<string, string | null>>({});
@@ -247,20 +254,27 @@ export function NetworkSection() {
     (a) => !a.proxy_accepts_socks && (effective[a.id] ?? "") !== "" && isSocks(effective[a.id] ?? ""),
   );
 
+  const overrides = Object.keys(proxy.per_agent).length;
+  const perAgentOpen = expandAll || (openState ?? overrides > 0);
+
   return (
     <>
-      {/* 手机远程已独立成「手机远程」分区（About.tsx），这里只剩代理。 */}
-      <div className="row-card">
         <div className="row">
           <div className="row-text">
             <div className="row-label">{t.proxy.mode}</div>
             <div className="row-desc">{t.proxy.modeDesc}</div>
+            {/* 不显示、只供设置搜索：搜旧分区名「网络」或英文 network / proxy 时命中这一行，整组子行随它显示，
+                通用页其余卡片照常滤掉（挂在分区名上会把整页都带出来，代理又在页尾，窄窗要滚三张卡才看得到）。 */}
+            <span className="chat-sronly" aria-hidden="true">{t.proxy.searchExtra}</span>
           </div>
           <Segmented value={globalMode} options={modeOptions} onChange={changeGlobalMode} label={t.proxy.mode} />
         </div>
 
+        {/* 以下各行都是「网络代理」名下的 .row-sub：设置搜索把表头和子行当一组（searchFilter），
+            表头命中就整组带出——此前地址行没有可搜的文字，搜「代理」时地址框被滤掉（审查 2026-11-19）。
+            proxy-flat：视觉上不缩进，地址框和各 Agent 表头仍贴卡片左内边距。 */}
         {globalMode === "custom" && (
-          <div className="row proxy-url-row">
+          <div className="row row-sub proxy-flat proxy-url-row">
             <UrlInput
               value={proxy.url}
               placeholder={t.proxy.urlPlaceholder}
@@ -279,7 +293,7 @@ export function NetworkSection() {
         )}
 
         {globalMode === "system" && (
-          <div className="row">
+          <div className="row row-sub proxy-flat proxy-url-row">
             <div className="row-text">
               <div className="row-desc">
                 {effective[""] ? t.proxy.systemHint(effective[""]!) : t.proxy.systemNone}
@@ -287,22 +301,27 @@ export function NetworkSection() {
             </div>
           </div>
         )}
-      </div>
 
-      {socksBroken && <div className="sec-hint proxy-err">{t.proxy.socksWarn}</div>}
-      {effective[""] && isSocks(effective[""]!) && (
-        <div className="sec-hint proxy-err">{t.proxy.updaterSocksHint}</div>
-      )}
+        {socksBroken && <div className="row row-sub proxy-flat proxy-url-row"><div className="row-text"><div className="row-desc proxy-err">{t.proxy.socksWarn}</div></div></div>}
+        {effective[""] && isSocks(effective[""]!) && (
+          <div className="row row-sub proxy-flat proxy-url-row"><div className="row-text"><div className="row-desc proxy-err">{t.proxy.updaterSocksHint}</div></div></div>
+        )}
 
       {agents.length > 0 && (
-        <div className="row-card">
-          <div className="row">
+        <>
+          <div className="row row-sub proxy-flat proxy-sub-head">
             <div className="row-text">
               <div className="row-label">{t.proxy.perAgent}</div>
-              <div className="row-desc">{t.proxy.perAgentDesc}</div>
+              <div className="row-desc">{overrides > 0 ? t.proxy.perAgentCount(overrides) : t.proxy.perAgentNone}</div>
             </div>
+            {!expandAll && (
+              <button type="button" className="sbtn" aria-expanded={perAgentOpen} onClick={() => setOpenState(!perAgentOpen)}>
+                {perAgentOpen ? t.proxy.perAgentClose : t.proxy.perAgentOpen}
+              </button>
+            )}
           </div>
-          {agents.map((a) => {
+          {/* 各 Agent 的行同样是「网络代理」的子行（缩进一级），搜「codex」带出「网络代理」表头。 */}
+          {perAgentOpen && agents.map((a) => {
             const m = rowMode(a.id);
             const rep = reports[a.id];
             const full = a.proxy_covers_all_launches;
@@ -310,7 +329,7 @@ export function NetworkSection() {
             const proxied = hasEffective(a.id) && (effective[a.id] ?? "") !== "";
             return (
               <Fragment key={a.id}>
-                <div className="row">
+                <div className="row row-sub">
                   <div className="row-text">
                     <div className="row-label proxy-agent-name">{a.display_name}</div>
                     {/* 自定义模式的输入框已经展示同一个地址，不再在上方重复一遍。 */}
@@ -334,7 +353,7 @@ export function NetworkSection() {
                   <Dropdown value={m} options={rowOptions} onChange={(v: RowMode) => changeRowMode(a.id, v)} />
                 </div>
                 {m === "custom" && (
-                  <div className="row proxy-url-row">
+                  <div className="row row-sub proxy-url-row">
                     <UrlInput
                       value={proxy.per_agent[a.id]?.url ?? ""}
                       placeholder={t.proxy.urlPlaceholder}
@@ -345,12 +364,8 @@ export function NetworkSection() {
               </Fragment>
             );
           })}
-        </div>
+        </>
       )}
-
-      {/* 7S-7：与其余分区统一——此前是裸 div，无 × 也无 role=alert。 */}
-      <SettingsError preformatted error={err ? t.settings.saveFailed(err) : null} onDismiss={() => setErr(null)} />
-      <div className="sec-hint">{t.proxy.desc}</div>
     </>
   );
 }
