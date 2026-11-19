@@ -204,3 +204,33 @@ describe("firstHitControl（搜索后跳到第一条命中）", () => {
     expect(firstHitControl(body)).toBeNull();
   });
 });
+
+// 设置页精简（2026-11-19）：扩展并进 Agent 页后，每组扩展是「分组标题 + 卡片」包在 .ext-group 里。
+// 此前直挂的非卡片元素一律当提示让位，技能、MCP 名字永远搜不出来（整组被藏）。
+describe("包着卡片的容器（.ext-group）跟随里面卡片的可见性", () => {
+  const buildExt = () => {
+    const body = document.createElement("div");
+    body.innerHTML = `
+      <div class="main-sec" data-sec="account">
+        <div class="ext-group" id="mcp">
+          <div class="sec-caption">MCP 服务</div>
+          <div class="row-card"><div class="row"><div class="row-text"><div class="row-label">playwright</div></div></div></div>
+        </div>
+        <div class="ext-group" id="skill">
+          <div class="sec-caption">技能</div>
+          <div class="row-card"><div class="row"><div class="row-text"><div class="row-label">pr-description</div></div></div></div>
+        </div>
+        <div class="sec-hint">只读。</div>
+      </div>`;
+    return body;
+  };
+  it("命中某个 MCP 名：它那一组显示，别的组和提示让位；清词全部复原", () => {
+    const body = buildExt();
+    expect(applySettingsFilter(body, "playwright", { account: "Agent" })).toBe(true);
+    expect(shown(body.querySelector("#mcp"))).toBe(true);
+    expect(shown(body.querySelector("#skill"))).toBe(false);
+    expect(shown(body.querySelector(".sec-hint"))).toBe(false);
+    applySettingsFilter(body, "", { account: "Agent" });
+    expect(shown(body.querySelector("#skill"))).toBe(true);
+  });
+});

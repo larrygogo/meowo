@@ -1,4 +1,4 @@
-// 设置页「网络」分区：代理的**优先级**与**覆盖面如实**。
+// 设置页「通用」里的网络代理（原「网络」分区，设置页精简 2026-11-19 并进通用）：代理的**优先级**与**覆盖面如实**。
 //
 // 两件事值得钉死：
 //
@@ -9,6 +9,7 @@
 //      你在别处开的终端我们够不着。UI 说成「全部会话」就是骗人：用户会对着自己终端里连不上的 codex
 //      毫无线索地瞎试。
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { useState } from "react";
 import { render, screen, fireEvent, cleanup, waitFor, act } from "@testing-library/react";
 
 // vi.mock 会被提升到文件顶部，工厂里引用的外部变量必须走 vi.hoisted（与 About.account.test.tsx 同坑）。
@@ -32,7 +33,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 const fireInstallDone = (provider: string, ok: boolean) =>
   act(() => ev.doneCbs.forEach((cb) => cb({ payload: { provider, ok, code: ok ? 0 : 1, logPath: null } })));
 
-import { NetworkSection } from "./NetworkSection";
+import { ProxyRows } from "./NetworkSection";
 import { SETTINGS_DEFAULTS } from "./state";
 import { descriptors } from "../../test/agents";
 import { zh } from "../../i18n/zh";
@@ -41,13 +42,20 @@ import type { ProxySettings } from "../../api";
 const DIRECT: ProxySettings = { mode: "off", url: "", per_agent: {} };
 
 /// 挂载网络分区。`effective` 是后端解析出的生效代理（键 "" = 全局规则）。
+/// expandAll 默认开：这里测的是各 Agent 行本身；折叠行为另有一组用例。
+/// onError 接到页面上：保存失败原先由网络分区自己显示，现在交给通用页的 SettingsError。
+function Host({ expandAll }: { expandAll: boolean }) {
+  const [error, setError] = useState<string | null>(null);
+  return <><div className="row-card"><ProxyRows expandAll={expandAll} onError={setError} /></div>{error && <div role="alert">{error}</div>}</>;
+}
 const mount = async (
   proxy: ProxySettings,
   effective: Record<string, string | null> = {},
+  expandAll = true,
 ) => {
   api.getSettings.mockResolvedValue({ ...SETTINGS_DEFAULTS, proxy });
   api.getEffectiveProxy.mockImplementation((agent?: string) => Promise.resolve(effective[agent ?? ""] ?? null));
-  render(<NetworkSection />);
+  render(<Host expandAll={expandAll} />);
   await waitFor(() => expect(api.getEffectiveProxy).toHaveBeenCalled());
 };
 
@@ -175,6 +183,32 @@ describe("覆盖面如实标注", () => {
     );
     expect(screen.getByText(zh.proxy.socksWarn)).toBeTruthy();
     expect(screen.getByText(zh.proxy.updaterSocksHint)).toBeTruthy();
+  });
+});
+
+describe("各 Agent 单独设置折在一行里", () => {
+  it("没有单独设置时默认折起，点「设置」展开、「收起」收回", async () => {
+    await mount(DIRECT, {}, false);
+    expect(await screen.findByText(zh.proxy.perAgentNone)).toBeTruthy();
+    expect(screen.queryByText("Claude Code")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: zh.proxy.perAgentOpen }));
+    expect(await screen.findByText("Claude Code")).toBeTruthy();
+    // 各 Agent 行是表头行名下的子行：设置搜索靠它把表头和子行当一组。
+    expect(screen.getByText("Claude Code").closest(".row")!.classList.contains("row-sub")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: zh.proxy.perAgentClose }));
+    expect(screen.queryByText("Claude Code")).toBeNull();
+  });
+
+  it("已有单独设置的首次打开就展开，表头写明几个", async () => {
+    await mount({ mode: "off", url: "", per_agent: { codex: { mode: "custom", url: "http://c:1" } } }, {}, false);
+    expect(await screen.findByText(zh.proxy.perAgentCount(1))).toBeTruthy();
+    expect(await screen.findByText("Codex")).toBeTruthy();
+  });
+
+  it("设置搜索时（expandAll）全部展开，不给折叠按钮", async () => {
+    await mount(DIRECT, {}, true);
+    expect(await screen.findByText("Claude Code")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: zh.proxy.perAgentOpen })).toBeNull();
   });
 });
 

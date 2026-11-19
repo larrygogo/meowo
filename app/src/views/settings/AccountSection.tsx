@@ -44,7 +44,8 @@ import { AgentAppIcon } from "../chat/AgentAppIcon";
 import { useT, repairFailMessage } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import type { Dict } from "../../i18n/zh";
-import { Switch, SettingsError } from "./widgets";
+import { Switch, SettingsError, Segmented } from "./widgets";
+import { ExtensionsSection } from "./ExtensionsSection";
 import { ActionMenu, Dropdown } from "../menu";
 import { useSettingsState } from "./state";
 import { RelayAccess } from "./RelayAccess";
@@ -1288,7 +1289,16 @@ function ProfileList({ provider, movesSessionsAcrossAccounts, onChanged, viewing
 /** 顶部模型切换记住上次选择的 localStorage 键。 */
 const SELECTED_AGENT_KEY = "meowo-account-agent";
 
-export function AccountSection() {
+/** Agent 页的两段：账号与用量 / 扩展。共用顶部同一个 Agent 选择器（设置页精简 2026-11-19）。 */
+export type AgentView = "account" | "extensions";
+
+export function AccountSection({ view = "account", onViewChange, showAll = false }: {
+  view?: AgentView;
+  /// 给了才画分段控件（设置窗的 Agent 页）；单独渲染账号卡（测试、旧用法）时不画。
+  onViewChange?: (view: AgentView) => void;
+  /// 设置搜索时两段都渲染：折在另一段里的行搜不到就等于没有。
+  showAll?: boolean;
+} = {}) {
   const t = useT();
   // 读取/写入应用设置（用于贴纸配额开关）。patchError 与其它分区同款：保存被拒时
   // 开关会被回读弹回去，必须有一行说明（S-3）。
@@ -1555,8 +1565,19 @@ export function AccountSection() {
           })}
           onChange={pickAgent}
         />
+        {onViewChange && !showAll && (
+          <Segmented
+            value={view}
+            options={[
+              { value: "account" as const, label: t.settings.agentViewAccount },
+              { value: "extensions" as const, label: t.settings.agentViewExtensions },
+            ]}
+            onChange={onViewChange}
+            label={t.settings.nav.account}
+          />
+        )}
       </div>
-      <ProviderCard
+      {(showAll || view === "account") && <ProviderCard
         key={cur.id}
         provider={cur.id}
         name={cur.display_name}
@@ -1584,7 +1605,8 @@ export function AccountSection() {
         onToggleQuota={() => toggleQuotaProvider(cur.id)}
         usageRefreshedAt={usageRefreshedAt[cur.id] ?? null}
         updateInfo={updateMap[cur.id] ?? null}
-      />
+      />}
+      {(showAll || view === "extensions") && <ExtensionsSection agent={cur.id} />}
       {/* T-6 兄弟场景（2026-11-12）：此前是手写的红字 + 内联样式 ×，与其余分区的 SettingsError 两套样式。 */}
       <SettingsError preformatted error={patchError} onDismiss={clearPatchError} />
     </>

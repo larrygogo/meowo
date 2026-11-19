@@ -21,8 +21,8 @@ vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ close: () 
 vi.mock("../useUpdate", () => ({ useUpdate: () => ({ status: "idle", version: null }) }));
 vi.mock("../useShowWhenReady", () => ({ useShowWhenReady: () => {} }));
 vi.mock("./settings/AccountSection", () => ({ AccountSection: () => null }));
-vi.mock("./settings/ExtensionsSection", () => ({ ExtensionsSection: () => null }));
-vi.mock("./settings/NetworkSection", () => ({ NetworkSection: () => null }));
+// 网络代理并进了通用页（ProxyRows）、扩展并进了 Agent 页（AccountSection 里），一并换成空壳。
+vi.mock("./settings/NetworkSection", () => ({ ProxyRows: () => null }));
 vi.mock("./settings/RemoteAccessCard", () => ({ RemoteAccessCard: () => null }));
 
 import { About, GeneralSection, SessionsSection } from "./About";

@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 // UI 调研 shell #2：「卡片」组的「对话预览」「打开终端方式」只有已下线的贴纸在读，拨了没反应。
-// 关卡 A 定案：删这两项（字段保留读旧配置），组名改「会话列表」，浏览器那项挪到「运行」组。
+// 关卡 A 定案：删这两项（字段保留读旧配置），浏览器那项挪到「运行」组。
+// 设置页精简（2026-11-19）：「会话列表」「已完成会话」两个单行分组合成一组「列表」。
 const api = vi.hoisted(() => ({
   getSettings: vi.fn(),
   setSettings: vi.fn(),
@@ -41,14 +42,26 @@ const captionBefore = (el: Element) => {
   return prev?.textContent;
 };
 
-describe("设置：会话列表组", () => {
-  it("会话分区不再有对话预览与打开方式，组名叫会话列表，卡片菜单还在", async () => {
+describe("设置：列表组", () => {
+  it("会话分区不再有对话预览与打开方式，卡片菜单与已完成会话同在「列表」组", async () => {
     render(<SessionsSection />);
     const cardMenu = await screen.findByText(zh.settings.cardMenu);
-    expect(captionBefore(cardMenu)).toBe("会话列表");
+    expect(captionBefore(cardMenu)).toBe("列表");
+    // 对话功能开着（OLD 没写 chat_enabled → 默认开）：已完成会话是同一张卡里的一行，不再自成一组。
+    const admin = screen.getByRole("button", { name: zh.settings.archivedOpenAdmin });
+    expect(admin.closest(".row-card")).toBe(cardMenu.closest(".row-card"));
+    expect(Array.from(document.querySelectorAll(".sec-caption")).map((el) => el.textContent)).toEqual([zh.settings.worktreeGroup, "列表"]);
     expect(screen.queryByText("对话预览")).toBeNull();
     expect(screen.queryByText("打开方式")).toBeNull();
     expect(screen.queryByText(zh.settings.browserAgent)).toBeNull();
+  });
+
+  it("worktree 位置与分支前缀成一组", async () => {
+    render(<SessionsSection />);
+    const location = await screen.findByText(zh.wtnew.settingsLocation);
+    const prefix = screen.getByText(zh.wtnew.settingsPrefix);
+    expect(location.closest(".row-card")).toBe(prefix.closest(".row-card"));
+    expect(captionBefore(location)).toBe(zh.settings.worktreeGroup);
   });
 
   it("浏览器开关在通用分区的「运行」组，拨它时旧配置的死字段原样写回", async () => {

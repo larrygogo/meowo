@@ -1,4 +1,4 @@
-// 设置页「网络」分区顶部：手机远程访问（局域网/Tailscale + token）开关与扫码配对。
+// 设置页「手机远程」分区：手机远程访问（局域网/Tailscale + token）开关与扫码配对。
 //
 // token 是进门凭据，绝不上网线：二维码把它放 URL fragment（`#token=`，不进服务端日志
 // 也不随请求发出），手机端首次打开即存 localStorage 并清掉 hash。开关/端口经 set_settings
@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useFlash } from "../../hooks/useFlash";
 import { renderSVG } from "uqr";
-import { regenerateRemoteToken, remoteAccessInfo, testBarkPush, type RemoteAccessInfo, type RemoteBindMode } from "../../api";
+import { regenerateRemoteToken, remoteAccessInfo, type RemoteAccessInfo, type RemoteBindMode } from "../../api";
 import { appConfirm } from "../../confirm";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
@@ -58,67 +58,6 @@ function PortInput({ value, onCommit, conflict }: {
         ? <div className="proxy-err remote-port-err" role="alert">{t.remote.portInvalid}</div>
         : conflict && <div className="proxy-err remote-port-err" role="alert">{conflict}</div>}
     </>
-  );
-}
-
-/// 手机推送（Bark）一行：地址草稿失焦/回车才落盘（同 PortInput），旁边「发一条测试」直接用
-/// 草稿测——填完先测通再走开，不用等保存。远程访问关着也能用：推送只要电脑能连上 Bark。
-/// 填了地址后右侧多一个开关：手机设置面板能暂停推送，电脑这边得看得见、拨得回来。
-function BarkPushRow({ value, paused, onCommit, onTogglePaused }: {
-  value: string;
-  paused: boolean;
-  onCommit: (url: string) => Promise<string | null>;
-  onTogglePaused: () => void;
-}) {
-  const t = useT();
-  const [text, setText] = useState(value);
-  const [status, setStatus] = useState<{ kind: "testing" | "ok" } | { kind: "error"; message: string } | null>(null);
-  const saved = useSavedFlash();
-  useEffect(() => { setText(value); }, [value]);
-  const commit = () => {
-    const next = text.trim();
-    if (next !== value) void onCommit(next).then((err) => { if (!err) saved.flash(); });
-  };
-  const test = () => {
-    if (!text.trim() || status?.kind === "testing") return;
-    setStatus({ kind: "testing" });
-    testBarkPush(text.trim())
-      .then(() => setStatus({ kind: "ok" }))
-      .catch((error) => setStatus({ kind: "error", message: formatBackendError(error, t.locale) }));
-  };
-  return (
-    <div className="row remote-push-row">
-      <div className="row-text">
-        <div className="row-label">{t.remote.pushLabel}</div>
-        <div className="row-desc">{t.remote.pushDesc}</div>
-        <div className="remote-url-row">
-          <input
-            className="ns-input remote-push-input"
-            type="url"
-            autoComplete="off"
-            spellCheck={false}
-            placeholder={t.remote.pushPlaceholder}
-            aria-label={t.remote.pushLabel}
-            value={text}
-            onChange={(e) => { setText(e.target.value); setStatus(null); saved.hide(); }}
-            onBlur={commit}
-            // T-5：回车提交、焦点留在框里（同 PortInput）。
-            onKeyDown={(e) => { if (e.key === "Enter") commit(); }}
-          />
-          <SavedNote shown={saved.shown} fx={saved.fx} />
-          {/* 测试进行中不用 disabled：焦点就在这颗钮上，disabled 会把焦点踢到 body（第三轮焦点准则）。
-              test() 自己拦重复点击。 */}
-          <button type="button" className="remote-copy" disabled={!text.trim()} aria-disabled={status?.kind === "testing" || undefined} onClick={test}>
-            {status?.kind === "testing" ? t.remote.pushTesting : t.remote.pushTest}
-          </button>
-        </div>
-        {status?.kind === "ok" && <div className="row-desc" role="status">{t.remote.pushTestOk}</div>}
-        {status?.kind === "error" && <div className="proxy-err" role="alert">{status.message}</div>}
-        {/* 内容出本机的事实写在旁边：项目名、会话标题、在等什么都会经过 Bark 服务器。 */}
-        {text.trim() && <div className="row-desc">{t.remote.pushPrivacy}</div>}
-      </div>
-      {value.trim() && <Switch checked={!paused} onChange={onTogglePaused} label={t.remote.pushToggle} />}
-    </div>
   );
 }
 
@@ -300,12 +239,7 @@ export function RemoteAccessCard() {
             </div>
           </div>
         ))}
-      <BarkPushRow
-        value={settings?.bark_url ?? ""}
-        paused={settings?.bark_paused ?? false}
-        onCommit={(url) => patch({ bark_url: url })}
-        onTogglePaused={() => { void patch({ bark_paused: !(settings?.bark_paused ?? false) }); }}
-      />
+      {/* 手机推送（Bark）搬到「通知」页（设置页精简 2026-11-19）：推送不依赖远程访问，和别的提醒放一起才找得到。 */}
     </div>
     {/* 报错放在卡片外、紧跟其后（此前夹在卡片两行之间，用户实拍「位置不对」）。端口被占贴在端口行
         （portConflict），这里只剩保存失败与其余启动失败。7S-7：错误统一走 SettingsError（带 ×、role=alert）。 */}

@@ -7,7 +7,6 @@ const api = vi.hoisted(() => ({
   getSettings: vi.fn(),
   setSettings: vi.fn(),
   remoteAccessInfo: vi.fn(),
-  testBarkPush: vi.fn(),
   regenerateRemoteToken: vi.fn(),
 }));
 vi.mock("../../api", async (o) => ({ ...(await o<typeof import("../../api")>()), ...api }));
@@ -67,22 +66,14 @@ describe("RemoteAccessCard", () => {
     expect(screen.getByText(zh.remote.hintTailscale)).toBeTruthy();
   });
 
-  // 手机推送(Bark):远程访问关着也能配;测试用输入框里的草稿,不必先保存;失焦才落盘。
-  it("Bark 推送:测试用草稿地址,失败给原因,失焦落盘 bark_url", async () => {
-    api.getSettings.mockResolvedValue({ ...SETTINGS_DEFAULTS });
+  // 手机推送(Bark)搬去「通知」页(设置页精简 2026-11-19,测试在 About.notify.test.tsx),这里不再出现。
+  it("手机远程页不再有 Bark 推送行", async () => {
+    api.getSettings.mockResolvedValue({ ...SETTINGS_DEFAULTS, bark_url: "https://api.day.app/KEY/" });
     api.remoteAccessInfo.mockResolvedValue({ enabled: false, port: 18620, token: TOKEN, ips: [], lastError: null });
-    api.testBarkPush.mockRejectedValueOnce("push/invalid_url").mockResolvedValueOnce(undefined);
     render(<RemoteAccessCard />);
-    const input = await screen.findByRole("textbox", { name: zh.remote.pushLabel });
-    fireEvent.change(input, { target: { value: "https://api.day.app/KEY/" } });
-    fireEvent.click(screen.getByRole("button", { name: zh.remote.pushTest }));
-    expect(await screen.findByText("推送地址无效，请从 Bark App 里复制")).toBeTruthy();
-    expect(api.testBarkPush).toHaveBeenCalledWith("https://api.day.app/KEY/");
-    expect(api.setSettings).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: zh.remote.pushTest }));
-    expect(await screen.findByText(zh.remote.pushTestOk)).toBeTruthy();
-    fireEvent.blur(input);
-    await waitFor(() => expect(api.setSettings).toHaveBeenCalledWith(expect.objectContaining({ bark_url: "https://api.day.app/KEY/" })));
+    await screen.findByRole("switch", { name: zh.remote.enable });
+    expect(screen.queryByRole("textbox", { name: zh.remote.pushLabel })).toBeNull();
+    expect(screen.queryByText(zh.remote.pushLabel)).toBeNull();
   });
 
   it("关闭态点开关:落盘 remote_access_enabled=true", async () => {
