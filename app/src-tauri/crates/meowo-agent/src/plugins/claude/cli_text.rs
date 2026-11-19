@@ -345,6 +345,12 @@ pub(super) static DEPS: &[D] = &[
         "同上；带次数的那一种（Retrying in … attempt n/m）见 retry_line 的样例",
     ),
     D::new(
+        "screen:background_wait_idle",
+        "",
+        "\u{273b} Waiting for 2 background agents to finish",
+        "2.1.327 真机屏幕 2026-11-19（会话 1823，主回合结束、2 个后台子代理在跑，输入框上方）；子代理个数与单复数运行时拼，程序文件里没有可搜的原样片段",
+    ),
+    D::new(
         "clipboard_image",
         "[Image #",
         "[Image #1]",
