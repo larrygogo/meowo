@@ -79,9 +79,10 @@ const AGENTS_WITH_OPTIONS = [
       { id: "opus", label: "Opus 5", args: [], risk: false },
       { id: "sonnet", label: "Sonnet 5", args: [], risk: false },
     ] },
-  ] },
-  { id: "codex", display_name: "Codex", installed: true, launch_options: [] },
-  { id: "kimi", display_name: "Kimi Code", installed: true, launch_options: [] },
+  ], supports_proxy: true, proxy_covers_all_launches: true, proxy_accepts_socks: false },
+  // supports_proxy：通用页「各 Agent 单独设置」代理只列支持代理的已装 agent，缺了这三项那一行拍不出来。
+  { id: "codex", display_name: "Codex", installed: true, launch_options: [], supports_proxy: true, proxy_covers_all_launches: false, proxy_accepts_socks: false },
+  { id: "kimi", display_name: "Kimi Code", installed: true, launch_options: [], supports_proxy: true, proxy_covers_all_launches: false, proxy_accepts_socks: true },
   { id: "gemini", display_name: "Gemini CLI", installed: false, launch_options: [] },
   { id: "opencode", display_name: "opencode", installed: false, launch_options: [] },
 ];
@@ -428,8 +429,13 @@ async function boot(): Promise<React.ReactNode> {
     if (searchQuery) whenReady<HTMLInputElement>(".side-search input", (el) => typeInto(el, searchQuery));
     // 账号分区要版本探测、远程分区要配对信息：演示 mock 不管这几条，返回 null 会让分区崩掉。
     store.settings.remote_access_enabled = true;
-    // 网络分区拍「自定义代理」：地址输入行与各 Agent 的单独设置只在这一档出现。
-    if (section === "network") store.settings.proxy = { mode: "custom", url: "http://127.0.0.1:7890", per_agent: {} };
+    // ?proxy=custom：通用页的网络代理拍「自定义」，地址输入行只在这一档出现；?proxy=agents 再给 codex 单独设一条，
+    // 「各 Agent 单独设置」首次打开即展开。旧场景名 settingswin-network 由分区映射落到通用页。
+    const proxyParam = q.get("proxy") ?? (section === "network" ? "custom" : null);
+    if (proxyParam === "custom") store.settings.proxy = { mode: "custom", url: "http://127.0.0.1:7890", per_agent: {} };
+    if (proxyParam === "agents") store.settings.proxy = { mode: "custom", url: "http://127.0.0.1:7890", per_agent: { codex: { mode: "off", url: "" } } };
+    // ?notify=off：通知页的桌面通知总开关关着（系统通知列置灰、灵动岛列照常可改）。
+    if (q.get("notify") === "off") store.settings.notifications_enabled = false;
     // ?upd=checking|error|available|downloading|ready：关于页的更新状态（设置窗开着 10 秒后自动查一次）。
     // ?fail=1：保存设置失败（各分区的错误提示）；远程分区另报一条端口之外的启动错误。
     const upd = q.get("upd");
@@ -455,6 +461,11 @@ async function boot(): Promise<React.ReactNode> {
       if (cmd === "list_agent_extensions") return EXTENSIONS;
       if (cmd === "available_terminals") return ["wt", "powershell", "cmd"];
       if (cmd === "lead_workflow_installed") return true;
+      // 通用页 Lead 组「其他 CLI」：一家装好可自动继续、一家没装，拍出表头 + 子行的样子。
+      if (cmd === "lead_provider_installations") {
+        const row = (provider: string, name: string, installed: boolean) => ({ provider, name, profileId: null, profileName: null, version: "1.0.0", configured: true, supported: true, managed: installed, installed, assetsInstalled: installed, hooksInstalled: installed, automaticContinue: installed, notes: [], reason: null });
+        return [row("codex", "Codex", true), row("kimi", "Kimi Code", false)];
+      }
       if (cmd === "check_provider_hooks") return "installed";
       if (cmd === "plugin:app|version") return "0.6.20";
       if (cmd === "list_profiles") {

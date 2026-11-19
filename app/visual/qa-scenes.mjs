@@ -256,21 +256,21 @@ export const QA_SHOTS = [
   // 查看非 active 账号只换用量视图：账号名、按下态和非 active 用量都要入镜。
   { name: "qa-set-profile-usage", scene: "settingswin-account", size: SETTINGS, sel: ".usage-card-title", steps: [["click", '[data-testid="profile-usage-claude-work"]']], langs: ["zh", "en"] },
   { name: "qa-set-dropdown-sessions", scene: "settingswin-sessions", size: SETTINGS, sel: ".dd-menu", steps: [["click", ".dd > .dd-btn >> nth=1"]] },
-  { name: "qa-set-focus", scene: "settingswin-network", size: SETTINGS, sel: ".settings", steps: [["click", ".main-body input[type=text], .main-body input:not([type])"]] },
+  { name: "qa-set-focus", scene: "settingswin-general", params: "proxy=custom", size: SETTINGS, sel: ".settings", steps: [["click", ".main-body input[type=text], .main-body input:not([type])"]] },
   { name: "qa-set-search-focus", scene: "settingswin-general", size: SETTINGS, sel: ".settings", steps: [["click", ".side-search input"]] },
   { name: "qa-set-error", scene: "settingswin-general", params: "fail=1", size: SETTINGS, sel: ".settings-error", steps: [["click", ".pswitch >> nth=1"]], langs: ["zh", "en"] },
   { name: "qa-set-error-remote", scene: "settingswin-remote", params: "fail=1", size: SETTINGS, sel: ".settings-error" },
   { name: "qa-set-kbd", scene: "settingswin-appearance", size: SETTINGS, sel: ".settings", steps: [["keys", "Tab", 4]] },
   { name: "qa-set-hover", scene: "settingswin-general", size: SETTINGS, sel: ".settings", steps: [["hover", ".side-nav .nav-item >> nth=2"]] },
-  // 设置搜索的成组显隐：表头行（「自动弹出提醒」/「通知这些事」）和它名下的子开关同进退。
-  // 「提醒」命中外观分区的表头，「审批」只命中子行（两个分区各一行），都不该留下没有控件的空表头。
+  // 设置搜索的成组显隐：表头行（通知矩阵的列头 / 「防止电脑休眠」）和它名下的子行同进退。
+  // 「提醒」命中通知页的分组，「审批」只命中矩阵的一行（要带上列头），都不该留下没有控件的空表头。
   { name: "qa-set-search-alerts", scene: "settingswin-appearance", size: SETTINGS, sel: ".settings", steps: [["type", ".side-search input", "提醒"]] },
   { name: "qa-set-search-sub", scene: "settingswin-general", size: SETTINGS, sel: ".settings", steps: [["type", ".side-search input", "审批"]] },
   { name: "qa-set-en", scene: "settingswin-general", size: SETTINGS, sel: ".settings", langs: ["en"] },
   { name: "qa-set-en-remote", scene: "settingswin-remote", size: SETTINGS, sel: ".settings", langs: ["en"] },
   { name: "qa-set-en-sessions", scene: "settingswin-sessions", size: SETTINGS, sel: ".settings", langs: ["en"] },
   // ── 定尺寸窗口的英文（文案最长）──
-  ...["shortcuts", "appearance", "network", "account", "extensions", "about"].map((sec) => ({ name: "qa-set-en-" + sec, scene: "settingswin-" + sec, size: SETTINGS, sel: ".settings", langs: ["en"], themes: ["light"] })),
+  ...["shortcuts", "appearance", "notify", "account", "extensions", "about"].map((sec) => ({ name: "qa-set-en-" + sec, scene: "settingswin-" + sec, size: SETTINGS, sel: ".settings", langs: ["en"], themes: ["light"] })),
   ...[1, 2, 3, 4].map((n) => ({ name: "qa-onboarding-en-" + n, scene: "onboarding-" + n, size: [460, 600], langs: ["en"], themes: ["dark"] })),
   { name: "qa-updater-en", scene: "updater-available", size: [400, 500], sel: ".up-notes-body", langs: ["en"], themes: ["light"] },
   { name: "qa-updater-error-en", scene: "updater-error", size: [400, 252], sel: ".up-err", langs: ["en"], themes: ["dark"] },
