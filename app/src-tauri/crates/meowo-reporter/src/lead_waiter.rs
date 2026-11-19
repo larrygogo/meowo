@@ -593,6 +593,7 @@ pub fn wait_guarded(
     let mine = |r: &WaiterRecord| r.pid == record.pid && r.started == record.started;
     let start = std::time::Instant::now();
     let mut misses = 0;
+    let mut read_errors = 0;
     let out = loop {
         std::thread::sleep(poll);
         if !read_record(&task).as_ref().is_some_and(mine) {
@@ -611,9 +612,20 @@ pub fn wait_guarded(
         if start.elapsed() > max {
             break say("[lead] 等待关卡答复超时，已退出。");
         }
+        // 关卡文件可能正被改写（写工具先截断再写入、作答时的 rename），读到半截会解析失败。
+        // 连续多次读不出才退出；读到一次就退出会让 leader 的答复没人接（CI 实测偶发）。
         let gate = match lead::read_gate_checked(&task) {
-            Ok(gate) => gate,
-            Err(reason) => break say(format!("[lead] 无法读取关卡，等待器已退出：{reason}")),
+            Ok(gate) => {
+                read_errors = 0;
+                gate
+            }
+            Err(reason) => {
+                read_errors += 1;
+                if read_errors >= 5 {
+                    break say(format!("[lead] 无法读取关卡，等待器已退出：{reason}"));
+                }
+                continue;
+            }
         };
         if bound && gate.as_ref().is_some_and(|gate| gate.id != record.gate || gate.version != bound_version) {
             break say("[lead] 关卡版本已更换，本条无需处理。");
@@ -912,6 +924,24 @@ mod tests {
 
     const P: Duration = Duration::from_millis(20);
     const M: Duration = Duration::from_secs(20);
+
+    /// 关卡文件被改写时读到半截（截断后、写入前）：等待器不能当场退出，要等它写完再判断。
+    #[test]
+    fn half_written_gate_is_retried_not_fatal() {
+        let fx = Fx::new("pending");
+        let registry = fx.registry.clone();
+        let handle = std::thread::spawn(move || wait("kimi", "session_abc", &registry, P, M, || None));
+        wait_for_record(&fx.task, |record| record.gate == "Q-1");
+        std::fs::write(fx.task.join("gate.json"), "").unwrap();
+        std::thread::sleep(P * 3);
+        std::fs::write(
+            fx.task.join("gate.json"),
+            json!({"id":"Q-2","type":"Q","title":"t","status":"pending"}).to_string(),
+        )
+        .unwrap();
+        let out = handle.join().unwrap().stdout.unwrap();
+        assert!(out.contains("已更换"), "{out}");
+    }
 
     /// 做空 N3：关卡挂起、答复未送达时拦住重启；送达后、别的会话不拦。
     #[test]
