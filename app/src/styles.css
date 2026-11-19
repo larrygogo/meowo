@@ -2137,7 +2137,8 @@ button.stab {
 }
 .relay-field { display: flex; min-width: 0; flex-direction: column; gap: var(--sp-6); }
 .relay-field > span { color: var(--cc-text-dim); font-size: var(--text-xs); }
-.relay-field .ns-input { width: 100%; }
+/* 同 .forge-field：列方向 flex 里 .ns-input 的 flex: 1 会把高度压扁（中转密钥框实拍）。 */
+.relay-field .ns-input { flex: none; width: 100%; }
 .relay-select-field .dd, .relay-select-field .dd-btn { width: 100%; min-width: 0; }
 .relay-secret-field { grid-column: 1 / -1; }
 .relay-env-options { grid-column: 1 / -1; }
@@ -2145,7 +2146,26 @@ button.stab {
 .relay-env-option-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .relay-env-option-label { color: var(--cc-text); font-size: var(--text-xs); }
 .relay-env-option-desc { color: var(--cc-text-faint); font-size: var(--text-xs); }
-.relay-coverage { margin-top: var(--sp-10); color: var(--cc-text-faint); }
+/* 「看哪一边」由标签决定，「用哪一边启动」由这一行的按钮决定；生效的一边只显示徽章。 */
+.relay-use-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-12);
+  margin-top: var(--sp-12);
+  min-height: var(--btn-h-lg);
+}
+.relay-use-row .row-desc { min-width: 0; color: var(--cc-text-faint); }
+/* 标签上标出当前生效的一边：查看别的一边时也知道启动用的是哪种。 */
+.access-live-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: var(--sp-6);
+  border-radius: var(--radius-full);
+  background: var(--cc-ok-vivid);
+  vertical-align: middle;
+}
 .relay-model-picker {
   position: relative;
   display: flex;

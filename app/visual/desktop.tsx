@@ -436,6 +436,21 @@ async function boot(): Promise<React.ReactNode> {
     if (proxyParam === "agents") store.settings.proxy = { mode: "custom", url: "http://127.0.0.1:7890", per_agent: { codex: { mode: "off", url: "" } } };
     // ?notify=off：通知页的桌面通知总开关关着（系统通知列置灰、灵动岛列照常可改）。
     if (q.get("notify") === "off") store.settings.notifications_enabled = false;
+    // ?relay=on|ready|partial：Agent 页 Claude 卡的接入方式——中转正在用 / 配齐了但仍用官方 / 还差模型。
+    const relayParam = q.get("relay");
+    if (relayParam) {
+      store.settings.relay = { per_agent: { claude: {
+        enabled: relayParam === "on",
+        base_url: "https://relay.example.com/v1",
+        model: relayParam === "partial" ? "" : "claude-sonnet-5",
+        protocol: "",
+        auth: "bearer",
+        env_options: [],
+      } } };
+    }
+    const relayAgents = relayParam
+      ? AGENTS_WITH_OPTIONS.map((a) => a.id === "claude" ? { ...a, relay: { protocols: [], auth_modes: [{ value: "bearer", label: "Bearer Token" }, { value: "api_key", label: "API Key (x-api-key)" }], default_protocol: "", default_auth: "bearer", suggestions: [{ protocol: "", models: ["claude-sonnet-5"] }], env_options: [] } } : a)
+      : AGENTS_WITH_OPTIONS;
     // ?upd=checking|error|available|downloading|ready：关于页的更新状态（设置窗开着 10 秒后自动查一次）。
     // ?fail=1：保存设置失败（各分区的错误提示）；远程分区另报一条端口之外的启动错误。
     const upd = q.get("upd");
@@ -457,7 +472,9 @@ async function boot(): Promise<React.ReactNode> {
       }
       if (fail && cmd === "set_settings") throw new Error("settings/write_failed: C:\Users\demo\.meowo\settings.json is read-only");
       if (cmd === "installed_agent_versions" || cmd === "check_agent_updates") return [];
-      if (cmd === "list_agents") return AGENTS_WITH_OPTIONS;
+      if (cmd === "list_agents") return relayAgents;
+      if (relayParam && cmd === "get_relay_secret_status") return { claude: true };
+      if (relayParam && cmd === "get_relay_secrets") return { claude: "sk-demo-relay-token" };
       if (cmd === "list_agent_extensions") return EXTENSIONS;
       if (cmd === "available_terminals") return ["wt", "powershell", "cmd"];
       if (cmd === "lead_workflow_installed") return true;

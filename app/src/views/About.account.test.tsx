@@ -424,7 +424,8 @@ describe("AccountSection agent 卡", () => {
     expect(screen.queryByTestId("agent-profile-claude")).toBeNull();
   });
 
-  it("模型卡内用官方账号 / API 中转二选一，预配置完整时可直接切换", async () => {
+  // leader 2026-11-19：「切换了 tab 就切换了（启动方式）这样不好」。标签只管看，按钮才管用。
+  it("点标签或方向键只切换查看，不改启动方式；点「改用 API 中转」才启用", async () => {
     api.getSettings.mockResolvedValue({
       sticker_quota_providers: [],
       relay: {
@@ -447,12 +448,87 @@ describe("AccountSection agent 卡", () => {
       (el) => el.textContent === zh.relay.title,
     ) as HTMLElement;
     expect(relayChoice).toBeTruthy();
+    await waitFor(() => expect(api.getRelaySecretStatus).toHaveBeenCalled());
+    // 生效的一边（官方）挂着「正在使用」的点。
+    const live = () => screen.getByTestId("agent-access-live-claude").closest('[role="radio"]')?.textContent;
+    expect(live()).toBe(zh.relay.official);
     fireEvent.click(relayChoice);
+    expect(card.querySelector('[role="radio"][aria-checked="true"]')?.textContent).toBe(zh.relay.title);
+    expect(await screen.findByDisplayValue("https://relay.example/v1")).toBeTruthy();
+    fireEvent.keyDown(relayChoice, { key: "ArrowLeft" });
+    expect(card.querySelector('[role="radio"][aria-checked="true"]')?.textContent).toBe(zh.relay.official);
+    fireEvent.keyDown(card.querySelector('[role="radio"][aria-checked="true"]')!, { key: "ArrowRight" });
+    expect(api.setSettings).not.toHaveBeenCalled();
+    expect(live()).toBe(zh.relay.official);
 
+    const use = await screen.findByTestId("agent-access-use-relay-claude");
+    await waitFor(() => expect((use as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(use);
     await waitFor(() => expect(api.setSettings).toHaveBeenCalled());
     const saved = api.setSettings.mock.calls.at(-1)?.[0];
     expect(saved.relay.per_agent.claude.enabled).toBe(true);
+  });
+
+  it("正在用中转时点「官方账号」标签不停用中转，点「改用官方账号」才停用", async () => {
+    api.getSettings.mockResolvedValue({
+      sticker_quota_providers: [],
+      relay: { per_agent: { claude: {
+        enabled: true,
+        base_url: "https://relay.example/v1",
+        model: "claude-relay",
+        protocol: "",
+        auth: "bearer",
+      } } },
+    });
+    api.getRelaySecretStatus.mockResolvedValue({ claude: true, codex: false, kimi: false });
+    render(<AccountSection />);
+    const card = await screen.findByTestId("agent-card-claude");
+    // settings 异步加载后默认停在生效的一边（中转），能直接看到配置。
+    expect(await screen.findByDisplayValue("claude-relay")).toBeTruthy();
     expect(card.querySelector('[role="radio"][aria-checked="true"]')?.textContent).toBe(zh.relay.title);
+    const officialTab = Array.from(card.querySelectorAll('[role="radio"]')).find(
+      (el) => el.textContent === zh.relay.official,
+    ) as HTMLElement;
+    fireEvent.click(officialTab);
+    expect(screen.getByText(zh.relay.nowRelay)).toBeTruthy();
+    expect(api.setSettings).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("agent-access-use-official-claude"));
+    await waitFor(() =>
+      expect(api.setSettings.mock.calls.at(-1)?.[0].relay.per_agent.claude.enabled).toBe(false),
+    );
+    // 中转配置原样保留。
+    expect(api.setSettings.mock.calls.at(-1)?.[0].relay.per_agent.claude.base_url).toBe("https://relay.example/v1");
+  });
+
+  it("中转配置不全时「改用 API 中转」不可点并列出缺项；填齐也不会自动启用", async () => {
+    api.getSettings.mockResolvedValue({
+      sticker_quota_providers: [],
+      relay: { per_agent: { claude: {
+        enabled: false,
+        base_url: "https://relay.example/v1",
+        model: "",
+        protocol: "",
+        auth: "bearer",
+      } } },
+    });
+    api.getRelaySecretStatus.mockResolvedValue({ claude: true, codex: false, kimi: false });
+    render(<AccountSection />);
+    const card = await screen.findByTestId("agent-card-claude");
+    await waitFor(() => expect(api.getRelaySecretStatus).toHaveBeenCalled());
+    fireEvent.click(Array.from(card.querySelectorAll('[role="radio"]')).find(
+      (el) => el.textContent === zh.relay.title,
+    ) as HTMLElement);
+    const use = await screen.findByTestId("agent-access-use-relay-claude") as HTMLButtonElement;
+    expect(use.disabled).toBe(true);
+    expect(screen.getByText(zh.relay.missingFields([zh.relay.model]))).toBeTruthy();
+
+    const model = screen.getByPlaceholderText(zh.relay.modelPlaceholder);
+    fireEvent.change(model, { target: { value: "claude-relay" } });
+    fireEvent.keyDown(model, { key: "Enter" });
+    await waitFor(() => expect(api.setSettings).toHaveBeenCalled());
+    const saved = api.setSettings.mock.calls.at(-1)?.[0].relay.per_agent.claude;
+    expect(saved.model).toBe("claude-relay");
+    expect(saved.enabled).toBe(false);
   });
 
   it("中转密钥仍走独立命令，不进入 Settings", async () => {
@@ -495,6 +571,7 @@ describe("AccountSection agent 卡", () => {
     await waitFor(() =>
       expect(api.setSettings.mock.calls.at(-1)?.[0].relay.per_agent.claude.enabled).toBe(false),
     );
+    expect(await screen.findByText(zh.relay.secretClearedOff)).toBeTruthy();
   });
 
   it("旧中转规则协议为空时保存插件默认协议", async () => {
@@ -517,6 +594,9 @@ describe("AccountSection agent 卡", () => {
       (el) => el.textContent === zh.relay.title,
     ) as HTMLElement;
     fireEvent.click(relayChoice);
+    const use = await screen.findByTestId("agent-access-use-relay-kimi") as HTMLButtonElement;
+    await waitFor(() => expect(use.disabled).toBe(false));
+    fireEvent.click(use);
 
     await waitFor(() => expect(api.setSettings).toHaveBeenCalled());
     const saved = api.setSettings.mock.calls.at(-1)?.[0].relay.per_agent.kimi;

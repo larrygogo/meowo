@@ -300,7 +300,12 @@ function RelayAccessSupported({ agent, settings, patch, capability }: {
   const t = useT();
   const relay = settings?.relay ?? { per_agent: {} };
   const rule = relay.per_agent[agent.id] ?? relayDefault(agent);
-  const [configuring, setConfiguring] = useState(false);
+  // 标签只管「看哪一边」，不管「用哪一边启动」：点标签、方向键都不写 settings。
+  // 启动方式只由下方的「改用…」按钮改（leader 2026-11-19：切了 tab 就切了启动方式不好）。
+  // picked 为 null 时跟随当前生效的一边——settings 异步加载完成后也能落在正确的一边。
+  const [picked, setPicked] = useState<AccessMode | null>(null);
+  // 使用中把密钥清空，中转已不可用，会自动回到官方账号；这一句说明为什么启动方式变了。
+  const [autoOff, setAutoOff] = useState(false);
   const [secretSaved, setSecretSaved] = useState(false);
   const [secretValue, setSecretValue] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -309,7 +314,8 @@ function RelayAccessSupported({ agent, settings, patch, capability }: {
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [modelsAttempted, setModelsAttempted] = useState(false);
   const modelsRequestSeq = useRef(0);
-  const mode: AccessMode = rule.enabled || configuring ? "relay" : "official";
+  const active: AccessMode = rule.enabled ? "relay" : "official";
+  const view: AccessMode = picked ?? active;
 
   useEffect(() => {
     getRelaySecretStatus()
@@ -318,10 +324,9 @@ function RelayAccessSupported({ agent, settings, patch, capability }: {
     getRelaySecrets()
       .then((secrets) => setSecretValue(secrets[agent.id] ?? ""))
       .catch(() => {});
+    setPicked(null);
+    setAutoOff(false);
   }, [agent.id]);
-  useEffect(() => {
-    if (rule.enabled) setConfiguring(false);
-  }, [rule.enabled]);
   useEffect(() => {
     modelsRequestSeq.current += 1; // 令旧地址/协议的在途响应失效
     setRemoteModels([]);
@@ -372,22 +377,14 @@ function RelayAccessSupported({ agent, settings, patch, capability }: {
     return Boolean(normalized.base_url.trim() && normalized.model.trim() && hasSecret
       && (!capability.protocols.length || normalized.protocol));
   };
+  // 改配置只存配置：填齐最后一项也不顺带启用（那同样是没打招呼就换了启动方式）。
   const saveField = (next: RelayRule) => {
-    // 正在配置且最后一个必填项刚补齐时直接完成切换，不要求用户先切回官方再点一次中转。
-    void saveRule({ ...next, enabled: rule.enabled || (configuring && ready(next)) });
+    void saveRule({ ...next, enabled: rule.enabled });
   };
-  const changeMode = (next: AccessMode) => {
-    if (next === "official") {
-      setConfiguring(false);
-      void saveRule({ ...rule, enabled: false });
-      return;
-    }
-    if (ready(rule)) {
-      void saveRule({ ...rule, enabled: true });
-    } else {
-      setConfiguring(true);
-      setErr(null);
-    }
+  const switchTo = (next: AccessMode) => {
+    setAutoOff(false);
+    if (next === "relay" && !ready(rule)) return;
+    void saveRule({ ...rule, enabled: next === "relay" });
   };
   const saveSecret = (value: string) => {
     setErr(null);
@@ -398,9 +395,8 @@ function RelayAccessSupported({ agent, settings, patch, capability }: {
         setSecretValue(normalized);
         setSecretSaved(saved);
         if (!saved && rule.enabled) {
+          setAutoOff(true);
           void saveRule({ ...rule, enabled: false });
-        } else if (configuring && ready(rule, saved)) {
-          void saveRule({ ...rule, enabled: true });
         }
       })
       .catch((e) => setErr(formatBackendError(e, t.locale)));
@@ -433,16 +429,49 @@ function RelayAccessSupported({ agent, settings, patch, capability }: {
       <div className="provider-access-head">
         <span className="row-label">{t.relay.accessMode}</span>
         <Segmented
-          value={mode}
+          value={view}
           label={`${agent.display_name} ${t.relay.accessMode}`}
-          options={[
-            { value: "official", label: t.relay.official },
-            { value: "relay", label: t.relay.title },
-          ]}
-          onChange={changeMode}
+          options={(["official", "relay"] as const).map((value) => ({
+            value,
+            label: (
+              <>
+                {active === value && (
+                  <span
+                    className="access-live-dot"
+                    role="img"
+                    aria-label={t.relay.inUse}
+                    data-testid={`agent-access-live-${agent.id}`}
+                  />
+                )}
+                {value === "official" ? t.relay.official : t.relay.title}
+              </>
+            ),
+          }))}
+          onChange={setPicked}
         />
       </div>
-      {mode === "relay" && (
+      {view === "official" && (
+        <div className="relay-use-row">
+          <span className="row-desc">
+            {active === "official"
+              ? autoOff ? t.relay.secretClearedOff : t.relay.officialDesc
+              : t.relay.nowRelay}
+          </span>
+          {active === "official" ? (
+            <span className="provider-badge provider-badge-plan">{t.relay.inUse}</span>
+          ) : (
+            <button
+              type="button"
+              className="provider-card-action"
+              data-testid={`agent-access-use-official-${agent.id}`}
+              onClick={() => switchTo("official")}
+            >
+              {t.relay.useOfficial}
+            </button>
+          )}
+        </div>
+      )}
+      {view === "relay" && (
         <>
           <div className="relay-fields">
             <label className="relay-field">
@@ -533,12 +562,29 @@ function RelayAccessSupported({ agent, settings, patch, capability }: {
               </div>
             )}
           </div>
-          <div className="row-desc relay-coverage">
-            {rule.enabled
-              ? t.relay.coverage
-              : missingFields.length
-              ? t.relay.missingFields(missingFields)
-              : t.relay.completeToEnable}
+          <div className="relay-use-row">
+            <span className="row-desc">
+              {rule.enabled
+                ? t.relay.coverage
+                : autoOff
+                ? t.relay.secretClearedOff
+                : missingFields.length
+                ? t.relay.missingFields(missingFields)
+                : t.relay.readyToUse}
+            </span>
+            {rule.enabled ? (
+              <span className="provider-badge provider-badge-plan">{t.relay.inUse}</span>
+            ) : (
+              <button
+                type="button"
+                className="provider-card-action"
+                data-testid={`agent-access-use-relay-${agent.id}`}
+                disabled={missingFields.length > 0}
+                onClick={() => switchTo("relay")}
+              >
+                {t.relay.useRelay}
+              </button>
+            )}
           </div>
         </>
       )}
