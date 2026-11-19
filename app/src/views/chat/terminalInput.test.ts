@@ -86,6 +86,49 @@ describe("pasteImagesNatively", () => {
     await expect(pasteImagesNatively({ ...base, images: ["a.png", "b.png"], io: stuck.io, abandon: async () => false })).rejects.toThrow("图片附加未完成");
   });
 
+  /// 回合进行中 TUI 不停重绘：输入框里已有的 [Image #6] 每帧都再输出一遍。按出现次数数会把
+  /// 重绘当成第二张落地、提前提交，迟到的 [Image #7] 留在终端输入框里（2026-11-19 实拍）。
+  it("重绘反复输出已有占位符时，不把它当成下一张落地", async () => {
+    const writes: string[] = [];
+    let offset = 10;
+    let pasted = 0;
+    const io: NativePasteIo = {
+      setClipboardImage: async () => {},
+      write: async (data) => { writes.push(data); pasted += 1; },
+      snapshot: async (since) => {
+        if (since === undefined) return snap(offset, b64("> [Image #5] 上一条消息"));
+        // 第一张贴下去后屏幕上是 [Image #6]；第二张始终没落地，屏幕只是带着 #6 一帧帧重绘。
+        const data = pasted === 0 ? "" : "\x1b[2K> [Image #6] ";
+        offset += data.length;
+        return snap(offset, b64(data));
+      },
+    };
+    const abandon = vi.fn(async () => true);
+    expect(await pasteImagesNatively({ ...base, images: ["a.png", "b.png"], io, abandon })).toBe("fallback");
+    expect(writes).toEqual(["\x16", "\x16"]);
+    expect(abandon).toHaveBeenCalledTimes(1);
+  });
+
+  it("按编号判定：第二张的编号出现才算落地", async () => {
+    const writes: string[] = [];
+    let offset = 10;
+    let pasted = 0;
+    let polls = 0;
+    const io: NativePasteIo = {
+      setClipboardImage: async () => {},
+      write: async (data) => { writes.push(data); pasted += 1; polls = 0; },
+      snapshot: async (since) => {
+        if (since === undefined) return snap(offset);
+        polls += 1;
+        const data = pasted === 1 ? "> [Image #6] " : polls < 2 ? "> [Image #6] " : "> [Image #6] [Image #7] ";
+        offset += data.length;
+        return snap(offset, b64(data));
+      },
+    };
+    expect(await pasteImagesNatively({ ...base, images: ["a.png", "b.png"], io, abandon: async () => false })).toBe("landed");
+    expect(writes).toEqual(["\x16", "\x16"]);
+  });
+
   it("中途有交互提示弹出（abort 非空）就中止", async () => {
     const { io } = fakeTerminal([true, true]);
     let calls = 0;

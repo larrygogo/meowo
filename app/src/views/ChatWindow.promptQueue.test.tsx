@@ -82,7 +82,7 @@ describe("ChatWindow 持久队列", () => {
     await waitFor(() => expect(harness.writes().some((text) => String(text).includes("卡住的消息"))).toBe(true), { timeout: 4_000 });
     await waitFor(() => expect(harness.state()).toBe("delivered"));
     expect(harness.writes()).toContain("\r");
-    expect(document.body.textContent).not.toContain(zh.chat.steerWaiting);
+    expect(document.body.textContent).not.toContain("等这一步完成后插入你的插话");
     await waitFor(() => expect(document.querySelector(".chat-running.is-background")?.textContent).toContain(zh.chat.backgroundOnlyRunning));
   });
 

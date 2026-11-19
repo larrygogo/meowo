@@ -35,8 +35,9 @@ describe("ChatWindow", () => {
     await deliverQueuedNow();
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 93, data: "插一句" }), { timeout: 3_000 });
     expect(await screen.findByText("1 条插话等待插入当前回合")).toBeTruthy();
-    // 对话末尾的运行行先说插话的去向（用户此刻最关心的事），压过「工作中/请求中」。
-    expect(screen.getByText("等这一步完成后插入你的插话").closest(".chat-running")).toBeTruthy();
+    // 运行行照常显示 agent 在做的事，插话去向只由排队气泡交代，不顶掉运行行。
+    expect(document.querySelector(".chat-running")?.textContent ?? "").not.toContain("插话");
+    expect(document.querySelector(".chat-running")?.textContent ?? "").toMatch(/工作中|请求中/);
     // 排队的插话以气泡排在对话末尾（下一轮将出现的位置），不再藏进输入框上方的胶囊。
     const bubble = screen.getByText("插一句", { selector: ".chat-queue-body" });
     expect(bubble.closest(".chat-scroll")).toBeTruthy();

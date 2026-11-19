@@ -75,6 +75,20 @@ export type NativePasteIo = {
 /// 返回 "landed" = 全部落地，调用方接着提交正文；"fallback" = 没贴成但可以安全改走文本路径
 /// （首张还没粘贴，或贴了一半的残图已由 abandon 确认清干净）。清不掉的残图抛 unconfirmed——
 /// 带着残图降级会重复附图。abort 返回非空即中止（回车前交互提示恰好弹出、会话已切走）。
+/// 占位符的编号（`[Image #7]`、`[image #7 (W×H)]` 里的 7）。marker 正则只认开头，编号从
+/// 匹配处往后一小段里找；认不出编号返回 null。
+function markerIds(text: string, pattern: RegExp): { ids: number[]; count: number } {
+  const ids: number[] = [];
+  let count = 0;
+  for (const match of text.matchAll(pattern)) {
+    count += 1;
+    const after = text.slice(match.index ?? 0, (match.index ?? 0) + match[0].length + 12);
+    const id = /#\s*(\d+)/.exec(after);
+    if (id) ids.push(Number(id[1]));
+  }
+  return { ids, count };
+}
+
 export async function pasteImagesNatively({ images, marker, pasteInput, io, abort, abandon, onPasteStarted, landingPolls, unconfirmed }: {
   images: readonly string[];
   /** 占位符的匹配正则（插件声明）。 */
@@ -93,6 +107,11 @@ export async function pasteImagesNatively({ images, marker, pasteInput, io, abor
   const before = await io.snapshot();
   const markerPattern = new RegExp(marker, "gi");
   const decoder = new TextDecoder();
+  // 落地判定按编号：新贴的图编号一定大于此前出现过的任何占位符。不能数占位符出现的次数：
+  // 回合进行中 TUI 每次重绘（转圈）都会把输入框里已有的 [Image #6] 再输出一遍，数到两次就
+  // 误判第二张已落地、提前提交正文，迟到的 [Image #7] 留在终端输入框里（2026-11-19 实拍）。
+  // 认不出编号的形态（kimi 旧版 `[image:…]`）才退回按次数数。
+  let highest = Math.max(0, ...markerIds(visibleTerminalText(appendTerminalText("", before.data, new TextDecoder())), markerPattern).ids);
   let tail = "";
   let since = before.endOffset;
   let pasteStarted = false;
@@ -116,7 +135,10 @@ export async function pasteImagesNatively({ images, marker, pasteInput, io, abor
       if (!snapshot.active || snapshot.endOffset < since) break;
       since = snapshot.endOffset;
       tail = appendTerminalText(tail, snapshot.data, decoder);
-      landed = (visibleTerminalText(tail).match(markerPattern) ?? []).length >= index + 1;
+      const seen = markerIds(visibleTerminalText(tail), markerPattern);
+      const newest = Math.max(0, ...seen.ids);
+      landed = seen.ids.length > 0 ? newest > highest : seen.count >= index + 1;
+      if (landed) highest = Math.max(highest, newest);
     }
     if (!landed) {
       if (await abandon()) return "fallback";

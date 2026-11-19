@@ -98,7 +98,7 @@ describe("ChatWindow 适配回归", () => {
     await waitFor(() => expect(writes(513)).toContain("\r"));
     expect(document.querySelector(".chat-queue-body")).toBeNull();
     expect(document.querySelector(".chat-queued-head")).toBeNull();
-    expect(document.body.textContent).not.toContain(zh.chat.steerWaiting);
+    expect(document.body.textContent).not.toContain("等这一步完成后插入你的插话");
     // 运行条位置只交代后台还在跑（不计时、不挂插话去向）。
     expect(document.querySelector(".chat-running.is-background")?.textContent).toContain(zh.chat.backgroundOnlyRunning);
   });
