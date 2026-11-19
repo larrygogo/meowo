@@ -2,6 +2,8 @@
 // 补「更改」面板要的 git 接口。只给 app/visual/ 下的截图页用，不进产品构建。
 import { CHAT_SESSION_ID } from "../src/demo/chatData";
 import { makeSession } from "../src/demo/data";
+import multiForgeDecisions from "../src/views/chat/__fixtures__/lead/multi-forge.decisions.md?raw";
+import multiForgeProgress from "../src/views/chat/__fixtures__/lead/multi-forge.progress.tail.md?raw";
 
 /// 与 src/demo/*Embed.tsx 同一个冻结时刻，时间戳在两次拍摄间不漂。
 export const FIXED_NOW = 1_780_000_000_000;
@@ -203,8 +205,9 @@ export const MENTION_CANDIDATES = [
 
 /// Lead 任务快照（lead_task_snapshot）：默认一张待作答的 B 类关卡，摘要够长（会出「展开」），三个选项带推荐；
 /// kind=C 换成验收关卡（固定的「驳回 / 验收通过」两颗按钮）。SPEC 标题和进度给面板的任务名、最新进展用。
-export function leadTask(lang: "zh" | "en", kind: "B" | "C" = "B"): unknown {
+export function leadTask(lang: "zh" | "en", kind: "B" | "C" | "rich" = "B"): unknown {
   const zh = lang === "zh";
+  if (kind === "rich") return leadRichTask(zh);
   const verify = kind === "C";
   return {
     slug: "login-schema", phase: verify ? "verify" : "design", decisions: "",
@@ -237,6 +240,54 @@ export function leadTask(lang: "zh" | "en", kind: "B" | "C" = "B"): unknown {
         { id: "c", label: zh ? "两边都做" : "Both", detail: null, recommended: false },
       ],
     },
+  };
+}
+
+/// Lead 面板三个页签的「真实内容」场景（kind=rich）：中文用真实任务目录的 decisions.md 与后端尾部截断后的
+/// progress.md（样例在 src/views/chat/__fixtures__/lead/，测试共用同一份）；英文是同样结构的手写样本。
+/// 验收清单覆盖：有证据 / 无证据、长文本、待实测、待 leader、已豁免，看「只有有内容的才可展开」。
+function leadRichTask(zh: boolean): unknown {
+  const evidence = (command: string, result: string) => ({ revision: "1315887c", command, result, reference: zh ? "progress.md「验证」一节" : "progress.md, Verification", limitations: zh ? "macOS 未实测" : "Not run on macOS" });
+  const check = (id: string, text: string, over: Record<string, unknown> = {}) => ({ id, check: text, passes: false, waived: null, leader: false, blocked: null, ...over });
+  return {
+    slug: "20261118-multi-forge", phase: "verify", gate: null,
+    spec: zh ? "# 代码托管：多平台 PR（20261118-multi-forge）\n\n## 目的\n不只 GitHub。" : "# Code hosting: PRs beyond GitHub (20261118-multi-forge)\n\n## Goal\nNot only GitHub.",
+    checks: [
+      check("M1", zh ? "GitLab、Gitea、Bitbucket、Gitee 的 PR 列表、检查、合并、评论走统一接口" : "GitLab, Gitea, Bitbucket and Gitee PRs, checks, merge and comments go through one interface",
+        { passes: true, evidence: [evidence("cargo test -p meowo-app --lib forge", zh ? "135 passed" : "135 passed")] }),
+      check("M2", zh ? "设置里的「代码托管」分区" : "\"Code hosting\" section in Settings", { passes: true }),
+      check("M3", zh ? "没账号时引导去设置添加" : "Without an account, point to Settings"),
+      check("M4", zh ? "Gitee 与 Bitbucket 合并前再读一次头提交核对，核对与合并之间的窗口内被人推了新提交时，合并请求要被拒绝并给出可读的原因，不能静默合并旧的头提交" : "Before merging on Gitee and Bitbucket, re-read the head commit; if someone pushes in the window between the check and the merge, refuse with a readable reason instead of silently merging the old head"),
+      check("M5", zh ? "gitlab.com 用个人访问令牌实测登录" : "Sign in to gitlab.com with a personal access token", { blocked: zh ? "要 leader 提供一个测试账号" : "Needs a test account from the leader" }),
+      check("M6", zh ? "CI 全部通过" : "CI is green", { evidence: [evidence("gh pr checks 197", zh ? "Windows detect 计时测试失败一次，重跑通过" : "Windows detect timing test failed once, passed on rerun")] }),
+      check("M8", zh ? "leader 在安装包里添加一个非 GitHub 账号试用" : "The leader adds a non-GitHub account in the installed build", { leader: true }),
+      check("M9", zh ? "Azure DevOps" : "Azure DevOps", { waived: zh ? "D1 定了不做" : "Out of scope per D1" }),
+    ],
+    decisions: zh ? multiForgeDecisions : [
+      "# Decisions", "",
+      "## D1 Scope (2026-11-18, leader: \"go with your suggestion\")", "",
+      "- Platforms: GitHub (.com + Enterprise), GitLab (.com + self-managed), Gitea/Forgejo (incl. Codeberg), Bitbucket Cloud; no Azure DevOps.",
+      "- Sign-in: device code for github.com; personal access tokens elsewhere, stored in the system keychain.", "",
+      "## D2 Drop the local gh (2026-11-18, leader: \"drop gh\")", "",
+      "- Meowo no longer runs the local gh CLI; github.com uses an account plus the built-in client like every other host.",
+      "- Without an account, point to Settings instead of erroring.", "",
+      "## D3 Settings section (agent decision)", "",
+      "One list for every host; no separate off switch.", "",
+      "## D4 Accepted (2026-11-18, leader picked accept at gate C-20261118-multi-forge-1, no note)", "",
+      "- Scope: the 9 frozen checks (M1–M9), build 032d0505.",
+      "- Merging #197 and #198 still needs the leader's go-ahead.",
+    ].join("\n"),
+    progress: zh ? multiForgeProgress : [
+      "phase: verify", "",
+      "## 2026-11-18", "- Leader agreed to the scope (D1). Started on top of a56ea18d.", "",
+      "## 2026-11-18 Implementation (branch feat/multi-forge)", "",
+      "### Architecture", "- One PR/MR interface; the two GitHub paths moved behind it.", "",
+      "### Coverage", "| Host | Sign-in | Merge |", "|---|---|---|", "| GitLab | Token | Yes |", "| Gitee | Token | Yes (head re-read) |", "",
+      "## 2026-11-18 Review fixes", "- A 8abcee2c: GitLab refresh only flags re-login on 400/401 invalid_grant.", "- B 1ed437be: Gitea 405 now reads \"can't merge yet\".", "",
+      "```", "cargo test -p meowo-app --lib forge  # 135 passed", "```", "",
+      "## 2026-11-18 Verification (lead)", "- Three independent review rounds; all findings fixed (1315887c).", "- Published gate C-20261118-multi-forge-1 with 9 frozen checks.",
+      "- Leader accepted; waiting for the merge decision.",
+    ].join("\n"),
   };
 }
 

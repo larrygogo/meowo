@@ -91,6 +91,8 @@ export function qaFlowBoot(scene: string, lang: Lang): void {
     "flow-browser-blank": [{ key: "b1", type: "browser", paneId: 7, url: "about:blank", title: "" }],
     "flow-browser-emu": [{ key: "b1", type: "browser", paneId: 7, url: "http://localhost:5173/", title: "Vite" }],
     "flow-shell": [{ key: "t1", type: "term", shellId: 5, cwd: "C:/dev/web-app" }],
+    // Lead 页签开在侧边面板里（真实任务目录的决定与进度，见 fixtures.ts 的 leadTask("rich")）。
+    "flow-lead-rich-panel": [{ key: "l", type: "lead" }],
   };
   if (panelTabs[scene]) {
     const tabs = [{ key: "diff", type: "diff" }, ...panelTabs[scene]] as never[];
@@ -221,6 +223,8 @@ export function qaFlowMock(scene: string, lang: Lang, chat: (cmd: string) => unk
     }
     if (cmd === "lead_task_snapshot" && (kind === "lead" || kind === "lead-panel")) return leadTask(lang);
     if (cmd === "lead_task_snapshot" && kind === "lead-c") return leadTask(lang, "C");
+    if (cmd === "lead_task_snapshot" && (kind === "lead-rich" || kind === "lead-rich-panel")) return leadTask(lang, "rich");
+    if (cmd === "lead_task_snapshot" && (kind === "lead-rich" || kind === "lead-rich-panel")) return leadTask(lang, "rich");
     if (cmd === "worktree_setup" && kind.startsWith("wt-")) return worktreeSetup(kind === "wt-failed" ? "failed" : kind === "wt-trust" ? "needs_trust" : "running");
     if (cmd === "pending_interaction") {
       if (kind === "term-approval") return chat(cmd);

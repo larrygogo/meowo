@@ -14,6 +14,21 @@ const FORGE_SCROLL = "document.querySelector('[data-testid=forge-accounts]')?.sc
 const FORGE_ACTIONS_SCROLL = "document.querySelector('[data-testid=forge-device-start]')?.scrollIntoView({ block: 'end' })";
 const FORGE_ADD_SCROLL = "document.querySelector('[data-testid=forge-add]')?.scrollIntoView({ block: 'start' })";
 
+/// Lead 面板三个页签一组（数据见 fixtures.ts 的 leadTask("rich")）。open：先点开面板的入口（侧边面板场景不用点）；
+/// root：面板所在容器，页签按它找，免得点到另一处的同名页签。验收页展开「已通过与豁免」后悬停第一行（没有证据的那条），
+/// checks-open 点开有证据的 M6。
+function leadRichShots(prefix, scene, open, root, extra = {}) {
+  const pre = open ? [["click", open]] : [];
+  const tab = (n) => ["click", `${root} .lead-tab >> nth=${n}`];
+  const base = { scene, sel: root, langs: ["zh", "en"], ...extra };
+  return [
+    { ...base, name: `${prefix}-checks`, steps: [...pre, ["click", `${root} .lead-check-toggle`], ["hover", `${root} .lead-check >> nth=0`]] },
+    { ...base, name: `${prefix}-checks-open`, langs: ["zh"], steps: [...pre, ["click", `${root} button.lead-check:has-text("M6")`]] },
+    { ...base, name: `${prefix}-decisions`, steps: [...pre, tab(2)] },
+    { ...base, name: `${prefix}-progress`, steps: [...pre, tab(3)] },
+  ];
+}
+
 export const QA_SHOTS = [
   // ── 输入框：斜杠菜单、@ 补全 ──
   { name: "qa-slash", scene: "pop-idle", steps: [["type", TA, "/"]] },
@@ -59,6 +74,10 @@ export const QA_SHOTS = [
   { name: "qa-lead-c-reject", scene: "flow-lead-c", sel: ".lead-gate-card", steps: [["click", ".lead-gate-card .is-deny"]] },
   { name: "qa-lead-c-620", scene: "flow-lead-c", sel: ".lead-gate-card", size: W620 },
   { name: "qa-lead-c-panel", scene: "flow-lead-c", sel: ".panel-lead", steps: [["click", ".dock-workbar .ui-pill"]], langs: ["zh", "en"] },
+  // Lead 面板三个页签用真实任务目录的内容（2026-11-19 面板打磨）：验收只有有内容的行可展开（悬停第一行：无证据），
+  // 决定是一张张卡，进度是倒序时间线。停靠面板与侧边面板各拍一组。
+  ...leadRichShots("qa-lead-rich", "flow-lead-rich", ".dock-workbar .ui-pill", ".panel-lead"),
+  ...leadRichShots("qa-lead-rich-side", "flow-lead-rich-panel", null, ".side-panel-lead"),
   { name: "qa-queued", scene: "flow-queued", sel: ".chat-queued-turn" },
   // 会话状态（2026-11-18）：只剩后台子代理在跑时运行条位置的说明与可发送的输入框；子代理面板的
   // 实时时长与 token（含 SendMessage 续上的那个）；API 卡住等重试时的运行条与侧栏状态点。
@@ -307,6 +326,7 @@ export const QA_SHOTS = [
   { name: "qa-m-lead-c", page: "mobile", scene: "mobile-lead-c", size: PHONE, sel: ".lead-gate-card", langs: ["zh", "en"] },
   { name: "qa-m-lead-c-reject", page: "mobile", scene: "mobile-lead-c", size: PHONE, sel: ".lead-gate-card", steps: [["click", ".lead-gate-card .is-deny"]] },
   { name: "qa-m-lead-panel", page: "mobile", scene: "mobile-lead-c", size: PHONE, sel: ".panel-lead", steps: [["click", ".dock-workbar .ui-pill"]] },
+  ...leadRichShots("qa-m-lead-rich", "mobile-lead-rich", ".dock-workbar .ui-pill", ".panel-lead", { page: "mobile", size: PHONE }),
   // 后台任务面板（一条在跑、三条跑完）：面板头两行（标题 + 关闭钮 / 整行分段筛选），转圈是运行绿。
   { name: "qa-m-tasks", page: "mobile", scene: "mobile-tasks", size: PHONE, sel: ".panel-tasks", steps: [["click", ".dock-workbar .ui-pill >> nth=0"]], langs: ["zh", "en"] },
   { name: "qa-m-tasks-430", page: "mobile", scene: "mobile-tasks", size: [430, 932], sel: ".panel-tasks", steps: [["click", ".dock-workbar .ui-pill >> nth=0"]] },

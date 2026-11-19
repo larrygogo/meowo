@@ -132,14 +132,14 @@ describe("Lead 入口", () => {
     expect(document.querySelector('[aria-current="step"]')?.textContent).toBe("实施");
     expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("1");
     expect(screen.getByText("手机能用")).toBeTruthy();
-    // 用户选定的样式（2026-11-09）：没通过的排前面、不显示 #编号；点一条展开全文。
+    // 用户选定的样式（2026-11-09）：没通过的排前面、不显示 #编号。没有证据、说明的条目是普通的一行，不能点开（2026-11-19）。
     expect(screen.queryByText("测试全过")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "已通过与豁免 · 1" }));
     const rows = [...document.querySelectorAll(".lead-check")];
     expect(rows.map((row) => row.querySelector(".lead-check-text")?.textContent)).toEqual(["手机能用", "测试全过"]);
     expect(document.body.textContent).not.toContain("#1");
-    fireEvent.click(rows[0]);
-    expect(rows[0].className).toContain("is-open");
+    expect(rows[0].tagName).toBe("DIV");
+    expect(rows[0].className).toContain("is-static");
     fireEvent.click(screen.getByRole("tab", { name: "规格" }));
     expect(screen.getByText(/目的：演示/)).toBeTruthy();
   });
@@ -699,20 +699,22 @@ it("验收项展开后显示对应版本的证据，不给旧条目造证据", (
   expect(screen.getByText("macOS 未验证")).toBeTruthy();
 });
 
-it("决策与进度按条目展示且保留原始内容", async () => {
+it("决策按决定卡展示、最新在上，进度不再平铺 phase 行，内容不丢", async () => {
   render(<LeadPanel task={task({
     decisions: "- D-17（publication-2）：采用显式发布，保留旧答复。\n- D-18：继续验证。",
     progress: "phase: verify\n- 完成第一轮验证\n- 修复后复验通过",
   })} onClose={() => {}} />);
   fireEvent.click(screen.getByRole("tab", { name: "决策" }));
-  expect(screen.getByRole("heading", { name: "D-17（publication-2）" })).toBeTruthy();
+  // 单行旧格式：编号、括号说明、正文各归各位；文件末尾的 D-18 是最新的，排最上。
+  const cards = [...document.querySelectorAll(".lead-decision")];
+  expect(cards.map((card) => card.querySelector(".lead-decision-id")?.textContent)).toEqual(["D-18", "D-17"]);
+  expect(cards[1].querySelector(".lead-decision-meta")?.textContent).toBe("publication-2");
   expect(screen.getByText(visibleText("采用显式发布，保留旧答复。"))).toBeTruthy();
-  expect(screen.getByRole("heading", { name: "D-18" })).toBeTruthy();
-  expect(screen.getByText("继续验证。")).toBeTruthy();
+  expect(screen.getByText(visibleText("继续验证。"))).toBeTruthy();
   fireEvent.click(screen.getByRole("tab", { name: "进度" }));
-  expect(document.querySelector(".lead-notes-phase")?.textContent).toBe("phase: verify");
-  expect(document.querySelectorAll(".lead-notes.is-progress .lead-note")).toHaveLength(2);
-  expect(document.querySelector(".lead-notes.is-progress .lead-note:last-child")?.textContent).toContain("修复后复验通过");
+  // 当前阶段由顶部阶段条显示（二者同源），时间线里不再重复一行「phase: verify」。
+  expect(document.querySelector(".lead-notes.is-progress")?.textContent).not.toContain("phase:");
+  expect(screen.getByText(visibleText("修复后复验通过"))).toBeTruthy();
 });
 
 it("历史缺少会话 id 时只查询并展示后端允许的未认领任务", async () => {
@@ -722,20 +724,22 @@ it("历史缺少会话 id 时只查询并展示后端允许的未认领任务", 
   expect(await screen.findByRole("button", { name: /Lead.*1\/2/ })).toBeTruthy();
 });
 
-it("验收显示稳定编号，决策保留表格，进度使用时间轴", () => {
+it("验收显示稳定编号，旧任务的决定表格拆成卡，进度使用时间轴", () => {
   render(<LeadPanel task={task({
     checks: [
       { id: "L17", check: "恢复未认领任务入口", passes: false, leader: false, blocked: null, waived: null },
       { id: "L18", check: "移动端表格", passes: true, leader: false, blocked: null, waived: null },
     ],
     decisions: "- D-20：保留原始表格\n\n| 日期 | 决策 | 理由 |\n| --- | --- | --- |\n| 11-17 | 时间轴 | 保持顺序 |",
-    progress: "phase: verify\n- 第一条记录\n- 第二条记录",
+    progress: "phase: verify\n## 2026-11-17 第一节\n- 第一条记录\n\n## 2026-11-18 第二节\n- 第二条记录",
   })} onClose={() => {}} />);
   expect(document.querySelector(".lead-check-id")?.textContent).toBe("L17");
   fireEvent.click(screen.getByRole("tab", { name: "决策" }));
-  expect(screen.getByRole("table")).toBeTruthy();
-  expect(screen.getByRole("columnheader", { name: "决策" })).toBeTruthy();
+  // 表头有「决策」列的表格每行一张卡：标题取决策列，其余列成要点，原文不丢。
+  expect(screen.queryByRole("table")).toBeNull();
+  expect(screen.getByRole("heading", { name: "时间轴" })).toBeTruthy();
+  expect(screen.getByText(visibleText("理由：保持顺序"))).toBeTruthy();
   fireEvent.click(screen.getByRole("tab", { name: "进度" }));
   expect(document.querySelectorAll(".lead-timeline .lead-timeline-marker")).toHaveLength(2);
-  expect(document.querySelectorAll(".lead-timeline .lead-note")[1].textContent).toContain("第二条记录");
+  expect(document.querySelectorAll(".lead-timeline .lead-entry")[0].textContent).toContain("第二节");
 });
