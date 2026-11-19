@@ -344,7 +344,6 @@ export function ChatWindow() {
   const pendingEchoes = useMemo(() => outgoing.filter((prompt) => prompt.kind === "echo"), [outgoing]);
   const queuedPending = queuedInterjections.filter((prompt) => prompt.phase === "pending" || prompt.phase === "accepted").length
     + persistedQueue.filter((prompt) => prompt.state === "held").length;
-  const queuedInserted = queuedInterjections.some((prompt) => prompt.phase === "inserted");
   const persistedQueueShown = useMemo(() => persistedQueue.filter((queued) =>
     !outgoing.some((prompt) => prompt.queueId === queued.id)), [persistedQueue, outgoing]);
   // 排队区只放还没进对话的：已插入的那条此刻已经以「回合中插入」的气泡出现在对话里，
@@ -1718,7 +1717,8 @@ export function ChatWindow() {
     out.push({ type: "meta", id: "handoff-current", timestamp: null, kind: `handoff:${nameOf(provider ?? "")}` });
     return [...out, ...displayItems];
   }, [prefixSegments, displayItems, agentsForOptions, provider]);
-  // 运行行的说法（对照 Kimi 的优先级）：插话去向 > 压缩中 > CLI 状态行 > 工作中/请求中。
+  // 运行行的说法：压缩中 > CLI 状态行 > 工作中/请求中。插话的去向由对话末尾的排队气泡交代，
+  // 运行行始终显示 agent 正在做的事，不被插话提示顶掉（leader 2026-11-19 截图）。
   // 「工作中」与「请求中」之分：本轮在最后一条用户消息之后有没有任何输出——还没有就是
   // 请求刚发出去、在等模型，有了就是在干活。只认真实 items，回显不算输出。
   const liveTurnHasOutput = useMemo(() => {
@@ -1728,10 +1728,7 @@ export function ChatWindow() {
     }
     return false;
   }, [items]);
-  const runningOverride = chatUi?.queue_delivery === "next_step" && queuedPending > 0 ? t.chat.steerWaiting
-    : chatUi?.queue_delivery === "next_step" && queuedInserted ? t.chat.steerInjected
-    : compactingNow ? t.chat.compacting
-    : null;
+  const runningOverride = compactingNow ? t.chat.compacting : null;
   // 运行条本地计时的起点（读不到屏幕状态行时用）：本轮 = 最后一条用户消息起；
   // transcript 还没落这条（或不带时间戳）时退回「GUI 看到它开跑」的时刻。
   const lastUserAt = useMemo(() => {

@@ -787,17 +787,14 @@ export const zh = {
     compactViewSummary: "查看摘要",
     compactHideSummary: "收起摘要",
     compacting: "正在压缩上下文…",
-    // 对话末尾的运行行（对照 Kimi：还没有任何输出叫「请求中」，有了叫「工作中」；
-    // 插话的去向优先于它们，因为那是用户此刻最关心的那件事）
+    // 对话末尾的运行行（对照 Kimi：还没有任何输出叫「请求中」，有了叫「工作中」）
     requesting: "请求中…",
     working: "工作中…",
     // 读屏播报的回合状态句（运行条本身不播报，见 RunningBar 的 TurnAnnouncer）。
     liveWorking: "工作中",
     liveReplyDone: "回复完成",
-    steerWaiting: "等这一步完成后插入你的插话",
     // 主回合停了、只剩后台子代理在跑（对话窗运行条位置）：说清后台在干活，也说清发消息不受影响。
     backgroundOnlyRunning: "后台子任务还在运行，发消息不受影响",
-    steerInjected: "已插入，正在继续处理",
     // 手机上的底部面板（斜杠命令）
     slashSheetTitle: "命令",
     slashSheetSearch: "搜索命令",
