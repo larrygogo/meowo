@@ -1887,7 +1887,7 @@ export const zh = {
     // 「退出登录」的用户猜不到该点它（key 名 account 与显示名分裂也是自证）。
     nav: { general: "通用", appearance: "外观", notify: "通知", sessions: "会话", account: "Agent", github: "代码托管", remote: "手机远程", shortcuts: "快捷键", about: "关于" },
     // 设置搜索额外匹配的词（不显示）：导航名为排版改短后，旧名里的词仍要能搜到对应分区。
-    navSearchExtra: { shortcuts: "键盘", notify: "提醒 推送 提示音", account: "账号 用量 扩展 技能 MCP 命令 插件 钩子", github: "Git 提交身份 user.name user.email GitHub PR 登录 GitLab MR Gitea Forgejo Codeberg Bitbucket Gitee 企业版 令牌 账号" },
+    navSearchExtra: { general: "网络 代理 network proxy", shortcuts: "键盘", notify: "提醒 推送 提示音", account: "账号 用量 扩展 技能 MCP 命令 插件 钩子", github: "Git 提交身份 user.name user.email GitHub PR 登录 GitLab MR Gitea Forgejo Codeberg Bitbucket Gitee 企业版 令牌 账号" },
     searchPlaceholder: "搜索设置…",
     searchNoResults: "没有匹配的设置项",
     searchClear: "清除搜索",
@@ -1906,6 +1906,7 @@ export const zh = {
     // 「会话列表」「已完成会话」两个单行分组合成一组（设置页精简 2026-11-19）。
     listGroup: "列表",
     worktreeGroup: "Worktree",
+    networkGroup: "网络",
     // Agent 页顶部的分段：同一个 Agent 选择器下切看账号用量或扩展。
     agentViewAccount: "账号与用量",
     agentViewExtensions: "扩展",

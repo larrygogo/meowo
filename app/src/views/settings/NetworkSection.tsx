@@ -267,8 +267,11 @@ export function ProxyRows({ expandAll = false, onError }: { expandAll?: boolean;
           <Segmented value={globalMode} options={modeOptions} onChange={changeGlobalMode} label={t.proxy.mode} />
         </div>
 
+        {/* 以下各行都是「网络代理」名下的 .row-sub：设置搜索把表头和子行当一组（searchFilter），
+            表头命中就整组带出——此前地址行没有可搜的文字，搜「代理」时地址框被滤掉（审查 2026-11-19）。
+            proxy-flat：视觉上不缩进，地址框和各 Agent 表头仍贴卡片左内边距。 */}
         {globalMode === "custom" && (
-          <div className="row proxy-url-row">
+          <div className="row row-sub proxy-flat proxy-url-row">
             <UrlInput
               value={proxy.url}
               placeholder={t.proxy.urlPlaceholder}
@@ -287,7 +290,7 @@ export function ProxyRows({ expandAll = false, onError }: { expandAll?: boolean;
         )}
 
         {globalMode === "system" && (
-          <div className="row proxy-url-row">
+          <div className="row row-sub proxy-flat proxy-url-row">
             <div className="row-text">
               <div className="row-desc">
                 {effective[""] ? t.proxy.systemHint(effective[""]!) : t.proxy.systemNone}
@@ -296,14 +299,14 @@ export function ProxyRows({ expandAll = false, onError }: { expandAll?: boolean;
           </div>
         )}
 
-        {socksBroken && <div className="row proxy-url-row"><div className="row-text"><div className="row-desc proxy-err">{t.proxy.socksWarn}</div></div></div>}
+        {socksBroken && <div className="row row-sub proxy-flat proxy-url-row"><div className="row-text"><div className="row-desc proxy-err">{t.proxy.socksWarn}</div></div></div>}
         {effective[""] && isSocks(effective[""]!) && (
-          <div className="row proxy-url-row"><div className="row-text"><div className="row-desc proxy-err">{t.proxy.updaterSocksHint}</div></div></div>
+          <div className="row row-sub proxy-flat proxy-url-row"><div className="row-text"><div className="row-desc proxy-err">{t.proxy.updaterSocksHint}</div></div></div>
         )}
 
       {agents.length > 0 && (
         <>
-          <div className="row">
+          <div className="row row-sub proxy-flat proxy-sub-head">
             <div className="row-text">
               <div className="row-label">{t.proxy.perAgent}</div>
               <div className="row-desc">{overrides > 0 ? t.proxy.perAgentCount(overrides) : t.proxy.perAgentNone}</div>
@@ -314,7 +317,7 @@ export function ProxyRows({ expandAll = false, onError }: { expandAll?: boolean;
               </button>
             )}
           </div>
-          {/* 各 Agent 的行是 .row-sub：设置搜索把它们和上面那行当一组，搜「codex」带出表头。 */}
+          {/* 各 Agent 的行同样是「网络代理」的子行（缩进一级），搜「codex」带出「网络代理」表头。 */}
           {perAgentOpen && agents.map((a) => {
             const m = rowMode(a.id);
             const rep = reports[a.id];

@@ -46,7 +46,8 @@ beforeAll(() => {
     if (cmd === "list_agents") return AGENTS;
     if (cmd === "list_agent_extensions") return EXTENSIONS;
     if (cmd === "available_terminals") return ["wt", "powershell"];
-    if (cmd === "lead_workflow_installed") return false;
+    // 装着 Lead：「有关卡待拍板时」防休眠子行只在装了 Lead 后出现（与改前同一条件）。
+    if (cmd === "lead_workflow_installed") return true;
     if (cmd === "lead_provider_installations") return [{ provider: "codex", name: "Codex", profileId: null, profileName: null, version: "1", configured: true, supported: true, managed: false, installed: false, assetsInstalled: false, hooksInstalled: false, automaticContinue: false, notes: [], reason: null }];
     if (cmd === "installed_agent_versions" || cmd === "check_agent_updates") return [];
     if (cmd === "get_autostart") return false;
@@ -66,6 +67,8 @@ beforeEach(() => {
   baseSettings ??= JSON.parse(JSON.stringify(store.settings));
   store.settings = JSON.parse(JSON.stringify(baseSettings));
   Object.assign(store.settings, { remote_access_enabled: true, notifications_enabled: true, chat_enabled: true, bark_url: "https://api.day.app/KEY/" });
+  // 自定义代理 + codex 单独设了自定义地址：代理地址框、各 Agent 的模式与地址都在页面上。
+  store.settings.proxy = { mode: "custom", url: "http://127.0.0.1:7890", per_agent: { codex: { mode: "custom", url: "http://10.0.0.2:8080" } } };
 });
 afterEach(() => cleanup());
 
@@ -79,6 +82,9 @@ type Item = {
   label: string;
   /** 开关的无障碍名：给了就拨一下，断言 field 被写回（布尔字段取反、数组字段变化）。 */
   toggle?: string;
+  /** 没有行标题的项（地址输入框）：自己定位到那一行；query 是用来搜它的词。 */
+  find?: () => HTMLElement | null;
+  query?: string;
 };
 
 const k = zh.settings.islandAlertKinds;
@@ -132,6 +138,11 @@ const ITEMS: Item[] = [
   // ── 改前「网络」 ──
   { before: "网络 · 默认代理（+ 地址）", field: "proxy.mode / proxy.url", sec: "general", label: zh.proxy.mode },
   { before: "网络 · 按 Agent 覆盖", field: "proxy.per_agent", sec: "general", label: zh.proxy.perAgent },
+  { before: "网络 · 默认代理 · 自定义地址", field: "proxy.url", sec: "general", label: "代理地址框", query: "代理",
+    find: () => (document.querySelector<HTMLInputElement>('.main-sec[data-sec="general"] input[value="http://127.0.0.1:7890"]')?.closest<HTMLElement>(".row") ?? null) },
+  { before: "网络 · 按 Agent 覆盖 · Codex 的模式", field: "proxy.per_agent.codex.mode", sec: "general", label: "Codex" },
+  { before: "网络 · 按 Agent 覆盖 · Codex 的自定义地址", field: "proxy.per_agent.codex.url", sec: "general", label: "Codex 代理地址框", query: "网络",
+    find: () => (document.querySelector<HTMLInputElement>('.main-sec[data-sec="general"] input[value="http://10.0.0.2:8080"]')?.closest<HTMLElement>(".row") ?? null) },
   // ── 改前「代码托管」（本次未改，只验位置与搜索） ──
   { before: "代码托管 · user.name", field: "git config user.name", sec: "github", label: zh.codeHosting.userName },
   { before: "代码托管 · user.email", field: "git config user.email", sec: "github", label: zh.codeHosting.userEmail },
@@ -180,7 +191,7 @@ describe("不丢设置：改前每一项在新结构里都在、搜得到、写�
       await screen.findByPlaceholderText(zh.settings.searchPlaceholder);
       if (!item.before.startsWith("扩展")) navTo(item.sec);
       const row = await waitFor(() => {
-        const found = rowIn(item.sec, item.label);
+        const found = item.find ? item.find() : rowIn(item.sec, item.label);
         expect(found, `${zh.settings.nav[item.sec]} 分区里找不到「${item.label}」`).toBeTruthy();
         return found!;
       });
@@ -197,10 +208,11 @@ describe("不丢设置：改前每一项在新结构里都在、搜得到、写�
 
       // 搜索：用行标题搜，这一行可见；所在分区的标题也在（搜索结果按新分区平铺）。
       const input = screen.getByPlaceholderText(zh.settings.searchPlaceholder);
-      fireEvent.change(input, { target: { value: item.label } });
+      const query = item.query ?? item.label;
+      fireEvent.change(input, { target: { value: query } });
       await waitFor(() => {
-        const hit = rowIn(item.sec, item.label);
-        expect(hit && shown(hit), `搜「${item.label}」时 ${item.sec} 分区那一行不可见`).toBe(true);
+        const hit = item.find ? item.find() : rowIn(item.sec, item.label);
+        expect(hit && shown(hit), `搜「${query}」时 ${item.sec} 分区「${item.label}」不可见`).toBe(true);
       });
       const title = document.querySelector<HTMLElement>(`.main-sec[data-sec="${item.sec}"] .sec-title`)!;
       expect(shown(title)).toBe(true);
@@ -260,6 +272,39 @@ describe("分区结构", () => {
     await waitFor(() => expect(rowIn("account", "playwright")).toBeTruthy());
     expect(document.querySelectorAll(".main-sec[data-sec=account] .account-agent-switch .dd-btn")).toHaveLength(1);
     expect(localStorage.getItem(SETTINGS_SECTION_KEY)).toBe("extensions");
+  });
+});
+
+describe("搜旧分区名「网络」与「代理」：代理地址与各 Agent 行都在（审查 2026-11-19 第 1 条）", () => {
+  const urlRow = (value: string) => document.querySelector<HTMLInputElement>(`.main-sec[data-sec="general"] input[value="${value}"]`)?.closest(".row") ?? null;
+  for (const q of ["网络", "代理", "network"]) {
+    it(`搜「${q}」：网络代理、地址框、各 Agent 单独设置与各家行都可见`, async () => {
+      render(<About />);
+      const input = await screen.findByPlaceholderText(zh.settings.searchPlaceholder);
+      fireEvent.change(input, { target: { value: q } });
+      await waitFor(() => expect(urlRow("http://10.0.0.2:8080")).toBeTruthy());
+      expect(shown(rowIn("general", zh.proxy.mode)!)).toBe(true);
+      expect(shown(urlRow("http://127.0.0.1:7890")!)).toBe(true);
+      expect(shown(rowIn("general", zh.proxy.perAgent)!)).toBe(true);
+      for (const name of ["Claude Code", "Codex"]) expect(shown(rowIn("general", name)!), name).toBe(true);
+      expect(shown(urlRow("http://10.0.0.2:8080")!)).toBe(true);
+    });
+  }
+
+  it("搜索结果里把代理切到「自定义」：新出现的地址框不被过滤掉", async () => {
+    store.settings.proxy = { mode: "off", url: "", per_agent: {} };
+    render(<About />);
+    const input = await screen.findByPlaceholderText(zh.settings.searchPlaceholder);
+    // 「默认代理」是改前网络页的行标题，现在只命中「网络代理」这一行本身，不靠分区名带出整页。
+    fireEvent.change(input, { target: { value: "网络代理" } });
+    const custom = await waitFor(() => {
+      const el = screen.getAllByRole("radio", { name: zh.proxy.custom }).find((r) => shown(r));
+      expect(el).toBeTruthy();
+      return el!;
+    });
+    fireEvent.click(custom);
+    const box = await screen.findByPlaceholderText(zh.proxy.urlPlaceholder);
+    await waitFor(() => expect(shown(box)).toBe(true));
   });
 });
 

@@ -2376,6 +2376,13 @@ button.stab {
 .row-col:has(+ .row-sub) { padding-bottom: var(--sp-6); }
 .row-sub:not(:has(+ .row-sub)) { padding-bottom: var(--sp-12); }
 .row-head { display: flex; align-items: center; gap: var(--sp-13); }
+/* 通用 › 网络代理：地址行、系统代理提示、SOCKS 告警、「各 Agent 单独设置」都是「网络代理」名下的 .row-sub
+   （设置搜索按组显隐），但视觉上照旧：地址框贴卡片左内边距、紧跟表头（上内边距 0），
+   「各 Agent 单独设置」仍是一行普通设置（通栏分隔线、常规内边距）；只有各 Agent 的行缩进一级。 */
+.row.row-sub.proxy-flat { padding-left: var(--sp-16); }
+.row.row-sub.proxy-flat.proxy-url-row { padding-top: 0; padding-bottom: var(--sp-12); }
+.row.row-sub.proxy-sub-head { padding: var(--sp-12) var(--sp-16); border-top: var(--hairline) solid var(--cc-border); }
+.proxy-sub-head .row-label { font-weight: var(--fw-medium); }
 /* 设置 › 通知的事件矩阵（NotifySection）：每个事件一行、两列开关（系统通知 / 灵动岛弹出），表头行写列名。
    列宽固定、列名与开关都靠列的右缘：最右一列开关的右缘与上面卡片里开关的右缘是同一条线（620 宽实测 572），
    列名右缘与开关右缘对齐。不居中：「灵动岛弹出」比开关宽 22px，居中又要对齐右缘时列名会顶到卡片边上

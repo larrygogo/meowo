@@ -259,6 +259,8 @@ export function GeneralSection({ searching = false }: { searching?: boolean } = 
   const browserAgentOn = settings?.browser_agent ?? true;
   const leadAwakeOn = settings?.keep_awake_for_lead_gate ?? true;
   const [leadOn, setLeadOn] = useState<boolean | null>(null);
+  // 其他 CLI 里有一家装着 Lead 也算「有关卡」：和改前一样，两者都没装时不给「有关卡待拍板时」这一行。
+  const [providerLeadOn, setProviderLeadOn] = useState(false);
   const [leadError, setLeadError] = useState<string | null>(null);
   useEffect(() => {
     leadWorkflowInstalled().then(setLeadOn).catch(() => setLeadOn(false));
@@ -301,7 +303,6 @@ export function GeneralSection({ searching = false }: { searching?: boolean } = 
           </div>
           <Switch checked={autoUpdateOn} onChange={() => patch({ auto_update_enabled: !autoUpdateOn })} label={t.settings.autoUpdate} />
         </div>
-        <ProxyRows expandAll={searching} onError={setProxyError} />
       </div>
 
       <div className="sec-caption">{t.settings.runGroup}</div>
@@ -336,10 +337,11 @@ export function GeneralSection({ searching = false }: { searching?: boolean } = 
             <div className="row-text"><div className="row-label">{t.settings.keepAwakeRunning}</div></div>
             <Switch checked={keepAwakeOn} onChange={() => patch({ keep_awake_while_running: !keepAwakeOn })} label={`${t.settings.keepAwakeGroup} · ${t.settings.keepAwakeRunning}`} />
           </div>
-          <div className="row row-sub">
+          {/* 显示条件与改前一致（main：装了 Lead 才出现）：没装时这一组只剩一个子开关。 */}
+          {(leadOn || providerLeadOn) && <div className="row row-sub">
             <div className="row-text"><div className="row-label">{t.settings.keepAwakeLeadGate}</div></div>
             <Switch checked={leadAwakeOn} onChange={() => patch({ keep_awake_for_lead_gate: !leadAwakeOn })} label={`${t.settings.keepAwakeGroup} · ${t.settings.keepAwakeLeadGate}`} />
-          </div>
+          </div>}
         </>}
       </div>
 
@@ -355,7 +357,14 @@ export function GeneralSection({ searching = false }: { searching?: boolean } = 
           </div>
           <Switch checked={!!leadOn} onChange={toggleLead} label={t.settings.leadWorkflow} />
         </div>
-        <LeadProviderRows />
+        <LeadProviderRows onInstalledChange={setProviderLeadOn} />
+      </div>
+
+      {/* 网络代理放在通用页最后（审查 2026-11-19）：首屏留给语言、自启、更新和「运行」组；
+          代理是装好后很少再动的一项，自定义地址和各 Agent 的单独设置都挂在它名下。 */}
+      <div className="sec-caption">{t.settings.networkGroup}</div>
+      <div className="row-card">
+        <ProxyRows expandAll={searching} onError={setProxyError} />
       </div>
       {/* T-6（2026-11-12 走查）：此前是单独一套红字、没有 ×，与下一行 SettingsError 两种样式（7S-7 漏的一处）。
           失败时开关已弹回原值，「重试」就是再拨一次。 */}
@@ -1140,7 +1149,8 @@ export function About() {
     const body = bodyRef.current;
     if (!body) return;
     const navLabels: Record<Section, string> = {
-      general: t.settings.nav.general,
+      // 「网络」分区并进了通用：旧分区名和「代理」都要能把通用页（含代理地址、各 Agent 行）整页搜出来。
+      general: `${t.settings.nav.general} ${t.settings.navSearchExtra.general}`,
       appearance: t.settings.nav.appearance,
       notify: `${t.settings.nav.notify} ${t.settings.navSearchExtra.notify}`,
       sessions: t.settings.nav.sessions,
