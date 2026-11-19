@@ -78,20 +78,30 @@ describe("通知页：事件 × 渠道矩阵", () => {
     expect(lastSaved().island_alerts).toEqual(["approval", "question"]);
   });
 
-  it("桌面通知关着：系统通知列置灰但保留勾选，灵动岛列照常可改；提示音置灰而不是消失", async () => {
+  it("桌面通知关着：系统通知列置灰但保留勾选，灵动岛列照常可改；提示音隐藏（与改前一致）", async () => {
     api.getSettings.mockResolvedValue({ notifications_enabled: false, notify_kinds: ["approval"], island_alerts: ["waiting"] });
     render(<NotifySection />);
     await waitFor(() => expect((sysSwitch("approval") as HTMLButtonElement).disabled).toBe(true));
     for (const kind of KINDS) expect((sysSwitch(kind) as HTMLButtonElement).disabled).toBe(true);
     expect(sysSwitch("approval").getAttribute("aria-checked")).toBe("true");
     expect(document.querySelector(".notify-matrix-head .notify-col")!.classList.contains("is-off")).toBe(true);
-    expect((screen.getByRole("switch", { name: zh.settings.notifySound }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("switch", { name: zh.settings.notifySound })).toBeNull();
+    expect(screen.queryByText(zh.settings.notifySound)).toBeNull();
 
     expect((islandSwitch("error") as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(islandSwitch("error"));
     await waitFor(() => expect(api.setSettings).toHaveBeenCalled());
     expect(lastSaved().island_alerts).toEqual(["waiting", "error"]);
     expect(lastSaved().notify_kinds).toEqual(["approval"]);
+  });
+
+  it("桌面通知开着时提示音在、可拨，写回 notification_sound", async () => {
+    api.getSettings.mockResolvedValue({ notifications_enabled: true, notification_sound: true });
+    render(<NotifySection />);
+    const sound = await screen.findByRole("switch", { name: zh.settings.notifySound });
+    await waitFor(() => expect(sound.getAttribute("aria-checked")).toBe("true"));
+    fireEvent.click(sound);
+    await waitFor(() => expect(lastSaved().notification_sound).toBe(false));
   });
 
   it("桌面通知、提示音、任务栏提醒各自读写原字段", async () => {

@@ -123,14 +123,14 @@ export function NotifySection() {
             </button>
           </div>
         )}
-        {/* 提示音只跟系统通知走：桌面通知关着时置灰而不是藏起来，免得用户以为这项没了。 */}
-        <div className="row">
+        {/* 提示音只在通知开着时有意义：通知关了就不给这一行（与改前一致，main 同样隐藏）。 */}
+        {notifyOn && <div className="row">
           <div className="row-text">
             <div className="row-label">{t.settings.notifySound}</div>
             <div className="row-desc">{t.settings.notifySoundDesc}</div>
           </div>
-          <Switch checked={soundOn} disabled={!notifyOn} onChange={() => patch({ notification_sound: !soundOn })} label={t.settings.notifySound} />
-        </div>
+          <Switch checked={soundOn} onChange={() => patch({ notification_sound: !soundOn })} label={t.settings.notifySound} />
+        </div>}
         {/* 任务栏闪烁仅 Windows 有效（macOS 由菜单栏徽章承担同一职责），别的平台不显示无效开关。 */}
         {IS_WIN && <div className="row">
           <div className="row-text">
