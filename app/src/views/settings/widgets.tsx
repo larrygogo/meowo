@@ -1,7 +1,7 @@
 // 设置窗口的通用 UI 组件：开关、分段选择、色板、离散滑块。
 // 纯展示、无业务耦合，供各 section 复用。
 // 弹层菜单（Dropdown / ActionMenu / useMenuPopup）已收敛到 ../menu——全项目只有那一份实现。
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useFlash } from "../../hooks/useFlash";
 import { STICKER_COLORS, STICKER_COLOR_KEYS } from "../../appearance";
 import { useT } from "../../i18n";
@@ -78,7 +78,7 @@ export function Segmented<T extends string | number>({
   label,
 }: {
   value: T;
-  options: { value: T; label: string }[];
+  options: { value: T; label: ReactNode }[];
   onChange: (v: T) => void;
   label: string;
 }) {
