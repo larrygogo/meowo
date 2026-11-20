@@ -40,8 +40,9 @@ export function ToolIcon({ kind }: { kind: ToolKind }) {
 export function toolShortName(name: string, kind: ToolKind, t: ReturnType<typeof useT>): string {
   if (kind === "other") {
     // MCP 工具原名是 `mcp__<服务>__<工具>`，双下划线读着像乱码（本机近两周出现数百次）。
+    // 收录过的工具段（Meowo 自己的浏览器工具等）给译名，不认得的拆成「服务 · 工具」。
     const mcp = /^mcp__(.+?)__(.+)$/.exec(name);
-    if (mcp) return `${mcp[1]} · ${mcp[2]}`;
+    if (mcp) return t.chat.toolOtherNames[mcp[2]] ?? `${mcp[1]} · ${mcp[2]}`;
     return t.chat.toolOtherNames[name] ?? name;
   }
   return t.chat.toolShortNames[kind] ?? name;

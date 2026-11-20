@@ -38,6 +38,7 @@ function currentClause(items: ProcessItem[], results: Map<string, ToolResultItem
     const kind = item.kind;
     const doing = t.chat.turnToolDoing;
     if (kind === "run") return { text: doing.run, toolId: item.id };
+    if (kind === "image") return { text: doing.image, toolId: item.id };
     const subject = clip(toolSummary(item, cwd).replace(/\/ /g, "/"));
     const verb = kind === "read" || kind === "edit" || kind === "write" || kind === "search" || kind === "web" ? doing[kind] : null;
     return { text: verb && subject ? verb(subject) : doing.other, toolId: item.id };

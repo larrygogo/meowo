@@ -613,7 +613,7 @@ export function ChatWindow() {
   const compactingNow = history?.currentActivity === COMPACTING_ACTIVITY;
   // 次行优先取 transcript 里还没回执的那条调用（正在跑的那一步）；记录给不出时退回 hook 值
   // ——hook 只在工具跑完时写，长命令跑着时它是上一条已完成的命令（见 liveToolActivity）。
-  const liveTool = useMemo(() => liveToolActivity(items), [items]);
+  const liveTool = useMemo(() => liveToolActivity(items, t), [items, t]);
   const runningActivity = compactingNow ? null
     : liveTool ?? (history?.currentActivity ? runningActivityView(history.currentActivity, t.chat.compacting, t.chat.running) : null);
   const cliStatusStore = useCliStatusStore();

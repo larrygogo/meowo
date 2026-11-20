@@ -170,6 +170,9 @@ export const QA_SHOTS = [
   { name: "qa-images", scene: "flow-images-main", size: [1100, 900], sel: ".chat-sent", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300]] },
   { name: "qa-images-bottom", scene: "flow-images-main", size: [1100, 900], sel: ".chat-sent", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 1e6"], ["tick", 300]] },
   { name: "qa-images-states", scene: "flow-images-states", size: [1100, 1000], sel: ".chat-sent-failed", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300]] },
+  // 过程块展开：截图、读图、写图片三行的动作名都是人话（不露 mcp__meowo__browser_screenshot）。
+  { name: "qa-images-states-open", scene: "flow-images-states", size: [1100, 1000], sel: ".chat-sent-failed", steps: [["tick", 400], OPEN_FOLDS, ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300]] },
+  { name: "qa-m-images-states-open", page: "mobile", scene: "mobile-images-states", size: PHONE, sel: ".chat-sent-failed", steps: [["tick", 400], OPEN_FOLDS, ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300]] },
   { name: "qa-images-hover", scene: "flow-images-main", size: [1100, 900], sel: ".chat-sent", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300], ["hover", ".chat-sent-tile >> nth=0"]] },
   { name: "qa-images-lightbox", scene: "flow-images-main", size: [1100, 800], sel: ".chat-lightbox", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300], ["click", ".chat-sent-open >> nth=0"]] },
   { name: "qa-m-images", page: "mobile", scene: "mobile-images-main", size: PHONE, sel: ".chat-sent", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300]] },
