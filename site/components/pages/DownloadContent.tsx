@@ -35,7 +35,7 @@ const CONTENT: Record<Lang, Content> = {
     title: "下载 Meowo",
     leadVersion: (tag) => `最新版本 ${tag}。`,
     leadRest: "开源，MIT 许可。AI 编程 CLI 不需要提前装，可以在装好 Meowo 之后，从设置里安装和登录。",
-    win: { meta: "x64 安装包 · Windows 10 / 11", btn: "下载 .exe", fallback: "在 GitHub Releases 里选 x64-installer.exe（老版本为 x64-setup.exe）" },
+    win: { meta: "x64 安装包 · Windows 10 / 11", btn: "下载 .exe", fallback: "在 GitHub Releases 里选 x64-setup.exe" },
     mac: {
       meta: "Apple 芯片与 Intel 各一个 DMG · ≥ Sonoma",
       btnArm: "下载 .dmg（Apple 芯片）",
@@ -69,7 +69,7 @@ const CONTENT: Record<Lang, Content> = {
     title: "Download Meowo",
     leadVersion: (tag) => `Latest version ${tag}. `,
     leadRest: "Open source, MIT. You don't need an AI coding CLI beforehand; install and sign in to one from Meowo's Settings after installing Meowo.",
-    win: { meta: "x64 installer · Windows 10 / 11", btn: "Download .exe", fallback: "Pick x64-installer.exe in GitHub Releases (older releases: x64-setup.exe)" },
+    win: { meta: "x64 installer · Windows 10 / 11", btn: "Download .exe", fallback: "Pick x64-setup.exe in GitHub Releases" },
     mac: {
       meta: "Separate DMG for Apple silicon and Intel · ≥ Sonoma",
       btnArm: "Download .dmg (Apple silicon)",

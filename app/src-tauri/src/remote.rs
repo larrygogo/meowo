@@ -1952,7 +1952,7 @@ fn cache_control_for(rel: &str) -> &'static str {
 
 /// debug 下仓库内的 dist-mobile。包目录取运行时环境变量（tauri dev 经 cargo run 启动，
 /// cargo 会设它），不用编译期 env!()：多个 worktree 共用 CARGO_TARGET_DIR 时产物会被
-/// 复用，env!() 烙进去的是别的 worktree 的路径（meowo-setup build.rs 同病，2026-11-10
+/// 复用，env!() 烙进去的是别的 worktree 的路径（2026-11-10
 /// 复现脚本实测）。没设或目录不在返回 None，由调用方退回打包资源。
 #[cfg_attr(not(debug_assertions), allow(dead_code))]
 fn dev_static_root(manifest_dir: Option<&std::ffi::OsStr>) -> Option<PathBuf> {

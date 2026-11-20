@@ -1,9 +1,8 @@
 # winget 收录自动更新：release 从 draft 点 Publish 后，用微软官方 wingetcreate
 # 向 microsoft/winget-pkgs 自动发版本更新 PR。人工闸门就是「点 Publish」本身。
 #
-# manifest 指向 NSIS 芯（-setup.exe）而非 WebView2 壳：winget 本来就是静默安装
-# （installerType: nsis 自动识别 /S），壳的 UI 在这条链路毫无用武之地；
-# 壳继续做官网/GitHub 的人类下载入口。
+# manifest 指向 NSIS 安装器（-setup.exe），与官网/GitHub 下载的是同一个包；winget 本来就是
+# 静默安装（installerType: nsis 自动识别 /S）。
 #
 # ── 一次性准备（没做完之前本 workflow 会失败，属预期）──
 # 1. 建 GitHub PAT（classic，勾 public_repo），存为仓库 secret：WINGET_PAT。

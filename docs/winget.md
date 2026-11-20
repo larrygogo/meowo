@@ -6,9 +6,8 @@
 
 ## 链路
 
-- **manifest 指向 NSIS 芯 `Meowo_x.y.z_x64-setup.exe`**，不是 WebView2 壳
-  （`-installer.exe`）。winget 恒静默安装，`installerType: nsis` 自动识别 `/S`；
-  壳的现代 UI 只服务官网/GitHub 的人类下载。
+- **manifest 指向 NSIS 安装器 `Meowo_x.y.z_x64-setup.exe`**（官网与 GitHub 下载的也是它）。
+  winget 恒静默安装，`installerType: nsis` 自动识别 `/S`。
 - 发版自动化：`.github/workflows/winget.yml` 挂在 **release published** 事件上——
   draft release 由 tauri-action 生成，你人工点 Publish 即触发提交，不会把草稿发出去。
   它用微软官方 `wingetcreate update --submit` 向 winget-pkgs 发 PR，微软的自动化
