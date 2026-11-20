@@ -52,7 +52,9 @@ export const KIMI_APPROVAL_SCREEN = [
 ].join("\n");
 
 /// Gemini 的工具确认框。0.61 真机屏（`--approval-mode default` 下跑一条带重定向的 shell），
-/// 与 terminalAttention.test.ts 里的既有样本同一份。
+/// 与 terminalAttention.test.ts 里的既有样本同一份。框宽是手改窄的；0.68.0 真机帧（2026-11-20，
+/// fixtures/approval-frames.json 的 gemini）文案、选项、顺序都没变，approvalFrames.test 断言两份
+/// 算出同一张卡。
 export const GEMINI_APPROVAL_SCREEN = [
   "╭────────────────────────────────────────────╮",
   "│ ? Shell  echo meowo-probe > probe-out.txt                         │",

@@ -779,6 +779,36 @@ fn ignored_user_content(text: &str) -> bool {
         || text.starts_with("<hook_context>")
 }
 
+/// 回合中途插话的原话。开了 `experimental.modelSteering` 时，运行中回车送进去的话不单独成一轮，
+/// CLI 把它包进固定模板，作为一条 user 记录写盘（排在当前这一步的调用连同结果之后）：
+///
+/// ```text
+/// User steering update:
+/// <user_input>
+/// 原话（空白已归一成单个空格）
+/// </user_input>
+/// Internal instruction: Re-evaluate the active plan using this user steering update. …
+/// ```
+///
+/// 模板取自 0.68.0 bundle `chunk-RCB6BI5H.js` 的 `buildUserSteeringHintPrompt`（约 355219 行），
+/// 真机记录见 `tests/fixtures/chat-replay/gemini.e664ee9c.jsonl`（2026-11-20）。不认的话，对话页的用户
+/// 气泡是整段模板连同给模型的内部指令，而且被当成新一轮的开头。
+///
+/// 同文件的 `formatUserHintsForModel`（`User hints:` 加 `- ` 列表）没有在真机记录里见过，不认。
+fn steering_hint(text: &str) -> Option<String> {
+    let rest = text
+        .trim_start()
+        .strip_prefix("User steering update:")?
+        .trim_start_matches([' ', '\r', '\n'])
+        .strip_prefix("<user_input>")?;
+    let (hint, after) = rest.split_once("</user_input>")?;
+    if !after.trim_start().starts_with("Internal instruction:") {
+        return None;
+    }
+    let hint = hint.trim();
+    (!hint.is_empty()).then(|| hint.to_string())
+}
+
 /// 会话文件尾部最近的模型：回复行的 `model`，或 `/model set` 当场写的 info 行「Model set to X」
 /// （0.68 切换时立即写，回复要等下一轮，research-kimi-gemini §3.5）。取最后出现的那条。
 pub(super) fn model_from_tail(tail: &str) -> Option<String> {
@@ -1064,13 +1094,20 @@ fn parse_line(line: &str) -> Vec<TranscriptEvent> {
         Some("user")
             if text.trim_start().starts_with("<session_context>")
                 || text.trim_start().starts_with("<hook_context>") => {}
-        Some("user") if !text.trim().is_empty() => events.push(TranscriptEvent::UserMessage {
-            id: format!("gemini-user-{id}"),
-            timestamp,
-            text,
-            interjected: false,
-            turn_id: None,
-        }),
+        Some("user") if !text.trim().is_empty() => {
+            // 回合中途的插话（modelSteering）：CLI 把原话包进固定模板再写盘，见 `steering_hint`。
+            let (text, interjected) = match steering_hint(&text) {
+                Some(hint) => (hint, true),
+                None => (text, false),
+            };
+            events.push(TranscriptEvent::UserMessage {
+                id: format!("gemini-user-{id}"),
+                timestamp,
+                text,
+                interjected,
+                turn_id: None,
+            })
+        }
         // 用户按 Esc 打断：CLI 记一条 info「Request cancelled.」。画成中断分隔条；
         // 其余 info（升级提示、切换回退模型）仍不上屏。
         Some("info") if text.trim() == "Request cancelled." => {
