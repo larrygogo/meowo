@@ -99,7 +99,7 @@ pub use relay::{
 };
 pub use transcript::{
     default_resolve_cwd, read_chat_delta, read_chat_delta_paged, read_chat_window, AgentMode,
-    ChatDelta, ChatItem, ChatLineMark, ChatWindow, TranscriptCache, TranscriptEvent,
+    ChatDelta, ChatItem, ChatLineMark, ChatWindow, ToolSideImages, TranscriptCache, TranscriptEvent,
     TranscriptInfo, TranscriptParser, TranscriptSpec, TurnError,
 };
 pub use trust::{trust_key, WorkspaceTrustSpec};

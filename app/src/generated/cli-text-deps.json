@@ -1640,6 +1640,13 @@
           "note": "rollout 实样（2026-07-13，代码模式里 view_image 再 image() 出来，回执里的图据此显示）",
           "rule": "record:input_image",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/telemetry.rs:497"
+        },
+        {
+          "legacy": false,
+          "needle": "McpToolCall",
+          "note": "0.169.0 rollout 真机实样（2026-11-21 探针，exec 脚本只 await 发图不输出时，靠它补回执里的图片引用行）",
+          "rule": "record:McpToolCall",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/telemetry.rs:784"
         }
       ],
       "id": "codex",

@@ -181,4 +181,10 @@ pub(super) static DEPS: &[D] = &[
         r#"{"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_EXlE1YwDaOn8mwNJoyVg9aUT","output":[{"type":"input_text","text":"Script completed\nWall time 0.6 seconds\nOutput:\n"},{"type":"input_image","image_url":"data:image/png;base64,iVBORw0KGgo=","detail":"high"}]}}"#,
         "rollout 实样（2026-07-13，代码模式里 view_image 再 image() 出来，回执里的图据此显示）",
     ),
+    D::record(
+        "record:McpToolCall",
+        "McpToolCall",
+        r#"{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"McpToolCall","id":"exec-4f9822c8","server":"meowo","tool":"send_image","status":"completed","result":{"content":[{"type":"text","text":"图片已发给用户。"}],"isError":false}},"started_at_ms":1795191435888}}"#,
+        "0.169.0 rollout 真机实样（2026-11-21 探针，exec 脚本只 await 发图不输出时，靠它补回执里的图片引用行）",
+    ),
 ];

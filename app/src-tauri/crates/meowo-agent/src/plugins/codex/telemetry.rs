@@ -773,6 +773,54 @@ pub(super) fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
 /// （135 条，调用带 `login:false` 时），命令原文恒在最后一项；`exit_code` 与 `duration` 恒有；
 /// 较新的版本在 payload 上另有 `started_at_ms`。只按需要的字段反序列化——`aggregated_output`
 /// 可以有几百 KB。
+/// MCP 工具调用的完整结果旁路记录（`event_msg/item_completed/McpToolCall`）里的图片引用行。
+///
+/// 代码模式下 MCP 工具是在 exec 脚本里 `await tools.mcp__<服务器>__<工具>(…)` 调的，结果交给
+/// 脚本；脚本不 `text()` / `image()` 输出时，`custom_tool_call_output` 里只有一行状态头，发图
+/// 回执的引用行、截图都看不到。这条旁路记录（0.169.0 真机：落在调用行与回执行之间，带 server、
+/// tool、arguments、完整 result 与 started_at_ms，但没有 call_id）补上它：读取层按工具全名与
+/// 时序对回调用（见 transcript.rs 的 ExitJoin）。结果里的引用行原样取，内嵌图落进持久目录。
+fn mcp_side_images(line: &str) -> Option<crate::transcript::ToolSideImages> {
+    if !line.contains("\"McpToolCall\"") {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    if value.get("type").and_then(|v| v.as_str()) != Some("event_msg") {
+        return None;
+    }
+    let payload = value.get("payload")?;
+    if payload.get("type").and_then(|v| v.as_str()) != Some("item_completed") {
+        return None;
+    }
+    let item = payload.get("item")?;
+    if item.get("type").and_then(|v| v.as_str()) != Some("McpToolCall") {
+        return None;
+    }
+    let server = item.get("server")?.as_str()?;
+    let tool = item.get("tool")?.as_str()?;
+    let mut refs = Vec::new();
+    for part in item.pointer("/result/content").and_then(|v| v.as_array()).into_iter().flatten() {
+        if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+            refs.extend(
+                text.lines()
+                    .map(str::trim)
+                    .filter(|l| l.starts_with("[Image: source: ") && l.ends_with(']'))
+                    .map(str::to_string),
+            );
+        } else if let Some(line) = output_image(part) {
+            refs.push(line);
+        }
+    }
+    if refs.is_empty() {
+        return None;
+    }
+    Some(crate::transcript::ToolSideImages {
+        tool: format!("mcp__{server}__{tool}"),
+        refs,
+        started_ms: payload.get("started_at_ms").and_then(|v| v.as_i64()),
+    })
+}
+
 fn command_exit(line: &str) -> Option<crate::transcript::CommandExit> {
     #[derive(serde::Deserialize)]
     struct Line<'a> {
@@ -988,6 +1036,10 @@ impl TranscriptSpec for CodexTranscript {
         command_exit(line)
     }
 
+    fn chat_tool_images(&self, line: &str) -> Option<crate::transcript::ToolSideImages> {
+        mcp_side_images(line)
+    }
+
     /// 关联要看的行：工具调用与回执（exec 脚本的 `custom_tool_call(_output)`、直接调用的
     /// `function_call(_output)`）、命令执行完毕的旁路记录、一轮的起点（新老两种用户消息行）与回溯。
     fn command_exit_markers(&self) -> &'static [&'static str] {
@@ -995,6 +1047,7 @@ impl TranscriptSpec for CodexTranscript {
             "\"custom_tool_call",
             "\"function_call",
             "\"CommandExecution\"",
+            "\"McpToolCall\"",
             "\"user_message\"",
             "\"UserMessage\"",
             "\"thread_rolled_back\"",
@@ -1803,9 +1856,10 @@ mod tests {
         let markers = CODEX_TRANSCRIPT.command_exit_markers();
         assert!(!markers.is_empty());
         let mut relevant = 0;
-        for name in ["codex.01a1cea4.jsonl", "codex.01a13ed0.jsonl", "codex-exit-join.jsonl"] {
+        for name in ["codex.01a1cea4.jsonl", "codex.01a13ed0.jsonl", "codex-exit-join.jsonl", "codex-mcp-images.jsonl"] {
             for line in replay_fixture(name).lines() {
                 let matters = command_exit(line).is_some()
+                    || mcp_side_images(line).is_some()
                     || CODEX_TRANSCRIPT.chat_line_mark(line).is_some()
                     || parse_transcript_events(line).iter().any(|event| {
                         // 子代理的开始与结局（SubAgentActivity）产出的是子任务的结局回执，不是命令的回执：
