@@ -10,6 +10,7 @@ import { GenericTool } from "./tools/GenericTool";
 import { fileImages, ResolvedImage, SentImageMessage, splitReceiptImages, ToolImageStrip } from "./ChatImage";
 
 export { ToolIcon, toolKindLabel, toolShortName } from "./ToolIcon";
+import { ToolHasImageContext } from "./ToolIcon";
 export type { ToolKind } from "./ToolIcon";
 
 type DiffOperation = { kind: " " | "-" | "+"; text: string };
@@ -330,7 +331,7 @@ export const ToolActivity = memo(function ToolActivity({ item, result }: { item:
   if (media.images.length === 0 && files.length === 0) return row;
   return (
     <>
-      {row}
+      {media.images.length > 0 ? <ToolHasImageContext.Provider value>{row}</ToolHasImageContext.Provider> : row}
       {media.images.length > 0
         ? <ToolImageStrip paths={media.images} />
         : <div className="chat-tool-media">{files.map((path) => <ResolvedImage key={path} src={path} mode="thumb" />)}</div>}

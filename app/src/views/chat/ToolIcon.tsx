@@ -1,3 +1,4 @@
+import { createContext } from "react";
 import { useT } from "../../i18n";
 import type { Dict } from "../../i18n/zh";
 import type { ToolKind } from "../../generated/contracts/ToolKind";
@@ -24,13 +25,48 @@ const KIND_GLYPH: Partial<Record<ToolKind, typeof icSearch>> = {
   image: icImage,
 };
 
-/// 按工具类别分图标：搜索 / 读文件 / 改文件 / 网络 / 子任务 / 待办，其余用终端图标。
-/// 一组操作若全是同一个 `>_`，用户在展开列表里无法一眼区分做了什么。
+/// 归不进类别（other）的工具里，Meowo 自己的 MCP 工具按工具段精确取图标：浏览器工具是网页，截图是图片。
+/// 与 toolOtherNames 同一种「按原名精确查表」，不按子串猜类别、不看是哪家 Provider（五家的 Meowo 工具名
+/// 后端已统一成 mcp__meowo__<工具>，Kimi 是不带前缀的工具段，两种都命中同一个键）。
+const OTHER_GLYPH: Record<string, typeof icSearch> = {
+  send_image: icImage,
+  browser_screenshot: icImage,
+  browser_open: icGlobe,
+  browser_navigate: icGlobe,
+  browser_snapshot: icGlobe,
+  browser_click: icGlobe,
+  browser_type: icGlobe,
+  browser_press: icGlobe,
+  browser_scroll: icGlobe,
+  browser_select: icGlobe,
+  browser_back: icGlobe,
+  browser_forward: icGlobe,
+  browser_reload: icGlobe,
+  browser_evaluate: icGlobe,
+  browser_wait_for: icGlobe,
+  browser_emulate: icGlobe,
+};
+
+/// 工具行图标：先看类别；未归类的再看收录表；回执里带图（任何 MCP 截图工具）用图片图标；其余是终端。
+export function toolGlyph(kind: ToolKind, name: string, hasImage: boolean): typeof icSearch {
+  const byKind = KIND_GLYPH[kind];
+  if (byKind) return byKind;
+  if (kind === "other") {
+    const segment = /^mcp__.+?__(.+)$/.exec(name)?.[1] ?? name;
+    const listed = OTHER_GLYPH[segment];
+    if (listed) return listed;
+    if (hasImage) return icImage;
+  }
+  return icTerminal;
+}
+
+/// 按工具类别分图标：搜索 / 读文件 / 改文件 / 网络 / 子任务 / 待办 / 图片，其余用终端图标。
+/// 一组操作若全是同一个 `>_`，用户在展开列表里无法一眼区分做了什么（网页截图曾顶着 >_，2026-11-21 做空）。
 /// 形状走共用注册表、线宽由 Icon 统一：放大镜曾是填充轮廓（内外两圈），与笔/文件并排时明显发粗。
-export function ToolIcon({ kind }: { kind: ToolKind }) {
+export function ToolIcon({ kind, name = "", hasImage = false }: { kind: ToolKind; name?: string; hasImage?: boolean }) {
   return (
     <span className="chat-tool-icon" data-kind={kind}>
-      <Icon glyph={KIND_GLYPH[kind] ?? icTerminal} size={16} />
+      <Icon glyph={toolGlyph(kind, name, hasImage)} size={16} />
     </span>
   );
 }
@@ -64,3 +100,6 @@ export function toolKindLabel(name: string, kind: ToolKind, t: Dict): string {
     default: return toolShortName(name, kind, t);
   }
 }
+
+/// 这一行的回执里有没有图片引用行。ToolActivity 把引用行从回执里抽走后才交给各渲染器，外壳看不到原文，由它告诉外壳。
+export const ToolHasImageContext = createContext(false);

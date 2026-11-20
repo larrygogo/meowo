@@ -1404,6 +1404,8 @@ export const en: Dict = {
     sentImageFailed: "The image didn't come through",
     sentImageOpen: "View full size",
     imageLoading: "Loading image",
+    remoteImageLoad: "Click to load image",
+    remoteImageTip: (host: string, name: string) => `${name} is hosted on ${host}. Click to have Meowo download it; other images from this site load automatically for the rest of this session`,
     imageLong: "Long",
     imageSave: "Save",
     imageSaved: "Saved",

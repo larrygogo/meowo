@@ -22,6 +22,16 @@ export function Lightbox({ src, name, onClose, actions, caption }: {
   const stageRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ startX: number; startY: number; baseX: number; baseY: number; moved: boolean } | null>(null);
   const justDraggedRef = useRef(false);
+  // 桌面 Windows/Linux 的顶栏（拖拽区 + 最小化/最大化/关闭）留在灯箱外面：三颗窗口按钮上盖着原生覆盖子窗
+  // （Windows 上，见 WindowControls.tsx 的 snap_layout），那片区域的点击进不了网页——工具栏压在那里时，
+  // 点灯箱的「关闭」实际按到的是窗口的最大化或关闭。
+  // 灯箱从顶栏下沿开始，窗口按钮照常可见可用。macOS（红绿灯在左、没有这条顶栏）与手机页量出来是 0。
+  const [chromeTop, setChromeTop] = useState(measureChromeTop);
+  useEffect(() => {
+    const onResize = () => setChromeTop(measureChromeTop());
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
   const clampScale = (value: number) => Math.min(8, Math.max(0.2, value));
   const reset = () => { setScale(1); setOffset({ x: 0, y: 0 }); };
 
@@ -79,7 +89,7 @@ export function Lightbox({ src, name, onClose, actions, caption }: {
   };
 
   return createPortal(
-    <div className="chat-lightbox" role="dialog" aria-label={name}>
+    <div className="chat-lightbox" role="dialog" aria-label={name} style={chromeTop > 0 ? { top: chromeTop } : undefined}>
       <div
         ref={stageRef}
         className={"chat-lightbox-stage" + (caption ? " has-caption" : "")}
@@ -112,4 +122,10 @@ export function Lightbox({ src, name, onClose, actions, caption }: {
     </div>,
     document.body,
   );
+}
+
+/** 窗口自带顶栏的下沿（没有顶栏时是 0）。 */
+function measureChromeTop(): number {
+  const bar = typeof document === "undefined" ? null : document.querySelector(".chat-topbar");
+  return bar ? Math.max(0, Math.round(bar.getBoundingClientRect().bottom)) : 0;
 }

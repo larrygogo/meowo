@@ -16,7 +16,8 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { components, PLUGINS } from "../ChatMarkdown";
-import { resolveChatImageCached } from "./ChatImage";
+import { RemoteImagePlaceholder, resolveChatImageCached } from "./ChatImage";
+import { useRemoteImageGate } from "./remoteImageGate";
 
 
 /** 文件预览的 sanitize 白名单：defaultSchema（GitHub 风）基础上补 README 生态
@@ -48,12 +49,14 @@ function PreviewImage({ src, alt, width, height, resolve }: {
   resolve: (src: string) => Promise<string | null>;
 }) {
   const remote = !!src && /^https?:/i.test(src);
+  // README 里的网络图（徽章、截图）同样不自动下载：点了才下，同一会话里点过的域名之后自动加载（remoteImageGate.ts）。
+  const gate = useRemoteImageGate(src);
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
     // src 变了先归位:useState 只在首挂时取初值,effect 又只在解析成功时 setUrl,二者都不覆盖旧值。
     // react-markdown 按位置复用节点时（切文件 A→B、同位置换图),不清会残留上一张。
     setUrl(null);
-    if (!src) return;
+    if (!src || !gate.ready) return;
     let alive = true;
     const pending = remote
       ? resolveChatImageCached(src, null).then((outcome) => ("path" in outcome ? convertFileSrc(outcome.path) : null))
@@ -66,7 +69,8 @@ function PreviewImage({ src, alt, width, height, resolve }: {
     return () => {
       alive = false;
     };
-  }, [src, remote, resolve]);
+  }, [src, remote, resolve, gate.ready]);
+  if (!gate.ready && gate.host) return <RemoteImagePlaceholder host={gate.host} name={alt || gate.host} onLoad={gate.allow} />;
   if (!url) return alt ? <span className="chat-md-img-broken">{alt}</span> : null;
   return <img src={url} alt={alt ?? ""} width={width} height={height} loading="lazy" referrerPolicy="no-referrer" />;
 }

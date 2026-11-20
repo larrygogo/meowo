@@ -4,7 +4,7 @@
 // 懒加载：图片进视口（含上下 600px 的预读）才去拿。长会话里几十上百张图，打开时不能一起去读盘、去下载；
 // 不靠浏览器自带的 loading="lazy"：它的预读距离由浏览器定（Chromium 上千像素），且后端解析（复制、下载）
 // 要在请求图片之前做，只能自己判。
-import { memo, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useContext, useEffect, useState, type ReactNode } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { exportChatImage, resolveChatImage, revealTerminalPath, type ChatImageError, type ResolveChatImageResult } from "../../api";
@@ -18,6 +18,7 @@ import { FILE_TOKEN_REFRESHED_EVENT, IMAGE_LOAD_FAILED_EVENT, remoteUi } from ".
 import { useFlash } from "../../hooks/useFlash";
 import { Lightbox } from "./Lightbox";
 import { ChatCwdContext } from "./chatCwd";
+import { ChatSessionContext, useRemoteImageGate } from "./remoteImageGate";
 import { useToolRunState } from "./toolState";
 import type { ToolResultItem, ToolUseItem } from "./shared";
 
@@ -82,12 +83,12 @@ export function imageErrorText(t: Dict, error: ChatImageError): string {
 
 /// 进视口才为 true，之后不再变回 false（滚出去不卸载已加载的图，免得来回滚时反复闪）。
 /// 没有 IntersectionObserver 的环境（测试的 jsdom）直接当作可见。
-export function useInView<T extends Element>(): [React.RefObject<T>, boolean] {
-  const ref = useRef<T>(null);
+/// 用回调 ref 记元素：同一个组件可能先渲染占位（网络图片的「点击加载」）、再换成图片容器，元素换了要重新观察。
+export function useInView<T extends Element>(): [(el: T | null) => void, boolean] {
+  const [el, ref] = useState<T | null>(null);
   const [seen, setSeen] = useState(() => typeof IntersectionObserver === "undefined");
   useEffect(() => {
     if (seen) return;
-    const el = ref.current;
     if (!el) return;
     const observer = new IntersectionObserver((entries) => {
       if (entries.some((entry) => entry.isIntersecting)) {
@@ -97,20 +98,21 @@ export function useInView<T extends Element>(): [React.RefObject<T>, boolean] {
     }, { rootMargin: "600px 0px" });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [seen]);
+  }, [seen, el]);
   return [ref, seen];
 }
 
-/// 解析结果按「来源 + 会话目录」缓存：虚拟列表与流式重建会反复挂载同一张图，不能每次都去复制、去下载。
+/// 解析结果按「来源 + 会话目录 + 会话」缓存：虚拟列表与流式重建会反复挂载同一张图，不能每次都去复制、去下载。
+/// 会话也进键：手机桥按会话限定本地路径的范围，同一个相对路径在两个会话里结果可能不同。
 /// 只缓存成功和确定的失败；调用本身抛错（桥断了、后端没这个命令）不缓存，下次挂载再试。
 const resolved = new Map<string, Promise<ResolveChatImageResult>>();
 const RESOLVE_CACHE_MAX = 400;
 
-export function resolveChatImageCached(src: string, cwd: string | null): Promise<ResolveChatImageResult> {
-  const key = `${cwd ?? ""}\u0000${src}`;
+export function resolveChatImageCached(src: string, cwd: string | null, sessionId: number | null = null): Promise<ResolveChatImageResult> {
+  const key = `${sessionId ?? ""}\u0000${cwd ?? ""}\u0000${src}`;
   const hit = resolved.get(key);
   if (hit) return hit;
-  const pending = resolveChatImage(src, cwd).catch((error: unknown) => {
+  const pending = resolveChatImage(src, cwd, sessionId).catch((error: unknown) => {
     resolved.delete(key);
     throw error;
   });
@@ -286,6 +288,8 @@ export const SentImageMessage = memo(function SentImageMessage({ item, result }:
 });
 
 /// 这次调用读出或写出的图片文件（回执里没带图片引用行时才用）：读图片、写出或修改 png/jpg/gif/webp/svg。
+/// 后端在第一次解析到写图调用时就把当时的文件存进 tool/，并在回执里补引用行，所以同一路径写三次是三张不同的图；
+/// 只有这条规则之前的旧数据才走到这里，按 detail.path 现解析（显示的是现在的文件内容）。
 /// 删除的不算；失败的调用不露图（文件多半没写成）。
 export function fileImages(item: ToolUseItem, result: ToolResultItem | undefined): string[] {
   if (!result || result.is_error || result.interrupted) return [];
@@ -356,12 +360,28 @@ export function ImageChip({ name, reason }: { name: string; reason: string | nul
   );
 }
 
+/// 还没放行的网络图片：和文件名徽章同一个皮，写出域名和「点击加载图片」。点了放行这个域名（当前会话内），
+/// 这张图和同域名的其他图一起去加载。悬停说明会写清楚点了之后发生什么。
+export function RemoteImagePlaceholder({ host, name, onLoad }: { host: string; name: string; onLoad: () => void }) {
+  const t = useT();
+  return (
+    <button type="button" className="chat-image-chip is-gated" data-tip={t.chat.remoteImageTip(host, name)}
+      onClick={(event) => { event.stopPropagation(); onLoad(); }}>
+      <Icon glyph={icImage} size={12} />
+      <span>{host}</span>
+      <span className="chat-image-chip-reason">{t.chat.remoteImageLoad}</span>
+    </button>
+  );
+}
+
 /// 需要先交给后端解析的图：正文 Markdown 里的本地路径与网址、写出或读取的图片文件。进视口才解析，解析出 Meowo
 /// 图片目录里的持久路径后再显示；解析失败或读不到退回文件名徽章并写明原因。
 /// mode：inline 是正文里的图（随正文排版、限宽）；thumb 是工具行下的缩略图（与 ToolThumb 同尺寸）。
 export function ResolvedImage({ src, alt, mode }: { src: string; alt?: string | null; mode: "inline" | "thumb" }) {
   const t = useT();
   const cwd = useContext(ChatCwdContext);
+  const sessionId = useContext(ChatSessionContext);
+  const gate = useRemoteImageGate(src);
   const [ref, inView] = useInView<HTMLSpanElement>();
   const [outcome, setOutcome] = useState<ResolveChatImageResult | null>(null);
   const [open, setOpen] = useState(false);
@@ -370,13 +390,15 @@ export function ResolvedImage({ src, alt, mode }: { src: string; alt?: string | 
   const name = alt?.trim() || fileNameOf(src.replace(/[?#].*$/, "")) || src;
   useEffect(() => {
     setOutcome(null);
-    if (!inView) return;
+    // 网络图片没放行前不去解析：解析就是下载（见 remoteImageGate.ts）。
+    if (!inView || !gate.ready) return;
     let alive = true;
-    resolveChatImageCached(src, cwd)
+    resolveChatImageCached(src, cwd, sessionId)
       .then((value) => { if (alive) setOutcome(value); })
       .catch(() => { if (alive) setOutcome({ error: { code: "unknown", message: "" } }); });
     return () => { alive = false; };
-  }, [src, cwd, inView]);
+  }, [src, cwd, sessionId, inView, gate.ready]);
+  if (!gate.ready && gate.host) return <RemoteImagePlaceholder host={gate.host} name={name} onLoad={gate.allow} />;
   if (outcome && "error" in outcome) return <ImageChip name={name} reason={imageErrorText(t, outcome.error)} />;
   if (load.failed) return <ImageChip name={name} reason={t.chat.imageErrors.unreadable} />;
   const url = path ? convertFileSrc(path) : null;
