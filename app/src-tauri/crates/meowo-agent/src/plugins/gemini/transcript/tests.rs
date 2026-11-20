@@ -609,6 +609,18 @@ fn mcp_image_in_function_response_parts_or_sibling_part_is_kept() {
     }
 }
 
+/// 真机样本（2026-11-21，gemini 0.68.0 + gemini-3-flash-preview `gemini -p` 调
+/// mcp_meowo_browser_screenshot）：图在 `functionResponse.parts[].inlineData`，文字被包进
+/// `<untrusted_context>`。图要落进持久目录、回执里出现引用行（此前整张丢掉）。
+#[test]
+fn real_screenshot_inline_data_sample_is_kept() {
+    let line = include_str!("fixtures/screenshot.jsonl").lines().next().unwrap();
+    let refs = image_ref_of(&parse_line(line));
+    assert_eq!(refs.len(), 1, "{line}");
+    assert!(refs[0].starts_with(crate::images::images_root().unwrap().join("tool")));
+    assert!(refs[0].exists());
+}
+
 /// 发图工具在 gemini 里叫 `mcp_meowo_send_image`（0.68.0 generateValidName）→ Image 类。
 #[test]
 fn send_image_maps_to_image_kind() {

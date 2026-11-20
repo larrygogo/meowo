@@ -602,7 +602,7 @@ mod tests {
     const PNG_1X1_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==";
 
     /// MCP 截图回执（1.19.5 源码形态：MCP 的 image 块 → `state.attachments[]` 的 file part，
-    /// url 是 data URL；本机库里没有带 attachments 的 tool part，形态取自 opencode.exe 内嵌源码）。
+    /// url 是 data URL；真机实样见 real_screenshot_attachment_sample_becomes_reference）。
     /// 走导出（slim_part）再解析的真实路径：附件落进持久目录，回执里出现引用行。
     #[test]
     fn mcp_image_attachment_survives_export_and_becomes_reference() {

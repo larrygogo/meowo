@@ -863,7 +863,7 @@ const GEMINI_SEND_IMAGE: &str = "mcp_meowo_send_image";
 /// 回执里的内嵌图 → 持久目录副本的引用行。0.68.0 源码（mcp-tool.js transformImageAudioBlock）：
 /// MCP 返回的图变成 `{inlineData:{mimeType,data}}`，gemini-3 系列放进
 /// `functionResponse.parts`，其余模型作为与 functionResponse 并列的独立 part；read_file
-/// 读图片同样是 inlineData。本机 51 份会话里没有带 inlineData 的样本，形态取自源码。
+/// 读图片同样是 inlineData。gemini-3 放 parts 的形态有真机实样（2026-11-21 探针，fixtures/screenshot.jsonl），并列 part 的形态取自源码。
 /// 落在 `images/tool/`（按内容哈希），声明的 mimeType 不可信，按文件头判断。
 fn result_images(result: &Value) -> Vec<String> {
     let mut out = Vec::new();

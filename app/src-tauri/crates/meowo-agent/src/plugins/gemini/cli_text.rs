@@ -215,6 +215,6 @@ pub(super) static DEPS: &[D] = &[
         "record:inlineData",
         "inlineData",
         r#"{"toolCalls":[{"id":"c9","name":"mcp_meowo_browser_screenshot","result":[{"functionResponse":{"name":"mcp_meowo_browser_screenshot","response":{"output":"面板浏览器截图"},"parts":[{"inlineData":{"mimeType":"image/png","data":"iVBORw0KGgo="}}]}}]}]}"#,
-        "0.68.0 bundle mcp-tool.js transformImageAudioBlock（MCP 图片块转 inlineData，回执里的截图据此显示）；本机会话无实样",
+        "0.68.0 bundle mcp-tool.js transformImageAudioBlock（MCP 图片块转 inlineData，回执里的截图据此显示）；2026-11-21 探针真机实样（gemini-3-flash-preview，functionResponse.parts）",
     ),
 ];
