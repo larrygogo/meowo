@@ -5,7 +5,7 @@
 // 不靠浏览器自带的 loading="lazy"：它的预读距离由浏览器定（Chromium 上千像素），且后端解析（复制、下载）
 // 要在请求图片之前做，只能自己判。
 import { memo, useContext, useEffect, useState, type ReactNode } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { isRemotePath, safeFileSrc } from "../../assetSrc";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { exportChatImage, resolveChatImage, revealTerminalPath, type ChatImageError, type ResolveChatImageResult } from "../../api";
 import { useT } from "../../i18n";
@@ -172,8 +172,13 @@ export function ImageActions({ path, variant = "lightbox" }: { path: string; var
   const save = async () => {
     setError(null);
     if (remoteUi()) {
+      const href = safeFileSrc(path);
+      if (!href) {
+        setError(t.chat.imageErrors.forbidden);
+        return;
+      }
       const link = document.createElement("a");
-      link.href = convertFileSrc(path);
+      link.href = href;
       link.download = name;
       link.rel = "noreferrer";
       document.body.appendChild(link);
@@ -236,8 +241,9 @@ const SentImageTile = memo(function SentImageTile({ path, caption, album }: { pa
   const [open, setOpen] = useState(false);
   const load = useImageLoad(path);
   const name = fileNameOf(path);
+  if (isRemotePath(path)) return <ImageFailure title={t.chat.sentImageFailed} reason={t.chat.imageErrors.forbidden} name={name} />;
   if (load.failed) return <ImageFailure title={t.chat.sentImageFailed} reason={t.chat.imageErrors.unreadable} name={name} />;
-  const src = inView ? convertFileSrc(path) : null;
+  const src = inView ? safeFileSrc(path) : null;
   const shape = imageShape(load.natural);
   return (
     <figure ref={ref} className="chat-sent-tile" data-shape={album ? "album" : shape ?? undefined} data-state={shape ? "ready" : "loading"}>
@@ -335,8 +341,9 @@ function ToolThumb({ path }: { path: string }) {
   const [open, setOpen] = useState(false);
   const load = useImageLoad(path);
   const name = fileNameOf(path);
+  if (isRemotePath(path)) return <ImageChip name={name} reason={t.chat.imageErrors.forbidden} />;
   if (load.failed) return <ImageChip name={name} reason={t.chat.imageErrors.unreadable} />;
-  const src = inView ? convertFileSrc(path) : null;
+  const src = inView ? safeFileSrc(path) : null;
   const shape = imageShape(load.natural);
   return (
     <>
@@ -401,7 +408,7 @@ export function ResolvedImage({ src, alt, mode }: { src: string; alt?: string | 
   if (!gate.ready && gate.host) return <RemoteImagePlaceholder host={gate.host} name={name} onLoad={gate.allow} />;
   if (outcome && "error" in outcome) return <ImageChip name={name} reason={imageErrorText(t, outcome.error)} />;
   if (load.failed) return <ImageChip name={name} reason={t.chat.imageErrors.unreadable} />;
-  const url = path ? convertFileSrc(path) : null;
+  const url = path ? safeFileSrc(path) : null;
   const shape = imageShape(load.natural);
   const cls = mode === "inline" ? "chat-md-image" : "chat-tool-thumb";
   return (

@@ -81,3 +81,18 @@ describe("ImageRef：白名单外的图先请宿主放行再重试", () => {
     expect(allowImagePreview).toHaveBeenCalledTimes(1);
   });
 });
+
+/// 做空第二轮：用户消息里的图片引用行同样过守卫——网络共享路径不进 asset 协议、
+/// 也不请宿主放行（allow_image_preview 会对路径做文件系统操作）。
+describe("ImageRef 拒网络共享路径", () => {
+  it("//host 与 \\\\host 直接回退徽章，不发请求", () => {
+    vi.mocked(allowImagePreview).mockClear();
+    for (const path of ["//attacker/s/x.png", "\\\\attacker\\s\\x.png"]) {
+      const { container, unmount } = render(<ImageRef path={path} />);
+      expect(container.querySelector("img")).toBeNull();
+      expect(container.querySelector(".chat-image-chip")).toBeTruthy();
+      unmount();
+    }
+    expect(allowImagePreview).not.toHaveBeenCalled();
+  });
+});

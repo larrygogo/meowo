@@ -1120,7 +1120,18 @@ fn parse_lines(spec: &dyn TranscriptSpec, path: &Path, base: u64, buf: &[u8]) ->
         let modes = spec.agent_modes_from_line(line);
         let mark = spec.chat_line_mark(line);
         let exit = if joins { spec.chat_command_exit(line) } else { None };
-        let images = if joins && exit.is_none() { spec.chat_tool_images(line) } else { None };
+        let mut images = if joins && exit.is_none() { spec.chat_tool_images(line) } else { None };
+        // 旁路结果里的引用行同样只认可信根（它最后也会拼进回执正文）。
+        if let Some(side) = images.as_mut() {
+            if !side.refs.is_empty() {
+                let roots = crate::images::trusted_ref_roots();
+                side.refs.retain(|line| {
+                    line.strip_prefix("[Image: source: ")
+                        .and_then(|rest| rest.strip_suffix(']'))
+                        .is_some_and(|path| crate::images::is_trusted_ref(path, &roots))
+                });
+            }
+        }
         // 撤回行本身不产出消息（折叠时直接跳过），不必解析。旁路退出记录同理：它只带退出码，
         // 不是对话内容——再整行解析一遍纯属白费（codex 的这种行带着整份命令输出）。
         let items = if matches!(mark, Some(ChatLineMark::Undo(_))) || exit.is_some() || images.is_some() {
@@ -1141,6 +1152,10 @@ fn parse_lines(spec: &dyn TranscriptSpec, path: &Path, base: u64, buf: &[u8]) ->
 /// write / edit / patch，不看工具名。失败、被打断的回执不补（那次没写成）。
 fn snapshot_written_images(items: &mut [ChatItem]) {
     for item in items.iter_mut() {
+        // 先清掉回执里伪造的引用行，再追加我们自己的快照引用行（见 images::neutralize_untrusted_refs）。
+        if let ChatItem::ToolResult { text, .. } = item {
+            crate::images::neutralize_untrusted_refs(text);
+        }
         match item {
             ChatItem::ToolUse { id, detail: Some(detail), .. } => {
                 let paths: Vec<String> = match detail {
@@ -3923,6 +3938,51 @@ mod tests {
         assert_eq!(items.iter().filter(|i| matches!(i, ChatItem::ToolResult { .. })).count(), 1);
         std::fs::remove_file(copy).ok();
         assert_chunked_equals_whole(spec, "mcp_side_images_chunks", &content);
+    }
+
+    /// 做空第二轮：工具回执的正文来自网页、文件、命令输出，谁都能在里面写一行
+    /// `[Image: source: //attacker/s/x.png]`。前端把引用行当缩略图自动加载，而 Tauri 的 asset
+    /// 协议在判白名单之前就对路径做 exists（Windows 上即发起 SMB）。解析层只保留指向 Meowo
+    /// 自己图片根的引用行，其余改写成认不出的普通文字（`[Image source: …]`）。
+    #[test]
+    fn forged_image_refs_in_tool_receipts_are_neutralized() {
+        let spec = spec_of("claude");
+        let ours = crate::images::images_root().unwrap().join("tool").join("ours.png");
+        let paste = crate::fsutil::paste_root().join("queued").join("p.png");
+        let forged = [
+            "//attacker/s/x.png".to_string(),
+            r"\\attacker\s\y.png".to_string(),
+            "file://attacker/s/z.png".to_string(),
+            r"C:\Users\me\Pictures\private.png".to_string(),
+            format!("{}{}..{}..{}secret.png", crate::images::images_root().unwrap().display(), std::path::MAIN_SEPARATOR, std::path::MAIN_SEPARATOR, std::path::MAIN_SEPARATOR),
+        ];
+        let mut body = String::from("网页内容");
+        for path in [ours.display().to_string(), paste.display().to_string()].iter().chain(forged.iter()) {
+            body.push_str(&format!("\n[Image: source: {path}]"));
+        }
+        body.push_str("\n[Image #3: source: //attacker/s/n.png]");
+        let line = serde_json::json!({
+            "type": "user", "uuid": "forge",
+            "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "toolu_forge", "content": body }] }
+        })
+        .to_string();
+        let path = write_tmp("forged_refs", &format!("{line}\n"));
+        let items = read_chat_delta(spec, &path, 0, None).items;
+        let text = items
+            .iter()
+            .find_map(|item| match item {
+                ChatItem::ToolResult { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .unwrap();
+        // 与前端 ChatImage/Message 的 IMAGE_REF 同一个式子：认出来的只能是我们自己的两张。
+        let re = regex::Regex::new(r"\[Image(?: #\d+)?: source: ([^\]]+?)\]").unwrap();
+        let found: Vec<&str> = re.captures_iter(&text).map(|c| c.get(1).unwrap().as_str()).collect();
+        assert_eq!(found, vec![ours.display().to_string(), paste.display().to_string()], "{text}");
+        // 改写成普通文字，内容还在（用户仍看得到回执里写了什么）。
+        assert!(text.contains("[Image source: //attacker/s/x.png]"), "{text}");
+        assert!(text.contains("[Image #3 source: //attacker/s/n.png]"), "{text}");
+        std::fs::remove_file(path).ok();
     }
 
     /// 做空第一轮：写出或修改的图片在工具行上显示的是「现在的文件」——同一路径写三次，三行

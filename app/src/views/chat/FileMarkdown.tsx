@@ -14,7 +14,7 @@ import { memo, useEffect, useMemo, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { safeFileSrc } from "../../assetSrc";
 import { components, PLUGINS } from "../ChatMarkdown";
 import { RemoteImagePlaceholder, resolveChatImageCached } from "./ChatImage";
 import { useRemoteImageGate } from "./remoteImageGate";
@@ -59,7 +59,7 @@ function PreviewImage({ src, alt, width, height, resolve }: {
     if (!src || !gate.ready) return;
     let alive = true;
     const pending = remote
-      ? resolveChatImageCached(src, null).then((outcome) => ("path" in outcome ? convertFileSrc(outcome.path) : null))
+      ? resolveChatImageCached(src, null).then((outcome) => ("path" in outcome ? safeFileSrc(outcome.path) : null))
       : resolve(src);
     pending
       .then((resolved) => {

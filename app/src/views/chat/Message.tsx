@@ -1,7 +1,7 @@
 import { memo, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useFlash } from "../../hooks/useFlash";
 import { Lightbox } from "./Lightbox";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { safeFileSrc } from "../../assetSrc";
 import { useT } from "../../i18n";
 import { deliveryStatusLabel } from "../../i18n/statusVocab";
 import { attachmentInstructionEn, attachmentInstructionZh } from "../../i18n/attachmentInstruction";
@@ -202,7 +202,9 @@ export function ImageRef({ path }: { path: string }) {
     window.addEventListener(FILE_TOKEN_REFRESHED_EVENT, retry);
     return () => window.removeEventListener(FILE_TOKEN_REFRESHED_EVENT, retry);
   }, [failed]);
-  if (failed) {
+  // 网络共享路径不进 asset 协议、也不请宿主放行（见 assetSrc.ts），直接按读不到显示。
+  const base = safeFileSrc(path);
+  if (failed || base === null) {
     return (
       <span className="chat-image-chip" data-tip={name}>
         <Icon glyph={icImage} size={12} />
@@ -210,7 +212,6 @@ export function ImageRef({ path }: { path: string }) {
       </span>
     );
   }
-  const base = convertFileSrc(path);
   const src = stage === "retry" ? `${base}${base.includes("?") ? "&" : "?"}preview=1` : base;
   return (
     <>

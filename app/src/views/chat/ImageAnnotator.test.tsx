@@ -19,6 +19,12 @@ afterEach(() => {
 });
 
 describe("ImageAnnotator", () => {
+  it("网络共享路径不读（不 fetch asset 协议），直接显示读取失败", async () => {
+    render(<ImageAnnotator path="//attacker/s/x.png" onDone={() => {}} onClose={() => {}} />);
+    await waitFor(() => expect(document.body.textContent).toContain("图片读取失败"));
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("没画框时按钮是「不标注，直接附上」,点了原样交回", async () => {
     const onDone = vi.fn();
     render(<ImageAnnotator path="C:\\tmp\\a.png" onDone={onDone} onClose={() => {}} />);

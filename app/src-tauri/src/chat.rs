@@ -722,12 +722,21 @@ const PREVIEW_IMAGE_EXTS: [&str; 7] = ["png", "jpg", "jpeg", "gif", "webp", "bmp
 /// 拖进来或在文件对话框里选的图，读取被拒，附件条只剩文件名（2026-11-16 用户反馈「拖拽进来的图片
 /// 看不到预览」）。缩略图第一次加载失败时由前端调这里，放行后重试一次。不是图片扩展名、不是
 /// 存在的文件就不放行（返回 false，前端照旧显示文件名）。
+/// 能不能给这条路径开预览：图片扩展名、是本机文件。UNC / 设备路径先按字符串拒——对它做
+/// is_file 就会发起 SMB 连接（做空第二轮，见 meowo_agent::images::is_remote_path）。
+fn preview_candidate(file: &std::path::Path) -> bool {
+    if meowo_agent::images::is_remote(file) {
+        return false;
+    }
+    let ext = file.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).unwrap_or_default();
+    PREVIEW_IMAGE_EXTS.contains(&ext.as_str()) && file.is_file()
+}
+
 #[tauri::command]
 pub(crate) async fn allow_image_preview(app: tauri::AppHandle, path: String) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let file = std::path::Path::new(&path);
-        let ext = file.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).unwrap_or_default();
-        if !PREVIEW_IMAGE_EXTS.contains(&ext.as_str()) || !file.is_file() {
+        if !preview_candidate(file) {
             return Ok(false);
         }
         use tauri::Manager;
@@ -1222,6 +1231,16 @@ pub(crate) async fn search_chat_transcripts(
 
 #[cfg(test)]
 mod tests {
+    /// 预览放行不对网络共享路径做任何文件系统操作（192.0.2.1 是文档保留地址，真去连要卡到超时）。
+    #[test]
+    fn preview_candidate_rejects_unc_without_touching_network() {
+        for raw in [r"\\192.0.2.1\s\a.png", "//192.0.2.1/s/a.png"] {
+            let started = std::time::Instant::now();
+            assert!(!preview_candidate(std::path::Path::new(raw)));
+            assert!(started.elapsed() < std::time::Duration::from_millis(500), "{raw}");
+        }
+    }
+
     use super::*;
 
     /// 已停用的「Meowo 托管」会话：照常走原生读取，只多带一个停用标记；有没有原生 id 决定能否用官方 CLI 打开。
