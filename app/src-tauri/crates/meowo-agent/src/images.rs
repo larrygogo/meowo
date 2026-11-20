@@ -757,7 +757,8 @@ pub fn is_remote_path(raw: &str) -> bool {
             && b.get(6).is_none_or(|c| sep(*c));
         return !verbatim_disk;
     }
-    if s.len() >= 5 && s[..5].eq_ignore_ascii_case("file:") {
+    // 按字节切前先确认是 ASCII 边界：路径里常有中文，`s[..5]` 会切在字符中间而 panic。
+    if s.get(..5).is_some_and(|head| head.eq_ignore_ascii_case("file:")) {
         let rest = s[5..].trim_start_matches(['/', '\\']);
         let slashes = s.len() - 5 - rest.len();
         // `file://host/…`：两个斜杠后跟非空主机名（`file:///C:/…` 是三个斜杠、主机为空）。
@@ -1470,6 +1471,10 @@ mod tests {
             assert_eq!(err.code, ImageErrorCode::Forbidden, "{raw}");
             assert!(resolve_within(std::slice::from_ref(&root), Path::new(raw)).is_none());
             assert!(started.elapsed() < std::time::Duration::from_millis(500), "{raw} 碰了文件系统");
+        }
+        // 中文开头（字节 5 落在字符中间）不能 panic：伪造引用行里的路径会走到这里。
+        for text in ["路径路径.png", "图片：x", "截图"] {
+            assert!(!is_remote_path(text), "{text}");
         }
         for local in [r"C:\Users\a.png", "/home/a.png", r"\\?\C:\a.png", "relative/a.png", r"\single\a.png"] {
             assert!(!is_remote_path(local), "{local}");
