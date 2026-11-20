@@ -486,6 +486,7 @@ fn tool_call_events(
 /// - MCP 工具直接调用：`{"type":"image","data":<base64>,"mimeType":…}`（或 `source.data`）；
 /// - `view_image` 与脚本里 `image(…)`：`{"type":"input_image","image_url":"data:image/png;base64,…"}`
 ///   （本机 2026-07-13 rollout 实样，代码模式里调 view_image）。
+///
 /// 声明的类型不可信，落盘前按文件头判断（images 模块）；落在 `images/tool/`，按内容哈希命名。
 fn output_image(part: &serde_json::Value) -> Option<String> {
     let path = match part.get("type").and_then(|v| v.as_str()) {

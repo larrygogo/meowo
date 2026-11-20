@@ -530,7 +530,7 @@ pub fn prune_in(root: &Path, cap: u64) -> PruneReport {
     let mut removed = 0;
     if total > cap {
         // false（可再生）排在 true（sent）前面；同类按修改时间从旧到新。
-        files.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+        files.sort_by_key(|f| (f.0, f.1));
         for (_, _, len, path) in &files {
             if total <= cap {
                 break;

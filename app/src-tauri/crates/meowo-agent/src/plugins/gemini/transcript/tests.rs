@@ -621,3 +621,32 @@ fn send_image_maps_to_image_kind() {
     let TranscriptEvent::ToolResult { text, .. } = &events[1] else { panic!() };
     assert!(text.ends_with("[Image: source: C:/Users/me/.meowo/images/sent/ab.png]"), "{text}");
 }
+
+/// 真机样本（2026-11-21，gemini 0.68.0 `gemini -p` 调 Meowo MCP 的 send_image；隔离 home 的
+/// settings.json 登记 meowo、用户级策略只放行 send_image；探针目录前缀换成 C:\probe）。
+/// 同一行里还有 update_topic 调用。0.68 会把 MCP 回执包进 `<untrusted_context>`，引用行仍独占一行。
+/// 同一次运行里 browser_snapshot 没有策略放行，非交互模式下直接报「找不到工具」——审批语义未被绕过。
+#[test]
+fn real_send_image_sample_parses_to_image_message() {
+    let line = include_str!("fixtures/send_image.jsonl").lines().next().unwrap();
+    let events = parse_line(line);
+    let call = events
+        .iter()
+        .find_map(|e| match e {
+            TranscriptEvent::ToolCall { name, kind, summary, .. } if name == "mcp_meowo_send_image" => Some((*kind, summary.clone())),
+            _ => None,
+        })
+        .expect("应有发图调用");
+    assert_eq!(call, (ToolKind::Image, "gemini 探针".to_string()));
+    let text = events
+        .iter()
+        .find_map(|e| match e {
+            TranscriptEvent::ToolResult { tool_call_id: Some(id), text, .. } if id.contains("mcp_meowo_send_image") => Some(text.clone()),
+            _ => None,
+        })
+        .expect("应有发图回执");
+    assert!(
+        text.lines().any(|l| l == r"[Image: source: C:\probe\images\sent\0c6eebdca4b84ccf186723b705349400.png]"),
+        "{text}"
+    );
+}
