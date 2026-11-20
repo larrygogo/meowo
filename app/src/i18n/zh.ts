@@ -94,11 +94,9 @@ export const zh = {
     dismissAll: "全部忽略",
     // 「全部忽略」钮上的字：n = 正在弹的这条 + 后面排着的。
     dismissAllCount: (n: number) => `忽略 ${n} 条`,
-    // 灵动岛「打开」失败（I-1/I-2，走查 2026-11-12）：留在岛上说清原因与下一步。
+    // 灵动岛「打开」失败（I-1，走查 2026-11-12）：留在岛上说清原因与「重试」。
     openFailed: "没能打开对话窗",
-    liteNoChat: "轻量模式没有对话窗，可在设置里开启",
     retry: "重试",
-    openSettings: "打开设置",
     dismissError: "关闭提示",
   },
   sticker: {
@@ -1899,10 +1897,6 @@ export const zh = {
     archivedSessions: "已完成会话",
     archivedInAdminDesc: "在会话管理中按工作区、时间筛选，批量恢复",
     archivedOpenAdmin: "打开会话管理",
-    archivedEmpty: "还没有已完成的会话",
-    archivedLoadMore: "加载更多",
-    archivedLoadFailed: "已完成会话加载失败",
-    unarchiveFailed: "恢复进行中失败，请稍后再试",
     // 「会话列表」「已完成会话」两个单行分组合成一组（设置页精简 2026-11-19）。
     listGroup: "列表",
     worktreeGroup: "Worktree",
@@ -1947,7 +1941,6 @@ export const zh = {
     sessionOpenInDesc: "用哪个界面打开会话",
     sessionOpenInChat: "对话窗口",
     sessionOpenInTerminal: "外部终端",
-    sessionOpenInLite: "轻量模式下固定为外部终端",
     // 运行时防止休眠（power.rs）：只拦系统休眠、不拦息屏，没会话在跑就交还系统。
     keepAwake: "运行时防止休眠",
     keepAwakeDesc: "有会话在跑时电脑不睡，屏幕照常熄灭",
@@ -1973,8 +1966,6 @@ export const zh = {
     keepAwakeLeadGate: "有关卡待拍板时",
     notifySound: "通知提示音",
     notifySoundDesc: "系统通知弹出时响一声",
-    chatFeature: "对话窗口功能",
-    chatFeatureDesc: "关闭进入轻量模式：只留灵动岛，会话在外部终端进行",
     cardMenu: "会话菜单",
     cardMenuDesc: "置顶、重命名等操作的打开方式",
     cardMenuContext: "右键菜单",

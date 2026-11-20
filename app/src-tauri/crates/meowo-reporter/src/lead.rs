@@ -1517,6 +1517,9 @@ pub fn task_of_gate(cwd: &str, gate_id: &str) -> Option<PathBuf> {
 
 // ---------------- wait（asyncRewake 后台 hook） ----------------
 
+/// 关卡文件连续读不到 / 读不出时，至少要持续这么久才认定它真没了（见 [`wait`] 的轮询段）。
+const GATE_READ_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// 后台等待关卡答复（Stop / SessionStart 上的 asyncRewake hook）。
 /// - 关卡已作答：立刻以退出码 2 结束，stderr 是答复 → 模型被唤醒（会话恢复后也走这里）。
 /// - 关卡挂起：每 `poll` 看一次，直到作答（退出码 2）、被消费/撤掉/换了关卡（0）、
@@ -1567,21 +1570,34 @@ pub fn wait(
     let mine = format!("{me}:{}", first.id);
     let _ = std::fs::write(&waiter, &mine); // 接管：之前的等待者下一轮看到不是自己就退出
     let start = std::time::Instant::now();
+    // 关卡文件读不到（被删后重写、rename 的空窗）或读出半截（写工具先截断再写入）都算「暂时」：
+    // 连续 5 次且持续 ≥ GATE_READ_GRACE 才放弃。只数次数不看时长不行——轮询很短时 5 次只有
+    // 几十毫秒，CI 机器一卡就越界（Windows / macOS CI 实测）；读出半截就立刻退出更会让 leader 的
+    // 答复没人接（lead_waiter 同类问题，2026-11-20 一并修）。
     let mut misses = 0;
+    let mut first_miss: Option<std::time::Instant> = None;
     let out = loop {
         std::thread::sleep(poll);
         if read(&waiter).trim() != mine || start.elapsed() > max {
             break Output::default(); // 被新等待者接管，或超时
         }
-        match read_gate_checked(&task) {
-            Err(reason) => break read_error(reason),
+        let missing = match read_gate_checked(&task) {
+            Err(reason) => Some(read_error(reason)),
             Ok(Some(g)) if g.id == first.id && g.version == first.version && g.status == "answered" => break wake(&g),
-            Ok(Some(g)) if g.id == first.id && g.version == first.version && g.status == "pending" => misses = 0,
+            Ok(Some(g)) if g.id == first.id && g.version == first.version && g.status == "pending" => None,
             Ok(Some(_)) => break Output::default(),
-            Ok(None) => {
+            Ok(None) => Some(Output::default()),
+        };
+        match missing {
+            None => {
+                misses = 0;
+                first_miss = None;
+            }
+            Some(give_up) => {
                 misses += 1;
-                if misses >= 5 {
-                    break Output::default();
+                let since = *first_miss.get_or_insert_with(std::time::Instant::now);
+                if misses >= 5 && since.elapsed() >= GATE_READ_GRACE {
+                    break give_up;
                 }
             }
         }

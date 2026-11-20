@@ -96,7 +96,6 @@ export function IslandPanel({
   usageMeta = {},
   openError = null,
   onRetryOpen,
-  onOpenSettingsFromError,
   onDismissOpenError,
   focusOnOpen = true,
 }: {
@@ -111,8 +110,8 @@ export function IslandPanel({
   initialPage?: number;
   /** 新建会话（标题旁的「＋」与空态按钮）。 */
   onNewSession?: () => void;
-  /** 打开对话窗口。轻量模式（对话功能关闭）时不传，按钮不出现。 */
-  onOpenChat?: () => void;
+  /** 打开对话窗口。2026-11-20 起没有轻量模式，入口恒在，故必传。 */
+  onOpenChat: () => void;
   /** 打开设置。 */
   onOpenSettings?: () => void;
   /** 当前是否极简模式（收起成细条）。 */
@@ -121,10 +120,9 @@ export function IslandPanel({
   onToggleStrip?: () => void;
   /** 每家额度的新鲜度：刷新失败的标成缓存（backlog 仍存在 #1）。 */
   usageMeta?: Record<string, IslandUsageMeta>;
-  /** 点会话行「打开」失败（I-1/I-2）：面板留着，顶上显示原因和下一步。 */
+  /** 点会话行「打开」失败（I-1）：面板留着，顶上显示原因和「重试」。 */
   openError?: IslandOpenError | null;
   onRetryOpen?: (sessionId: number) => void;
-  onOpenSettingsFromError?: () => void;
   onDismissOpenError?: () => void;
   /** 展开时把焦点放到第一条会话（I-3）。菜单栏落点收起时面板仍挂着，此时为 false。 */
   focusOnOpen?: boolean;
@@ -225,16 +223,14 @@ export function IslandPanel({
             >{PLUS}{t.sticker.newSession}</button>
           )}
           {/* 托盘菜单去掉「打开会话列表」后，对话窗与设置在岛上也要有入口（用户 2026-11-05 要求）。 */}
-          {onOpenChat && (
-            <button
-              type="button"
-              className="isl-btn is-ghost is-icon"
-              title={t.sticker.openChatWindow}
-              aria-label={t.sticker.openChatWindow}
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={onOpenChat}
-            ><ChatIcon /></button>
-          )}
+          <button
+            type="button"
+            className="isl-btn is-ghost is-icon"
+            title={t.sticker.openChatWindow}
+            aria-label={t.sticker.openChatWindow}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={onOpenChat}
+          ><ChatIcon /></button>
           {onOpenSettings && (
             <button
               type="button"
@@ -264,17 +260,15 @@ export function IslandPanel({
         </div>
 
         {openError && (
-          // 打开失败（I-1/I-2）：说清原因，给下一步；不自动消失，× 或收起面板才关。
+          // 打开失败（I-1）：说清原因，给「重试」；不自动消失，× 或收起面板才关。
           <div className="isl-panel-err" role="alert">
             <span className="isl-panel-err-text">
-              <span className="isl-state is-error">{openError.kind === "lite" ? t.island.liteNoChat : t.island.openFailed}</span>
-              {openError.kind === "failed" && openError.reason && (
+              <span className="isl-state is-error">{t.island.openFailed}</span>
+              {openError.reason && (
                 <><span className="isl-sep">·</span><span className="isl-alert-detail" title={openError.reason}>{openError.reason}</span></>
               )}
             </span>
-            {openError.kind === "lite"
-              ? onOpenSettingsFromError && <button type="button" className="isl-btn is-dark" onClick={onOpenSettingsFromError}>{t.island.openSettings}</button>
-              : onRetryOpen && <button type="button" className="isl-btn is-dark" onClick={() => onRetryOpen(openError.sessionId)}>{t.island.retry}</button>}
+            {onRetryOpen && <button type="button" className="isl-btn is-dark" onClick={() => onRetryOpen(openError.sessionId)}>{t.island.retry}</button>}
             {onDismissOpenError && (
               <button type="button" className="isl-alert-close" aria-label={t.island.dismissError} title={t.island.dismissError} onClick={onDismissOpenError}>
                 <Icon glyph={icClose} size={12} />
@@ -289,13 +283,8 @@ export function IslandPanel({
               {rows.length === 0 && (
                 <div className="isl-empty">
                   <span>{t.island.idle}</span>
-                  {/* 标题栏已有「新建会话」，空态的主按钮改成打开对话窗口（用户 2026-11-05 要求）；
-                      轻量模式没有对话窗口，才退回新建。 */}
-                  {onOpenChat ? (
-                    <button type="button" className="isl-btn is-primary" onClick={onOpenChat}>{t.sticker.openChatWindow}</button>
-                  ) : onNewSession && (
-                    <button type="button" className="isl-btn is-primary isl-new" onClick={onNewSession}>{PLUS}{t.sticker.newSession}</button>
-                  )}
+                  {/* 标题栏已有「新建会话」，空态的主按钮改成打开对话窗口（用户 2026-11-05 要求）。 */}
+                  <button type="button" className="isl-btn is-primary" onClick={onOpenChat}>{t.sticker.openChatWindow}</button>
                 </div>
               )}
               {rows.map((item, indexInPage) => {

@@ -1822,13 +1822,6 @@ button.stab {
 .shortcut-card .row-label { font-weight: var(--fw-regular); }
 /* 分组标题：小一号的次要色，左缘与卡片外缘对齐（卡片外的一切文字都对这条线）。 */
 .sec-caption { margin: var(--sp-24) 0 var(--sp-8); font-size: var(--text-xs); font-weight: var(--fw-semibold); line-height: 1.4; color: var(--cc-text-dim); }
-/* 设置 → 会话 → 已归档会话列表（看板已无「已归档」tab，这里是唯一管理入口）。
-   限高内滚：归档可能积上百条，不能撑满设置页。 */
-.archived-scroll { max-height: 300px; overflow-y: auto; overscroll-behavior: contain; }
-.archived-empty { padding: var(--sp-14) var(--sp-16); color: var(--cc-text-dim); font-size: var(--text-xs); }
-.archived-row .archived-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.archived-actions { flex: none; display: flex; gap: var(--sp-8); }
-.archived-more-row { justify-content: center; }
 
 /* 关于区的 app LOGO（图标 PNG 自带深底圆角方块，仅定尺寸与块级化） */
 .pmark {

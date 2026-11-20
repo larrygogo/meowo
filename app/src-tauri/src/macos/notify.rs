@@ -126,31 +126,20 @@ fn handle_response(center: &UNUserNotificationCenter, response: &UNNotificationR
         std::thread::spawn(move || route_click(session_id, pid));
     } else if let Some((app, _)) = CLICK_CONTEXT.get() {
         // JOBS 是进程内存表（重启后通知中心的残留通知、或满 64 整体清空都查不到路由
-        // 参数）：落空不能静默丢弃这次点击——回退打开对话窗/召回面板，与 W-14
-        // 「定位失败回退打开对话窗」同一纪律。设置文件是 IO，放子线程读。
-        let app = app.clone();
-        std::thread::spawn(move || {
-            if crate::settings::load_settings().chat_enabled {
-                crate::window::open_latest_chat_window(&app);
-            } else {
-                crate::macos::panel::recall_panel(&app);
-            }
-        });
+        // 参数）：落空不能静默丢弃这次点击——回退打开对话窗，与 W-14「定位失败回退
+        // 打开对话窗」同一纪律。open_latest_chat_window 自带子线程查库，这里直调。
+        // （原「轻量模式下召回面板」一支随 2026-11-20 去掉轻量模式删除。）
+        crate::window::open_latest_chat_window(app);
     }
 }
 
 /// 点击路由（工作线程）：与旧串行线程版逐条对应。
 fn route_click(session_id: i64, pid: i64) {
     // 托管会话：PTY 归 Meowo，没有可聚焦的外部终端——打开对话窗口落在该会话上。
-    // 对话功能关闭（轻量模式）时对话窗不是合法落点，改把同一个 PTY 镜像进
-    // 外部终端（reveal_session 在关闭态强制走 attach 路径）。
+    // （2026-11-20 起没有轻量模式，原「对话关闭 → 镜像进外部终端」分支删除。）
     if let Some((app, ptys)) = CLICK_CONTEXT.get() {
         if ptys.is_managed(session_id) {
-            if crate::settings::load_settings().chat_enabled {
-                crate::window::open_chat_window_detached(app.clone(), session_id);
-            } else if let Err(error) = crate::terminal::reveal_session(app, ptys, session_id) {
-                eprintln!("通知点击打开外部终端失败: {error}");
-            }
+            crate::window::open_chat_window_detached(app.clone(), session_id);
             return;
         }
     }

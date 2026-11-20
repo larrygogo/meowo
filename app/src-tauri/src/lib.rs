@@ -38,8 +38,6 @@ mod prompt_queue;
 mod pty;
 mod push;
 mod relay;
-#[cfg(target_os = "windows")]
-mod seed;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod tray_anim;
 // pub：集成测试 `tests/proxy_apply.rs` 要在**独立进程**里跑端到端写入（它会设 CLAUDE_CONFIG_DIR /
@@ -1763,11 +1761,6 @@ pub fn run() {
             // 【临时测试后门，验证外部终端恢复链路，测完删除】
             #[cfg(any(target_os = "windows", target_os = "macos"))]
             terminal::spawn_test_external_resume(app.handle());
-            // 安装器的「对话窗口功能」勾选种子必须最先合并：下面的托盘构建、onboarding
-            // 判断等都消费 load_settings()，晚了就会拿开关生效前的旧值建 UI。
-            // （同步执行的线程纪律豁免理由见 seed.rs 文件头。）
-            #[cfg(target_os = "windows")]
-            seed::consume_installer_seed();
             // attach 服务在线程中接收 hook 审批；拿到 AppHandle 后主动推送给对话窗口，
             // 前端轮询仅作为窗口晚打开时的兜底。
             approval_ptys.set_app_handle(app.handle().clone());

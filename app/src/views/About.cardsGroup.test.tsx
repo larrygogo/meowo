@@ -47,7 +47,7 @@ describe("设置：列表组", () => {
     render(<SessionsSection />);
     const cardMenu = await screen.findByText(zh.settings.cardMenu);
     expect(captionBefore(cardMenu)).toBe("列表");
-    // 对话功能开着（OLD 没写 chat_enabled → 默认开）：已完成会话是同一张卡里的一行，不再自成一组。
+    // 已完成会话是同一张卡里的一行，不再自成一组（2026-11-20 起没有轻量模式，这是唯一形态）。
     const admin = screen.getByRole("button", { name: zh.settings.archivedOpenAdmin });
     expect(admin.closest(".row-card")).toBe(cardMenu.closest(".row-card"));
     expect(Array.from(document.querySelectorAll(".sec-caption")).map((el) => el.textContent)).toEqual([zh.settings.worktreeGroup, "列表"]);

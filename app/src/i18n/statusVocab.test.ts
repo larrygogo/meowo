@@ -76,7 +76,6 @@ const ALLOWED: Record<string, string> = {
   "chat.sidebarReopenFailed": "未归档的会话",
   "chat.dirGoneNoReopen": "未归档的会话",
   "settings.archivedInAdminDesc": "未归档的会话",
-  "settings.unarchiveFailed": "未归档的会话",
   "worktree.reason.shared_session": "未归档的会话",
   // PR 与 CI 检查的状态是代码托管平台的词，不是会话状态。
   "forge.prState.open": "PR 状态",

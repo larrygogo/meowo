@@ -565,6 +565,7 @@ describe("IslandPanel 展开面板", () => {
         usage={{}}
         quotaProviders={["claude"]}
         onOpenSession={noop}
+        onOpenChat={noop}
         onMeasure={noop}
         onPointerDownDrag={noop}
         {...props}
@@ -600,16 +601,17 @@ describe("IslandPanel 展开面板", () => {
     expect(onOpenSession).toHaveBeenCalledWith(top.session.id);
   });
 
-  it("新建会话：标题旁的按钮与空态按钮都能开", () => {
+  // 空态里那颗「新建会话」只在轻量模式（不传 onOpenChat）出现，随 2026-11-20 去掉轻量模式删除；
+  // 空态主按钮是「打开对话窗口」（见下方用例），新建只剩标题旁这一颗。
+  it("新建会话：标题旁的按钮能开", () => {
     const onNewSession = vi.fn();
     renderPanel({ onNewSession });
     // 按钮名就是「新建会话」：加号是 aria-hidden 的图标，不进可访问名称（审查 2026-11-09）。
     const buttons = screen.getAllByRole("button", { name: zh.sticker.newSession });
-    // 空态时两个：标题旁一个、空态里一个。
-    expect(buttons).toHaveLength(2);
+    expect(buttons).toHaveLength(1);
     buttons.forEach((button) => expect(button.querySelector("svg[aria-hidden='true']")).toBeTruthy());
     buttons.forEach((button) => fireEvent.click(button));
-    expect(onNewSession).toHaveBeenCalledTimes(2);
+    expect(onNewSession).toHaveBeenCalledTimes(1);
   });
 
   it("面板上不放「全部」按钮（用户要求）；没有额度数据时只有一页、不出翻页点", () => {
@@ -662,7 +664,9 @@ describe("IslandPanel 展开面板", () => {
     expect(container.querySelectorAll(".isl-usage-cell")).toHaveLength(1);
   });
 
-  it("面板标题栏有打开对话窗口和设置；轻量模式不传对话回调就不出那颗", () => {
+  // 2026-11-20 去掉轻量模式：「不传对话回调就不出那颗」「空态退回新建会话」两条轻量分支断言删除，
+  // onOpenChat 改为必传。
+  it("面板标题栏有打开对话窗口和设置", () => {
     const onOpenChat = vi.fn();
     const onOpenSettings = vi.fn();
     renderPanel({ onOpenChat, onOpenSettings });
@@ -671,21 +675,15 @@ describe("IslandPanel 展开面板", () => {
     fireEvent.click(screen.getByRole("button", { name: zh.sticker.openSettings }));
     expect(onOpenChat).toHaveBeenCalledOnce();
     expect(onOpenSettings).toHaveBeenCalledOnce();
-    cleanup();
-    renderPanel({ onOpenSettings });
-    expect(screen.queryByRole("button", { name: zh.sticker.openChatWindow })).toBeNull();
   });
 
-  it("没有会话时空态主按钮是打开对话窗口；轻量模式退回新建会话", () => {
+  it("没有会话时空态主按钮是打开对话窗口", () => {
     const onOpenChat = vi.fn();
     const onNewSession = vi.fn();
     const { container } = renderPanel({ onOpenChat, onNewSession });
     fireEvent.click(container.querySelector(".isl-empty .isl-btn")!);
     expect(onOpenChat).toHaveBeenCalledOnce();
     expect(onNewSession).not.toHaveBeenCalled();
-    cleanup();
-    const lite = renderPanel({ onNewSession });
-    expect(lite.container.querySelector(".isl-empty .isl-btn")?.textContent).toContain(zh.sticker.newSession);
   });
 
   it("只有一页时不出箭头", () => {
@@ -738,7 +736,7 @@ describe("折叠的 +N 与分页圆点按最急状态上色", () => {
 
   it("面板分页圆点按该页最急状态上色", () => {
     const { container } = render(
-      <IslandPanel sessions={five()} usage={{}} quotaProviders={[]} onOpenSession={noop} onMeasure={noop} onPointerDownDrag={noop} />,
+      <IslandPanel sessions={five()} usage={{}} quotaProviders={[]} onOpenSession={noop} onOpenChat={noop} onMeasure={noop} onPointerDownDrag={noop} />,
     );
     const dots = [...container.querySelectorAll(".isl-dots-nav button")];
     expect(dots).toHaveLength(2);

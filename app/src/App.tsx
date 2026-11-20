@@ -154,9 +154,6 @@ export function App() {
   // 折叠条恒显示全部「连接中」会话（running + waiting），与当前选中 tab 无关——
   // 故独立于分页 items 单独加载（按状态查，覆盖旧但仍连接的会话，不受 tab/分页窗口影响）。
   const [stripSessions, setStripSessions] = useState<Item[]>([]);
-  // 灵动岛「打开」在轻量模式下按 pid 找外部终端（I-2），回调里同步读最新一份。
-  const stripSessionsRef = useRef<Item[]>([]);
-  stripSessionsRef.current = stripSessions;
   const stripRowCacheRef = useRef<RowCache>(new Map());
   const loadStrip = useCallback(() => {
     Promise.all([
@@ -500,11 +497,6 @@ export function App() {
   const [quotaProviders, setQuotaProviders] = useState<string[]>(["claude"]);
   const islandAlertsRef = useRef<string[] | null>(null);
   const islandAlertMsRef = useRef(ISLAND_ALERT_MS_DEFAULT);
-  // 轻量模式（对话功能关闭）时面板不放「打开对话窗口」，与贴纸底栏、托盘菜单同一规则。
-  const [chatEnabled, setChatEnabled] = useState(true);
-  // 回调里同步读（openSession 是稳定回调，闭包里的 state 会过期）。
-  const chatEnabledRef = useRef(true);
-  chatEnabledRef.current = chatEnabled;
   // 「打开」失败（I-1/I-2，走查 2026-11-12）：留住提醒或面板，就地显示原因和下一步。
   // 不自动消失：提醒的倒计时在点「打开」时就撤了，直到用户 ×、重试或收起。
   const [openError, setOpenError] = useState<IslandOpenError | null>(null);
@@ -549,7 +541,6 @@ export function App() {
     root.classList.toggle("island-menubar", host.kind === "menubar");
   }, [host]);
   useSettingsEffect((settings) => {
-    setChatEnabled(settings.chat_enabled ?? true);
     setIslandStrip(settings.island_strip ?? false);
     setAutoStripEnabled(settings.island_auto_strip ?? true);
     if (settings.island_compact) setIslandCompact(settings.island_compact);
@@ -948,7 +939,7 @@ export function App() {
     startDrag(event.currentTarget, event.pointerId, event.screenX, () => {});
   }, [startDrag]);
 
-  // 托盘找回（轻量模式下单击托盘、通知定位失败的兜底）：Windows 贴纸已删（2026-11-05 用户
+  // 托盘找回：Windows 贴纸已删（2026-11-05 用户
   // 定案），岛本来就在顶上，找回就是展开面板。
   useEffect(() => {
     const un = listen("recall-sticker", () => expand());
@@ -1109,12 +1100,8 @@ export function App() {
       alertTimerRef.current = null;
     }
     setOpenError(null);
-    const failure = await openIslandSession({
-      sessionId,
-      chatEnabled: chatEnabledRef.current,
-      item: stripSessionsRef.current.find((entry) => entry.session.id === sessionId),
-      locale: t.locale,
-    }).finally(() => { openingRef.current = false; });
+    const failure = await openIslandSession({ sessionId, locale: t.locale })
+      .finally(() => { openingRef.current = false; });
     const mode = islandModeRef.current;
     if (failure) {
       if (mode === "expanded" || mode === "alert") setOpenError(failure);
@@ -1133,13 +1120,6 @@ export function App() {
     setIslandMode("compact");
     layoutCompact().catch(() => {}).finally(() => pumpAlert());
   }, [collapse, layoutCompact, pumpAlert, t.locale]);
-  // 轻量模式失败时的「打开设置」：设置里有「对话窗口功能」开关。
-  const openSettingsFromError = useCallback(() => {
-    setOpenError(null);
-    invoke("open_settings").catch((err) => console.error("[island] 打开设置失败：", err));
-    if (islandModeRef.current === "expanded") collapse();
-    else if (islandModeRef.current === "alert") finishAlert();
-  }, [collapse, finishAlert]);
   openSessionRef.current = openSession;
 
   if (!bootReady) {
@@ -1168,16 +1148,15 @@ export function App() {
           openError={openError}
           focusOnOpen={islandMode === "expanded"}
           onRetryOpen={(id) => void openSession(id)}
-          onOpenSettingsFromError={openSettingsFromError}
           onDismissOpenError={() => setOpenError(null)}
           onMeasure={onPanelMeasure}
           onPointerDownDrag={onPanelHeadPointerDown}
           onNewSession={() => panelAction(() => {
             openNewSessionWindow().catch((err) => console.error("[island] 打开新建会话失败：", err));
           })}
-          onOpenChat={chatEnabled ? () => panelAction(() => {
+          onOpenChat={() => panelAction(() => {
             invoke("open_latest_chat").catch((err) => console.error("[island] 打开对话窗口失败：", err));
-          }) : undefined}
+          })}
           onOpenSettings={() => panelAction(() => {
             invoke("open_settings").catch((err) => console.error("[island] 打开设置失败：", err));
           })}
@@ -1209,7 +1188,6 @@ export function App() {
       onActivate={expand}
       onOpenSession={openSession}
       openError={openError}
-      onOpenSettingsFromError={openSettingsFromError}
       onPointerDownDrag={onPillPointerDown}
       onAlertHover={onAlertHover}
       onDismissAlert={dismissAlert}

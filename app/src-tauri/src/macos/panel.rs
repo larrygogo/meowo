@@ -111,8 +111,3 @@ pub fn set_visible(app: &AppHandle, visible: bool, focus: bool) {
         panel.order_front_regardless();
     }
 }
-
-/// 「找回」：通知点击落空等兜底入口。贴纸没了，找回就是让岛展开面板（前端 recall-sticker 监听）。
-pub fn recall_panel(app: &AppHandle) {
-    let _ = app.emit_to("main", "recall-sticker", ());
-}

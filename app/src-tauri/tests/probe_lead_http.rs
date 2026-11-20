@@ -64,12 +64,6 @@ fn production_http_answer_snapshot_and_retry() {
         "auto_update_enabled":false,"notifications_enabled":false,"onboarding_seen":true,
         "remote_access_enabled":true,"remote_access_port":port,"remote_access_bind":"loopback","remote_access_token":token
     }).to_string()).unwrap();
-    // 真实启动会消费安装器种子；探针只在种子不存在时运行，不能把隔离验证变成全局设置变更。
-    if let Ok(key) = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
-        .open_subkey_with_flags(r"Software\larrygogo\Meowo", winreg::enums::KEY_READ)
-    {
-        assert!(key.get_value::<u32, _>("ChatEnabled").is_err(), "安装器 ChatEnabled 种子仍存在，不能运行真实应用探针");
-    }
     let app_log = std::fs::File::create(root.join("app.log")).unwrap();
     let child = Command::new(binary)
         .env_remove("MEOWO_TEST_EXTERNAL_RESUME")

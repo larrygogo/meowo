@@ -53,7 +53,7 @@ const renderIsland = (props: Partial<Parameters<typeof Island>[0]> = {}) =>
   );
 const renderPanel = (sessions: Item[], onOpenSession: (id: number) => void = noop) =>
   render(
-    <IslandPanel sessions={sessions} usage={{}} quotaProviders={[]} onOpenSession={onOpenSession} onMeasure={noop} onPointerDownDrag={noop} />,
+    <IslandPanel sessions={sessions} usage={{}} quotaProviders={[]} onOpenSession={onOpenSession} onOpenChat={noop} onMeasure={noop} onPointerDownDrag={noop} />,
   );
 
 /** 打开系统「减少动效」：只认 prefers-reduced-motion 这一条查询。 */
