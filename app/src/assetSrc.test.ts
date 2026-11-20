@@ -36,6 +36,19 @@ describe("不是本地绝对路径就在 convertFileSrc 之前拒掉", () => {
     expect(isLocalAbsolute("/home/me/a.png", "unknown")).toBe(true);
   });
 
+  // 做空第四轮：页面不再直接显示任何 SVG（CSS 里的 data: 位图拦不完），一律显示后端栅格化的
+  // `<原件>.png`；「保存」走 downloadFileSrc 拿原件（下载不渲染）。
+  it("SVG 一律显示后端栅格化的 PNG 副本，下载才给原件", async () => {
+    convert.mockClear();
+    const svg = "C:\\Users\\me\\.meowo\\images\\sent\\a1.svg";
+    expect(safeFileSrc(svg)).toBe(`asset://localhost/${encodeURIComponent(`${svg}.png`)}`);
+    expect(safeFileSrc("C:\\x\\B.SVG")).toBe(`asset://localhost/${encodeURIComponent("C:\\x\\B.SVG.png")}`);
+    expect(convert.mock.calls.every(([path]) => !/\.svg$/i.test(path as string))).toBe(true);
+    const { downloadFileSrc } = await import("./assetSrc");
+    expect(downloadFileSrc(svg)).toBe(`asset://localhost/${encodeURIComponent(svg)}`);
+    expect(downloadFileSrc("//attacker/s/a.svg")).toBeNull();
+  });
+
   it("做空第三轮的 NT 前缀写法在任何平台都当远程", () => {
     for (const remote of [
       "\\??\\UNC\\attacker\\s\\x.png",
@@ -75,6 +88,8 @@ describe("不是本地绝对路径就在 convertFileSrc 之前拒掉", () => {
         if (allowed.has(rel)) continue;
         const code = readFileSync(path, "utf8").replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, "");
         if (/\bconvertFileSrc\b/.test(code)) offenders.push(rel);
+        // 做空第四轮：页面不直接显示任何 SVG——也不许自己拼 SVG 的 data URL / Blob 去显示。
+        if (/image\/svg\+xml/.test(code)) offenders.push(`${rel}（image/svg+xml）`);
       }
     };
     walk(SRC);

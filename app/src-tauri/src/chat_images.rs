@@ -446,6 +446,11 @@ fn resolve_scoped(
             Err(e) => return Err(e),
         },
     };
+    // 拼好的候选先过严格白名单再碰文件系统：会话目录本身在网络盘上时，相对路径拼出来的也是
+    // 网络路径，旧实现先 is_file（发起 SMB）再拒（做空第四轮）。
+    if candidates.iter().any(|path| images::is_remote(path)) {
+        return Err(if bound.is_some() { out_of_scope() } else { images::remote_forbidden() });
+    }
     let in_scope = |path: &Path| match bound {
         None => true,
         Some(session) => {
@@ -742,6 +747,26 @@ mod tests {
         }
         assert!(listener.accept().is_err(), "不应发出任何请求");
         assert!(!root.exists(), "网址不该落盘任何东西");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 做空第四轮：会话目录本身在网络盘上时，相对路径拼出来的候选也是网络路径。旧实现先 is_file
+    /// （发起 SMB）再拒；现在拼好的候选先过严格白名单，不是本地绝对路径的不碰文件系统。
+    #[test]
+    fn candidates_under_network_session_dir_are_rejected_before_any_access() {
+        let dir = temp("unc-cwd");
+        let root = dir.join("images");
+        let readable = vec![root.clone()];
+        for cwd in [r"\\192.0.2.1\share\proj", r"\??\UNC\192.0.2.1\share\proj"] {
+            let started = std::time::Instant::now();
+            let err = resolve_into(&root, &readable, "docs/a.png", Some(cwd), None).unwrap_err();
+            assert_eq!(err.code, ImageErrorCode::Forbidden, "{cwd}");
+            assert!(started.elapsed() < Duration::from_millis(500), "{cwd} 碰了网络（{:?}）", started.elapsed());
+            let started = std::time::Instant::now();
+            let err = resolve_bridged(&root, &readable, "docs/a.png", Some(Path::new(cwd)), None).unwrap_err();
+            assert_eq!(err.code, ImageErrorCode::Forbidden, "bridged {cwd}");
+            assert!(started.elapsed() < Duration::from_millis(500), "bridged {cwd} 碰了网络");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

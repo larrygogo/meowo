@@ -179,11 +179,19 @@ fn read_image_preview_blocking(cwd: &str, rel: &str) -> Result<ImagePreviewDto, 
         return Ok(ImagePreviewDto { data_url: None, too_large: true });
     }
     let bytes = std::fs::read(&path).map_err(|e| format!("无法读取文件：{e}"))?;
+    // SVG 不把原文交给页面：浏览器渲染会加载 CSS 里的 data: 位图（做空第四轮），改给后端栅格化的 PNG
+    // （meowo_agent::images::render_svg，不加载任何位图与外部资源）。
+    let (mime, bytes) = if mime == "image/svg+xml" {
+        let png = meowo_agent::images::render_svg(&bytes).map_err(|e| e.message)?;
+        ("image/png", png)
+    } else {
+        (mime, bytes)
+    };
     let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
     Ok(ImagePreviewDto { data_url: Some(format!("data:{mime};base64,{encoded}")), too_large: false })
 }
 
-/// 扩展名 → 预览 MIME。SVG 也走 <img> + data URL 渲染：img 上下文不执行脚本，无注入面。
+/// 扩展名 → 预览 MIME。SVG 预览前先栅格化成 PNG（见 read_image_preview_blocking）。
 fn image_mime(rel: &str) -> Option<&'static str> {
     let name = rel.rsplit('/').next()?;
     let ext = name.rsplit('.').next()?.to_lowercase();
@@ -783,6 +791,23 @@ pub(crate) fn reveal_target(target: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// 做空第四轮：页面不再直接显示任何 SVG。「文件」页签预览项目里的 .svg 也给栅格化的 PNG
+    /// （CSS 里的 data: 位图不加载），不再把 SVG 原文做成 data:image/svg+xml。
+    #[test]
+    fn svg_preview_is_rasterized_png() {
+        let dir = TempDir::new();
+        std::fs::write(
+            dir.0.join("bg.svg"),
+            include_bytes!("../crates/meowo-agent/tests/fixtures/svg/cssbg.svg"),
+        )
+        .unwrap();
+        let preview = read_image_preview_blocking(&dir.0.to_string_lossy(), "bg.svg").unwrap();
+        let url = preview.data_url.unwrap();
+        assert!(url.starts_with("data:image/png;base64,"), "{}", &url[..40.min(url.len())]);
+        std::fs::write(dir.0.join("broken.svg"), "<svg xmlns='http://www.w3.org/2000/svg'><oops").unwrap();
+        assert!(read_image_preview_blocking(&dir.0.to_string_lossy(), "broken.svg").is_err());
+    }
 
     #[test]
     fn 导出只写_md_与_txt() {

@@ -476,8 +476,17 @@ fn image_dimensions_raw(bytes: &[u8]) -> Option<(u32, u32)> {
 }
 
 /// 校验一段字节能不能进图片目录：非空、不超 [`IMAGE_MAX_BYTES`]、文件头是图片、像素数不超
-/// [`IMAGE_MAX_PIXELS`]。返回规范扩展名。
+/// [`IMAGE_MAX_PIXELS`]；SVG 还要能栅格化（[`render_svg`]）。返回规范扩展名。
 pub fn validate(bytes: &[u8]) -> Result<&'static str, ImageError> {
+    let ext = precheck(bytes)?;
+    if ext == "svg" {
+        render_svg(bytes)?;
+    }
+    Ok(ext)
+}
+
+/// [`validate`] 里不栅格化的那部分（便宜的检查）。落盘时先做它，算出文件名，已经有副本就不再栅格化。
+fn precheck(bytes: &[u8]) -> Result<&'static str, ImageError> {
     if bytes.len() as u64 > IMAGE_MAX_BYTES {
         return Err(too_large(bytes.len() as u64));
     }
@@ -594,6 +603,89 @@ fn check_svg_elements(bytes: &[u8]) -> Result<(), ImageError> {
     Ok(())
 }
 
+/// SVG 栅格化副本的单边上限（像素）。对话里缩略图最多几百像素宽，灯箱在 2 倍屏上铺满一块
+/// 1000 多点宽的区域也只要 2000 出头；2048 够看清图表与图标细节，单张 RGBA 画布最多 16MB、
+/// 栅格化几十毫秒。再大的 SVG 按比例缩小到这个尺寸。
+pub const SVG_RASTER_MAX_SIDE: u32 = 2048;
+
+/// 把 SVG 栅格化成 PNG（做空第四轮）。页面上**不再直接显示任何 SVG**：浏览器渲染 SVG 时会加载
+/// CSS 里的 `url(data:…)`（背景、mask、filter 引用的内嵌 SVG 再套 feImage）、`<use href="data:…">`
+/// 等内嵌位图，写法还能用 CSS 转义、字符引用、非 UTF-8 编码藏起来——逐个枚举永远漏，而且能绕过
+/// 位图的像素上限。改由后端用 resvg（纯 Rust）渲染：
+/// - 不加载任何位图：图片引用解析器对 data: 与外部地址一律返回 None，且 resvg 编译时关掉了
+///   raster-images（根本不带位图解码器）；
+/// - 不读外部 CSS、外部字体（usvg 本来就不联网，这里也不给 resources_dir）；文字用本机系统字体；
+/// - 输出单边不超过 [`SVG_RASTER_MAX_SIDE`]，小图按 2 倍出，保持宽高比。
+///
+/// 解析或渲染失败（不是合法 XML、没有 SVG 命名空间、编码不支持……）按 not_image。
+pub fn render_svg(bytes: &[u8]) -> Result<Vec<u8>, ImageError> {
+    use resvg::{tiny_skia, usvg};
+    let failed = |why: String| ImageError::new(ImageErrorCode::NotImage, format!("这张 SVG 渲染不了：{why}"));
+    let options = usvg::Options {
+        resources_dir: None,
+        fontdb: svg_fonts(),
+        image_href_resolver: usvg::ImageHrefResolver {
+            resolve_data: Box::new(|_, _, _| None),
+            resolve_string: Box::new(|_, _| None),
+        },
+        ..usvg::Options::default()
+    };
+    let tree = usvg::Tree::from_data(bytes, &options).map_err(|e| failed(e.to_string()))?;
+    let size = tree.size();
+    let (w, h) = (size.width(), size.height());
+    if !(w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0) {
+        return Err(failed("没有尺寸".into()));
+    }
+    let scale = (SVG_RASTER_MAX_SIDE as f32 / w.max(h)).min(2.0);
+    let side = |v: f32| ((v * scale).round() as u32).clamp(1, SVG_RASTER_MAX_SIDE);
+    let (pw, ph) = (side(w), side(h));
+    let mut pixmap = tiny_skia::Pixmap::new(pw, ph).ok_or_else(|| failed("画布分配失败".into()))?;
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(pw as f32 / w, ph as f32 / h),
+        &mut pixmap.as_mut(),
+    );
+    pixmap.encode_png().map_err(|e| failed(e.to_string()))
+}
+
+/// 栅格化用的字体库：本机系统字体，进程内只扫一次（扫描要几十到几百毫秒）。
+fn svg_fonts() -> std::sync::Arc<resvg::usvg::fontdb::Database> {
+    static FONTS: std::sync::OnceLock<std::sync::Arc<resvg::usvg::fontdb::Database>> = std::sync::OnceLock::new();
+    FONTS
+        .get_or_init(|| {
+            let mut db = resvg::usvg::fontdb::Database::new();
+            db.load_system_fonts();
+            std::sync::Arc::new(db)
+        })
+        .clone()
+}
+
+/// SVG 原件旁边的栅格化副本：`<名字>.svg` → `<名字>.svg.png`。页面显示它，「保存」导出原件。
+pub fn svg_rendition_path(svg: &Path) -> PathBuf {
+    let mut name = svg.as_os_str().to_owned();
+    name.push(".png");
+    PathBuf::from(name)
+}
+
+/// 落盘一张已过 [`precheck`] 的图。SVG 连同栅格化副本一起写：两个都在就只刷新时间、不再栅格化
+/// （栅格化只在首次落盘时做一次）；栅格化失败什么都不写，按 not_image 返回。
+fn store_prepared(dir: &Path, name: &str, bytes: &[u8], ext: &str, durable: bool) -> Result<(PathBuf, bool), ImageError> {
+    if ext != "svg" {
+        return write_named(dir, name, bytes, durable);
+    }
+    let path = dir.join(name);
+    let rendition = svg_rendition_path(&path);
+    let have = std::fs::metadata(&path).is_ok_and(|m| m.is_file() && m.len() == bytes.len() as u64)
+        && std::fs::metadata(&rendition).is_ok_and(|m| m.is_file() && m.len() > 0);
+    if have {
+        return write_named(dir, name, bytes, durable);
+    }
+    let png = render_svg(bytes)?;
+    let rendition_name = format!("{name}.png");
+    write_named(dir, &rendition_name, &png, durable)?;
+    write_named(dir, name, bytes, durable)
+}
+
 pub fn too_large(len: u64) -> ImageError {
     ImageError::new(
         ImageErrorCode::TooLarge,
@@ -615,9 +707,9 @@ fn hex_digest(data: &[u8]) -> String {
 /// 把一张图存进 `root/<kind>/`，按内容哈希命名。同一内容重复写入直接复用，并把修改时间刷新为
 /// 现在——回收按修改时间从旧到新删，常被引用的图因此留得最久。
 pub fn store_bytes_in(root: &Path, kind: ImageKind, bytes: &[u8]) -> Result<PathBuf, ImageError> {
-    let ext = validate(bytes)?;
+    let ext = precheck(bytes)?;
     let name = format!("{}.{ext}", hex_digest(bytes));
-    write_named(&root.join(kind.dir_name()), &name, bytes, kind == ImageKind::Sent).map(|(path, _)| path)
+    store_prepared(&root.join(kind.dir_name()), &name, bytes, ext, kind == ImageKind::Sent).map(|(path, _)| path)
 }
 
 /// 同 [`store_bytes_in`]，落在默认根目录。
@@ -632,9 +724,9 @@ pub fn store_keyed_in(
     key: &str,
     bytes: &[u8],
 ) -> Result<PathBuf, ImageError> {
-    let ext = validate(bytes)?;
+    let ext = precheck(bytes)?;
     let name = format!("{}.{ext}", hex_digest(key.as_bytes()));
-    write_named(&root.join(kind.dir_name()), &name, bytes, kind == ImageKind::Sent).map(|(path, _)| path)
+    store_prepared(&root.join(kind.dir_name()), &name, bytes, ext, kind == ImageKind::Sent).map(|(path, _)| path)
 }
 
 /// 正文本地图的副本：`local/<来源哈希>-<内容哈希>.<扩展名>`。
@@ -645,11 +737,11 @@ pub fn store_keyed_in(
 ///   写出新版本时把同一来源的旧版本删掉，`local/` 不随编辑次数增长。
 pub fn store_local_copy_in(root: &Path, source_key: &str, path: &Path) -> Result<PathBuf, ImageError> {
     let bytes = read_image_file(path)?;
-    let ext = validate(&bytes)?;
+    let ext = precheck(&bytes)?;
     let prefix = format!("{}-", hex_digest(source_key.as_bytes()));
     let name = format!("{prefix}{}.{ext}", hex_digest(&bytes));
     let dir = root.join(ImageKind::Local.dir_name());
-    let (stored, fresh) = write_named(&dir, &name, &bytes, false)?;
+    let (stored, fresh) = store_prepared(&dir, &name, &bytes, ext, false)?;
     // 记下这份副本的原路径（回收据此判断原文件还在不在，见 prune_in_with）。只在新写或缺失时写。
     let index = root.join(LOCAL_SOURCES_DIR).join(prefix.trim_end_matches('-'));
     if fresh || !index.exists() {
@@ -661,7 +753,8 @@ pub fn store_local_copy_in(root: &Path, source_key: &str, path: &Path) -> Result
             for entry in entries.flatten() {
                 let file = entry.file_name();
                 let file = file.to_string_lossy();
-                if file.starts_with(&prefix) && file != name && !file.contains(".tmp.") {
+                // 同来源的旧版本（连同它的 SVG 栅格化副本）收掉；这一版自己的副本 `<name>.png` 留着。
+                if file.starts_with(&prefix) && file != name && *file != format!("{name}.png") && !file.contains(".tmp.") {
                     let _ = std::fs::remove_file(entry.path());
                 }
             }
@@ -763,8 +856,12 @@ pub fn is_local_absolute(raw: &str) -> bool {
 }
 
 /// [`is_local_absolute`] 按指定平台的规则判断（测试两个平台的列都跑）。
+///
+/// 不 trim（做空第四轮）：判断用的字符串必须就是之后访问的字符串；前导空白一律不算本地。
+/// Unix 上另外排除 `/net`、`/Network`（不分大小写，macOS 默认文件系统不区分）：macOS 的 autofs
+/// 访问它们下面的路径就会去挂 NFS/SMB 共享，和 Windows 的 UNC 是一回事。
 fn local_absolute_for(raw: &str, windows: bool) -> bool {
-    let b = raw.trim().as_bytes();
+    let b = raw.as_bytes();
     if windows {
         let drive = |b: &[u8]| b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/');
         if drive(b) {
@@ -773,7 +870,11 @@ fn local_absolute_for(raw: &str, windows: bool) -> bool {
         b.strip_prefix(br"\\?\")
             .is_some_and(|rest| rest.len() >= 3 && rest[0].is_ascii_alphabetic() && rest[1] == b':' && rest[2] == b'\\')
     } else {
-        b.first() == Some(&b'/') && !matches!(b.get(1), Some(b'/') | Some(b'\\'))
+        let automount = ["/net", "/network"].iter().any(|prefix| {
+            b.get(..prefix.len()).is_some_and(|head| head.eq_ignore_ascii_case(prefix.as_bytes()))
+                && matches!(b.get(prefix.len()), None | Some(b'/'))
+        });
+        b.first() == Some(&b'/') && !matches!(b.get(1), Some(b'/') | Some(b'\\')) && !automount
     }
 }
 
@@ -782,7 +883,8 @@ fn local_absolute_for(raw: &str, windows: bool) -> bool {
 /// `file:` 网址只认 `file:///<本地绝对路径>`；其余——以 `\` 或 `/` 开头却不在白名单里的、
 /// Windows 上 `C:x` 这种盘符相对写法——一律当远程拒。拼好的路径进文件系统前用 [`is_remote`]（严格版）。
 pub fn is_remote_path(raw: &str) -> bool {
-    let s = raw.trim();
+    // 不 trim：调用方拿去拼路径、访问的就是这个字符串（见 local_absolute_for）。
+    let s = raw;
     if is_local_absolute(s) {
         return false;
     }
@@ -975,8 +1077,8 @@ pub fn snapshot_written_in(root: &Path, call_id: &str, path: &Path) -> Option<Pa
         }
     }
     let bytes = read_image_file(path).ok()?;
-    let ext = validate(&bytes).ok()?;
-    write_named(&dir, &format!("{stem}.{ext}"), &bytes, false).ok().map(|(p, _)| p)
+    let ext = precheck(&bytes).ok()?;
+    store_prepared(&dir, &format!("{stem}.{ext}"), &bytes, ext, false).ok().map(|(p, _)| p)
 }
 
 /// 写图快照的文件名前缀（`tool/w-<哈希>.<扩展名>`），见 [`snapshot_written_in`]。
@@ -1155,6 +1257,29 @@ fn prune_in_with(root: &Path, cap: u64, after_scan: impl FnOnce()) -> PruneRepor
             files.push((irreplaceable(root, kind, &name), mtime, meta.len(), entry.path()));
         }
     }
+    // SVG 的栅格化副本跟着原件走：大小算进原件，删原件时一起删（页面只显示副本，留下孤零零的
+    // 原件或副本都没用）。原件已经不在的副本按普通文件处理。
+    let svgs: std::collections::HashSet<PathBuf> = files
+        .iter()
+        .filter(|f| f.3.extension().is_some_and(|e| e == "svg"))
+        .map(|f| f.3.clone())
+        .collect();
+    let mut rendition_sizes: std::collections::HashMap<PathBuf, u64> = Default::default();
+    files.retain(|f| {
+        let name = f.3.to_string_lossy();
+        match name.strip_suffix(".png").map(PathBuf::from) {
+            Some(svg) if svgs.contains(&svg) => {
+                rendition_sizes.insert(svg, f.2);
+                false
+            }
+            _ => true,
+        }
+    });
+    for f in files.iter_mut() {
+        if let Some(extra) = rendition_sizes.get(&f.3) {
+            f.2 += extra;
+        }
+    }
     after_scan();
     let before: u64 = files.iter().map(|f| f.2).sum();
     let mut total = before;
@@ -1176,6 +1301,9 @@ fn prune_in_with(root: &Path, cap: u64, after_scan: impl FnOnce()) -> PruneRepor
                 continue;
             }
             if std::fs::remove_file(path).is_ok() {
+                if rendition_sizes.contains_key(path) {
+                    let _ = std::fs::remove_file(svg_rendition_path(path));
+                }
                 total -= len;
                 removed += 1;
             }
@@ -1296,7 +1424,7 @@ const PROBE_IMAGES_ROOT: &str = r"C:\probe\images\";
 /// （Windows 上不分大小写、`/` 与 `\` 等同）。
 pub fn is_trusted_ref(path: &str, roots: &[PathBuf]) -> bool {
     use std::path::Component;
-    let path = path.trim();
+    // 不 trim：前端按引用行里的原样字符串加载，判断用同一个（做空第四轮）。
     let p = Path::new(path);
     #[cfg(test)]
     if path.starts_with(PROBE_IMAGES_ROOT) && !path.contains("..") {
@@ -1529,6 +1657,119 @@ mod tests {
         assert_eq!(sniff_image("<!doctyp中 svg><svg/>".as_bytes()), None);
     }
 
+    /// 做空第四轮：SVG 用 CSS 把 data: 位图带进来（`<style>` 背景、根元素 style 背景、mask-image、
+    /// filter:url("data:image/svg+xml,…feImage…")、`<use href="data:…">`、CSS 转义 `u\72l(d\61ta:…)`、
+    /// 属性里的 `&#100;ata:`、ISO-2022-JP 编码藏标签），绕过元素过滤与像素上限，Chromium 实际渲染了
+    /// 12000×12000。不再枚举写法：SVG 一律在后端栅格化成 PNG（不加载任何位图、外部资源），页面只显示
+    /// 这份 PNG。样例全部入库（tests/fixtures/svg/），断言：能落盘的都有栅格化副本、尺寸受限、里面没有
+    /// 内嵌图的红色像素；栅格化不了的按 not_image 拒。
+    #[test]
+    fn svg_samples_are_rasterized_without_embedded_bitmaps() {
+        let samples: &[(&str, &[u8])] = &[
+            ("attrref", include_bytes!("../tests/fixtures/svg/attrref.svg")),
+            ("bomb_css", include_bytes!("../tests/fixtures/svg/bomb_css.svg")),
+            ("cssbg", include_bytes!("../tests/fixtures/svg/cssbg.svg")),
+            ("escdata", include_bytes!("../tests/fixtures/svg/escdata.svg")),
+            ("filterurl", include_bytes!("../tests/fixtures/svg/filterurl.svg")),
+            ("iso2022", include_bytes!("../tests/fixtures/svg/iso2022.svg")),
+            ("iso2022b", include_bytes!("../tests/fixtures/svg/iso2022b.svg")),
+            ("mask", include_bytes!("../tests/fixtures/svg/mask.svg")),
+            ("stylebg", include_bytes!("../tests/fixtures/svg/stylebg.svg")),
+            ("usedata", include_bytes!("../tests/fixtures/svg/usedata.svg")),
+            ("entity", include_bytes!("../tests/fixtures/svg/entity.svg")),
+        ];
+        let root = temp_root("svg-raster");
+        let mut stored = 0;
+        for (name, bytes) in samples {
+            match store_bytes_in(&root, ImageKind::Sent, bytes) {
+                Ok(path) => {
+                    stored += 1;
+                    let rendition = PathBuf::from(format!("{}.png", path.display()));
+                    assert!(rendition.exists(), "{name}：SVG 必须有栅格化副本，页面只显示它");
+                    let pixmap = resvg::tiny_skia::Pixmap::load_png(&rendition).unwrap();
+                    assert!(pixmap.width() <= SVG_RASTER_MAX_SIDE && pixmap.height() <= SVG_RASTER_MAX_SIDE, "{name}");
+                    let red = pixmap
+                        .pixels()
+                        .iter()
+                        .any(|p| p.red() > 180 && p.green() < 80 && p.blue() < 80 && p.alpha() > 128);
+                    assert!(!red, "{name}：栅格化结果里出现了内嵌图的红色像素");
+                }
+                Err(e) => assert_eq!(e.code, ImageErrorCode::NotImage, "{name}: {e:?}"),
+            }
+        }
+        assert!(stored >= 5, "大部分样例本身是合法 SVG，应能落盘（只是内嵌图不显示）：{stored}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 回收时 SVG 原件与栅格化副本一起删，大小合在一起算；只存一次栅格化（第二次落盘不再渲染：
+    /// 副本的修改时间不变说明没重写）。
+    #[test]
+    fn svg_rendition_is_written_once_and_pruned_with_its_original() {
+        let root = temp_root("svg-pair");
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="#0a0"/></svg>"##;
+        let path = store_bytes_in(&root, ImageKind::Tool, svg).unwrap();
+        let rendition = svg_rendition_path(&path);
+        assert!(rendition.exists());
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(9000);
+        for p in [&path, &rendition] {
+            std::fs::OpenOptions::new().write(true).open(p).unwrap().set_modified(old).unwrap();
+        }
+        let len_before = std::fs::read(&rendition).unwrap();
+        assert_eq!(store_bytes_in(&root, ImageKind::Tool, svg).unwrap(), path);
+        assert_eq!(std::fs::read(&rendition).unwrap(), len_before);
+        // 回收：上限 0，原件与副本都没了，没有留下孤零零的副本。
+        for p in [&path, &rendition] {
+            std::fs::OpenOptions::new().write(true).open(p).unwrap().set_modified(old).unwrap();
+        }
+        let report = prune_in(&root, 0);
+        assert_eq!(report.removed, 1, "原件与副本按一个算");
+        assert!(!path.exists() && !rendition.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 单张栅格化耗时（手动跑：cargo test -p meowo-agent --release --lib -- svg_render_timing --ignored --nocapture）。
+    #[test]
+    #[ignore]
+    fn svg_render_timing() {
+        let mut chart = String::from(r##"<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500" viewBox="0 0 800 500"><rect width="800" height="500" fill="#fff"/>"##);
+        for i in 0..40 {
+            chart.push_str(&format!(r##"<rect x="{}" y="{}" width="14" height="{}" fill="#4a7"/><text x="{}" y="490" font-size="10">{i}</text>"##, 20 + i * 19, 480 - i * 10, i * 10, 20 + i * 19));
+        }
+        chart.push_str("<text x=\"400\" y=\"30\" font-size=\"24\" text-anchor=\"middle\">每月图片数量</text></svg>");
+        let _ = render_svg(chart.as_bytes()); // 首次含系统字体扫描
+        for (name, bytes) in [
+            ("图表 800×500（带文字）", chart.as_bytes().to_vec()),
+            ("bomb_css 样例", include_bytes!("../tests/fixtures/svg/bomb_css.svg").to_vec()),
+            ("10000×5000 声明尺寸", br##"<svg xmlns="http://www.w3.org/2000/svg" width="10000" height="5000"><rect width="10000" height="5000" fill="#0a0"/></svg>"##.to_vec()),
+        ] {
+            let mut times = Vec::new();
+            for _ in 0..9 {
+                let t = std::time::Instant::now();
+                let _ = render_svg(&bytes);
+                times.push(t.elapsed().as_secs_f64() * 1000.0);
+            }
+            times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            println!("{name}: 中位数 {:.1} ms（9 次）", times[4]);
+        }
+        let t = std::time::Instant::now();
+        let fonts = svg_fonts();
+        println!("字体库（已缓存）取用 {:?}，字体数 {}", t.elapsed(), fonts.len());
+    }
+
+    /// 栅格化尺寸：单边不超过 SVG_RASTER_MAX_SIDE，小图按 2 倍出（高分屏清晰），宽高比不变；
+    /// 栅格化不了的（不是合法 XML）按 not_image。
+    #[test]
+    fn svg_rendition_size_is_capped_and_failures_are_not_image() {
+        let png = render_svg(br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="12"><rect width="24" height="12" fill="#00f"/></svg>"##).unwrap();
+        let small = resvg::tiny_skia::Pixmap::decode_png(&png).unwrap();
+        assert_eq!((small.width(), small.height()), (48, 24));
+        let png = render_svg(br#"<svg xmlns="http://www.w3.org/2000/svg" width="10000" height="5000"/>"#).unwrap();
+        let big = resvg::tiny_skia::Pixmap::decode_png(&png).unwrap();
+        assert_eq!((big.width(), big.height()), (SVG_RASTER_MAX_SIDE, SVG_RASTER_MAX_SIDE / 2));
+        assert_eq!(render_svg(b"<svg xmlns='http://www.w3.org/2000/svg'><unclosed").unwrap_err().code, ImageErrorCode::NotImage);
+        assert_eq!(validate(b"<svg xmlns='http://www.w3.org/2000/svg'><unclosed").unwrap_err().code, ImageErrorCode::NotImage);
+    }
+
     /// 做空第三轮：DOCTYPE 内部子集定义实体，把 `<image href="data:…">` 藏在实体里带进来，绕过
     /// 元素过滤（Chromium 实际渲染了内嵌 PNG）。出现 `<!ENTITY` 或带内部子集的 DOCTYPE 一律拒。
     #[test]
@@ -1543,6 +1784,22 @@ mod tests {
             code(r#"<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd"><svg width="10" height="10"/>"#),
             Ok(())
         );
+    }
+
+    /// 做空第四轮：引用行里的路径带前导 / 尾随空白时，判断用的字符串与之后访问用的必须是同一个。
+    /// 现在判断不再 trim：多出的空白让它不是本地绝对路径，按伪造的改写；我们自己写的引用行
+    /// （`[Image: source: <路径>]`，冒号后恰好一个空格）不受影响。
+    #[test]
+    fn ref_paths_with_extra_whitespace_are_not_trusted() {
+        let ours = images_root().unwrap().join("tool").join("ws.png");
+        let roots = trusted_ref_roots();
+        assert!(is_trusted_ref(&ours.to_string_lossy(), &roots));
+        assert!(!is_trusted_ref(&format!(" {}", ours.display()), &roots));
+        assert!(!is_trusted_ref(&format!("\t{}", ours.display()), &roots));
+        let mut text = format!("[Image: source:  {}]\n[Image: source: {}]", ours.display(), ours.display());
+        neutralize_untrusted_refs(&mut text);
+        assert!(text.starts_with("[Image source:  "), "{text}");
+        assert!(text.ends_with(&format!("\n[Image: source: {}]", ours.display())), "{text}");
     }
 
     /// 可信根的两种写法都认：根是经符号链接 / junction 的别名（macOS 上 TMPDIR 的 `/var/…` 与真实

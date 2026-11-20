@@ -13,19 +13,19 @@ import { isMac, isWindows } from "./platform";
 export type PathOs = "windows" | "unix" | "unknown";
 
 /** 本地绝对路径白名单（与后端 `meowo_agent::images::is_local_absolute` 同一规则，两边共用
- *  test/fixtures/local-paths.json 用例表）。做空第三轮查出 `\??\UNC\host\…` 这类写法绕过了
- *  「枚举坏写法」的旧规则，改成只认好写法：
+ *  test/fixtures/local-paths.json 用例表）：
  *  - Windows：`盘符:\` / `盘符:/` 开头，或 `\\?\盘符:\` 开头；
- *  - Unix：单个 `/` 开头（`//`、`/\` 不算）；
+ *  - Unix：单个 `/` 开头（`//`、`/\` 不算），且不在 `/net`、`/Network` 下（macOS 的 autofs 访问
+ *    它们就会去挂 NFS/SMB，不分大小写）；
  *  - 不知道宿主平台（手机页、平台还没探测到）：Windows 规则，或 Unix 规则且路径里没有反斜杠、
- *    不以 `/?`、`/.` 开头——这样在 Windows 宿主上它只可能落到本机盘根，碰不到 NT 前缀。 */
+ *    不以 `/?`、`/.` 开头——这样在 Windows 宿主上它只可能落到本机盘根，碰不到 NT 前缀。
+ *  不 trim：判断用的字符串就是之后访问的字符串，前导空白一律不算本地。 */
 export function isLocalAbsolute(path: string, os: PathOs = currentOs()): boolean {
-  const s = path.trim();
-  const windows = /^[A-Za-z]:[\\/]/.test(s) || /^\\\\\?\\[A-Za-z]:\\/.test(s);
-  const unix = /^\/(?![/\\])/.test(s);
+  const windows = /^[A-Za-z]:[\\/]/.test(path) || /^\\\\\?\\[A-Za-z]:\\/.test(path);
+  const unix = /^\/(?![/\\])/.test(path) && !/^\/(?:net|network)(?:\/|$)/i.test(path);
   if (os === "windows") return windows;
   if (os === "unix") return unix;
-  return windows || (unix && !s.includes("\\") && !/^\/[?.]/.test(s));
+  return windows || (unix && !path.includes("\\") && !/^\/[?.]/.test(path));
 }
 
 function currentOs(): PathOs {
@@ -39,7 +39,15 @@ export function isRemotePath(path: string): boolean {
   return !isLocalAbsolute(path);
 }
 
-/** 不是本地绝对路径返回 null（调用方显示成读不到），其余交给 convertFileSrc。 */
+/** 页面显示用的地址。不是本地绝对路径返回 null（调用方显示成读不到）。
+ *  SVG 一律换成后端栅格化的 `<原件>.png`（做空第四轮：浏览器渲染 SVG 会加载 CSS 里的
+ *  `url(data:…)` 等内嵌位图，拦不完；后端 images::render_svg 渲染时什么位图都不加载）。 */
 export function safeFileSrc(path: string): string | null {
+  if (isRemotePath(path)) return null;
+  return convertFileSrc(/\.svg$/i.test(path) ? `${path}.png` : path);
+}
+
+/** 下载用的地址（手机端「保存」）：原件，SVG 也给原件——下载不渲染。 */
+export function downloadFileSrc(path: string): string | null {
   return isRemotePath(path) ? null : convertFileSrc(path);
 }

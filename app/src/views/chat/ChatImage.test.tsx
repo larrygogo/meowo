@@ -206,8 +206,9 @@ describe("工具行的图片", () => {
     );
     await act(async () => {});
     expect(resolveChatImage).toHaveBeenCalledWith(`C:\\dev\\icon.${ext}`, "C:\\dev", null);
-    // SVG 也是 <img>，不内联进 DOM（img 上下文不执行脚本）。
-    expect(document.querySelector(".chat-tool-media img")?.getAttribute("src")).toBe(`asset://local/C:\\Users\\me\\.meowo\\images\\local\\icon.${ext}`);
+    // SVG 不内联进 DOM，也不直接给 <img>：显示后端栅格化的 `<原件>.png`（做空第四轮）。
+    const shown = ext === "svg" ? `icon.${ext}.png` : `icon.${ext}`;
+    expect(document.querySelector(".chat-tool-media img")?.getAttribute("src")).toBe(`asset://local/C:\\Users\\me\\.meowo\\images\\local\\${shown}`);
     expect(document.querySelector(".chat-tool-media svg:not(.icon)")).toBeNull();
   });
 

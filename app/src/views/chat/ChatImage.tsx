@@ -5,7 +5,7 @@
 // 不靠浏览器自带的 loading="lazy"：它的预读距离由浏览器定（Chromium 上千像素），且后端解析（复制、下载）
 // 要在请求图片之前做，只能自己判。
 import { memo, useContext, useEffect, useState, type ReactNode } from "react";
-import { isRemotePath, safeFileSrc } from "../../assetSrc";
+import { downloadFileSrc, isRemotePath, safeFileSrc } from "../../assetSrc";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { exportChatImage, resolveChatImage, revealTerminalPath, type ChatImageError, type ResolveChatImageResult } from "../../api";
 import { useT } from "../../i18n";
@@ -172,7 +172,7 @@ export function ImageActions({ path, variant = "lightbox" }: { path: string; var
   const save = async () => {
     setError(null);
     if (remoteUi()) {
-      const href = safeFileSrc(path);
+      const href = downloadFileSrc(path);
       if (!href) {
         setError(t.chat.imageErrors.forbidden);
         return;
