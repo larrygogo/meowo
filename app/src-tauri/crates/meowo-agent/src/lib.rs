@@ -90,7 +90,7 @@ pub use ports::{Body, HttpError, HttpPort, HttpRequest, KeychainPort, NoKeychain
 pub use profile::ProfileSpec;
 pub use proxy::{is_socks, ProxySpec};
 pub use registry::{
-    all, by_id, installation, is_agent_process, resolve, AgentPlugin, ForkMode, McpAttach,
+    all, by_id, installation, is_agent_process, resolve, AgentPlugin, ForkMode, McpApproval, McpAttach,
     ModelCatalogEntry, ModelPreset, resolve_session_args, DEFAULT_ID,
 };
 pub use relay::{

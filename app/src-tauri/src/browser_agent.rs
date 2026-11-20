@@ -895,6 +895,13 @@ pub(crate) fn reassign_panels(from: i64, to: i64) {
 /// MCP 服务器在 agent 那边的名字；claude 里工具名就是 `mcp__meowo__browser_*`。
 const SERVER_NAME: &str = "meowo";
 
+/// 发图工具（meowo-reporter mcp.rs 的 SEND_IMAGE）。与浏览器开关无关，始终挂上并免逐次审批：
+/// 它只是把一张图显示给用户，不改用户的任何东西。
+const SEND_IMAGE: &str = "send_image";
+
+/// 浏览器开关关掉时让服务器只列发图工具（meowo-reporter mcp.rs 的 NO_BROWSER_FLAG）。
+const NO_BROWSER_FLAG: &str = "--no-browser";
+
 /// claude 免审批的浏览器工具：打开、读、点、填这些照 Kimi Code 直接做，用户随时能接管。
 /// `browser_evaluate` 不在里面——它能在已登录的网站上跑任意脚本，照常走 claude 自己的审批。
 /// 和 meowo-reporter mcp.rs 的工具清单对应，加工具时两边一起改。
@@ -915,12 +922,27 @@ const AUTO_ALLOWED: &[&str] = &[
     "browser_emulate",
 ];
 
-/// 托管会话启动时追加的参数（pty.rs 的 start_spawned，外部终端启动不走这里）。各 agent 怎么接
-/// 由插件的 `mcp_attach()` 声明（meowo_agent::McpAttach）：
-/// - ConfigFileArg：启动参数指向配置文件，可选同时放行 AUTO_ALLOWED 里的工具——和 Kimi Code 一样
-///   agent 直接操作，用户随时能在页签上「接管」。
-/// - TomlOverride：配置覆盖参数，值用 TOML 单引号字符串。
-/// - DataDirJson：没有启动参数可用，走数据目录里的配置文件（见 sync_mcp_files），这里不追加。
+/// 一律要审批的浏览器工具（能显式写「问」的 agent 都写上，不随它的默认放行走）。
+const ALWAYS_ASK: &str = "browser_evaluate";
+
+/// 服务器启动参数：浏览器开关关掉时只给发图工具。
+fn server_args(browser: bool) -> Vec<&'static str> {
+    if browser {
+        vec!["mcp"]
+    } else {
+        vec!["mcp", NO_BROWSER_FLAG]
+    }
+}
+
+/// 免审批的工具：发图始终在；浏览器工具只在开关开着时。
+fn auto_allowed(browser: bool) -> Vec<&'static str> {
+    let mut tools = vec![SEND_IMAGE];
+    if browser {
+        tools.extend_from_slice(AUTO_ALLOWED);
+    }
+    tools
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct McpSessionEnv<'a> {
     pub endpoint: &'a str,
@@ -928,10 +950,17 @@ pub(crate) struct McpSessionEnv<'a> {
     pub protocol: u16,
 }
 
+/// 托管会话启动时追加的参数（pty.rs 的 start_spawned，外部终端启动不走这里）。各 agent 怎么接
+/// 由插件的 `mcp_attach()` 声明（meowo_agent::McpAttach）：
+/// - ConfigFileArg：启动参数指向配置文件，同时放行发图工具和（开关开着时）AUTO_ALLOWED 里的
+///   浏览器工具——和 Kimi Code 一样 agent 直接操作，用户随时能在页签上「接管」。
+/// - TomlOverride：配置覆盖参数，值用 TOML 单引号字符串；发图工具单独设免审批。
+/// - DataDirJson：没有启动参数可用，走数据目录里的配置文件（见 sync_mcp_files），这里不追加。
+/// - InlineConfigEnv：走环境变量（见 launch_env），这里不追加。
+///
+/// 浏览器开关只决定给不给浏览器工具；发图工具始终挂上（它和面板浏览器无关）。
 pub(crate) fn launch_args(provider: &str, session: Option<McpSessionEnv<'_>>) -> Vec<String> {
-    if !crate::settings::load_settings().browser_agent {
-        return Vec::new();
-    }
+    let browser = crate::settings::load_settings().browser_agent;
     let Some(reporter) = crate::setup::sibling_reporter() else {
         return Vec::new();
     };
@@ -945,14 +974,14 @@ pub(crate) fn launch_args(provider: &str, session: Option<McpSessionEnv<'_>>) ->
             allow_flag,
             allow_prefix,
         }) => {
-            let Some(path) = config_file(plugin.id().as_str(), &reporter) else {
+            let Some(path) = config_file(plugin.id().as_str(), &reporter, browser) else {
                 return Vec::new();
             };
             let mut args = vec![file_flag.to_string(), path];
             if let Some(flag) = allow_flag {
                 args.push(flag.to_string());
                 args.extend(
-                    AUTO_ALLOWED
+                    auto_allowed(browser)
                         .iter()
                         .map(|tool| format!("{allow_prefix}{SERVER_NAME}__{tool}")),
                 );
@@ -960,15 +989,67 @@ pub(crate) fn launch_args(provider: &str, session: Option<McpSessionEnv<'_>>) ->
             args
         }
         Some(meowo_agent::McpAttach::TomlOverride { flag }) => {
-            toml_mcp_args(flag, &reporter, session)
+            toml_mcp_args(flag, &reporter, session, browser)
         }
         _ => Vec::new(),
     }
 }
 
+/// 托管会话启动时追加的环境变量（McpAttach::InlineConfigEnv）。`env` 是已经要设的环境（中转
+/// 可能也用同一个变量放配置）：同名变量把 Meowo 的 `mcp` / `permission` 合并进去，不覆盖中转。
+pub(crate) fn launch_env(provider: &str, env: &[(String, String)]) -> Vec<(String, String)> {
+    let Some(plugin) = meowo_agent::by_id(provider) else {
+        return Vec::new();
+    };
+    let Some(meowo_agent::McpAttach::InlineConfigEnv { env: key }) = plugin.mcp_attach() else {
+        return Vec::new();
+    };
+    let Some(reporter) = crate::setup::sibling_reporter() else {
+        return Vec::new();
+    };
+    let browser = crate::settings::load_settings().browser_agent;
+    let existing = env
+        .iter()
+        .rev()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.clone())
+        .or_else(|| std::env::var(key).ok());
+    inline_config(existing.as_deref(), &reporter, browser)
+        .map(|value| vec![(key.to_string(), value)])
+        .unwrap_or_default()
+}
+
+/// 合并出 opencode 形态的内联配置。已有配置不是 JSON 对象（用户手写坏了）时不碰，返回 None。
+fn inline_config(existing: Option<&str>, reporter: &str, browser: bool) -> Option<String> {
+    let mut root: Value = match existing.filter(|s| !s.trim().is_empty()) {
+        Some(text) => serde_json::from_str(text).ok()?,
+        None => json!({}),
+    };
+    let obj = root.as_object_mut()?;
+    let mut command = vec![json!(reporter)];
+    command.extend(server_args(browser).into_iter().map(Value::from));
+    let mcp = obj.entry("mcp").or_insert_with(|| json!({}));
+    mcp.as_object_mut()?.insert(
+        SERVER_NAME.into(),
+        json!({ "type": "local", "command": command, "enabled": true }),
+    );
+    let permission = obj.entry("permission").or_insert_with(|| json!({}));
+    // permission 也可以是一个字符串（全局 allow/ask）：那是用户的意思，不改写成对象。
+    if let Some(permission) = permission.as_object_mut() {
+        permission.insert(format!("{SERVER_NAME}_{SEND_IMAGE}"), json!("allow"));
+        permission.insert(format!("{SERVER_NAME}_{ALWAYS_ASK}"), json!("ask"));
+    }
+    serde_json::to_string(&root).ok()
+}
+
 /// Codex 0.167.2 同 daemon 双 thread 实测：隐式继承拿的是 daemon 的旧环境，显式 MCP env 才隔离。
 /// 本次 scoped token 只进入直接 spawn 的 argv，不写配置文件、不经 shell，也不输出参数日志。
-fn toml_mcp_args(flag: &str, reporter: &str, session: Option<McpSessionEnv<'_>>) -> Vec<String> {
+fn toml_mcp_args(
+    flag: &str,
+    reporter: &str,
+    session: Option<McpSessionEnv<'_>>,
+    browser: bool,
+) -> Vec<String> {
     let Some(session) = session else {
         return Vec::new();
     };
@@ -976,45 +1057,76 @@ fn toml_mcp_args(flag: &str, reporter: &str, session: Option<McpSessionEnv<'_>>)
     env.insert("MEOWO_PTY_ENDPOINT", session.endpoint.into());
     env.insert("MEOWO_PTY_TOKEN", session.token.into());
     env.insert("MEOWO_PTY_PROTOCOL", session.protocol.to_string().into());
-    vec![
+    let args = server_args(browser)
+        .into_iter()
+        .map(|a| format!("'{a}'"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let mut out = vec![
         flag.to_owned(),
         format!(
             "mcp_servers.{SERVER_NAME}.command={}",
             toml_edit::Value::from(reporter)
         ),
         flag.to_owned(),
-        format!("mcp_servers.{SERVER_NAME}.args=['mcp']"),
+        format!("mcp_servers.{SERVER_NAME}.args=[{args}]"),
         flag.to_owned(),
         format!("mcp_servers.{SERVER_NAME}.env={env}"),
-    ]
+        // 发图免审批。
+        flag.to_owned(),
+        format!("mcp_servers.{SERVER_NAME}.tools.{SEND_IMAGE}.approval_mode='approve'"),
+    ];
+    if browser {
+        // codex 默认 auto 下没有只读注解的 browser_evaluate 本来就要审批；显式写上，防默认值变化。
+        out.push(flag.to_owned());
+        out.push(format!(
+            "mcp_servers.{SERVER_NAME}.tools.{ALWAYS_ASK}.approval_mode='prompt'"
+        ));
+    }
+    out
 }
 
-fn server_entry(reporter: &str) -> Value {
-    json!({ "type": "stdio", "command": reporter, "args": ["mcp"] })
+/// 数据目录配置文件里的服务器项。`expand_env` 见 McpAttach::DataDirJson。
+fn server_entry(reporter: &str, browser: bool, expand_env: bool) -> Value {
+    let mut entry = json!({ "type": "stdio", "command": reporter, "args": server_args(browser) });
+    if expand_env {
+        entry["env"] = json!({
+            "MEOWO_PTY_ENDPOINT": "${MEOWO_PTY_ENDPOINT:-}",
+            "MEOWO_PTY_TOKEN": "${MEOWO_PTY_TOKEN:-}",
+            "MEOWO_PTY_PROTOCOL": "${MEOWO_PTY_PROTOCOL:-}",
+        });
+    }
+    entry
 }
 
 /// `~/.meowo/mcp/<agent>-browser.json`，每次启动按当前 reporter 路径重写一遍。
-fn config_file(agent: &str, reporter: &str) -> Option<String> {
+fn config_file(agent: &str, reporter: &str, browser: bool) -> Option<String> {
     let dir = crate::setup::meowo_dir().join("mcp");
     std::fs::create_dir_all(&dir).ok()?;
     let path = dir.join(format!("{agent}-browser.json"));
-    let body = json!({ "mcpServers": { SERVER_NAME: server_entry(reporter) } });
+    let body = json!({ "mcpServers": { SERVER_NAME: server_entry(reporter, browser, false) } });
     // 原子写：每次启动都重写，而 agent CLI 启动时按 --mcp-config 读它；直接 write 先截断，
     // 恰在此刻拉起的会话会读到空/半截 JSON，整组浏览器工具缺席。
     meowo_agent::fsutil::write_atomic(&path, &serde_json::to_string_pretty(&body).ok()?).ok()?;
     Some(path.to_string_lossy().into_owned())
 }
 
-/// 没有启动参数可用、只读数据目录里 MCP 配置文件的 agent（McpAttach::DataDirJson，如 kimi 2.x）。
-/// 开关开着就登记 `meowo` 这一项，关了就摘掉；文件里别的服务器原样保留。
-/// 这份文件 Kimi Code 桌面版和外部终端里的 kimi 也会读——服务器在那些地方拿不到 Meowo 的
+/// 没有启动参数可用、只读数据目录里 MCP 配置文件的 agent（McpAttach::DataDirJson，如 kimi 2.x、gemini）。
+/// 有 reporter 就登记 `meowo` 这一项（浏览器开关只决定参数里带不带 `--no-browser`），并按插件
+/// 声明写发图工具的免审批规则；文件里别的服务器、别的规则原样保留。
+/// 这份文件 agent 的桌面版和外部终端里的 CLI 也会读——服务器在那些地方拿不到 Meowo 的
 /// 会话令牌，工具列表是空的（见 meowo-reporter 的 mcp.rs），不会添乱。
 /// 只在自动接线开着时调（dev 构建默认不碰全局配置，同 hooks）。
 pub(crate) fn sync_mcp_files() {
     let settings = crate::settings::load_settings();
     let reporter = crate::setup::sibling_reporter();
     for plugin in meowo_agent::all() {
-        let Some(meowo_agent::McpAttach::DataDirJson { rel }) = plugin.mcp_attach() else {
+        let Some(meowo_agent::McpAttach::DataDirJson {
+            rel,
+            expand_env,
+            approval,
+        }) = plugin.mcp_attach()
+        else {
             continue;
         };
         // 默认账号 + Meowo 里建的每个账号：多账号整个换数据目录（kimi 的 KIMI_CODE_HOME），
@@ -1027,13 +1139,26 @@ pub(crate) fn sync_mcp_files() {
         }
         homes.sort();
         homes.dedup();
+        let entry = reporter
+            .as_deref()
+            .map(|reporter| server_entry(reporter, settings.browser_agent, expand_env));
         for home in homes.into_iter().filter(|dir| dir.is_dir()) {
-            sync_mcp_file(&home.join(rel), settings.browser_agent, reporter.as_deref());
+            sync_mcp_file(&home.join(rel), entry.clone());
+            match approval {
+                Some(meowo_agent::McpApproval::PermissionRules { rel, prefix }) => {
+                    sync_permission_rule(&home.join(rel), prefix, entry.is_some());
+                }
+                Some(meowo_agent::McpApproval::PolicyFile { rel }) => {
+                    sync_policy_file(&home.join(rel), entry.is_some());
+                }
+                None => {}
+            }
         }
     }
 }
 
-fn sync_mcp_file(path: &std::path::Path, enabled: bool, reporter: Option<&str>) {
+/// `entry` 为 None（没有 reporter）时摘掉 meowo 一项。
+fn sync_mcp_file(path: &std::path::Path, entry: Option<Value>) {
     let path = path.to_path_buf();
     let mut root: Value = match std::fs::read(&path) {
         Ok(bytes) => match serde_json::from_slice(&bytes) {
@@ -1043,7 +1168,7 @@ fn sync_mcp_file(path: &std::path::Path, enabled: bool, reporter: Option<&str>) 
         },
         // 只有「确实不存在」才当空文件新建。拒绝访问、被占用、路径是目录之类的读取错误
         // 若也当空文件，下面会写出只剩 meowo 一项的 mcpServers，把用户的配置冲掉。
-        Err(e) if enabled && e.kind() == std::io::ErrorKind::NotFound => json!({}),
+        Err(e) if entry.is_some() && e.kind() == std::io::ErrorKind::NotFound => json!({}),
         Err(_) => return,
     };
     if !root.is_object() {
@@ -1054,9 +1179,8 @@ fn sync_mcp_file(path: &std::path::Path, enabled: bool, reporter: Option<&str>) 
         obj.get_mut("mcpServers").and_then(Value::as_object_mut)
     });
     let Some(servers) = servers else { return };
-    let changed = match (enabled, reporter) {
-        (true, Some(reporter)) => {
-            let entry = server_entry(reporter);
+    let changed = match entry {
+        Some(entry) => {
             if servers.get(SERVER_NAME) == Some(&entry) {
                 false
             } else {
@@ -1064,7 +1188,7 @@ fn sync_mcp_file(path: &std::path::Path, enabled: bool, reporter: Option<&str>) 
                 true
             }
         }
-        _ => servers.remove(SERVER_NAME).is_some(),
+        None => servers.remove(SERVER_NAME).is_some(),
     };
     if !changed {
         return;
@@ -1072,12 +1196,112 @@ fn sync_mcp_file(path: &std::path::Path, enabled: bool, reporter: Option<&str>) 
     let Ok(body) = serde_json::to_string_pretty(&root) else {
         return;
     };
-    // 同 wiring 的「写前必备份、一律原子写」：这是用户自己的配置文件（kimi 的 mcp.json），
-    // 覆盖前留一份原件；备份失败就不写，宁可这次不接线也不冒丢配置的险。
-    if path.exists() && meowo_agent::wiring::backup_once(&path).is_err() {
+    write_user_config(&path, &body);
+}
+
+/// 同 wiring 的「写前必备份、一律原子写」：这是用户自己的配置文件，覆盖前留一份原件；
+/// 备份失败就不写，宁可这次不接线也不冒丢配置的险。
+fn write_user_config(path: &std::path::Path, body: &str) {
+    if path.exists() && meowo_agent::wiring::backup_once(path).is_err() {
         return;
     }
-    let _ = meowo_agent::fsutil::write_atomic(&path, &body);
+    let _ = meowo_agent::fsutil::write_atomic(path, body);
+}
+
+/// 本条规则的标记（`reason` 字段），增删时按它认自己的那条，不碰用户与 Lead 的规则。
+const RULE_REASON: &str = "由 Meowo 管理：send_image 只把图片显示给用户，免逐次审批";
+
+/// kimi `config.toml` 的 `[[permission.rules]]`：开着时确保有一条放行发图工具的规则，
+/// 关着时摘掉。文件不存在时不凭空新建（还没用过 kimi，审批模式由它自己定），
+/// 解析失败（用户手写坏了）不碰。
+fn sync_permission_rule(path: &std::path::Path, prefix: &str, enabled: bool) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let Ok(mut doc) = text.parse::<toml_edit::DocumentMut>() else {
+        return;
+    };
+    let pattern = format!("{prefix}{SERVER_NAME}__{SEND_IMAGE}");
+    let ours =
+        |t: &toml_edit::Table| t.get("reason").and_then(|v| v.as_str()) == Some(RULE_REASON);
+    let has = doc
+        .get("permission")
+        .and_then(|p| p.get("rules"))
+        .and_then(|r| r.as_array_of_tables())
+        .is_some_and(|rules| {
+            rules.iter().any(|t| {
+                ours(t) && t.get("pattern").and_then(|v| v.as_str()) == Some(pattern.as_str())
+            })
+        });
+    if enabled == has {
+        return;
+    }
+    if enabled {
+        if !doc.contains_key("permission") {
+            let mut table = toml_edit::Table::new();
+            table.set_implicit(true);
+            doc.insert("permission", toml_edit::Item::Table(table));
+        }
+        let Some(permission) = doc["permission"].as_table_mut() else {
+            return;
+        };
+        if !permission.contains_key("rules") {
+            permission.insert(
+                "rules",
+                toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new()),
+            );
+        }
+        let Some(rules) = permission
+            .get_mut("rules")
+            .and_then(|r| r.as_array_of_tables_mut())
+        else {
+            return;
+        };
+        // 旧版本留下的同标记规则（pattern 变了）先清掉。
+        rules.retain(|t| !ours(t));
+        let mut rule = toml_edit::Table::new();
+        rule.insert("decision", toml_edit::value("allow"));
+        rule.insert("scope", toml_edit::value("user"));
+        rule.insert("pattern", toml_edit::value(pattern));
+        rule.insert("reason", toml_edit::value(RULE_REASON));
+        rules.push(rule);
+    } else if let Some(rules) = doc
+        .get_mut("permission")
+        .and_then(|p| p.get_mut("rules"))
+        .and_then(|r| r.as_array_of_tables_mut())
+    {
+        rules.retain(|t| !ours(t));
+    }
+    write_user_config(path, &doc.to_string());
+}
+
+/// gemini 用户级策略文件（整个文件归 Meowo 管）：开着时写一条只放行 `meowo` 服务器
+/// `send_image` 工具的规则，关着时删掉文件。
+fn sync_policy_file(path: &std::path::Path, enabled: bool) {
+    if !enabled {
+        let _ = std::fs::remove_file(path);
+        return;
+    }
+    let body = policy_body();
+    if std::fs::read_to_string(path).is_ok_and(|old| old == body) {
+        return;
+    }
+    let _ = meowo_agent::fsutil::write_atomic(path, &body);
+}
+
+fn policy_body() -> String {
+    let mut doc = toml_edit::DocumentMut::new();
+    let mut rule = toml_edit::Table::new();
+    rule.insert("mcpName", toml_edit::value(SERVER_NAME));
+    rule.insert("toolName", toml_edit::value(SEND_IMAGE));
+    rule.insert("decision", toml_edit::value("allow"));
+    rule.insert("priority", toml_edit::value(900));
+    let mut rules = toml_edit::ArrayOfTables::new();
+    rules.push(rule);
+    doc.insert("rule", toml_edit::Item::ArrayOfTables(rules));
+    format!(
+        "# 由 Meowo 管理：Meowo 的发图工具 send_image 只把图片显示给用户，免逐次确认。\n{doc}"
+    )
 }
 
 /// 页面里的辅助对象。每次 eval 都带上，已有就跳过。
@@ -1280,8 +1504,9 @@ mod tests {
             "-c",
             "C:/O'Neil/reporter.exe",
             Some(binding("first-'quoted")),
+            true,
         );
-        let second = toml_mcp_args("-c", "C:/O'Neil/reporter.exe", Some(binding("second")));
+        let second = toml_mcp_args("-c", "C:/O'Neil/reporter.exe", Some(binding("second")), true);
         let config = first
             .chunks_exact(2)
             .map(|pair| pair[1].as_str())
@@ -1300,8 +1525,132 @@ mod tests {
             doc["mcp_servers"][SERVER_NAME]["env"]["MEOWO_PTY_PROTOCOL"].as_str(),
             Some("2")
         );
-        assert_ne!(first.last(), second.last());
-        assert!(toml_mcp_args("-c", "reporter.exe", None).is_empty());
+        // 发图免审批、browser_evaluate 显式要审批（codex 0.169 逐工具 approval_mode）。
+        let tools = &doc["mcp_servers"][SERVER_NAME]["tools"];
+        assert_eq!(tools["send_image"]["approval_mode"].as_str(), Some("approve"));
+        assert_eq!(tools["browser_evaluate"]["approval_mode"].as_str(), Some("prompt"));
+        assert_eq!(
+            doc["mcp_servers"][SERVER_NAME]["args"].as_array().unwrap().len(),
+            1
+        );
+        let env_of = |args: &[String]| {
+            args.iter()
+                .find(|a| a.starts_with("mcp_servers.meowo.env="))
+                .cloned()
+        };
+        assert_ne!(env_of(&first), env_of(&second));
+        assert!(toml_mcp_args("-c", "reporter.exe", None, true).is_empty());
+        // 浏览器开关关掉：服务器带 --no-browser，只剩发图的免审批。
+        let off = toml_mcp_args("-c", "r.exe", Some(binding("t")), false);
+        let off_doc: toml_edit::DocumentMut = off
+            .chunks_exact(2)
+            .map(|pair| pair[1].as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .parse()
+            .unwrap();
+        let args: Vec<&str> = off_doc["mcp_servers"][SERVER_NAME]["args"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(args, vec!["mcp", "--no-browser"]);
+        assert!(off_doc["mcp_servers"][SERVER_NAME]["tools"].get("browser_evaluate").is_none());
+    }
+
+    /// claude 的免审批清单：发图始终在；浏览器开关关掉时只剩它。
+    #[test]
+    fn send_image_is_always_auto_allowed() {
+        assert_eq!(auto_allowed(false), vec!["send_image"]);
+        let on = auto_allowed(true);
+        assert!(on.contains(&"send_image") && on.contains(&"browser_click"));
+        assert!(!on.contains(&"browser_evaluate"));
+    }
+
+    /// opencode 的内联配置：与中转已有的 OPENCODE_CONFIG_CONTENT 合并，不冲掉它的 provider；
+    /// send_image 放行、browser_evaluate 要问；用户写坏的配置不碰。
+    #[test]
+    fn opencode_inline_config_merges_with_relay() {
+        let relay = r#"{"provider":{"relay":{"npm":"x"}},"model":"relay/m","permission":{"*":"ask"}}"#;
+        let merged: Value =
+            serde_json::from_str(&inline_config(Some(relay), "C:/m/meowo-reporter.exe", true).unwrap())
+                .unwrap();
+        assert_eq!(merged["model"], "relay/m");
+        assert_eq!(merged["provider"]["relay"]["npm"], "x");
+        assert_eq!(
+            merged["mcp"]["meowo"],
+            json!({ "type": "local", "command": ["C:/m/meowo-reporter.exe", "mcp"], "enabled": true })
+        );
+        assert_eq!(merged["permission"]["*"], "ask");
+        assert_eq!(merged["permission"]["meowo_send_image"], "allow");
+        assert_eq!(merged["permission"]["meowo_browser_evaluate"], "ask");
+        // 后写的规则胜出：meowo_send_image 必须排在用户的 "*" 之后。
+        let keys: Vec<&String> = merged["permission"].as_object().unwrap().keys().collect();
+        assert_eq!(keys.first().map(|k| k.as_str()), Some("*"));
+        let fresh: Value =
+            serde_json::from_str(&inline_config(None, "r.exe", false).unwrap()).unwrap();
+        assert_eq!(fresh["mcp"]["meowo"]["command"], json!(["r.exe", "mcp", "--no-browser"]));
+        assert!(inline_config(Some("{broken"), "r.exe", true).is_none());
+        // permission 是全局字符串时保持原样。
+        let global: Value =
+            serde_json::from_str(&inline_config(Some(r#"{"permission":"ask"}"#), "r.exe", true).unwrap())
+                .unwrap();
+        assert_eq!(global["permission"], "ask");
+    }
+
+    /// gemini 的 settings.json 服务器项显式引用 MEOWO_PTY_*（gemini 会删掉继承环境里名字含
+    /// TOKEN 的变量）；令牌本身不落盘。
+    #[test]
+    fn gemini_entry_expands_env_instead_of_writing_token() {
+        let entry = server_entry("C:/m/meowo-reporter.exe", true, true);
+        assert_eq!(entry["env"]["MEOWO_PTY_TOKEN"], "${MEOWO_PTY_TOKEN:-}");
+        assert_eq!(entry["args"], json!(["mcp"]));
+        assert!(server_entry("r", true, false).get("env").is_none());
+        let body = policy_body();
+        let doc: toml_edit::DocumentMut = body.parse().unwrap();
+        let rule = &doc["rule"].as_array_of_tables().unwrap().get(0).unwrap();
+        assert_eq!(rule["mcpName"].as_str(), Some("meowo"));
+        assert_eq!(rule["toolName"].as_str(), Some("send_image"));
+        assert_eq!(rule["decision"].as_str(), Some("allow"));
+        // 只放行发图，没有服务器级 trust 或通配。
+        assert!(!body.contains("browser") && !body.contains('*'));
+    }
+
+    /// 五家都有 MCP 接法，且宿主不按名字分支：每家插件声明的 McpAttach 都能落到上面某条路径。
+    #[test]
+    fn every_agent_declares_an_mcp_attach() {
+        for plugin in meowo_agent::all() {
+            assert!(plugin.mcp_attach().is_some(), "{} 没有声明 mcp_attach", plugin.id().as_str());
+        }
+    }
+
+    /// kimi config.toml：加一条只放行 send_image 的规则，用户与 Lead 的规则原样保留；
+    /// 重复同步不重复加；关掉时只摘自己的那条；文件不存在不新建。
+    #[test]
+    fn kimi_permission_rule_is_added_once_and_removed_cleanly() {
+        let dir = std::env::temp_dir().join(format!("meowo-kimi-rule-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        sync_permission_rule(&path, "mcp__", true);
+        assert!(!path.exists(), "没有 config.toml 时不凭空新建");
+        let original = "default_model = 'keep'\n\n[[permission.rules]]\ndecision = 'deny'\npattern = 'Bash(rm *)'\n";
+        std::fs::write(&path, original).unwrap();
+        sync_permission_rule(&path, "mcp__", true);
+        sync_permission_rule(&path, "mcp__", true);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let doc: toml_edit::DocumentMut = text.parse().unwrap();
+        let rules = doc["permission"]["rules"].as_array_of_tables().unwrap();
+        assert_eq!(rules.len(), 2, "{text}");
+        assert_eq!(rules.get(0).unwrap()["pattern"].as_str(), Some("Bash(rm *)"));
+        assert_eq!(rules.get(1).unwrap()["pattern"].as_str(), Some("mcp__meowo__send_image"));
+        assert_eq!(rules.get(1).unwrap()["decision"].as_str(), Some("allow"));
+        assert_eq!(doc["default_model"].as_str(), Some("keep"));
+        sync_permission_rule(&path, "mcp__", false);
+        let doc: toml_edit::DocumentMut = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        assert_eq!(doc["permission"]["rules"].as_array_of_tables().unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1341,7 +1690,7 @@ mod tests {
         assert!(ref_arg(&json!({})).is_err());
     }
 
-    /// kimi 的 mcp.json：开着就加 meowo 一项、关了就摘掉，别的服务器原样保留；
+    /// kimi 的 mcp.json：有 reporter 就加 meowo 一项、没有就摘掉，别的服务器原样保留；
     /// 用户手写坏了的文件不碰。
     #[test]
     fn kimi_mcp_entry_is_merged_and_removed_without_touching_others() {
@@ -1354,21 +1703,17 @@ mod tests {
         )
         .unwrap();
         let read = || serde_json::from_slice::<Value>(&std::fs::read(&path).unwrap()).unwrap();
-        sync_mcp_file(&dir.join("mcp.json"), true, Some("C:/m/meowo-reporter.exe"));
+        sync_mcp_file(&dir.join("mcp.json"), Some(server_entry("C:/m/meowo-reporter.exe", true, false)));
         let root = read();
         assert_eq!(root["mcpServers"]["meowo"]["args"], json!(["mcp"]));
         assert_eq!(root["mcpServers"]["other"]["command"], "x");
         assert_eq!(root["keep"], 1);
-        sync_mcp_file(
-            &dir.join("mcp.json"),
-            false,
-            Some("C:/m/meowo-reporter.exe"),
-        );
+        sync_mcp_file(&dir.join("mcp.json"), None);
         let root = read();
         assert!(root["mcpServers"].get("meowo").is_none());
         assert_eq!(root["mcpServers"]["other"]["command"], "x");
         std::fs::write(&path, "{broken").unwrap();
-        sync_mcp_file(&dir.join("mcp.json"), true, Some("C:/m/meowo-reporter.exe"));
+        sync_mcp_file(&dir.join("mcp.json"), Some(server_entry("C:/m/meowo-reporter.exe", true, false)));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{broken");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1382,7 +1727,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let target = dir.join("mcp.json");
         std::fs::create_dir_all(&target).unwrap();
-        sync_mcp_file(&target, true, Some("C:/m/meowo-reporter.exe"));
+        sync_mcp_file(&target, Some(server_entry("C:/m/meowo-reporter.exe", true, false)));
         assert!(target.is_dir(), "目录被替换了");
         let siblings: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
@@ -1402,16 +1747,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// NotFound 才当空文件：开着时新建出只含 meowo 一项的配置；关着时不凭空造文件。
+    /// NotFound 才当空文件：要登记时新建出只含 meowo 一项的配置；要摘掉时不凭空造文件。
     #[test]
     fn mcp_file_missing_is_created_only_when_enabled() {
         let dir = std::env::temp_dir().join(format!("meowo-mcp-missing-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("mcp.json");
-        sync_mcp_file(&path, false, Some("C:/m/meowo-reporter.exe"));
+        sync_mcp_file(&path, None);
         assert!(!path.exists());
-        sync_mcp_file(&path, true, Some("C:/m/meowo-reporter.exe"));
+        sync_mcp_file(&path, Some(server_entry("C:/m/meowo-reporter.exe", true, false)));
         let root: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(root["mcpServers"]["meowo"]["args"], json!(["mcp"]));
         // 新建的文件没有可备份的原件，不该凭空出一份 .cckb-bak。
@@ -1428,8 +1773,8 @@ mod tests {
         let path = dir.join("mcp.json");
         let original = r#"{"mcpServers":{"other":{"command":"x"}}}"#;
         std::fs::write(&path, original).unwrap();
-        sync_mcp_file(&path, true, Some("C:/m/meowo-reporter.exe"));
-        sync_mcp_file(&path, false, Some("C:/m/meowo-reporter.exe"));
+        sync_mcp_file(&path, Some(server_entry("C:/m/meowo-reporter.exe", true, false)));
+        sync_mcp_file(&path, None);
         assert_eq!(
             std::fs::read_to_string(dir.join("mcp.json.cckb-bak")).unwrap(),
             original
@@ -1471,7 +1816,7 @@ mod tests {
     #[test]
     fn auto_allowed_matches_the_mcp_tool_list() {
         let source = include_str!("../crates/meowo-reporter/src/mcp.rs");
-        let body = &source[source.find("fn tools()").expect("mcp.rs 里找不到 tools()")..];
+        let body = &source[source.find("fn browser_tools()").expect("mcp.rs 里找不到 browser_tools()")..];
         let body = &body[..body.find("#[cfg(test)]").unwrap_or(body.len())];
         let mut listed: Vec<&str> = Vec::new();
         for (at, _) in body.match_indices("\"browser_") {

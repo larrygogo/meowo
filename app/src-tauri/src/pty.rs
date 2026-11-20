@@ -1417,6 +1417,10 @@ impl PtyBroker {
                 protocol: CURRENT_PROTOCOL_VERSION,
             });
         command.args(crate::browser_agent::launch_args(provider, mcp_session));
+        // 走环境变量交 MCP 的 agent（opencode）：与中转用的同名变量合并后覆盖上面设的值。
+        for (key, value) in crate::browser_agent::launch_env(provider, env) {
+            command.env(key, value);
+        }
         command.args(crate::lead_runtime::launch_args(provider, env, mcp_session));
         // 终端归一化:GUI 的托管 PTY 是给人看的全彩 xterm.js 渲染面,颜色必须可用。TERM
         // 之外还得管颜色开关——meowo 常从设了 NO_COLOR 的上游派生(典型:被某个 agent 的

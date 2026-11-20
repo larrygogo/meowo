@@ -631,7 +631,17 @@ impl AgentPlugin for Kimi {
     fn mcp_attach(&self) -> Option<crate::McpAttach> {
         // Kimi Code 2.x 没有临时挂 MCP 的启动参数，只读 `<数据目录>/mcp.json` 等文件
         // （2026-11-06 查 kimi.exe 内嵌源码：resolveKimiHome(...) + "mcp.json"）。
-        Some(crate::McpAttach::DataDirJson { rel: "mcp.json" })
+        // 发图免审批：mcp.json 没有逐工具审批字段，免审批规则写在 config.toml 的
+        // `[[permission.rules]]`（2.6.3 源码：qualifyMcpToolName → `mcp__meowo__send_image`，
+        // picomatch 匹配）。yolo 模式下本来就全放行，default 模式下靠这条。
+        Some(crate::McpAttach::DataDirJson {
+            rel: "mcp.json",
+            expand_env: false,
+            approval: Some(crate::McpApproval::PermissionRules {
+                rel: "config.toml",
+                prefix: "mcp__",
+            }),
+        })
     }
 
     fn fork_mode(&self) -> Option<crate::ForkMode> {

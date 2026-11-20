@@ -25,8 +25,12 @@ pub struct ModelPreset {
     pub label: &'static str,
 }
 
-/// 怎么把一个 stdio MCP 服务器交给这个 agent（宿主的面板浏览器 browser_agent.rs 用）。
+/// 怎么把 Meowo 的 stdio MCP 服务器（面板浏览器工具 + 发图工具 `send_image`）交给这个 agent，
+/// 以及怎么让发图工具免逐次审批（宿主 browser_agent.rs 用）。
 /// 放在插件里声明：宿主不按 agent 身份分支（见宿主 lib.rs 的 host_code_does_not_branch_on_agent_identity）。
+///
+/// 免审批只给 `send_image`（把一张图显示给用户，不改用户的任何东西）；浏览器工具保持各家原本
+/// 的审批语义，其中能在已登录网站上跑任意脚本的 `browser_evaluate` 一律要审批。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum McpAttach {
     /// 启动参数指向一份 `{"mcpServers": {…}}` JSON 文件：`<file_flag> <文件>`。`allow_flag` 有值时
@@ -39,11 +43,38 @@ pub enum McpAttach {
         allow_prefix: &'static str,
     },
     /// 配置覆盖参数：`<flag> mcp_servers.<名>.command='<路径>'` 与 `<flag> mcp_servers.<名>.args=[…]`，
-    /// 值是 TOML 单引号字符串，同样避开双引号（codex 的 `-c`）。
+    /// 值是 TOML 单引号字符串，同样避开双引号（codex 的 `-c`）。免审批的工具另加
+    /// `<flag> mcp_servers.<名>.tools.<工具>.approval_mode='approve'`（codex 0.169 逐工具审批配置，
+    /// 默认 `auto`：没有只读注解的 MCP 工具要审批）。
     TomlOverride { flag: &'static str },
     /// 没有临时挂 MCP 的启动参数，只能写进数据目录下的 JSON 文件（`mcpServers` 键）。
-    /// 多账号时每个账号的数据目录各写一份（kimi 2.x 的 `mcp.json`）。
-    DataDirJson { rel: &'static str },
+    /// 多账号时每个账号的数据目录各写一份（kimi 2.x 的 `mcp.json`、gemini 的 `settings.json`）。
+    DataDirJson {
+        rel: &'static str,
+        /// agent 不把 `MEOWO_PTY_*` 原样传给 MCP 子进程时为 true：服务器项里显式写
+        /// `"env": {"MEOWO_PTY_TOKEN": "${MEOWO_PTY_TOKEN:-}", …}`，由 agent 读配置时按自己的
+        /// 进程环境展开（gemini 0.68 会从继承环境里删掉名字含 TOKEN 的变量，而 settings 支持
+        /// `${VAR:-默认}` 展开）。令牌因此不落盘；不在 Meowo 里跑时展开成空串，工具列表为空。
+        expand_env: bool,
+        /// 发图工具免审批写在哪（None = 这家默认就不审批 MCP 工具）。
+        approval: Option<McpApproval>,
+    },
+    /// 环境变量里放一段内联 JSON 配置，与 agent 磁盘上的配置深合并（opencode 的
+    /// `OPENCODE_CONFIG_CONTENT`）：`mcp.<名> = {type:"local", command:[…], enabled:true}`，
+    /// 审批写 `permission.<名>_<工具> = "allow" | "ask"`（后写的规则胜出）。中转若也用同一个
+    /// 变量，宿主把两段合并成一段。MCP 子进程继承 agent 环境，令牌不进配置。
+    InlineConfigEnv { env: &'static str },
+}
+
+/// 发图工具的免审批规则写在 agent 数据目录的哪个文件里（[`McpAttach::DataDirJson`] 用）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpApproval {
+    /// TOML 配置里的 `[[permission.rules]]` 一条（`decision="allow"`、`pattern=<prefix><名>__<工具>`），
+    /// 其余规则原样保留（kimi 2.x 的 `config.toml`）。
+    PermissionRules { rel: &'static str, prefix: &'static str },
+    /// 整个文件归 Meowo 管的策略 TOML：`[[rule]] mcpName=<名> toolName=<工具> decision="allow"`
+    /// （gemini 的 `policies/*.toml`，用户级策略目录自动加载）。
+    PolicyFile { rel: &'static str },
 }
 
 /// 分叉会话的方式（对照 Kimi 桌面版会话菜单的「分叉会话」：从这里另开一条线试别的方向，

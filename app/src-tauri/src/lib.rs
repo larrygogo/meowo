@@ -2090,6 +2090,7 @@ mod tests {
                 include_str!("browser_permission.rs"),
             ),
             ("chat.rs", include_str!("chat.rs")),
+            ("chat_images.rs", include_str!("chat_images.rs")),
             ("confirm.rs", include_str!("confirm.rs")),
             ("detect.rs", include_str!("detect.rs")),
             ("envpath.rs", include_str!("envpath.rs")),
