@@ -543,6 +543,7 @@ pub fn store_local_copy_in(root: &Path, source_key: &str, path: &Path) -> Result
 /// 按原路径找 [`store_local_copy_in`] 存过的副本（原文件已经不在时用），取最新的一份。
 pub fn cached_local_copy_in(root: &Path, source_key: &str) -> Option<PathBuf> {
     let prefix = format!("{}-", hex_digest(source_key.as_bytes()));
+    let _guard = STORE_LOCK.read().unwrap_or_else(|e| e.into_inner());
     let entries = std::fs::read_dir(root.join(ImageKind::Local.dir_name())).ok()?;
     let hit = entries
         .flatten()
@@ -557,7 +558,7 @@ pub fn cached_local_copy_in(root: &Path, source_key: &str) -> Option<PathBuf> {
         })
         .max_by_key(|(mtime, _)| *mtime)
         .map(|(_, path)| path)?;
-    touch(&hit);
+    touch_unlocked(&hit);
     Some(hit)
 }
 
@@ -565,11 +566,13 @@ pub fn cached_local_copy_in(root: &Path, source_key: &str) -> Option<PathBuf> {
 pub fn cached_keyed_in(root: &Path, kind: ImageKind, key: &str) -> Option<PathBuf> {
     let stem = hex_digest(key.as_bytes());
     let dir = root.join(kind.dir_name());
+    // 找到与刷新在同一把读锁里：回收不会在两步之间把它删掉（见 prune_in_with）。
+    let _guard = STORE_LOCK.read().unwrap_or_else(|e| e.into_inner());
     ["png", "jpg", "gif", "webp", "svg"]
         .iter()
         .map(|ext| dir.join(format!("{stem}.{ext}")))
         .find(|path| std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() > 0))
-        .inspect(|path| touch(path))
+        .inspect(|path| touch_unlocked(path))
 }
 
 /// 读一个本地文件存进图片目录。先看元数据再读：不存在、是目录、超过上限都不读盘。
@@ -707,12 +710,17 @@ fn io_error(e: std::io::Error) -> ImageError {
 
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
+/// 图片目录的读写锁：写入、刷新修改时间持读锁（彼此并发），回收删除阶段持写锁。
+/// 见 [`prune_in_with`]。
+static STORE_LOCK: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
 /// 原子落盘：临时文件 + rename，读端不会看到半张图；目标已存在且大小一致就直接复用。
 /// 第二个返回值：这次是否真写了新文件（复用已有的为 false）。
 fn write_named(dir: &Path, name: &str, bytes: &[u8]) -> Result<(PathBuf, bool), ImageError> {
+    let _guard = STORE_LOCK.read().unwrap_or_else(|e| e.into_inner());
     let path = dir.join(name);
     if std::fs::metadata(&path).is_ok_and(|m| m.is_file() && m.len() == bytes.len() as u64) {
-        touch(&path);
+        touch_unlocked(&path);
         return Ok((path, false));
     }
     std::fs::create_dir_all(dir).map_err(io_error)?;
@@ -744,6 +752,11 @@ pub fn mark_used(path: &Path) {
 }
 
 fn touch(path: &Path) {
+    let _guard = STORE_LOCK.read().unwrap_or_else(|e| e.into_inner());
+    touch_unlocked(path);
+}
+
+fn touch_unlocked(path: &Path) {
     if let Ok(file) = std::fs::OpenOptions::new().write(true).open(path) {
         let _ = file.set_modified(std::time::SystemTime::now());
     }
@@ -767,6 +780,16 @@ pub struct PruneReport {
 /// 「最久没用到」按修改时间算：每次复用同一张图都会刷新它（见 [`store_bytes_in`]）。
 /// 顺带清掉崩溃遗留的临时文件。只认本模块的命名，不碰目录里的其他东西。
 pub fn prune_in(root: &Path, cap: u64) -> PruneReport {
+    prune_in_with(root, cap, || {})
+}
+
+/// [`prune_in`] 本体；`after_scan` 在扫描完、动手删之前调用（测试在这里模拟并发复用）。
+///
+/// 扫描不持锁（目录里上万个文件时扫描要一会儿，不能让解析热路径等它）；删除阶段持写锁，
+/// 并在删每个文件前重新看一眼修改时间：扫描后被复用过（写入 / 解析 / 查看都会刷新它）的跳过。
+/// 写入与刷新持读锁（[`write_named`]、[`touch`]），所以「刚确认存在并下发路径」与「删掉它」
+/// 不会交错。
+fn prune_in_with(root: &Path, cap: u64, after_scan: impl FnOnce()) -> PruneReport {
     let mut files: Vec<(bool, std::time::SystemTime, u64, PathBuf)> = Vec::new();
     for kind in ImageKind::ALL {
         let dir = root.join(kind.dir_name());
@@ -783,15 +806,24 @@ pub fn prune_in(root: &Path, cap: u64) -> PruneReport {
             files.push((kind == ImageKind::Sent, mtime, meta.len(), entry.path()));
         }
     }
+    after_scan();
     let before: u64 = files.iter().map(|f| f.2).sum();
     let mut total = before;
     let mut removed = 0;
     if total > cap {
         // false（可再生）排在 true（sent）前面；同类按修改时间从旧到新。
         files.sort_by_key(|f| (f.0, f.1));
-        for (_, _, len, path) in &files {
+        let _guard = STORE_LOCK.write().unwrap_or_else(|e| e.into_inner());
+        for (_, scanned, len, path) in &files {
             if total <= cap {
                 break;
+            }
+            // 扫描后被复用过：它已经是「刚用到」的了，不按旧时间删。
+            let reused = std::fs::metadata(path)
+                .and_then(|m| m.modified())
+                .is_ok_and(|now| now > *scanned);
+            if reused {
+                continue;
             }
             if std::fs::remove_file(path).is_ok() {
                 total -= len;
@@ -806,9 +838,20 @@ pub fn prune_in(root: &Path, cap: u64) -> PruneReport {
     }
 }
 
-/// 默认根目录按 [`IMAGES_TOTAL_CAP`] 回收（宿主启动时在后台线程调）。
+/// 默认根目录按 [`IMAGES_TOTAL_CAP`] 回收（宿主在后台线程按 [`prune_loop`] 定时调）。
 pub fn prune() -> Option<PruneReport> {
     Some(prune_in(&images_root()?, IMAGES_TOTAL_CAP))
+}
+
+/// 除启动时外，每隔多久再回收一次。Meowo 常驻托盘、一开几周不重启，只在启动时查一次的话
+/// 目录会一直涨（做空第一轮）；6 小时一次，一次扫描在上万个文件时也只是几十毫秒级。
+pub const PRUNE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
+
+/// 先跑一次 `tick`，之后每隔 `interval` 再跑；`tick` 返回 false 时停（正式用法永远返回 true）。
+pub fn prune_loop(interval: std::time::Duration, mut tick: impl FnMut() -> bool) {
+    while tick() {
+        std::thread::sleep(interval);
+    }
 }
 
 /// `path` 是否真的落在 `roots` 之一里面。两边都先解析成真实路径（展开 `..`、符号链接、junction）
@@ -1108,6 +1151,47 @@ mod tests {
         assert_eq!(report.after, 0);
         assert!(!sent_old.exists() && !web_new.exists());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 回收与写入 / 解析共用一把锁：扫描之后、真删之前有人复用了某张图（解析时同内容重写会
+    /// 刷新修改时间），这张图不能按扫描时的旧时间被删掉——否则刚下发给前端的路径立刻失效。
+    /// 钩子在扫描后、删除前模拟一次复用。
+    #[test]
+    fn prune_does_not_delete_a_file_reused_after_scan() {
+        use std::time::{Duration, SystemTime};
+        let root = temp_root("prune-race");
+        let dir = root.join("tool");
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = dir.join("old.png");
+        let newer = dir.join("newer.png");
+        for (path, age) in [(&old, 900), (&newer, 60)] {
+            std::fs::write(path, vec![0u8; 100]).unwrap();
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(SystemTime::now() - Duration::from_secs(age))
+                .unwrap();
+        }
+        let report = prune_in_with(&root, 150, || mark_used(&old));
+        assert!(old.exists(), "扫描后被复用的图不能删");
+        assert!(!newer.exists(), "该删的换成扫描时较新的那张");
+        assert_eq!(report.removed, 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 除启动时外每 6 小时回收一次：循环先跑一次，之后每隔一个间隔再跑。
+    #[test]
+    fn prune_runs_at_start_and_then_every_interval() {
+        assert_eq!(PRUNE_INTERVAL, std::time::Duration::from_secs(6 * 3600));
+        let mut ticks = 0;
+        let started = std::time::Instant::now();
+        prune_loop(std::time::Duration::from_millis(5), || {
+            ticks += 1;
+            ticks < 3
+        });
+        assert_eq!(ticks, 3);
+        assert!(started.elapsed() >= std::time::Duration::from_millis(10), "两次间隔都要等");
     }
 
     #[test]

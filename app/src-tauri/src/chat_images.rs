@@ -611,24 +611,28 @@ fn export_within(readable: &[PathBuf], path: &Path, dest: &Path) -> Result<(), S
 }
 
 /// 启动时：asset 协议放行图片目录（静态白名单写的是 `$HOME/.meowo/images/**`，数据目录被
-/// `MEOWO_DB` 挪走时靠这里补上），并在后台按总量上限回收。
+/// `MEOWO_DB` 挪走时靠这里补上），并在后台按总量上限回收（启动时一次，之后定时）。
 pub(crate) fn init(app: &tauri::AppHandle) {
     use tauri::Manager;
     if let Some(root) = images::images_root() {
         let _ = std::fs::create_dir_all(&root);
         let _ = app.asset_protocol_scope().allow_directory(&root, true);
     }
+    // 启动时回收一次，之后每 6 小时一次（images::PRUNE_INTERVAL）。
     std::thread::spawn(|| {
-        if let Some(report) = images::prune() {
-            if report.removed > 0 {
-                eprintln!(
-                    "[images] 图片目录 {} MB 超过上限，回收 {} 个文件，剩 {} MB",
-                    report.before / 1024 / 1024,
-                    report.removed,
-                    report.after / 1024 / 1024
-                );
+        images::prune_loop(images::PRUNE_INTERVAL, || {
+            if let Some(report) = images::prune() {
+                if report.removed > 0 {
+                    eprintln!(
+                        "[images] 图片目录 {} MB 超过上限，回收 {} 个文件，剩 {} MB",
+                        report.before / 1024 / 1024,
+                        report.removed,
+                        report.after / 1024 / 1024
+                    );
+                }
             }
-        }
+            true
+        });
     });
 }
 
@@ -1066,6 +1070,25 @@ mod tests {
         let no_session = |src: &str| resolve_bridged(&root, &readable, src, None, None);
         assert_eq!(no_session("docs/ok.png").unwrap_err(), answers[0]);
         assert_eq!(no_session(&ours.to_string_lossy()).unwrap(), ours);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 查看即「用到」：resolve 命中图片目录里已有的图时刷新修改时间，回收按它排先后，
+    /// 常看的图留得久（做空第一轮：旧实现命中时不刷新，老会话里常看的截图照样先被删）。
+    #[test]
+    fn resolve_hit_refreshes_modified_time() {
+        use std::time::{Duration, SystemTime};
+        let dir = temp("touch");
+        let root = dir.join("images");
+        std::fs::create_dir_all(root.join("tool")).unwrap();
+        let shot = root.join("tool").join("shot.png");
+        std::fs::write(&shot, PNG_1X1).unwrap();
+        let long_ago = SystemTime::now() - Duration::from_secs(30 * 86400);
+        std::fs::OpenOptions::new().write(true).open(&shot).unwrap().set_modified(long_ago).unwrap();
+        let got = resolve_into(&root, &[root.clone()], &shot.to_string_lossy(), None, None).unwrap();
+        assert_eq!(got, shot);
+        let mtime = std::fs::metadata(&shot).unwrap().modified().unwrap();
+        assert!(mtime > SystemTime::now() - Duration::from_secs(60), "命中后修改时间应刷新");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
