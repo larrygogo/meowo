@@ -5,6 +5,8 @@ import { exportChatImage, resolveChatImage, revealTerminalPath } from "../../api
 import { ChatMarkdown } from "../ChatMarkdown";
 import { ChatCwdContext } from "./chatCwd";
 import { resetChatImageCache, sentImageArgs, sentImageReceipt, SentImageMessage } from "./ChatImage";
+import { FileMarkdown } from "./FileMarkdown";
+import { ChatSessionContext, resetImageHostGate } from "./remoteImageGate";
 import { ToolActivity } from "./ToolActivity";
 import { TurnLiveContext } from "./toolState";
 import { Transcript } from "./Transcript";
@@ -40,6 +42,7 @@ class FakeObserver {
 
 beforeEach(() => {
   resetChatImageCache();
+  resetImageHostGate();
   vi.mocked(resolveChatImage).mockReset();
   vi.mocked(exportChatImage).mockClear();
   vi.mocked(revealTerminalPath).mockClear();
@@ -183,7 +186,7 @@ describe("工具行的图片", () => {
       </ChatCwdContext.Provider>,
     );
     await act(async () => {});
-    expect(resolveChatImage).toHaveBeenCalledWith(`C:\\dev\\icon.${ext}`, "C:\\dev");
+    expect(resolveChatImage).toHaveBeenCalledWith(`C:\\dev\\icon.${ext}`, "C:\\dev", null);
     // SVG 也是 <img>，不内联进 DOM（img 上下文不执行脚本）。
     expect(document.querySelector(".chat-tool-media img")?.getAttribute("src")).toBe(`asset://local/C:\\Users\\me\\.meowo\\images\\local\\icon.${ext}`);
     expect(document.querySelector(".chat-tool-media svg:not(.icon)")).toBeNull();
@@ -202,15 +205,18 @@ describe("正文 Markdown 图片", () => {
     render(<ChatCwdContext.Provider value={CWD}><div className="chat-md"><ChatMarkdown text={"看图：![架构](docs/arch.png)"} /></div></ChatCwdContext.Provider>);
     expect(document.querySelector(".chat-md-image")?.getAttribute("data-state")).toBe("loading");
     await act(async () => {});
-    expect(resolveChatImage).toHaveBeenCalledWith("docs/arch.png", "C:\\dev");
+    expect(resolveChatImage).toHaveBeenCalledWith("docs/arch.png", "C:\\dev", null);
     expect(document.querySelector(".chat-md-image img")?.getAttribute("src")).toBe("asset://local/C:\\Users\\me\\.meowo\\images\\local\\arch.png");
   });
 
-  it("网络图片也走后端，页面不直连第三方", async () => {
+  it("网络图片点了才走后端下载，页面不直连第三方", async () => {
     vi.mocked(resolveChatImage).mockResolvedValue({ path: "C:\\Users\\me\\.meowo\\images\\web\\ab12.png" });
     render(<ChatMarkdown text="![](https://example.com/a.png)" />);
     await act(async () => {});
-    expect(resolveChatImage).toHaveBeenCalledWith("https://example.com/a.png", null);
+    expect(resolveChatImage).not.toHaveBeenCalled();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /example\.com/ })); });
+    expect(resolveChatImage).toHaveBeenCalledWith("https://example.com/a.png", null, null);
+    expect(document.querySelector(".chat-md-image img")?.getAttribute("src")).toBe("asset://local/C:\\Users\\me\\.meowo\\images\\web\\ab12.png");
     expect(document.querySelector("img[src^='http']")).toBeNull();
   });
 
@@ -251,5 +257,84 @@ describe("正文 Markdown 图片", () => {
     render(<ChatMarkdown text="![](C:\\a.png)" />);
     await act(async () => {});
     expect(resolveChatImage).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("网络图片点了才加载", () => {
+  const WEB = "C:\Users\me\.meowo\images\web\ab12.png";
+  const md = (text: string, session: number | null = 7) => (
+    <ChatSessionContext.Provider value={session}><div className="chat-md"><ChatMarkdown text={text} /></div></ChatSessionContext.Provider>
+  );
+
+  it("进了视口也不下载，只显示域名和「点击加载图片」", async () => {
+    vi.stubGlobal("IntersectionObserver", FakeObserver);
+    vi.mocked(resolveChatImage).mockResolvedValue({ path: WEB });
+    render(md("![图表](https://cdn.example.com/chart.png)"));
+    await act(async () => { FakeObserver.all.forEach((observer) => observer.fire()); });
+    expect(resolveChatImage).not.toHaveBeenCalled();
+    const gate = document.querySelector("button.chat-image-chip.is-gated")!;
+    expect(gate.textContent).toContain("cdn.example.com");
+    expect(gate.textContent).toContain("点击加载图片");
+    expect(document.querySelector("img")).toBeNull();
+  });
+
+  it("点击后才调后端，带上会话 id", async () => {
+    vi.mocked(resolveChatImage).mockResolvedValue({ path: WEB });
+    render(md("![](https://cdn.example.com/chart.png)"));
+    await act(async () => { fireEvent.click(document.querySelector("button.is-gated")!); });
+    expect(resolveChatImage).toHaveBeenCalledWith("https://cdn.example.com/chart.png", null, 7);
+    expect(document.querySelector(".chat-md-image img")?.getAttribute("src")).toBe(`asset://local/${WEB}`);
+  });
+
+  it("同一会话同域名点过一次：屏幕上的和之后出现的图都自动加载；不同域名仍要点", async () => {
+    vi.mocked(resolveChatImage).mockResolvedValue({ path: WEB });
+    render(md("![](https://cdn.example.com/a.png)\n\n![](https://cdn.example.com/b.png)\n\n![](https://other.org/c.png)"));
+    expect(document.querySelectorAll("button.is-gated")).toHaveLength(3);
+    await act(async () => { fireEvent.click(screen.getAllByRole("button", { name: /cdn\.example\.com/ })[0]); });
+    expect(resolveChatImage).toHaveBeenCalledWith("https://cdn.example.com/a.png", null, 7);
+    expect(resolveChatImage).toHaveBeenCalledWith("https://cdn.example.com/b.png", null, 7);
+    expect(resolveChatImage).not.toHaveBeenCalledWith("https://other.org/c.png", null, 7);
+    const left = document.querySelectorAll("button.is-gated");
+    expect(left).toHaveLength(1);
+    expect(left[0].textContent).toContain("other.org");
+    // 之后才出现的同域名图（下一条回复）直接加载。
+    cleanup();
+    render(md("![](https://cdn.example.com/d.png)"));
+    await act(async () => {});
+    expect(document.querySelector("button.is-gated")).toBeNull();
+    expect(resolveChatImage).toHaveBeenCalledWith("https://cdn.example.com/d.png", null, 7);
+  });
+
+  it("放行只算当前会话：换个会话同域名还要点", async () => {
+    vi.mocked(resolveChatImage).mockResolvedValue({ path: WEB });
+    render(md("![](https://cdn.example.com/a.png)", 7));
+    await act(async () => { fireEvent.click(document.querySelector("button.is-gated")!); });
+    cleanup();
+    render(md("![](https://cdn.example.com/e.png)", 8));
+    await act(async () => {});
+    expect(document.querySelector("button.is-gated")?.textContent).toContain("cdn.example.com");
+    expect(resolveChatImage).not.toHaveBeenCalledWith("https://cdn.example.com/e.png", null, 8);
+  });
+
+  it("本地路径不受影响，照常自动显示", async () => {
+    vi.mocked(resolveChatImage).mockResolvedValue({ path: "C:\i\a.png" });
+    render(md("![](C:\a.png)"));
+    await act(async () => {});
+    expect(document.querySelector("button.is-gated")).toBeNull();
+    expect(resolveChatImage).toHaveBeenCalledWith("C:\a.png", null, 7);
+  });
+
+  it("README 预览里的网络图同样点了才下", async () => {
+    vi.mocked(resolveChatImage).mockResolvedValue({ path: WEB });
+    const local = vi.fn(async () => "data:image/png;base64,AAAA");
+    render(<ChatSessionContext.Provider value={7}><FileMarkdown text={"![badge](https://img.shields.io/b.svg)\n\n![logo](docs/logo.png)"} resolveImage={local} /></ChatSessionContext.Provider>);
+    await act(async () => {});
+    expect(resolveChatImage).not.toHaveBeenCalled();
+    expect(local).toHaveBeenCalledWith("docs/logo.png");
+    const gate = document.querySelector("button.is-gated")!;
+    expect(gate.textContent).toContain("img.shields.io");
+    await act(async () => { fireEvent.click(gate); });
+    expect(resolveChatImage).toHaveBeenCalledWith("https://img.shields.io/b.svg", null, null);
+    expect(document.querySelector(`img[src='asset://local/${WEB}']`)).toBeTruthy();
   });
 });

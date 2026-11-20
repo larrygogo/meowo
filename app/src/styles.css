@@ -5305,6 +5305,10 @@ button.scm-check-name:hover { text-decoration: underline; }
 /* 显示不了的图带上原因（文件不存在之类），原因不截断，文件名让位。 */
 .chat-image-chip:has(.chat-image-chip-reason) { max-width: min(400px, 100%); }
 .chat-image-chip > .chat-image-chip-reason { flex: 0 0 auto; color: var(--cc-text-faint); }
+/* 还没放行的网络图片（remoteImageGate.ts）：同一个徽章皮，做成可点的按钮，悬停加深一档底色，「点击加载图片」随之提亮。 */
+button.chat-image-chip.is-gated { border: 0; font-family: inherit; line-height: inherit; text-align: left; cursor: pointer; }
+button.chat-image-chip.is-gated:hover { background: var(--fill-selected-hover); color: var(--cc-text); }
+button.chat-image-chip.is-gated:hover > .chat-image-chip-reason { color: var(--cc-text-dim); }
 .chat-message.is-assistant { padding: 0; }
 /* 回合错误气泡（API Error 等，Message.tsx 的 turn_error）：红边淡红底与正文区隔——
    「API Error: Overloaded」披着模型正文的皮时，用户读不出这是故障。配色沿用工具失败

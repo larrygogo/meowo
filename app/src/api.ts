@@ -382,9 +382,10 @@ export type ResolveChatImageResult = { path: string } | { error: ChatImageError 
 
 /// 正文 Markdown 里的图片（本地路径、相对会话目录的路径、http(s) 网址）交给后端：校验是真图片后复制或下载进
 /// ~/.meowo/images，回持久路径，页面再按路径经 asset 协议（手机经 /file）显示。页面不直连第三方，CSP 不放宽。
-/// 手机端经远程桥，参数结构体在 meowo-protocol 的 bridge.rs。
-export function resolveChatImage(src: string, cwd: string | null): Promise<ResolveChatImageResult> {
-  return invoke("resolve_chat_image", { src, cwd } satisfies ResolveChatImageArgs);
+/// 手机端经远程桥，参数结构体在 meowo-protocol 的 bridge.rs。sessionId 是图所在的会话：手机桥只在该会话的
+/// 工作目录与 ~/.meowo/images 内解析本地路径（越界一律 forbidden）。桌面命令不认这个参数，多带的键 Tauri 会忽略。
+export function resolveChatImage(src: string, cwd: string | null, sessionId: number | null = null): Promise<ResolveChatImageResult> {
+  return invoke("resolve_chat_image", { src, cwd, sessionId } satisfies ResolveChatImageArgs);
 }
 
 /// 灯箱的「保存」：把 Meowo 图片目录里的一张图复制到用户在保存框里选的位置。桌面专用，手机端用浏览器下载。

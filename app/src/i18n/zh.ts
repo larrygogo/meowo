@@ -1625,6 +1625,9 @@ export const zh = {
     sentImageFailed: "图片没能发过来",
     sentImageOpen: "查看大图",
     imageLoading: "图片加载中",
+    // 网络图片默认不下载（防追踪），点了才由 Meowo 下载；同一会话里这个域名之后的图自动加载。
+    remoteImageLoad: "点击加载图片",
+    remoteImageTip: (host: string, name: string) => `${name} 来自 ${host}。点击后由 Meowo 下载显示，本会话里这个网站的其他图片也会自动加载`,
     imageLong: "长图",
     imageSave: "保存",
     imageSaved: "已保存",
