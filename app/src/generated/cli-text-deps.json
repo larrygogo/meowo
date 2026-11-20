@@ -1618,7 +1618,7 @@
           "needle": "turn_aborted",
           "note": "0.167.2 rollout 实样（用户中断处的分隔条，68 份里 64 次）；codex.exe 17 处",
           "rule": "record:turn_aborted",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/telemetry.rs:738"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/telemetry.rs:739"
         },
         {
           "legacy": false,
@@ -1639,7 +1639,7 @@
           "needle": "input_image",
           "note": "rollout 实样（2026-07-13，代码模式里 view_image 再 image() 出来，回执里的图据此显示）",
           "rule": "record:input_image",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/telemetry.rs:496"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/telemetry.rs:497"
         }
       ],
       "id": "codex",
@@ -1934,7 +1934,7 @@
         {
           "legacy": false,
           "needle": "inlineData",
-          "note": "0.68.0 bundle mcp-tool.js transformImageAudioBlock（MCP 图片块转 inlineData，回执里的截图据此显示）；本机会话无实样",
+          "note": "0.68.0 bundle mcp-tool.js transformImageAudioBlock（MCP 图片块转 inlineData，回执里的截图据此显示）；2026-11-21 探针真机实样（gemini-3-flash-preview，functionResponse.parts）",
           "rule": "record:inlineData",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/transcript.rs:618"
         }
@@ -2166,7 +2166,7 @@
         {
           "legacy": false,
           "needle": "attachments",
-          "note": "1.19.5 opencode.exe 内嵌源码（MCP 图片块转 state.attachments 的 file part，回执里的截图据此显示）；本机库无实样",
+          "note": "1.19.5 opencode.exe 内嵌源码（MCP 图片块转 state.attachments 的 file part，回执里的截图据此显示）；2026-11-21 探针真机实样（fixtures/screenshot.json）",
           "rule": "record:attachments",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/store.rs:524"
         }
