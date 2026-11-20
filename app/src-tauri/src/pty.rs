@@ -2905,6 +2905,31 @@ impl PtyBroker {
         }
     }
 
+    /// 前端「收卡」的出口：只撤已经了结的题面。broker 还持有这条提问（hook 仍在等作答）时
+    /// 拒绝撤下——那时终端里没有表单，题面卡是唯一的作答入口，撤掉它会话就卡死，只能 Esc
+    /// 打断整轮（2026-11-20 实拍：hook 挂了 10 小时，手机只剩「没认出选项」的兜底卡）。
+    /// 前端的收卡判断是推测（transcript 变长、回合状态），持有中的请求以 broker 为准。
+    /// 返回是否真的撤下。
+    ///
+    /// 锁顺序 approvals → interactive_questions：两把锁在别处都不嵌套，这里嵌套是为了让
+    /// 「是否持有」与「删除」原子化——handle_approval 先入题面表、后入 approvals，分开取
+    /// 快照会在两步之间误删刚入表的新提问。
+    pub(crate) fn dismiss_settled_interactive_question(&self, session_id: i64) -> bool {
+        let Ok(approvals) = self.attach.approvals.lock() else {
+            return false;
+        };
+        let Ok(mut questions) = self.attach.interactive_questions.lock() else {
+            return false;
+        };
+        let held = questions
+            .get(&session_id)
+            .is_some_and(|(request, _)| approvals.contains_key(&request.request_id));
+        if held {
+            return false;
+        }
+        questions.remove(&session_id).is_some()
+    }
+
     /// 对话窗/手机端此刻停在哪些会话上。审批消费者租约由对话页的 useEffect 在切到某
     /// 会话后注册、切走时注销，语义正是「有个视图正显示这条会话」——通知抑制复用它当
     /// 「用户正在看」的信号，不必再造一套上报。手机端新鲜租约同样算「在看」（人在

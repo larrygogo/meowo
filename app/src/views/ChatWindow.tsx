@@ -2436,6 +2436,11 @@ export function ChatWindow() {
   useEffect(() => {
     const baseline = questionTranscriptBaseline.current;
     if (!watchedQuestion || !baseline) return;
+    // broker 还持有的提问（hook 在等作答、终端里没有表单）不靠推测收卡：transcript 变长、
+    // 回合状态都证明不了它了结了，收掉就只剩一张答不了的兜底卡（2026-11-20 实拍：hook 挂了
+    // 10 小时）。它的了结以后端终态为准——轮询拿到非 pending 时 useApprovalChannel 会收卡，
+    // 折叠条也随 liveQuestionId 变化撤掉。
+    if (runtimeRequestBrokerLive(watchedQuestion)) return;
     const observation = {
       // 只数轮询从尾部读到的新条目：「加载更早」往头部前插旧历史也会让 items 变长，
       // 拿 items.length 判「答案已送达」会在用户往上翻的那一刻把挂起中的题面撤掉，

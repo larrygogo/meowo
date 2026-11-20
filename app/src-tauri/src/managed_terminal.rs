@@ -513,10 +513,11 @@ pub(crate) fn pending_interaction(
     }
 }
 
-/// 前端收卡时撤下题面，避免轮询把已答过的题重新弹出来。
+/// 前端收卡时撤下题面，避免轮询把已答过的题重新弹出来。broker 仍持有的提问不撤
+/// （见 `dismiss_settled_interactive_question`）。纯内存操作，同步命令合规。
 #[tauri::command]
 pub(crate) fn dismiss_interactive_question(state: State<'_, super::AppState>, session_id: i64) {
-    state.ptys.clear_interactive_question(session_id);
+    state.ptys.dismiss_settled_interactive_question(session_id);
 }
 
 /// 全部会话里「正在等用户」的清单（审批 + 同步题面），供远程端徽标轮询——push 事件
