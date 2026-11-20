@@ -526,6 +526,12 @@ pub fn store_local_copy_in(root: &Path, source_key: &str, path: &Path) -> Result
     let name = format!("{prefix}{}.{ext}", hex_digest(&bytes));
     let dir = root.join(ImageKind::Local.dir_name());
     let (stored, fresh) = write_named(&dir, &name, &bytes, false)?;
+    // 记下这份副本的原路径（回收据此判断原文件还在不在，见 prune_in_with）。只在新写或缺失时写。
+    let index = root.join(LOCAL_SOURCES_DIR).join(prefix.trim_end_matches('-'));
+    if fresh || !index.exists() {
+        let _ = std::fs::create_dir_all(root.join(LOCAL_SOURCES_DIR));
+        let _ = crate::fsutil::write_atomic(&index, &path.to_string_lossy());
+    }
     if fresh {
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for entry in entries.flatten() {
@@ -811,12 +817,49 @@ pub fn written_for(call_id: &str) -> Option<Vec<PathBuf>> {
 /// （按「调用 id + 路径」命名），之后再调直接返回同一份，不再读原文件——同一路径写三次就是
 /// 三张不同的图，原文件改了、删了也不影响已有的快照。原文件读不了或不是真图返回 None。
 pub fn snapshot_written_in(root: &Path, call_id: &str, path: &Path) -> Option<PathBuf> {
-    let key = format!("write\n{call_id}\n{}", path.display());
-    if let Some(hit) = cached_keyed_in(root, ImageKind::Tool, &key) {
-        return Some(hit);
+    // 文件名带 `w-` 前缀：回收认得出它不可再生（重拍只能拍到改过的文件），与 sent/ 同档最后删。
+    let stem = format!("{SNAPSHOT_PREFIX}{}", hex_digest(format!("write\n{call_id}\n{}", path.display()).as_bytes()));
+    let dir = root.join(ImageKind::Tool.dir_name());
+    {
+        let _guard = STORE_LOCK.read().unwrap_or_else(|e| e.into_inner());
+        let hit = ["png", "jpg", "gif", "webp", "svg"]
+            .iter()
+            .map(|ext| dir.join(format!("{stem}.{ext}")))
+            .find(|p| std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.len() > 0));
+        if let Some(hit) = hit {
+            touch_unlocked(&hit);
+            return Some(hit);
+        }
     }
     let bytes = read_image_file(path).ok()?;
-    store_keyed_in(root, ImageKind::Tool, &key, &bytes).ok()
+    let ext = validate(&bytes).ok()?;
+    write_named(&dir, &format!("{stem}.{ext}"), &bytes, false).ok().map(|(p, _)| p)
+}
+
+/// 写图快照的文件名前缀（`tool/w-<哈希>.<扩展名>`），见 [`snapshot_written_in`]。
+const SNAPSHOT_PREFIX: &str = "w-";
+/// 正文本地图副本的原路径记录：`<根>/local-sources/<来源哈希>`，内容是原路径。不在四个图片
+/// 子目录里，回收的扫描与 /file 的图片嗅探都不把它当图。
+const LOCAL_SOURCES_DIR: &str = "local-sources";
+
+/// 这张图删了能不能再生出同样的内容。不能的（sent/、写图快照、原文件已不在的 local 副本）
+/// 回收时与 sent/ 同档、最后才删（做空第二轮）。
+fn irreplaceable(root: &Path, kind: ImageKind, name: &str) -> bool {
+    match kind {
+        ImageKind::Sent => true,
+        ImageKind::Tool => name.starts_with(SNAPSHOT_PREFIX),
+        ImageKind::Web => false,
+        ImageKind::Local => {
+            let Some((prefix, _)) = name.split_once('-') else {
+                return true;
+            };
+            // 没有原路径记录（旧数据）按不可再生算，宁可留着。
+            match std::fs::read_to_string(root.join(LOCAL_SOURCES_DIR).join(prefix)) {
+                Ok(source) => is_remote_path(&source) || !Path::new(source.trim()).is_file(),
+                Err(_) => true,
+            }
+        }
+    }
 }
 
 /// 同上，默认根目录。
@@ -965,7 +1008,8 @@ fn prune_in_with(root: &Path, cap: u64, after_scan: impl FnOnce()) -> PruneRepor
                 continue;
             }
             let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
-            files.push((kind == ImageKind::Sent, mtime, meta.len(), entry.path()));
+            let name = entry.file_name().to_string_lossy().into_owned();
+            files.push((irreplaceable(root, kind, &name), mtime, meta.len(), entry.path()));
         }
     }
     after_scan();
@@ -973,7 +1017,8 @@ fn prune_in_with(root: &Path, cap: u64, after_scan: impl FnOnce()) -> PruneRepor
     let mut total = before;
     let mut removed = 0;
     if total > cap {
-        // false（可再生）排在 true（sent）前面；同类按修改时间从旧到新。
+        // false（可再生）排在 true（不可再生：sent、写图快照、原文件已删的 local 副本）前面；
+        // 同档按修改时间从旧到新。
         files.sort_by_key(|f| (f.0, f.1));
         let _guard = STORE_LOCK.write().unwrap_or_else(|e| e.into_inner());
         for (_, scanned, len, path) in &files {
@@ -994,6 +1039,20 @@ fn prune_in_with(root: &Path, cap: u64, after_scan: impl FnOnce()) -> PruneRepor
         }
         if removed > 0 {
             clear_tool_memo();
+        }
+    }
+    // 原路径记录里，对应副本已经一张不剩的收掉。
+    if let Ok(entries) = std::fs::read_dir(root.join(LOCAL_SOURCES_DIR)) {
+        let alive: std::collections::HashSet<String> = std::fs::read_dir(root.join(ImageKind::Local.dir_name()))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| e.file_name().to_string_lossy().split_once('-').map(|(p, _)| p.to_string()))
+            .collect();
+        for entry in entries.flatten() {
+            if !alive.contains(entry.file_name().to_string_lossy().as_ref()) {
+                let _ = std::fs::remove_file(entry.path());
+            }
         }
     }
     PruneReport {
@@ -1365,7 +1424,10 @@ mod tests {
         let sent_old = put(ImageKind::Sent, "s.png", 9000);
         let tool_old = put(ImageKind::Tool, "t.png", 500);
         let web_new = put(ImageKind::Web, "w.png", 10);
-        let local_mid = put(ImageKind::Local, "l.png", 100);
+        // 正文本地图副本，原文件还在（原路径记录指向一个存在的文件）：可再生。
+        let local_mid = put(ImageKind::Local, "l-c.png", 100);
+        std::fs::create_dir_all(root.join(LOCAL_SOURCES_DIR)).unwrap();
+        std::fs::write(root.join(LOCAL_SOURCES_DIR).join("l"), sent_old.to_string_lossy().as_bytes()).unwrap();
         // 一份崩溃残留的临时文件（够老）。
         let stale = put(ImageKind::Tool, "x.png.tmp.1.2", 7200);
 
@@ -1409,6 +1471,59 @@ mod tests {
         assert_eq!(store_tool_base64("aGVsbG8="), None);
         assert_eq!(store_tool_base64("aGVsbG8="), None);
         std::fs::remove_file(&first).ok();
+    }
+
+    /// 做空第二轮探针：写图快照与「原文件已删」的正文本地图副本删了就再也找不回原样——快照重拍
+    /// 会拍成改过的文件，原文件没了副本就没了。它们和 sent/ 同一档，最后才删；原文件还在的
+    /// local 副本、回执内嵌图（tool/ 按内容命名）、web/ 才是可再生的。
+    #[test]
+    fn prune_keeps_write_snapshots_and_orphaned_local_copies_until_last() {
+        use std::time::{Duration, SystemTime};
+        let base = temp_root("prune-tier");
+        let root = base.join("images");
+        let age = |path: &Path, secs: u64| {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(SystemTime::now() - Duration::from_secs(secs))
+                .unwrap();
+        };
+        let png = |w: u32| {
+            let mut p = PNG_1X1.to_vec();
+            p[16..20].copy_from_slice(&w.to_be_bytes());
+            p
+        };
+        // 快照：拍下 2×1，随后原文件被改成 3×1。
+        let drawn = base.join("chart.png");
+        std::fs::write(&drawn, png(2)).unwrap();
+        let shot = snapshot_written_in(&root, "call_1", &drawn).unwrap();
+        std::fs::write(&drawn, png(3)).unwrap();
+        // 正文本地图：一张原文件已删，一张原文件还在。
+        let gone = base.join("gone.png");
+        std::fs::write(&gone, png(4)).unwrap();
+        let orphan = store_local_copy_in(&root, &gone.to_string_lossy(), &gone).unwrap();
+        std::fs::remove_file(&gone).unwrap();
+        let alive = base.join("alive.png");
+        std::fs::write(&alive, png(5)).unwrap();
+        let copy = store_local_copy_in(&root, &alive.to_string_lossy(), &alive).unwrap();
+        // 可再生的回执图与网络图，都比上面三张新。
+        let receipt = store_bytes_in(&root, ImageKind::Tool, &png(6)).unwrap();
+        let web = store_keyed_in(&root, ImageKind::Web, "https://x.example/a.png", &png(7)).unwrap();
+        for (path, secs) in [(&shot, 9000), (&orphan, 8000), (&copy, 7000), (&receipt, 100), (&web, 50)] {
+            age(path, secs);
+        }
+        // 超额：只够留两张。
+        let one = std::fs::metadata(&shot).unwrap().len();
+        prune_in(&root, one * 2);
+        assert!(shot.exists(), "写图快照不能当可再生的删");
+        assert!(orphan.exists(), "原文件已删的副本不能当可再生的删");
+        assert!(!copy.exists() && !receipt.exists() && !web.exists());
+        // 再解析：仍是原快照（2×1），不是改过的文件。
+        let again = snapshot_written_in(&root, "call_1", &drawn).unwrap();
+        assert_eq!(again, shot);
+        assert_eq!(std::fs::read(&again).unwrap(), png(2));
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// 回收与写入 / 解析共用一把锁：扫描之后、真删之前有人复用了某张图（解析时同内容重写会
