@@ -181,6 +181,9 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "dismiss_interactive_question",
     // 附件（落盘到 %TEMP%/meowo-paste，路径由后端生成）
     "save_pasted_attachment",
+    // 正文 Markdown 图片：本地路径复制进 ~/.meowo/images/local、网络图由桌面端下载进 web/，
+    // 回的是图片目录里的路径，手机再经 /file 读。只收真图（按文件头判定），给不出别的文件内容。
+    "resolve_chat_image",
     // 尚未交给 CLI 的持久队列；领取是原子的，桌面与手机不能同时投递同一条。
     "prompt_queue_list",
     "prompt_queue_enqueue",
@@ -1562,6 +1565,10 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             let a = args!(SavePastedAttachmentArgs);
             reply(crate::chat::save_pasted_attachment(a.file_name, a.data_base64).await)
         }
+        "resolve_chat_image" => {
+            let a = args!(ResolveChatImageArgs);
+            reply(crate::chat_images::resolve_chat_image(a.src, a.cwd).await)
+        }
         "prompt_queue_list" => {
             let a = args!(SessionArg);
             reply(crate::prompt_queue::prompt_queue_list(state, a.session_id))
@@ -1834,7 +1841,8 @@ fn file_scope_roots() -> Vec<PathBuf> {
     // 默认账号 + 各 profile 的 image-cache（profile 设了 CLAUDE_CONFIG_DIR，图片不在
     // ~/.claude 下）。每次请求现扫：新加的账号不必重启远程服务即可读图。
     let mut roots = meowo_agent::plugins::claude::transcript::image_cache_dirs();
-    roots.push(std::env::temp_dir().join("meowo-paste"));
+    // Meowo 自己的图片目录（~/.meowo/images）与旧数据的 $TEMP/meowo-paste。
+    roots.extend(meowo_agent::images::readable_roots());
     roots
 }
 
@@ -2321,6 +2329,50 @@ mod tests {
 
         let _ = std::fs::remove_file(&outside);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 验收 #8：手机 /file 能读 Meowo 图片目录，目录里指向外面的符号链接 / junction 被拒。
+    #[test]
+    fn file_scope_covers_images_dir_and_rejects_links_out() {
+        let images = meowo_agent::images::images_root().unwrap();
+        assert!(file_scope_roots().contains(&images), "file_scope_roots 应含 ~/.meowo/images");
+
+        let base = std::env::temp_dir().join(format!("meowo-remote-links-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("images");
+        std::fs::create_dir_all(root.join("sent")).unwrap();
+        std::fs::write(root.join("sent").join("a.png"), b"x").unwrap();
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), b"secret").unwrap();
+        let roots = vec![root.clone()];
+        assert!(path_within_roots(root.join("sent").join("a.png").to_str().unwrap(), &roots).is_some());
+        let escape = root.join("sent").join("..").join("..").join("outside").join("secret.txt");
+        assert!(path_within_roots(escape.to_str().unwrap(), &roots).is_none());
+        // 文件符号链接（Windows 无开发者模式时建不出来，跳过这一段）。
+        let link = root.join("sent").join("link.txt");
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(outside.join("secret.txt"), &link).is_ok();
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_file(outside.join("secret.txt"), &link).is_ok();
+        if made {
+            assert!(path_within_roots(link.to_str().unwrap(), &roots).is_none());
+        }
+        // 目录 junction（Windows 普通用户就能建）：必须覆盖到。
+        #[cfg(windows)]
+        {
+            let junction = root.join("sent").join("jn");
+            let ok = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(&junction)
+                .arg(&outside)
+                .output()
+                .is_ok_and(|o| o.status.success());
+            assert!(ok, "mklink /J 应能建成");
+            assert!(path_within_roots(junction.join("secret.txt").to_str().unwrap(), &roots).is_none());
+            let _ = std::fs::remove_dir(&junction);
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
@@ -2811,6 +2863,11 @@ mod tests {
                 parse::<SavePastedAttachmentArgs>(br#"{"fileName":"a.png","dataBase64":"aGk="}"#)
                     .map(|_| ())
             }
+            // api.ts resolveChatImage：cwd 没有时发 null。
+            "resolve_chat_image" => parse::<ResolveChatImageArgs>(
+                br#"{"src":"docs/a.png","cwd":null}"#,
+            )
+            .map(|_| ()),
             "prompt_queue_orphans" => Ok(()),
             "prompt_queue_restore_orphan" => parse::<PromptQueueEntryArgs>(br#"{"sessionId":-1,"id":1}"#).map(|_| ()),
             "prompt_queue_list" => parse::<SessionArg>(br#"{"sessionId":42}"#).map(|_| ()),

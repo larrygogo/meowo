@@ -15,7 +15,7 @@ fn main() {
     // agent 拉起的 MCP 服务器（面板浏览器工具）。长驻读 stdin，必须在 run() 一次性读完
     // stdin 之前分流。
     if args.first().is_some_and(|arg| arg == "mcp") {
-        mcp::run();
+        mcp::run(&args[1..]);
         return;
     }
     // Lead 工作流 hook（用户在设置里打开 Lead 后才装）。与下面的主路径分开：只有它会输出

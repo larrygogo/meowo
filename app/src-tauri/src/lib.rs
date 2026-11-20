@@ -8,6 +8,7 @@ mod browser_emulation;
 mod browser_pane;
 mod browser_permission;
 mod chat;
+mod chat_images;
 mod checkpoints;
 mod confirm;
 mod detect;
@@ -1521,6 +1522,8 @@ pub fn run() {
             refresh_session_todos,
             save_pasted_attachment,
             allow_image_preview,
+            chat_images::resolve_chat_image,
+            chat_images::export_chat_image,
             clipboard_set_image,
             capture_screen_region,
             clipboard_restore,
@@ -1887,6 +1890,8 @@ pub fn run() {
             // %TEMP%\meowo-paste / meowo-handoff 没有任何 OS 侧回收（Windows 不清 %TEMP%），
             // 启动时后台按 mtime 清过期附件与交接文件（TTL 与回读方的取舍见 chat::PASTE_TTL）。
             chat::spawn_paste_cleanup();
+            // 对话图片的持久目录：asset 协议放行 + 后台按总量上限回收（见 chat_images::init）。
+            chat_images::init(app.handle());
             // 首次启动（新装 / 老用户升级后第一次）自动弹使用引导。延迟一拍让贴纸先画出来，
             // 引导窗口叠在已成型的应用上；看完/关闭时前端置 onboarding_seen=true，之后只手动打开。
             if !crate::settings::load_settings().onboarding_seen {

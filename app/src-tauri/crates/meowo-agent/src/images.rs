@@ -55,6 +55,8 @@ impl ImageKind {
 
 /// 失败原因的固定代码（前后端约定 contract.md：`[Image error: <code>] `）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
 #[serde(rename_all = "snake_case")]
 pub enum ImageErrorCode {
     NotFound,
@@ -78,6 +80,8 @@ impl ImageErrorCode {
 
 /// 一次失败：代码给前端分支用，`message` 是一句人话（给模型看，也直接显示给用户）。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
 pub struct ImageError {
     pub code: ImageErrorCode,
     pub message: String,
@@ -100,6 +104,27 @@ impl ImageError {
 impl std::fmt::Display for ImageError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.receipt())
+    }
+}
+
+/// `resolve_chat_image` 的返回（contract.md）：成功给持久目录里的路径，失败给原因。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(untagged)]
+pub enum ResolvedChatImage {
+    Ok { path: String },
+    Err { error: ImageError },
+}
+
+impl From<Result<PathBuf, ImageError>> for ResolvedChatImage {
+    fn from(result: Result<PathBuf, ImageError>) -> Self {
+        match result {
+            Ok(path) => Self::Ok {
+                path: path.to_string_lossy().into_owned(),
+            },
+            Err(error) => Self::Err { error },
+        }
     }
 }
 

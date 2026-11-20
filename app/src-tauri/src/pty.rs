@@ -3689,7 +3689,13 @@ impl PtyBroker {
         let session_id = self.binding(owner).unwrap_or(owner);
         // 操作可能要等页面加载十几秒；连接已认证，放开读超时。
         stream.set_read_timeout(None).ok();
-        let reply = match crate::browser_agent::handle(session_id, tool, args) {
+        // 发图不是浏览器操作：不受「允许 agent 操作面板浏览器」开关约束，也不碰面板。
+        let outcome = if tool == "send_image" {
+            crate::chat_images::send_image(args)
+        } else {
+            crate::browser_agent::handle(session_id, tool, args)
+        };
+        let reply = match outcome {
             Ok(mut body) => {
                 body["ok"] = serde_json::json!(true);
                 body

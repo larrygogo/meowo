@@ -71,6 +71,14 @@ bridged_args!(GetSessionAdminPageArgs {
 
 bridged_args!(SearchChatTranscriptsArgs { query: String });
 
+// 正文 Markdown 图片（chat_images.rs resolve_chat_image）：src 是 Markdown 里的原样地址，
+// cwd 是会话目录（相对路径按它补全），没有就 null。
+bridged_args!(ResolveChatImageArgs {
+    src: String,
+    #[serde(default)]
+    cwd: Option<String>
+});
+
 bridged_args!(RecentCwdsArgs {
     limit: usize,
     #[serde(default)]
