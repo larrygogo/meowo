@@ -38,6 +38,7 @@ import {
   type ProviderUsage,
   type UsageLane,
   type HooksStatus,
+  revealTerminalPath,
 } from "../../api";
 import { agentAssets } from "../../providers";
 import { AgentAppIcon } from "../chat/AgentAppIcon";
@@ -55,7 +56,8 @@ import { useLoginOperations, type LoginOperationState } from "../../hooks/useLog
 import { useInstallOperations, type InstallOperationState } from "../../hooks/useInstallOperations";
 import { isWindows } from "../../platform";
 import { Icon } from "../../icons/Icon";
-import { icDownload, icRefreshCw } from "../../icons/glyphs";
+import { icAlert, icDownload, icRefreshCw } from "../../icons/glyphs";
+import { remoteUi } from "../../remoteMode";
 import { icInfo } from "../../icons/glyphs.settings";
 import { busyProps } from "../../busyButton";
 
@@ -159,7 +161,7 @@ function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
 
 // 单个 provider 卡片：安装/登录/用量三态。已装且登录 = 现有账号信息 + 用量泳道 + 刷新按钮 + 贴纸显示开关；
 // 已装未登录 = 提示语；未装 = 一键安装按钮。
-function ProviderCard({ provider, name, installed, supportsAccount, supportsApiKeyLogin, supportsProfiles, movesSessionsAcrossAccounts, supportsContext, relay, payload, usage, err, onRefresh, installOp, onStartInstall, onCancelInstall, onLoggedIn, loginState, onStartLogin, onCancelLogin, refreshing, settings, patchSettings, onToggleQuota, usageRefreshedAt, updateInfo }: {
+function ProviderCard({ provider, name, installed, supportsAccount, supportsApiKeyLogin, supportsProfiles, movesSessionsAcrossAccounts, supportsContext, relay, payload, usage, err, onRefresh, installOp, onStartInstall, onCancelInstall, onLoggedIn, loginState, onStartLogin, onCancelLogin, refreshing, settings, patchSettings, onToggleQuota, usageRefreshedAt, updateInfo, mcpConfigUnreadable = null }: {
   provider: AgentId;
   /** 展示名，来自后端 list_agents()（产品名，不翻译）。 */
   name: string;
@@ -221,6 +223,9 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
   usageRefreshedAt?: number | null;
   /** 页面级探测的版本/更新信息（check_agent_updates）。null = 尚未探测或探测失败——整块不渲染。 */
   updateInfo: AgentUpdateInfo | null;
+  /** 后端 `mcp_config_unreadable`：Meowo 发图工具要登记进这家 CLI 的配置文件，但那份文件读不懂（如带注释的 JSONC），
+   *  这里是它的路径。有值就提示「发图工具没能接上」。只看字段有无，不看是哪家。 */
+  mcpConfigUnreadable?: string | null;
 }) {
   const t = useT();
   const acc = payload?.account ?? null;
@@ -815,6 +820,8 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
           </button>
         </div>
       )}
+
+      {isInstalled && mcpConfigUnreadable && <McpConfigUnreadableNote provider={provider} path={mcpConfigUnreadable} />}
 
       {pathMsg && (
         <div className="provider-card-body agent-path-msg" data-testid={"agent-path-msg-" + provider}>
@@ -1605,10 +1612,41 @@ export function AccountSection({ view = "account", onViewChange, showAll = false
         onToggleQuota={() => toggleQuotaProvider(cur.id)}
         usageRefreshedAt={usageRefreshedAt[cur.id] ?? null}
         updateInfo={updateMap[cur.id] ?? null}
+        mcpConfigUnreadable={cur.mcp_config_unreadable ?? null}
       />}
       {(showAll || view === "extensions") && <ExtensionsSection agent={cur.id} />}
       {/* T-6 兄弟场景（2026-11-12）：此前是手写的红字 + 内联样式 ×，与其余分区的 SettingsError 两套样式。 */}
       <SettingsError preformatted error={patchError} onDismiss={clearPatchError} />
     </>
+  );
+}
+
+/// 发图工具没能接上：这家 CLI 的配置文件 Meowo 读不懂（如带注释的 JSONC），不敢改写，就没登记进去。
+/// 说清后果（agent 发不了图）、原因与那份文件，给「在文件夹中显示」让用户自己去看、去改。
+/// 样式沿用卡片里的安装日志行（小字、文字链接式按钮），只有图标用提醒色，不整条标红：agent 本身照常能用。
+function McpConfigUnreadableNote({ provider, path }: { provider: AgentId; path: string }) {
+  const t = useT();
+  const [msg, setMsg] = useState<string | null>(null);
+  const reveal = () => {
+    setMsg(null);
+    revealTerminalPath("", path).catch((e: unknown) => setMsg(formatBackendError(e, t.locale)));
+  };
+  return (
+    <div className="provider-card-body agent-mcp-unreadable" role="note" data-testid={"agent-mcp-unreadable-" + provider}>
+      <div className="agent-mcp-unreadable-head">
+        <Icon glyph={icAlert} size={14} />
+        <span>{t.account.mcpConfigUnreadable}</span>
+      </div>
+      <div className="agent-install-log">
+        {t.account.mcpConfigUnreadableReason}
+        <span className="agent-mcp-unreadable-path">{path}</span>
+        {!remoteUi() && (
+          <button type="button" className="agent-path-gap-btn" data-testid={"agent-mcp-reveal-" + provider} onClick={reveal}>
+            {t.account.mcpConfigReveal}
+          </button>
+        )}
+        {msg && <span className="agent-mcp-unreadable-err">{msg}</span>}
+      </div>
+    </div>
   );
 }

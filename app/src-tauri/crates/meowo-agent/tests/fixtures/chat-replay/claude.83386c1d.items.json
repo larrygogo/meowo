@@ -1,0 +1,23 @@
+[
+  {
+    "type": "tool_use",
+    "id": "toolu_01AaFEcVBxfcb6GWA3DhPGVc",
+    "timestamp": "2026-11-20T15:45:23.311Z",
+    "name": "mcp__meowo__send_image",
+    "kind": "image",
+    "summary": "探针测试图",
+    "detail": {
+      "kind": "image",
+      "source": "chart.png",
+      "caption": "探针测试图"
+    }
+  },
+  {
+    "type": "tool_result",
+    "id": "4d341c7a-026a-4795-9df3-818ccebd57d8:0",
+    "timestamp": "2026-11-20T15:45:23.341Z",
+    "tool_use_id": "toolu_01AaFEcVBxfcb6GWA3DhPGVc",
+    "text": "图片已发给用户，对话里会直接显示这张图；不用再描述图片内容，也不要重复发送。\n[Image: source: C:\\probe\\images\\sent\\0c6eebdca4b84ccf186723b705349400.png]",
+    "is_error": false
+  }
+]

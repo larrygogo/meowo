@@ -487,6 +487,11 @@ fn clip(text: &str, max: usize) -> String {
     }
 }
 
+#[cfg(test)]
+pub(super) fn slim_part_for_test(part: Value) -> Value {
+    slim_part(part)
+}
+
 /// 工具 part 只留对话页用得到的字段：`state.metadata` 里有整份 diff/预览，体积远大于正文。
 fn slim_part(part: Value) -> Value {
     if part.get("type").and_then(Value::as_str) != Some("tool") {
@@ -516,8 +521,31 @@ fn slim_part(part: Value) -> Value {
             "error": field("error"),
             // 起止时刻：回执用结束时刻，工具耗时才算得出来。
             "time": field("time"),
+            "attachments": slim_attachments(state.and_then(|s| s.get("attachments"))),
         },
     })
+}
+
+/// 工具回执里的图（MCP 截图、读图片）：1.19.5 源码把 MCP 的 image 块转成
+/// `state.attachments[] = {type:"file", mime, url:"data:<mime>;base64,…"}`。此前整段丢掉，
+/// 图从对话里消失。这里把图落进 Meowo 持久目录 `images/tool/`（按内容哈希），只留路径——
+/// 整段 data URL 留在导出行里会把缓存撑大。不是图、落盘失败的附件丢弃。
+fn slim_attachments(attachments: Option<&Value>) -> Value {
+    let images: Vec<Value> = attachments
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let url = item.get("url")?.as_str()?;
+            let path = crate::images::store_tool_data_url(url)?;
+            Some(json!({ "image": path.to_string_lossy() }))
+        })
+        .collect();
+    if images.is_empty() {
+        Value::Null
+    } else {
+        Value::Array(images)
+    }
 }
 
 /// 用户消息的 file part 只有内嵌图片（粘贴截图）值得留正文；其余附件的 url 可能是整份

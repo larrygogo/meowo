@@ -1,4 +1,4 @@
-import { createContext, memo, useEffect, useState, type ReactNode } from "react";
+import { createContext, memo, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useT } from "../../i18n";
 import type { DiffHunk } from "../../generated/contracts/DiffHunk";
 import type { ToolDetail } from "../../generated/contracts/ToolDetail";
@@ -7,8 +7,10 @@ import { BashTool } from "./tools/BashTool";
 import { ReadTool } from "./tools/ReadTool";
 import { EditTool } from "./tools/EditTool";
 import { GenericTool } from "./tools/GenericTool";
+import { fileImages, ResolvedImage, SentImageMessage, splitReceiptImages, ToolImageStrip } from "./ChatImage";
 
 export { ToolIcon, toolKindLabel, toolShortName } from "./ToolIcon";
+import { ToolHasImageContext } from "./ToolIcon";
 export type { ToolKind } from "./ToolIcon";
 
 type DiffOperation = { kind: " " | "-" | "+"; text: string };
@@ -309,14 +311,32 @@ export function UnifiedDiff({ hunks, lang }: { hunks: DiffHunk[]; lang: string |
 
 /// 工具调用按类型分派到独立渲染器（对照 Kimi 的 ToolCall → BashTool/ReadTool/EditTool/GenericTool）。
 /// 类别来自后端（`item.kind`）：五家的读、写、改、命令各落到同一个渲染器。
+///
+/// 图片在这里统一处理，不分工具类别：回执里的图片引用行（截图、读图）从正文里抽走，缩略图露在工具行下面，
+/// 不用展开；回执里没有图、但这次读写的是图片文件的，交给后端解析成持久副本再露缩略图。
 export const ToolActivity = memo(function ToolActivity({ item, result }: { item: import("./shared").ToolUseItem; result?: import("./shared").ToolResultItem }) {
-  switch (item.kind) {
-    case "run": return <BashTool item={item} result={result} />;
-    case "read": return <ReadTool item={item} result={result} />;
-    case "write":
-    case "edit": return <EditTool item={item} result={result} />;
-    default: return <GenericTool item={item} result={result} />;
-  }
+  const media = useMemo(() => splitReceiptImages(result), [result]);
+  const files = useMemo(() => (media.images.length > 0 ? [] : fileImages(item, result)), [item, result, media.images.length]);
+  // agent 发来的图在时间线里排在正文区（Transcript）；子任务记录等直接渲染工具行的地方也按图片消息显示。
+  if (item.kind === "image") return <SentImageMessage item={item} result={result} />;
+  const row = (() => {
+    switch (item.kind) {
+      case "run": return <BashTool item={item} result={media.result} />;
+      case "read": return <ReadTool item={item} result={media.result} image={media.images.length > 0 || files.length > 0} />;
+      case "write":
+      case "edit": return <EditTool item={item} result={media.result} />;
+      default: return <GenericTool item={item} result={media.result} />;
+    }
+  })();
+  if (media.images.length === 0 && files.length === 0) return row;
+  return (
+    <>
+      {media.images.length > 0 ? <ToolHasImageContext.Provider value>{row}</ToolHasImageContext.Provider> : row}
+      {media.images.length > 0
+        ? <ToolImageStrip paths={media.images} />
+        : <div className="chat-tool-media">{files.map((path) => <ResolvedImage key={path} src={path} mode="thumb" />)}</div>}
+    </>
+  );
 });
 
 /// 收起后内容多留一瞬间，与 CSS 里 chat-strip-out 的时长同源（时长略短于动画会砍掉尾帧）。

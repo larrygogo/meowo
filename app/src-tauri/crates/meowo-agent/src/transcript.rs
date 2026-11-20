@@ -459,6 +459,19 @@ pub struct CommandExit {
     pub started_ms: Option<i64>,
 }
 
+/// 一条「某次 MCP 工具调用的完整结果」旁路记录（codex 的 `item_completed/McpToolCall`）：
+/// 不是对话内容，只带结果里的图片引用行。exec 脚本没把工具结果输出出来时（只 `await` 不
+/// `text()`），回执里就没有引用行，读取层拿它给对应的回执补上（见 [`ExitJoin`]）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolSideImages {
+    /// 工具全名，与对应工具调用的 `ToolUse.name` 逐字相同才算同一个工具。
+    pub tool: String,
+    /// `[Image: source: …]` 引用行，按出现顺序。
+    pub refs: Vec<String>,
+    /// 这次调用开始执行的时刻（Unix 毫秒）；缺了不参与关联（同 [`CommandExit::started_ms`]）。
+    pub started_ms: Option<i64>,
+}
+
 /// Provider transcript 中观测到的一个独立模式维度。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AgentMode {
@@ -678,6 +691,13 @@ pub trait TranscriptSpec: Sync {
     /// 这一行若是「某条命令跑完了」的旁路记录，取出命令原文与退出码（见 [`CommandExit`]）。
     /// 只有声明了 [`Self::command_exit_markers`] 的 provider 才会被问到。必须是这一行的纯函数。
     /// 返回 Some 的行不再交给 [`Self::parse_transcript_line`]：旁路记录不产出对话内容。
+    /// 这一行若是「某次 MCP 工具调用的完整结果」旁路记录，取出其中的图片引用行（见
+    /// [`ToolSideImages`]）。只有声明了 [`Self::command_exit_markers`] 的 provider 才会被问到；
+    /// 必须是这一行的纯函数。返回 Some 的行同样不再产出对话内容。
+    fn chat_tool_images(&self, _line: &str) -> Option<ToolSideImages> {
+        None
+    }
+
     fn chat_command_exit(&self, _line: &str) -> Option<CommandExit> {
         None
     }
@@ -778,12 +798,12 @@ fn read_stream(subagents: &dyn SubagentSpec, path: &Path) -> Option<Vec<ChatItem
     if truncated {
         lines.next();
     }
-    Some(
-        lines
-            .flat_map(|line| subagents.parse_stream_line(line))
-            .map(ChatItem::from)
-            .collect(),
-    )
+    let mut items: Vec<ChatItem> = lines
+        .flat_map(|line| subagents.parse_stream_line(line))
+        .map(ChatItem::from)
+        .collect();
+    sanitize_image_refs(&mut items);
+    Some(items)
 }
 
 /// 读取一次子任务委派的完整时间线。**按需调用**（用户展开时），不进增量热路径。
@@ -1081,6 +1101,8 @@ struct ParsedLine {
     mark: Option<ChatLineMark>,
     /// 旁路的命令退出记录（见 [`CommandExit`]）；没声明关联的 provider 恒为 None。
     exit: Option<CommandExit>,
+    /// 旁路的 MCP 工具结果图片（见 [`ToolSideImages`]）；同上。
+    images: Option<ToolSideImages>,
     items: Vec<ChatItem>,
 }
 
@@ -1098,16 +1120,82 @@ fn parse_lines(spec: &dyn TranscriptSpec, path: &Path, base: u64, buf: &[u8]) ->
         let modes = spec.agent_modes_from_line(line);
         let mark = spec.chat_line_mark(line);
         let exit = if joins { spec.chat_command_exit(line) } else { None };
+        let mut images = if joins && exit.is_none() { spec.chat_tool_images(line) } else { None };
+        // 旁路结果里的引用行同样只认可信根（它最后也会拼进回执正文）。
+        if let Some(side) = images.as_mut() {
+            if !side.refs.is_empty() {
+                let roots = crate::images::trusted_ref_roots();
+                side.refs.retain(|line| {
+                    line.strip_prefix("[Image: source: ")
+                        .and_then(|rest| rest.strip_suffix(']'))
+                        .is_some_and(|path| crate::images::is_trusted_ref(path, &roots))
+                });
+            }
+        }
         // 撤回行本身不产出消息（折叠时直接跳过），不必解析。旁路退出记录同理：它只带退出码，
         // 不是对话内容——再整行解析一遍纯属白费（codex 的这种行带着整份命令输出）。
-        let items = if matches!(mark, Some(ChatLineMark::Undo(_))) || exit.is_some() {
+        let items = if matches!(mark, Some(ChatLineMark::Undo(_))) || exit.is_some() || images.is_some() {
             Vec::new()
         } else {
-            spec.parse_transcript_line_in(path, line).into_iter().map(ChatItem::from).collect()
+            let mut items: Vec<ChatItem> =
+                spec.parse_transcript_line_in(path, line).into_iter().map(ChatItem::from).collect();
+            snapshot_written_images(&mut items);
+            items
         };
-        out.push(ParsedLine { start, modes, mark, exit, items });
+        out.push(ParsedLine { start, modes, mark, exit, images, items });
     }
     out
+}
+
+/// 写出 / 修改图片文件的调用：调用处登记它写的图片路径，回执处按调用 id 留快照并在回执末尾
+/// 追加引用行（见 [`crate::images::snapshot_written`]）。五家共用，只认 [`ToolDetail`] 的
+/// write / edit / patch，不看工具名。失败、被打断的回执不补（那次没写成）。
+fn snapshot_written_images(items: &mut [ChatItem]) {
+    // 先清掉伪造的引用行，再追加我们自己的快照引用行。
+    sanitize_image_refs(items);
+    for item in items.iter_mut() {
+        match item {
+            ChatItem::ToolUse { id, detail: Some(detail), .. } => {
+                let paths: Vec<String> = match detail {
+                    ToolDetail::Write { path, .. } | ToolDetail::Edit { path, .. } => vec![path.clone()],
+                    ToolDetail::Patch { files } => files
+                        .iter()
+                        .filter(|file| file.op != "delete")
+                        .map(|file| file.move_to.clone().unwrap_or_else(|| file.path.clone()))
+                        .collect(),
+                    _ => continue,
+                };
+                crate::images::remember_written(id, paths);
+            }
+            ChatItem::ToolResult { tool_use_id: Some(id), is_error: false, interrupted: false, text, .. } => {
+                let Some(paths) = crate::images::written_for(id) else { continue };
+                for path in paths {
+                    let Some(snapshot) = crate::images::snapshot_written(id, &path) else { continue };
+                    let line = crate::images::image_ref_line(&snapshot);
+                    if text.contains(&line) {
+                        continue;
+                    }
+                    if !text.is_empty() {
+                        text.push('\n');
+                    }
+                    text.push_str(&line);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// 前端会当图加载的文字（工具回执、用户消息）里，只保留指向 Meowo 可信图片根的引用行，其余改写成
+/// 普通文字（见 [`crate::images::neutralize_untrusted_refs`]）。五家共用这一处：主会话逐行解析
+/// （parse_lines）与子任务侧车流（read_stream）都走它——做空第三轮查出侧车流漏了。
+/// 用户粘贴的图落在 meowo-paste / image-cache / 图片目录，都是可信根，照常显示。
+fn sanitize_image_refs(items: &mut [ChatItem]) {
+    for item in items.iter_mut() {
+        if let ChatItem::ToolResult { text, .. } | ChatItem::UserText { text, .. } = item {
+            crate::images::neutralize_untrusted_refs(text);
+        }
+    }
 }
 
 /// [`fold_lines`] 的结果：每条已解析消息留不留（按行顺序平铺），`offsets[i]..offsets[i+1]`
@@ -1122,6 +1210,8 @@ struct Folded {
     lead_user: bool,
     /// 跨行关联补出的退出码：（消息的平铺下标，退出码），按下标升序（见 [`ExitJoin`]）。
     exits: Vec<(usize, i32)>,
+    /// 跨行关联补出的图片引用行：（消息的平铺下标，引用行），按下标升序。
+    images: Vec<(usize, Vec<String>)>,
 }
 
 impl Folded {
@@ -1131,6 +1221,7 @@ impl Folded {
 
     fn into_region(self, parsed: Vec<ParsedLine>) -> ChatRegion {
         let mut exits = self.exits.iter().peekable();
+        let mut images = self.images.into_iter().peekable();
         let lines = parsed
             .into_iter()
             .enumerate()
@@ -1148,6 +1239,17 @@ impl Folded {
                             if let ChatItem::ToolResult { exit_code, is_error, .. } = &mut item {
                                 *exit_code = Some(code);
                                 *is_error |= code != 0;
+                            }
+                        }
+                        // 补图片引用行：接在回执正文末尾，前端按行认图。
+                        if let Some((_, refs)) = images.next_if(|(flat, _)| *flat == first + at) {
+                            if let ChatItem::ToolResult { text, .. } = &mut item {
+                                for line in refs {
+                                    if !text.is_empty() {
+                                        text.push('\n');
+                                    }
+                                    text.push_str(&line);
+                                }
                             }
                         }
                         (item, kept)
@@ -1196,6 +1298,7 @@ fn fold_lines(spec: &dyn TranscriptSpec, path: &Path, base: u64, parsed: &[Parse
     // 给没带退出码的回执补结局（见 ExitJoin）。本段不从文件头起时，先回看段前一小段还原状态。
     let mut join = (!spec.command_exit_markers().is_empty()).then(ExitJoin::default);
     let mut exits: Vec<(usize, i32)> = Vec::new();
+    let mut images: Vec<(usize, Vec<String>)> = Vec::new();
     if let Some(join) = join.as_mut().filter(|_| base > 0 && ExitJoin::wanted(parsed)) {
         join.seed(spec, path, base);
     }
@@ -1204,7 +1307,7 @@ fn fold_lines(spec: &dyn TranscriptSpec, path: &Path, base: u64, parsed: &[Parse
         offsets.push(line_at);
         merge_modes(&mut agent_modes, line.modes.clone());
         if let Some(join) = join.as_mut() {
-            join.line(line, line_at, &mut exits);
+            join.line(line, line_at, &mut exits, &mut images);
         }
         let mut link = None;
         match &line.mark {
@@ -1310,7 +1413,7 @@ fn fold_lines(spec: &dyn TranscriptSpec, path: &Path, base: u64, parsed: &[Parse
         }
     }
     offsets.push(kept.len());
-    Folded { kept, offsets, agent_modes, undone, ambiguous, lead_user, exits }
+    Folded { kept, offsets, agent_modes, undone, ambiguous, lead_user, exits, images }
 }
 
 /// 给**没带退出码的工具回执**补上结局的跨行关联。
@@ -1353,6 +1456,10 @@ struct OpenRun {
     exit: Option<i32>,
     /// 对不准（见 [`ExitJoin`] 的「一律不补」）：不再给它补退出码。
     tainted: bool,
+    /// 非命令的工具调用（MCP 工具，按工具全名对 [`ToolSideImages`]）；命令调用为 None。
+    tool: Option<String>,
+    /// 对上的旁路结果图片引用行。
+    refs: Option<Vec<String>>,
 }
 
 /// 同一次脚本调用里各条命令共用的前缀：`<call_id>#<序号>` 的 `<call_id>`。
@@ -1369,9 +1476,20 @@ impl ExitJoin {
     /// 这一段里有没有用得上段前状态的行：旁路记录，或一条等着补退出码的回执。
     /// 都没有就不必回看（增量轮询的大多数批次只是正文与思考）。
     fn wanted(parsed: &[ParsedLine]) -> bool {
-        parsed
-            .iter()
-            .any(|line| line.exit.is_some() || line.items.iter().any(Self::needs_exit))
+        parsed.iter().any(|line| {
+            line.exit.is_some()
+                || line.images.is_some()
+                || line.items.iter().any(|item| Self::needs_exit(item) || Self::needs_images(item))
+        })
+    }
+
+    /// 回执里还没有图片引用行（失败与被打断的不补：那次调用没有产出图）。
+    fn needs_images(item: &ChatItem) -> bool {
+        matches!(
+            item,
+            ChatItem::ToolResult { tool_use_id: Some(_), is_error: false, interrupted: false, subagent: None, text, .. }
+                if !text.contains("[Image: source: ")
+        )
     }
 
     /// 子任务的结局回执（`subagent` 有值，如 codex 的 SubAgentActivity）不是命令的回执：不等退出码，
@@ -1412,27 +1530,39 @@ impl ExitJoin {
         // 窗口首行多半是半截，跳过（从文件头起则没有半截行）。
         let mut pos = if start == 0 { 0 } else { memchr::memchr(b'\n', &buf).map_or(buf.len(), |i| i + 1) };
         let mut sink = Vec::new();
+        let mut image_sink = Vec::new();
         while pos < buf.len() {
             let end = memchr::memchr(b'\n', &buf[pos..]).map_or(buf.len(), |i| pos + i + 1);
             let chunk = &buf[pos..end];
             if finders.iter().any(|finder| finder.find(chunk).is_some()) {
                 for line in parse_lines(spec, path, start + pos as u64, chunk) {
-                    self.line(&line, 0, &mut sink);
+                    self.line(&line, 0, &mut sink, &mut image_sink);
                     sink.clear();
+                    image_sink.clear();
                 }
             }
             pos = end;
         }
     }
 
-    /// 按文件顺序喂一行。`flat` = 这一行第一条消息的平铺下标；补出的退出码记进 `exits`。
-    fn line(&mut self, line: &ParsedLine, flat: usize, exits: &mut Vec<(usize, i32)>) {
+    /// 按文件顺序喂一行。`flat` = 这一行第一条消息的平铺下标；补出的退出码记进 `exits`，
+    /// 补出的图片引用行记进 `images`。
+    fn line(
+        &mut self,
+        line: &ParsedLine,
+        flat: usize,
+        exits: &mut Vec<(usize, i32)>,
+        images: &mut Vec<(usize, Vec<String>)>,
+    ) {
         // 新一轮开始或撤回：之前没等到回执的调用不会再有回执了。
         if matches!(line.mark, Some(ChatLineMark::TurnStart | ChatLineMark::Undo(_))) {
             self.open.clear();
         }
         if let Some(exit) = &line.exit {
             self.exit(exit, line.start);
+        }
+        if let Some(side) = &line.images {
+            self.side_images(side, line.start);
         }
         let mut closed = false;
         for (at, item) in line.items.iter().enumerate() {
@@ -1446,10 +1576,37 @@ impl ExitJoin {
                         at: line.start,
                         exit: None,
                         tainted: false,
+                        tool: None,
+                        refs: None,
+                    });
+                }
+                // MCP 等非命令工具：等旁路结果里的图片（只在回执自己没有引用行时补）。
+                ChatItem::ToolUse { id, timestamp, name, kind: ToolKind::Image | ToolKind::Other, .. } => {
+                    self.open.retain(|run| line.start - run.at <= Self::SPAN);
+                    self.open.push(OpenRun {
+                        id: id.clone(),
+                        command: String::new(),
+                        called_ms: timestamp.as_deref().and_then(epoch_millis),
+                        at: line.start,
+                        exit: None,
+                        tainted: false,
+                        tool: Some(name.clone()),
+                        refs: None,
                     });
                 }
                 ChatItem::ToolResult { tool_use_id: Some(id), .. } => {
                     closed = true;
+                    if Self::needs_images(item) {
+                        let refs = self
+                            .open
+                            .iter()
+                            .find(|run| run.id == *id && run.tool.is_some())
+                            .filter(|run| !run.tainted && line.start - run.at <= Self::SPAN)
+                            .and_then(|run| run.refs.clone());
+                        if let Some(refs) = refs {
+                            images.push((flat + at, refs));
+                        }
+                    }
                     if !Self::needs_exit(item) {
                         continue;
                     }
@@ -1477,12 +1634,45 @@ impl ExitJoin {
         }
     }
 
+    /// 旁路结果对调用：同 [`Self::exit`] 的规则（位置、开始时刻、同名未收回执的调用只有一个），
+    /// 按工具全名匹配。
+    fn side_images(&mut self, side: &ToolSideImages, at: u64) {
+        let Some(started) = side.started_ms else {
+            return;
+        };
+        let mut hits = self.open.iter_mut().filter(|run| {
+            run.tool.as_deref() == Some(side.tool.as_str())
+                && run.refs.is_none()
+                && at - run.at <= Self::SPAN
+                && run.called_ms.is_some_and(|called| started + Self::CLOCK_SLACK_MS >= called)
+        });
+        let Some(first) = hits.next() else {
+            return;
+        };
+        // 同一个脚本里先后调了几次同名工具：脚本按源码顺序执行，按顺序对给第一个还没对上的。
+        // 不同脚本（并行）里同时有未对上的同名调用：分不清是谁的，都不补。
+        let group = call_group(&first.id).to_string();
+        let mut shared = false;
+        for other in hits {
+            if call_group(&other.id) != group {
+                other.tainted = true;
+                shared = true;
+            }
+        }
+        if shared {
+            first.tainted = true;
+        } else {
+            first.refs = Some(side.refs.clone());
+        }
+    }
+
     fn exit(&mut self, exit: &CommandExit, at: u64) {
         let Some(started) = exit.started_ms else {
             return;
         };
         let mut hits = self.open.iter_mut().filter(|run| {
-            run.command == exit.command
+            run.tool.is_none()
+                && run.command == exit.command
                 && at - run.at <= Self::SPAN
                 && run.called_ms.is_some_and(|called| started + Self::CLOCK_SLACK_MS >= called)
         });
@@ -2809,6 +2999,9 @@ mod tests {
         fn chat_command_exit(&self, line: &str) -> Option<CommandExit> {
             self.0.chat_command_exit(line)
         }
+        fn chat_tool_images(&self, line: &str) -> Option<ToolSideImages> {
+            self.0.chat_tool_images(line)
+        }
         fn command_exit_markers(&self) -> &'static [&'static str] {
             self.0.command_exit_markers()
         }
@@ -3012,6 +3205,9 @@ mod tests {
         }
         fn chat_command_exit(&self, line: &str) -> Option<CommandExit> {
             self.0.chat_command_exit(line)
+        }
+        fn chat_tool_images(&self, line: &str) -> Option<ToolSideImages> {
+            self.0.chat_tool_images(line)
         }
         fn command_exit_markers(&self) -> &'static [&'static str] {
             self.0.command_exit_markers()
@@ -3715,6 +3911,245 @@ mod tests {
         assert_eq!(got, vec![(true, Some(101)), (false, Some(0)), (false, None)]);
         std::fs::remove_file(copy).ok();
         assert_chunked_equals_whole(spec, "exit_join_real_chunks", &content);
+    }
+
+    /// 真机样本（2026-11-21，codex-cli 0.169.0 `codex exec`，tests/fixtures/chat-replay/
+    /// codex.01a1f9bf.jsonl，探针目录前缀换成 C:\probe）：exec 脚本只 `await` 发图、不输出结果，
+    /// 回执里只有状态头。图片引用行要从 `item_completed/McpToolCall` 旁路记录补到 `<call_id>#0`
+    /// 的回执上；整读与分段增量读结果一致。
+    #[test]
+    fn mcp_side_record_fills_image_ref_when_script_prints_nothing() {
+        let spec = spec_of("codex");
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/chat-replay/codex.01a1f9bf.jsonl");
+        let content = std::fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
+        let copy = write_tmp("mcp_side_images", &content);
+        let items = read_chat_delta(spec, &copy, 0, None).items;
+        let call = items
+            .iter()
+            .find_map(|item| match item {
+                ChatItem::ToolUse { id, kind: ToolKind::Image, .. } => Some(id.clone()),
+                _ => None,
+            })
+            .expect("应有发图调用");
+        assert_eq!(call, "call_4f6905b126da497abd8a3aabd685a8e9#0");
+        let text = items
+            .iter()
+            .find_map(|item| match item {
+                ChatItem::ToolResult { tool_use_id: Some(id), text, .. } if *id == call => Some(text.clone()),
+                _ => None,
+            })
+            .expect("应有发图回执");
+        assert!(
+            text.lines().any(|l| l == r"[Image: source: C:\probe\images\sent\0c6eebdca4b84ccf186723b705349400.png]"),
+            "{text}"
+        );
+        assert_eq!(text.matches("[Image: source: ").count(), 1, "只补一次：{text}");
+        // 旁路记录本身不产出对话内容。
+        assert_eq!(items.iter().filter(|i| matches!(i, ChatItem::ToolResult { .. })).count(), 1);
+        std::fs::remove_file(copy).ok();
+        assert_chunked_equals_whole(spec, "mcp_side_images_chunks", &content);
+    }
+
+    /// 做空第二轮：工具回执的正文来自网页、文件、命令输出，谁都能在里面写一行
+    /// `[Image: source: //attacker/s/x.png]`。前端把引用行当缩略图自动加载，而 Tauri 的 asset
+    /// 协议在判白名单之前就对路径做 exists（Windows 上即发起 SMB）。解析层只保留指向 Meowo
+    /// 自己图片根的引用行，其余改写成认不出的普通文字（`[Image source: …]`）。
+    #[test]
+    fn forged_image_refs_in_tool_receipts_are_neutralized() {
+        let spec = spec_of("claude");
+        let ours = crate::images::images_root().unwrap().join("tool").join("ours.png");
+        let paste = crate::fsutil::paste_root().join("queued").join("p.png");
+        let forged = [
+            "//attacker/s/x.png".to_string(),
+            r"\\attacker\s\y.png".to_string(),
+            "file://attacker/s/z.png".to_string(),
+            r"C:\Users\me\Pictures\private.png".to_string(),
+            format!("{}{}..{}..{}secret.png", crate::images::images_root().unwrap().display(), std::path::MAIN_SEPARATOR, std::path::MAIN_SEPARATOR, std::path::MAIN_SEPARATOR),
+        ];
+        let mut body = String::from("网页内容");
+        for path in [ours.display().to_string(), paste.display().to_string()].iter().chain(forged.iter()) {
+            body.push_str(&format!("\n[Image: source: {path}]"));
+        }
+        body.push_str("\n[Image #3: source: //attacker/s/n.png]");
+        let line = serde_json::json!({
+            "type": "user", "uuid": "forge",
+            "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "toolu_forge", "content": body }] }
+        })
+        .to_string();
+        let path = write_tmp("forged_refs", &format!("{line}\n"));
+        let items = read_chat_delta(spec, &path, 0, None).items;
+        let text = items
+            .iter()
+            .find_map(|item| match item {
+                ChatItem::ToolResult { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .unwrap();
+        // 与前端 ChatImage/Message 的 IMAGE_REF 同一个式子：认出来的只能是我们自己的两张。
+        let re = regex::Regex::new(r"\[Image(?: #\d+)?: source: ([^\]]+?)\]").unwrap();
+        let found: Vec<&str> = re.captures_iter(&text).map(|c| c.get(1).unwrap().as_str()).collect();
+        assert_eq!(found, vec![ours.display().to_string(), paste.display().to_string()], "{text}");
+        // 改写成普通文字，内容还在（用户仍看得到回执里写了什么）。
+        assert!(text.contains("[Image source: //attacker/s/x.png]"), "{text}");
+        assert!(text.contains("[Image #3 source: //attacker/s/n.png]"), "{text}");
+        std::fs::remove_file(path).ok();
+    }
+
+    /// 做空第三轮：同一行伪造的引用，主会话回执里被改写，子代理侧车流（展开子任务时读，
+    /// read_stream）里也要被改写——旧实现漏了这条路径。
+    #[test]
+    fn forged_image_refs_are_neutralized_in_subagent_streams_too() {
+        let spec = spec_of("claude");
+        let forged = "[Image: source: //attacker/s/x.png]";
+        let line = serde_json::json!({
+            "type": "user", "uuid": "sub-forge", "isSidechain": true,
+            "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "toolu_sub", "content": format!("页面\n{forged}") }] }
+        })
+        .to_string();
+        let texts = |items: &[ChatItem]| -> Vec<String> {
+            items
+                .iter()
+                .filter_map(|item| match item {
+                    ChatItem::ToolResult { text, .. } => Some(text.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        let main = write_tmp("forge_main", &format!("{line}\n"));
+        let main_texts = texts(&read_chat_delta(spec, &main, 0, None).items);
+        assert!(main_texts.iter().all(|t| !t.contains(forged)), "{main_texts:?}");
+        let stream = write_tmp("forge_sub", &format!("{line}\n"));
+        let sub = read_stream(spec.subagents().unwrap(), &stream).unwrap();
+        let sub_texts = texts(&sub);
+        assert!(!sub_texts.is_empty());
+        assert!(sub_texts.iter().all(|t| !t.contains(forged) && t.contains("[Image source: //attacker/s/x.png]")), "{sub_texts:?}");
+        std::fs::remove_file(main).ok();
+        std::fs::remove_file(stream).ok();
+    }
+
+    /// 做空第三轮：用户消息里的引用行同样只认可信根。用户粘贴的图落在 meowo-paste / image-cache /
+    /// 图片目录，照常显示；别处的（比如经队列、Lead 转进来的文本里夹的伪造行）改写成普通文字。
+    #[test]
+    fn user_message_image_refs_only_trust_our_roots() {
+        let spec = spec_of("claude");
+        let paste = crate::fsutil::paste_root().join("queued").join("p.png");
+        let body = format!("看这个\n[Image: source: {}]\n[Image: source: //attacker/s/u.png]", paste.display());
+        let line = serde_json::json!({
+            "type": "user", "uuid": "user-forge",
+            "message": { "role": "user", "content": [{ "type": "text", "text": body }] }
+        })
+        .to_string();
+        let path = write_tmp("forge_user", &format!("{line}\n"));
+        let items = read_chat_delta(spec, &path, 0, None).items;
+        let text = items
+            .iter()
+            .find_map(|item| match item {
+                ChatItem::UserText { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert!(text.contains(&format!("[Image: source: {}]", paste.display())), "{text}");
+        assert!(text.contains("[Image source: //attacker/s/u.png]"), "{text}");
+        std::fs::remove_file(path).ok();
+    }
+
+    /// 做空第一轮：写出或修改的图片在工具行上显示的是「现在的文件」——同一路径写三次，三行
+    /// 都显示最后那张；原文件删了就裂图。现在解析器第一次解析到这次写入的回执时，把当时的
+    /// 文件内容存进 `tool/`（按调用 id 记住），回执末尾追加引用行；之后重解析、增量读、尾读
+    /// 都复用同一份。
+    #[test]
+    fn written_image_is_snapshotted_once_per_call() {
+        let spec = spec_of("claude");
+        let dir = std::env::temp_dir().join(format!("meowo_write_snap_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let svg = dir.join("icon.svg");
+        let svg_json = serde_json::to_string(&svg.to_string_lossy()).unwrap();
+        let transcript = dir.join("session.jsonl");
+        let mut content = String::new();
+        let mut offset = 0;
+        let colors = ["red", "green", "blue"];
+        for (i, color) in colors.iter().enumerate() {
+            let body = format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"><rect width=\"8\" height=\"8\" fill=\"{color}\"/></svg>");
+            std::fs::write(&svg, &body).unwrap();
+            content.push_str(&format!(
+                r#"{{"type":"assistant","uuid":"a{i}","timestamp":"2026-11-21T01:0{i}:00Z","message":{{"role":"assistant","content":[{{"type":"tool_use","id":"toolu_write_{i}","name":"Write","input":{{"file_path":{svg_json},"content":{}}}}}]}}}}"#,
+                serde_json::to_string(&body).unwrap()
+            ));
+            content.push('\n');
+            content.push_str(&format!(
+                r#"{{"type":"user","uuid":"u{i}","timestamp":"2026-11-21T01:0{i}:01Z","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"toolu_write_{i}","content":"File created successfully"}}]}}}}"#
+            ));
+            content.push('\n');
+            std::fs::write(&transcript, &content).unwrap();
+            // 实时：每次写完文件、回执落盘后增量读一次（第一次解析就在这时）。
+            offset = read_chat_delta(spec, &transcript, offset, None).offset;
+        }
+        let refs = |items: &[ChatItem]| -> Vec<String> {
+            items
+                .iter()
+                .filter_map(|item| match item {
+                    ChatItem::ToolResult { text, .. } => text
+                        .lines()
+                        .find_map(|l| l.strip_prefix("[Image: source: ").and_then(|r| r.strip_suffix(']')))
+                        .map(str::to_string),
+                    _ => None,
+                })
+                .collect()
+        };
+        let whole = refs(&read_chat_delta(spec, &transcript, 0, None).items);
+        assert_eq!(whole.len(), 3, "{whole:?}");
+        for (path, color) in whole.iter().zip(colors) {
+            let saved = std::fs::read_to_string(path).unwrap();
+            assert!(saved.contains(color), "{path} 应是写入当时的内容（{color}）：{saved}");
+            assert!(Path::new(path).starts_with(crate::images::images_root().unwrap().join("tool")));
+        }
+        // 原文件删掉：重解析仍指向同三份；整读、分段增量读、尾读一致。
+        std::fs::remove_file(&svg).unwrap();
+        assert_eq!(refs(&read_chat_delta(spec, &transcript, 0, None).items), whole);
+        assert_eq!(refs(&read_chat_delta_paged(spec, &transcript, 0, None, 2).items), whole[2..].to_vec());
+        assert_chunked_equals_whole(spec, "write_snap_chunks", &content);
+        // 尾读（首屏只解析末尾一段）：每种屏大小都等于整读的末尾几条。
+        let all = read_chat_delta(spec, &transcript, 0, None).items;
+        for page in 1..=all.len() {
+            let tail = read_chat_delta_paged(spec, &transcript, 0, None, page).items;
+            assert_eq!(tail, all[all.len() - page..].to_vec(), "page {page}");
+        }
+        // 失败的写入不补图。
+        let failed = content.replace(r#""content":"File created successfully"}"#, r#""content":"error","is_error":true}"#);
+        let failed_path = write_tmp("write_snap_failed", &failed);
+        assert!(refs(&read_chat_delta(spec, &failed_path, 0, None).items).is_empty());
+        std::fs::remove_file(failed_path).ok();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 回执自己已经带引用行（脚本 `text(...)` 了结果）：不重复补；同一行旁路记录换成别的工具名：对不上，不补。
+    #[test]
+    fn mcp_side_record_does_not_duplicate_or_misattach() {
+        let spec = spec_of("codex");
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/chat-replay/codex.01a1f9bf.jsonl");
+        let content = std::fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
+        let printed = content.replace(
+            r#""output":"Script completed\nWall time 0.0 seconds\nOutput:\n""#,
+            r#""output":"Script completed\nWall time 0.0 seconds\nOutput:\n[Image: source: C:\\probe\\images\\sent\\0c6eebdca4b84ccf186723b705349400.png]""#,
+        );
+        assert_ne!(printed, content, "样本里应有那段回执");
+        let copy = write_tmp("mcp_side_images_printed", &printed);
+        let items = read_chat_delta(spec, &copy, 0, None).items;
+        let text = items
+            .iter()
+            .find_map(|item| match item {
+                ChatItem::ToolResult { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(text.matches("[Image: source: ").count(), 1, "{text}");
+        std::fs::remove_file(copy).ok();
+        let other = content.replace(r#""tool":"send_image""#, r#""tool":"browser_screenshot""#);
+        let copy = write_tmp("mcp_side_images_other", &other);
+        let items = read_chat_delta(spec, &copy, 0, None).items;
+        assert!(items.iter().all(|item| !matches!(item, ChatItem::ToolResult { text, .. } if text.contains("[Image: source: "))));
+        std::fs::remove_file(copy).ok();
     }
 
     #[test]

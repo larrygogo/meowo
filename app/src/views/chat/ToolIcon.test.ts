@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { zh } from "../../i18n/zh";
-import { toolKindLabel, toolShortName, type ToolKind } from "./ToolIcon";
+import { toolGlyph, toolKindLabel, toolShortName, type ToolKind } from "./ToolIcon";
+import { icGlobe, icTerminal } from "../../icons/glyphs";
+import { icFile, icImage } from "../../icons/glyphs.chat";
 
 const t = zh as Parameters<typeof toolShortName>[2];
 const name = (tool: string, kind: ToolKind = "other") => toolShortName(tool, kind, t);
@@ -42,5 +44,23 @@ describe("toolShortName", () => {
     expect(name("KillShell", "other")).toBe("KillShell");
     expect(toolKindLabel("read_file", "read", t)).toBe("读取文件");
     expect(toolKindLabel("wait_agent", "other", t)).toBe("等待子任务");
+  });
+});
+
+describe("toolGlyph", () => {
+  it("Meowo 浏览器工具是网页图标、截图与发图是图片图标，不再顶着终端图标；五家名字形态同一个结果", () => {
+    for (const tool of ["mcp__meowo__browser_open", "browser_open", "mcp__meowo__browser_click"]) expect(toolGlyph("other", tool, false)).toBe(icGlobe);
+    for (const tool of ["mcp__meowo__browser_screenshot", "browser_screenshot"]) expect(toolGlyph("other", tool, true)).toBe(icImage);
+  });
+
+  it("没收录的工具回执里带图（别家的截图工具）用图片图标；不带图仍是终端", () => {
+    expect(toolGlyph("other", "mcp__chrome__take_screenshot", true)).toBe(icImage);
+    expect(toolGlyph("other", "mcp__chrome__click", false)).toBe(icTerminal);
+  });
+
+  it("有类别的先按类别：命令行回执带图仍是终端，读图片仍是文件", () => {
+    expect(toolGlyph("run", "Bash", true)).toBe(icTerminal);
+    expect(toolGlyph("read", "Read", true)).toBe(icFile);
+    expect(toolGlyph("web", "WebFetch", false)).toBe(icGlobe);
   });
 });

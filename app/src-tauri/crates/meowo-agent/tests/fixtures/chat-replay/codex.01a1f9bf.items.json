@@ -1,0 +1,23 @@
+[
+  {
+    "type": "tool_use",
+    "id": "call_4f6905b126da497abd8a3aabd685a8e9#0",
+    "timestamp": "2026-11-20T16:17:15.801Z",
+    "name": "mcp__meowo__send_image",
+    "kind": "image",
+    "summary": "静默发图",
+    "detail": {
+      "kind": "image",
+      "source": "C:\\probe\\work\\chart.png",
+      "caption": "静默发图"
+    }
+  },
+  {
+    "type": "tool_result",
+    "id": "codex-result-0b6ace32994767b2",
+    "timestamp": "2026-11-20T16:17:15.907Z",
+    "tool_use_id": "call_4f6905b126da497abd8a3aabd685a8e9#0",
+    "text": "[Image: source: C:\\probe\\images\\sent\\0c6eebdca4b84ccf186723b705349400.png]",
+    "is_error": false
+  }
+]

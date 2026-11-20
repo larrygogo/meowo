@@ -38,6 +38,8 @@ const api = vi.hoisted(() => ({
   mergeProfileIntoDefault: vi.fn(),
   // 本机可用终端：登录等待文案要拿它核对「存值的那个终端还在不在」（7S-1 尾）。
   availableTerminals: vi.fn(),
+  // 发图工具没接上的提示里「在文件夹中显示」。
+  revealTerminalPath: vi.fn(),
 }));
 vi.mock("../api", async (o) => ({ ...(await o<typeof import("../api")>()), ...api }));
 // 确认框统一走 appConfirm（应用主题原生小窗）；沿用 dialog.confirm 变量名以保住既有断言。
@@ -1590,5 +1592,37 @@ describe("AccountSection 版本与更新", () => {
     await waitFor(() => expect(api.checkAgentUpdates).toHaveBeenCalled());
     expect(screen.queryByTestId("agent-version-claude")).toBeNull();
     expect(document.querySelector(".agent-install-error")).toBeNull();
+  });
+});
+
+describe("AccountSection：发图工具没接上（mcp_config_unreadable）", () => {
+  const FILE = "C:\Users\me\.gemini\settings.json";
+
+  it("字段有值就提示：一句结论、原因、文件路径，点「在文件夹中显示」交给 reveal；不看是哪家", async () => {
+    // 故意放在 claude 上：判据只是字段有无，不按 Provider 名。
+    api.listAgents.mockResolvedValue(
+      descriptors(["claude", "codex"]).map((agent) => (agent.id === "claude" ? { ...agent, mcp_config_unreadable: FILE } : agent)),
+    );
+    api.revealTerminalPath.mockResolvedValue(undefined);
+    render(<AccountSection />);
+    const note = await screen.findByTestId("agent-mcp-unreadable-claude");
+    expect(note.textContent).toContain(zh.account.mcpConfigUnreadable);
+    expect(note.textContent).toContain("读不懂");
+    expect(note.textContent).toContain(FILE);
+    fireEvent.click(screen.getByTestId("agent-mcp-reveal-claude"));
+    expect(api.revealTerminalPath).toHaveBeenCalledWith("", FILE);
+    // 没有这个字段的 agent 不提示。
+    await selectAgent("Codex");
+    await screen.findByTestId("agent-card-codex");
+    expect(screen.queryByTestId("agent-mcp-unreadable-codex")).toBeNull();
+  });
+
+  it("「在文件夹中显示」失败时就地写原因", async () => {
+    api.listAgents.mockResolvedValue(descriptors(["gemini"]).map((agent) => ({ ...agent, mcp_config_unreadable: FILE })));
+    api.getAccounts.mockResolvedValue([]);
+    api.revealTerminalPath.mockRejectedValue("not found");
+    render(<AccountSection />);
+    fireEvent.click(await screen.findByTestId("agent-mcp-reveal-gemini"));
+    await waitFor(() => expect(screen.getByTestId("agent-mcp-unreadable-gemini").querySelector(".agent-mcp-unreadable-err")).toBeTruthy());
   });
 });

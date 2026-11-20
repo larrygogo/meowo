@@ -1,8 +1,8 @@
-import { memo, type ReactNode } from "react";
+import { memo, useContext, type ReactNode } from "react";
 import { useT } from "../../i18n";
 import { useRememberedDetails } from "./foldMemory";
 import { fmtSpan, type ToolResultItem, type ToolUseItem } from "./shared";
-import { ToolIcon } from "./ToolIcon";
+import { ToolHasImageContext, ToolIcon } from "./ToolIcon";
 import { useToolRunState } from "./toolState";
 
 /// 工具行的公共折叠外壳（对照 Kimi 的 ToolDisclosure）：图标、状态点、耗时、展开区。
@@ -17,6 +17,7 @@ export const ToolDisclosure = memo(function ToolDisclosure({ item, result, summa
   const t = useT();
   const details = useRememberedDetails(`tool:${item.id}`, defaultOpen);
   const state = useToolRunState(result);
+  const hasImage = useContext(ToolHasImageContext);
   const startedAt = Date.parse(item.timestamp ?? "");
   const endedAt = Date.parse(result?.timestamp ?? "");
   const span = result && Number.isFinite(startedAt) && Number.isFinite(endedAt) && endedAt - startedAt >= 1000
@@ -30,7 +31,7 @@ export const ToolDisclosure = memo(function ToolDisclosure({ item, result, summa
       {...details}
     >
       <summary>
-        <ToolIcon kind={item.kind} />
+        <ToolIcon kind={item.kind} name={item.name} hasImage={hasImage} />
         {summary}
         {/* 等人、已中断写在行上：这两个词原先只在展开区里，而行默认收起，等审批时只看到一行没有任何标记的
             命令（2026-11-14 截图自验）。与会话状态、中断分隔用的是同一个词。 */}

@@ -1417,6 +1417,10 @@ impl PtyBroker {
                 protocol: CURRENT_PROTOCOL_VERSION,
             });
         command.args(crate::browser_agent::launch_args(provider, mcp_session));
+        // 走环境变量交 MCP 的 agent（opencode）：与中转用的同名变量合并后覆盖上面设的值。
+        for (key, value) in crate::browser_agent::launch_env(provider, env) {
+            command.env(key, value);
+        }
         command.args(crate::lead_runtime::launch_args(provider, env, mcp_session));
         // 终端归一化:GUI 的托管 PTY 是给人看的全彩 xterm.js 渲染面,颜色必须可用。TERM
         // 之外还得管颜色开关——meowo 常从设了 NO_COLOR 的上游派生(典型:被某个 agent 的
@@ -3689,7 +3693,13 @@ impl PtyBroker {
         let session_id = self.binding(owner).unwrap_or(owner);
         // 操作可能要等页面加载十几秒；连接已认证，放开读超时。
         stream.set_read_timeout(None).ok();
-        let reply = match crate::browser_agent::handle(session_id, tool, args) {
+        // 发图不是浏览器操作：不受「允许 agent 操作面板浏览器」开关约束，也不碰面板。
+        let outcome = if tool == "send_image" {
+            crate::chat_images::send_image(args)
+        } else {
+            crate::browser_agent::handle(session_id, tool, args)
+        };
+        let reply = match outcome {
             Ok(mut body) => {
                 body["ok"] = serde_json::json!(true);
                 body

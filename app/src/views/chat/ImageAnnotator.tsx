@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { safeFileSrc } from "../../assetSrc";
 import { AppModal } from "../AppModal";
 import { useT } from "../../i18n";
 import { busyProps } from "../../busyButton";
@@ -34,7 +34,12 @@ export function ImageAnnotator({ path, onDone, onClose }: {
   // 0.6.16 只放了 img-src，正式版标注窗一律「图片读取失败」；dev 走 devUrl 不带 CSP，测不出来。
   useEffect(() => {
     let cancelled = false;
-    fetch(convertFileSrc(path))
+    const url = safeFileSrc(path);
+    if (!url) {
+      setFailed(true);
+      return;
+    }
+    fetch(url)
       .then((response) => (response.ok ? response.blob() : Promise.reject(new Error(String(response.status)))))
       .then((blob) => createImageBitmap(blob))
       .then((bitmap) => { if (!cancelled) setImage(bitmap); })

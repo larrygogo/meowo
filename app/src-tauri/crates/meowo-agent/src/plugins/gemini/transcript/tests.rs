@@ -571,3 +571,134 @@ fn steering_update_shows_the_users_own_words_as_an_interjection() {
         [TranscriptEvent::UserMessage { interjected: false, .. }]
     ));
 }
+
+const PNG_1X1_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==";
+
+fn image_ref_of(events: &[TranscriptEvent]) -> Vec<std::path::PathBuf> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            TranscriptEvent::ToolResult { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .flat_map(|text| {
+            text.lines()
+                .filter_map(|l| l.strip_prefix("[Image: source: ")?.strip_suffix(']').map(std::path::PathBuf::from))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// MCP 截图回执的两种落法（0.68.0 源码 mcp-tool.js transformImageAudioBlock + 会话记录的
+/// toolCalls[].result；本机会话里没有带 inlineData 的真实样本，形态按源码构造）：
+/// gemini-3 系列把图放进 functionResponse.parts，其余模型作为并列 part。两种都要落进
+/// 持久目录 images/tool/，回执里出现引用行；此前这些图整张丢掉。
+#[test]
+fn mcp_image_in_function_response_parts_or_sibling_part_is_kept() {
+    let nested = format!(
+        r#"{{"id":"a9","timestamp":"t","type":"gemini","content":"","model":"gemini-3.8-flash","toolCalls":[{{"id":"c9","name":"mcp_meowo_browser_screenshot","args":{{}},"status":"success","result":[{{"functionResponse":{{"id":"c9","name":"mcp_meowo_browser_screenshot","response":{{"output":"面板浏览器截图（1 KB）"}},"parts":[{{"text":"[Tool 'browser_screenshot' provided the following image data with mime-type: image/png]"}},{{"inlineData":{{"mimeType":"image/png","data":"{PNG_1X1_B64}"}}}}]}}}}]}}]}}"#
+    );
+    let sibling = format!(
+        r#"{{"id":"a8","timestamp":"t","type":"gemini","content":"","model":"gemini-2.5-pro","toolCalls":[{{"id":"c8","name":"read_file","args":{{"file_path":"shot.png"}},"status":"success","result":[{{"functionResponse":{{"id":"c8","name":"read_file","response":{{"output":"Binary content provided (1 item(s))."}}}}}},{{"inlineData":{{"mimeType":"image/png","data":"{PNG_1X1_B64}"}}}}]}}]}}"#
+    );
+    for line in [nested, sibling] {
+        let refs = image_ref_of(&parse_line(&line));
+        assert_eq!(refs.len(), 1, "{line}");
+        assert!(refs[0].starts_with(crate::images::images_root().unwrap().join("tool")));
+        assert!(refs[0].exists());
+    }
+}
+
+/// 真机样本（2026-11-21，gemini 0.68.0 + gemini-3-flash-preview `gemini -p` 调
+/// mcp_meowo_browser_screenshot）：图在 `functionResponse.parts[].inlineData`，文字被包进
+/// `<untrusted_context>`。图要落进持久目录、回执里出现引用行（此前整张丢掉）。
+#[test]
+fn real_screenshot_inline_data_sample_is_kept() {
+    let line = include_str!("../../../../tests/fixtures/chat-replay/gemini.probe-screenshot.jsonl").lines().next().unwrap();
+    let events = parse_line(line);
+    let refs = image_ref_of(&events);
+    assert_eq!(refs.len(), 1, "{line}");
+    assert!(refs[0].starts_with(crate::images::images_root().unwrap().join("tool")));
+    assert!(refs[0].exists());
+    // 对话页上：工具名是统一的 `mcp__meowo__<工具>`（前端认得、给译名），没参数不出 `{}`，
+    // 回执去掉 `<untrusted_context>` 标签与 CLI 给模型写的图片说明，只剩工具自己的那句话和引用行。
+    let Some(TranscriptEvent::ToolCall { name, summary, .. }) = events.first() else { panic!("{events:?}") };
+    assert_eq!((name.as_str(), summary.as_str()), ("mcp__meowo__browser_screenshot", ""));
+    let text = events
+        .iter()
+        .find_map(|e| match e {
+            TranscriptEvent::ToolResult { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 2, "{text}");
+    assert_eq!(lines[0], "面板浏览器截图（探针）");
+    assert!(lines[1].starts_with("[Image: source: "), "{text}");
+}
+
+/// `<untrusted_context>` 只去整行的标签，转义的闭标签还原；带 source 属性的开标签同样认。
+/// 不是图片的说明行（音频、内嵌资源）留着；没有内嵌图时图片说明也留着，别人的 MCP 工具名不改。
+#[test]
+fn untrusted_wrapper_and_image_note_are_cleaned_line_by_line() {
+    assert_eq!(
+        super::unwrap_untrusted("<untrusted_context source=\"meowo\">\n说 &lt;/untrusted_context&gt; 了\n</untrusted_context>"),
+        "说 </untrusted_context> 了"
+    );
+    assert_eq!(super::unwrap_untrusted("正文里提到 <untrusted_context> 标签"), "正文里提到 <untrusted_context> 标签");
+    assert_eq!(
+        super::drop_image_notes(
+            "[Tool 'shot' provided the following image data with mime-type: image/png]\n[Tool 'rec' provided the following audio data with mime-type: audio/wav]\n好了"
+        ),
+        "[Tool 'rec' provided the following audio data with mime-type: audio/wav]\n好了"
+    );
+    let line = r#"{"id":"a9","timestamp":"t","type":"gemini","content":"","toolCalls":[{"id":"c9","name":"mcp_other_shot","args":{},"status":"success","result":[{"functionResponse":{"id":"c9","name":"mcp_other_shot","response":{"output":"[Tool 'shot' provided the following image data with mime-type: image/png]"}}}]}]}"#;
+    let events = parse_line(line);
+    let Some(TranscriptEvent::ToolCall { name, .. }) = events.first() else { panic!("{events:?}") };
+    assert_eq!(name, "mcp_other_shot");
+    let TranscriptEvent::ToolResult { text, .. } = &events[1] else { panic!() };
+    assert!(text.contains("provided the following image data"), "{text}");
+}
+
+/// 发图工具在 gemini 里叫 `mcp_meowo_send_image`（0.68.0 generateValidName）→ Image 类。
+#[test]
+fn send_image_maps_to_image_kind() {
+    let line = r#"{"id":"a7","timestamp":"t","type":"gemini","content":"","model":"gemini-3.8-flash","toolCalls":[{"id":"c7","name":"mcp_meowo_send_image","args":{"source":"C:/repo/chart.png","caption":"趋势图"},"status":"success","result":[{"functionResponse":{"id":"c7","name":"mcp_meowo_send_image","response":{"output":"图片已发给用户。\n[Image: source: C:/Users/me/.meowo/images/sent/ab.png]"}}}]}]}"#;
+    let events = parse_line(line);
+    let Some(TranscriptEvent::ToolCall { kind, summary, detail, .. }) = events.first() else { panic!("{events:?}") };
+    assert_eq!(*kind, ToolKind::Image);
+    assert_eq!(summary, "趋势图");
+    assert_eq!(detail, &Some(ToolDetail::Image { source: "C:/repo/chart.png".into(), caption: Some("趋势图".into()) }));
+    let TranscriptEvent::ToolResult { text, .. } = &events[1] else { panic!() };
+    assert!(text.ends_with("[Image: source: C:/Users/me/.meowo/images/sent/ab.png]"), "{text}");
+}
+
+/// 真机样本（2026-11-21，gemini 0.68.0 `gemini -p` 调 Meowo MCP 的 send_image；隔离 home 的
+/// settings.json 登记 meowo、用户级策略只放行 send_image；探针目录前缀换成 C:\probe）。
+/// 同一行里还有 update_topic 调用。0.68 会把 MCP 回执包进 `<untrusted_context>`，引用行仍独占一行。
+/// 同一次运行里 browser_snapshot 没有策略放行，非交互模式下直接报「找不到工具」——审批语义未被绕过。
+#[test]
+fn real_send_image_sample_parses_to_image_message() {
+    let line = include_str!("../../../../tests/fixtures/chat-replay/gemini.probe-send-image.jsonl").lines().next().unwrap();
+    let events = parse_line(line);
+    let call = events
+        .iter()
+        .find_map(|e| match e {
+            TranscriptEvent::ToolCall { name, kind, summary, .. } if name == "mcp__meowo__send_image" => Some((*kind, summary.clone())),
+            _ => None,
+        })
+        .expect("应有发图调用");
+    assert_eq!(call, (ToolKind::Image, "gemini 探针".to_string()));
+    let text = events
+        .iter()
+        .find_map(|e| match e {
+            TranscriptEvent::ToolResult { tool_call_id: Some(id), text, .. } if id.contains("mcp_meowo_send_image") => Some(text.clone()),
+            _ => None,
+        })
+        .expect("应有发图回执");
+    assert!(
+        text.lines().any(|l| l == r"[Image: source: C:\probe\images\sent\0c6eebdca4b84ccf186723b705349400.png]"),
+        "{text}"
+    );
+    assert!(!text.contains("untrusted_context"), "{text}");
+}

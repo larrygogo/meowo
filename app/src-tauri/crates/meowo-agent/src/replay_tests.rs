@@ -15,6 +15,13 @@
 //! 除此之外不改内容，也不手编记录。每家缺哪类块、为什么缺，写在
 //! [`replay_samples_cover_the_expected_blocks`] 的期望表旁边。
 //!
+//! 发图与回执图（验收 #3 #5）：`claude.83386c1d`、`codex.01a1f9bf` 与各家的 `<家>.probe-*` 是
+//! 2026-11-21 后端探针用本机真实 CLI 调 Meowo 的 send_image / browser_screenshot 时抓下的记录
+//! （探针目录前缀换成 `C:\probe`）。探针的隔离目录随后删掉了，没留下会话 id 的按 `probe-<用途>`
+//! 命名；opencode 的探针样本是库里 tool part 的原样，回放时先走导出器（[`export_opencode_parts`]）。
+//! 回执内嵌图落盘后的路径在快照里换成固定占位（[`snapshot_text`]）。前端
+//! `app/src/views/chat/replayImages.test.tsx` 读这些快照，断言五家都显示成图片消息、截图露缩略图。
+//!
 //! 改了解析后更新快照：`MEOWO_UPDATE_REPLAY=1 cargo test -p meowo-agent --lib replay_`。
 
 use std::collections::BTreeSet;
@@ -70,35 +77,103 @@ fn replay_all(agent: &str) -> Vec<ChatItem> {
         .collect()
 }
 
-/// 对话页实际读的那个文件：gemini 是物化后的快照，其余就是样本本身。
+/// 对话页实际读的那个文件：gemini 是物化后的快照，opencode 的探针样本是导出后的导出行，
+/// 其余就是样本本身。
 fn sample_path(agent: &str, sample: &str) -> PathBuf {
     let source = fixture_dir().join(format!("{sample}.jsonl"));
     assert!(source.is_file(), "缺样本 {}", source.display());
-    if agent == "gemini" {
-        // 每份样本只物化一次：几个测试并行跑，各自清目录、各自物化会互相踩。
-        static MATERIALIZED: std::sync::Mutex<Vec<(String, PathBuf)>> =
-            std::sync::Mutex::new(Vec::new());
-        let mut done = MATERIALIZED.lock().unwrap();
-        if let Some((_, path)) = done.iter().find(|(name, _)| name == sample) {
-            return path.clone();
-        }
-        let dir =
-            std::env::temp_dir().join(format!("meowo_replay_{sample}_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = crate::plugins::gemini::materialize_for_test(&source, &dir)
-            .expect("gemini 样本物化失败");
-        done.push((sample.to_string(), path.clone()));
-        path
-    } else {
-        source
+    let derive = match agent {
+        "gemini" => true,
+        "opencode" => is_raw_opencode_parts(&source),
+        _ => false,
+    };
+    if !derive {
+        return source;
     }
+    // 每份样本只派生一次：几个测试并行跑，各自清目录、各自物化会互相踩。
+    static DERIVED: std::sync::Mutex<Vec<(String, PathBuf)>> = std::sync::Mutex::new(Vec::new());
+    let mut done = DERIVED.lock().unwrap();
+    if let Some((_, path)) = done.iter().find(|(name, _)| name == sample) {
+        return path.clone();
+    }
+    let dir = std::env::temp_dir().join(format!("meowo_replay_{sample}_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = if agent == "gemini" {
+        crate::plugins::gemini::materialize_for_test(&source, &dir).expect("gemini 样本物化失败")
+    } else {
+        export_opencode_parts(&source, &dir)
+    };
+    done.push((sample.to_string(), path.clone()));
+    path
 }
+
+/// opencode 探针样本（`opencode.probe-*`）：探针跑完只留下了库里那条工具 part 的原样（库随隔离
+/// 目录删掉了），不是导出行。识别办法：首行没有导出行的 `kind`，是一条 tool part。
+fn is_raw_opencode_parts(source: &Path) -> bool {
+    let text = std::fs::read_to_string(source).unwrap();
+    let first: serde_json::Value = serde_json::from_str(text.lines().next().unwrap_or("")).unwrap();
+    first.get("kind").is_none() && first.get("type").and_then(|t| t.as_str()) == Some("tool")
+}
+
+/// 库里的 part 走导出器的瘦身（`store::slim_part`：附件的 data URL 落进图片目录、只留路径），
+/// 再套上导出行的外壳。外壳里的 `msg` / `key` 只是游标：part 本身带不出所属消息 id，取附件上的
+/// messageID，没有就用占位；`key` 用 callID。
+fn export_opencode_parts(source: &Path, dir: &Path) -> PathBuf {
+    let text = std::fs::read_to_string(source).unwrap();
+    let mut out = String::new();
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let part: serde_json::Value = serde_json::from_str(line).unwrap();
+        let msg = part
+            .pointer("/state/attachments/0/messageID")
+            .and_then(|v| v.as_str())
+            .unwrap_or("msg_probe")
+            .to_string();
+        let key = part.get("callID").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let time = part.pointer("/state/time/start").cloned().unwrap_or(serde_json::Value::Null);
+        let slim = crate::plugins::opencode::export_part_for_test(part);
+        let row = serde_json::json!({
+            "kind": "part", "msg": msg, "key": key, "time": time, "summary": false, "part": slim,
+        });
+        out.push_str(&row.to_string());
+        out.push('\n');
+    }
+    let path = dir.join("export.jsonl");
+    std::fs::write(&path, out).unwrap();
+    path
+}
+
+/// 快照里的图片目录换成占位。回执内嵌的图（截图、读图）解析时落进图片目录，单测下是系统临时
+/// 目录（`images::images_root`），每台机器、每个系统都不一样；换成固定的 Windows 形态路径
+/// （其后的分隔符统一成反斜杠），快照在 Windows 与 macOS 上逐字一致。探针发图的回执本来就
+/// 指向探针时的持久目录 `C:\probe\images`，不受影响。
+const IMAGES_PLACEHOLDER: &str = r"C:\Users\user\.meowo\images";
 
 fn snapshot_text(items: &[ChatItem]) -> String {
     let mut text = serde_json::to_string_pretty(items).unwrap();
     text.push('\n');
-    text
+    let Some(root) = crate::images::images_root() else {
+        return text;
+    };
+    // 序列化后的 JSON 里反斜杠是转义过的：两头都按 JSON 字符串内容比对与替换。
+    let escape = |raw: &str| {
+        let quoted = serde_json::to_string(raw).unwrap();
+        quoted[1..quoted.len() - 1].to_string()
+    };
+    let root = escape(&root.display().to_string());
+    let placeholder = escape(IMAGES_PLACEHOLDER);
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text.as_str();
+    while let Some(at) = rest.find(&root) {
+        out.push_str(&rest[..at]);
+        out.push_str(&placeholder);
+        rest = &rest[at + root.len()..];
+        let end = rest.find([']', '"']).unwrap_or(rest.len());
+        out.push_str(&rest[..end].replace('/', r"\\"));
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// 时间线里出现了哪些要覆盖的块。
@@ -116,6 +191,7 @@ fn blocks(items: &[ChatItem]) -> BTreeSet<&'static str> {
                     ToolKind::Agent => "子任务",
                     ToolKind::Web => "网页",
                     ToolKind::Todo => "待办",
+                    ToolKind::Image => "发图",
                     ToolKind::Other => "其他",
                 });
             }
@@ -231,32 +307,33 @@ fn replay_samples_cover_the_expected_blocks() {
         (
             "claude",
             &[
-                "读", "写", "改", "命令", "搜索", "子任务", "其他", "失败回执", "没跑完的调用", "出错",
-                "中断",
+                "读", "写", "改", "命令", "搜索", "子任务", "其他", "发图", "失败回执", "没跑完的调用",
+                "出错", "中断",
             ],
         ),
         (
             "kimi",
-            &["读", "写", "改", "命令", "搜索", "子任务", "失败回执", "出错", "中断"],
+            &["读", "写", "改", "命令", "搜索", "子任务", "发图", "失败回执", "出错", "中断"],
         ),
         // 缺「读」：codex 没有读文件工具，读文件就是跑命令。缺「搜索」同理。
         // 缺「出错」：本机 98 份 rollout 里没有一次 task_complete 带 error。
         (
             "codex",
             &[
-                "写", "改", "命令", "网页", "子任务", "其他", "失败回执", "没跑完的调用", "中断",
+                "写", "改", "命令", "网页", "子任务", "其他", "发图", "失败回执", "没跑完的调用", "中断",
             ],
         ),
         // 缺「子任务」：本机 Gemini 会话没有派过子任务。
         (
             "gemini",
-            &["读", "写", "改", "命令", "搜索", "其他", "失败回执", "出错", "中断"],
+            &["读", "写", "改", "命令", "搜索", "其他", "发图", "失败回执", "出错", "中断"],
         ),
         // 缺「搜索」「子任务」：搜索只出现在一个私有项目的会话里（不能入库），task 一次都没有。
         (
             "opencode",
             &[
-                "读", "写", "改", "命令", "网页", "其他", "失败回执", "没跑完的调用", "出错", "中断",
+                "读", "写", "改", "命令", "网页", "其他", "发图", "失败回执", "没跑完的调用", "出错",
+                "中断",
             ],
         ),
     ];

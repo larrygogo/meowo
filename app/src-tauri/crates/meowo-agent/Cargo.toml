@@ -13,6 +13,11 @@ serde_json = { workspace = true }
 toml_edit = { workspace = true }
 sha2 = "0.10"
 base64 = "0.22"
+# 回执内嵌图的进程内备忘按 base64 原文取指纹（images.rs ToolMemo）。早已是 hashbrown 的传递依赖，不新增下载。
+foldhash = "0.2"
+# SVG 一律在后端栅格化成 PNG 再给页面显示（images.rs render_svg，做空第四轮）：纯 Rust、无系统依赖。
+# 关掉 raster-images（不解码 SVG 里内嵌或引用的任何位图），只留文字渲染与系统字体。
+resvg = { version = "0.45.1", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 # claude 模型目录：在约 300MB 的可执行里分块定位内嵌 model-catalog（见 plugins/claude/catalog.rs）。
 # 早已是传递依赖，不新增下载。
 memchr = "2"

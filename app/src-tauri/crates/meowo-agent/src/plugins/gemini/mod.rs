@@ -223,6 +223,25 @@ impl AgentPlugin for Gemini {
         &VARIANTS
     }
 
+    /// Meowo 的 MCP 服务器（发图 + 面板浏览器）怎么交给它（见 [`crate::McpAttach`]）。
+    /// 0.68.0 源码取证（bundle 里的 settings 加载与 MCP 客户端，2026-11-20）：
+    /// - 没有临时挂 MCP 的启动参数（无 `--mcp-config`）；`--allowed-mcp-server-names` 只是过滤。
+    ///   登记在用户 `settings.json` 的 `mcpServers`（多账号各自的 GEMINI_CLI_HOME 各写一份）。
+    /// - 启 MCP 子进程时会从继承环境里删掉名字含 TOKEN 的变量，`MEOWO_PTY_TOKEN` 传不过去；
+    ///   settings 读入时按 `${VAR:-默认}` 展开，所以服务器项里显式引用（expand_env）。
+    /// - 免审批不能用服务器级 `trust: true`（会连 browser_evaluate 一起放行）：写一份用户级策略
+    ///   `policies/meowo-images.toml`，只放行 `mcpName=meowo, toolName=send_image`；其余工具没有
+    ///   规则命中，交互模式下照常弹确认。用户级策略目录自动加载（Lead 的等待器放行也走这里）。
+    fn mcp_attach(&self) -> Option<crate::McpAttach> {
+        Some(crate::McpAttach::DataDirJson {
+            rel: "settings.json",
+            expand_env: true,
+            approval: Some(crate::McpApproval::PolicyFile {
+                rel: "policies/meowo-images.toml",
+            }),
+        })
+    }
+
     /// **不得不收 `node`。** gemini 没有自己的可执行——会话本体就是一个跑着 `bundle/gemini.js` 的
     /// node 进程，不收它，owner_pid 上溯就找不到会话宿主（PID 抓不到 → 判活拿不到依据），
     /// 整条会话生命周期都会瘸。

@@ -71,6 +71,19 @@ bridged_args!(GetSessionAdminPageArgs {
 
 bridged_args!(SearchChatTranscriptsArgs { query: String });
 
+// 正文 Markdown 图片（chat_images.rs resolve_chat_image）：src 是 Markdown 里的原样地址。
+// 手机桥只认 session_id：桌面端按它查会话目录，本地路径只在该目录或 Meowo 图片目录内解析
+// （contract.md 2026-11-21 修订）；cwd 是桌面版的参数，桥接时不用（不信手机传来的目录），
+// 留着是为了前端两端共用同一份 invoke 参数。没有会话（README 预览等）传 null，只认图片目录。
+bridged_args!(ResolveChatImageArgs {
+    src: String,
+    #[serde(default)]
+    cwd: Option<String>,
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "number | null", optional))]
+    session_id: Option<i64>
+});
+
 bridged_args!(RecentCwdsArgs {
     limit: usize,
     #[serde(default)]

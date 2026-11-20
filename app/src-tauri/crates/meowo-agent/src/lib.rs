@@ -37,9 +37,11 @@ pub mod extensions;
 pub mod fsutil;
 pub mod handoff;
 pub mod id;
+pub mod images;
 pub mod install;
 pub mod launch;
 pub mod launch_options;
+pub mod mcp_config;
 pub mod lead_install;
 pub mod plugins;
 pub mod ports;
@@ -89,7 +91,7 @@ pub use ports::{Body, HttpError, HttpPort, HttpRequest, KeychainPort, NoKeychain
 pub use profile::ProfileSpec;
 pub use proxy::{is_socks, ProxySpec};
 pub use registry::{
-    all, by_id, installation, is_agent_process, resolve, AgentPlugin, ForkMode, McpAttach,
+    all, by_id, installation, is_agent_process, resolve, AgentPlugin, ForkMode, McpApproval, McpAttach,
     ModelCatalogEntry, ModelPreset, resolve_session_args, DEFAULT_ID,
 };
 pub use relay::{
@@ -98,7 +100,7 @@ pub use relay::{
 };
 pub use transcript::{
     default_resolve_cwd, read_chat_delta, read_chat_delta_paged, read_chat_window, AgentMode,
-    ChatDelta, ChatItem, ChatLineMark, ChatWindow, TranscriptCache, TranscriptEvent,
+    ChatDelta, ChatItem, ChatLineMark, ChatWindow, ToolSideImages, TranscriptCache, TranscriptEvent,
     TranscriptInfo, TranscriptParser, TranscriptSpec, TurnError,
 };
 pub use trust::{trust_key, WorkspaceTrustSpec};

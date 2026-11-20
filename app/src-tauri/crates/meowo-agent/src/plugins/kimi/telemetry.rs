@@ -94,6 +94,9 @@ fn clip_detail(text: &str) -> (String, bool) {
 /// 前端的增删行数、diff 与语法高亮才有输入；此前 detail 恒为 None，只剩一行结果文案。
 fn tool_detail(name: &str, input: Option<&serde_json::Value>) -> Option<ToolDetail> {
     let input = input?;
+    if name == KIMI_SEND_IMAGE {
+        return ToolDetail::image_from_args(input);
+    }
     let text = |key: &str| input.get(key).and_then(|v| v.as_str()).map(str::to_string);
     let path = || text("path").or_else(|| text("file_path"));
     let num = |key: &str| {
@@ -180,9 +183,13 @@ fn tool_kind(name: &str) -> ToolKind {
         "FetchURL" | "WebSearch" => ToolKind::Web,
         "Agent" | "AgentSwarm" => ToolKind::Agent,
         "TodoList" => ToolKind::Todo,
+        KIMI_SEND_IMAGE => ToolKind::Image,
         _ => ToolKind::Other,
     }
 }
+
+/// Meowo 发图工具在 kimi 里的全名（2.6.3 qualifyMcpToolName：`mcp__<服务器>__<工具>`）。
+const KIMI_SEND_IMAGE: &str = "mcp__meowo__send_image";
 
 /// 图片 mime → 扩展名。渲染端按扩展名认图（Message.tsx 的 IMAGE_EXTENSIONS），未知类型不落盘。
 fn image_ext(mime: &str) -> Option<&'static str> {
@@ -234,10 +241,24 @@ fn tool_result_media(value: Option<&serde_json::Value>, wire_dir: Option<&Path>,
     let text = parts.iter().filter_map(|part| part.get("text").and_then(|v| v.as_str())).collect::<Vec<_>>().join("\n");
     let images = parts.iter().enumerate().filter_map(|(index, part)| {
         let url = mcp_image_url(part)?;
-        let path = persist_image_url(wire_dir, base_id, index, &url)?;
-        Some(format!("[Image: source: {}]", path.display()))
+        // 回执里的图落进持久目录 `images/tool/`（按内容哈希），不再进会被清理的临时目录。
+        let path = persist_image_url(wire_dir, base_id, index, &url, &persist_tool_image)?;
+        Some(crate::images::image_ref_line(&path))
     }).collect();
     (Some(text), images)
+}
+
+/// 落盘方式：用户消息里的图仍进粘贴临时目录（与粘贴附件同生命周期），工具回执里的图进
+/// 持久图片目录（见 [`persist_tool_image`]）。参数是 (文件名主干, 扩展名, 字节)。
+type Persist<'a> = &'a dyn Fn(&str, &str, &[u8]) -> Option<PathBuf>;
+
+fn persist_paste_image(stem: &str, ext: &str, bytes: &[u8]) -> Option<PathBuf> {
+    crate::fsutil::persist_paste_bytes(stem, ext, bytes)
+}
+
+/// 工具回执内嵌图：按内容哈希存进 `images/tool/`，文件头不是图片就不收。
+fn persist_tool_image(_stem: &str, _ext: &str, bytes: &[u8]) -> Option<PathBuf> {
+    crate::images::store_bytes(crate::images::ImageKind::Tool, bytes).ok()
 }
 
 fn persist_image_url(
@@ -245,6 +266,7 @@ fn persist_image_url(
     base_id: &str,
     index: usize,
     url: &str,
+    persist: Persist<'_>,
 ) -> Option<PathBuf> {
     use crate::fsutil::PASTE_MAX_BYTES;
     if let Some(rest) = url.strip_prefix("blobref:") {
@@ -265,10 +287,10 @@ fn persist_image_url(
             return None;
         }
         let bytes = std::fs::read(&src).ok()?;
-        return crate::fsutil::persist_paste_bytes(&format!("kimi-{sha}"), ext, &bytes);
+        return persist(&format!("kimi-{sha}"), ext, &bytes);
     }
     if let Some(rest) = url.strip_prefix(KIMI_FILE_SCHEME) {
-        return persist_kimi_file(wire_dir?, rest);
+        return persist_kimi_file(wire_dir?, rest, persist);
     }
     if let Some(rest) = url.strip_prefix("data:") {
         let (mime, data) = rest.split_once(";base64,")?;
@@ -289,7 +311,7 @@ fn persist_image_url(
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(data.as_bytes())
             .ok()?;
-        return crate::fsutil::persist_paste_bytes(&format!("kimi-{safe_id}-{index}"), ext, &bytes);
+        return persist(&format!("kimi-{safe_id}-{index}"), ext, &bytes);
     }
     None
 }
@@ -308,7 +330,7 @@ const KIMI_FILE_SCHEME: &str = "kimi-file://";
 ///
 /// 只认图片：扩展名或文件头是 png/jpeg/gif/webp 才落盘。都找不到（kimi 会按期清理
 /// `files/`）就返回 None，正文照常显示。
-fn persist_kimi_file(wire_dir: &Path, rest: &str) -> Option<PathBuf> {
+fn persist_kimi_file(wire_dir: &Path, rest: &str, persist: Persist<'_>) -> Option<PathBuf> {
     use crate::fsutil::PASTE_MAX_BYTES;
     let raw_id = rest.split('?').next().unwrap_or("");
     // id 直接拼进路径与文件名：只留 id 字符集，挡掉脏数据里的路径分隔符与 `..`。
@@ -357,7 +379,7 @@ fn persist_kimi_file(wire_dir: &Path, rest: &str) -> Option<PathBuf> {
         candidates.push(share.join("files").join(&id));
     }
     let (bytes, ext) = candidates.iter().find_map(|path| read_image(path))?;
-    crate::fsutil::persist_paste_bytes(&format!("kimi-{id}"), ext, &bytes)
+    persist(&format!("kimi-{id}"), ext, &bytes)
 }
 
 /// 按文件头认图片格式（`files/<id>` 没有扩展名）。扩展名不可信时也以文件头为准。
@@ -401,7 +423,7 @@ fn user_message_text(
         let Some(url) = image_part_url(part) else {
             continue;
         };
-        if let Some(path) = persist_image_url(wire_dir, base_id, index, url) {
+        if let Some(path) = persist_image_url(wire_dir, base_id, index, url, &persist_paste_image) {
             if !text.is_empty() {
                 text.push('\n');
             }
@@ -757,12 +779,16 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
                         kind: tool_kind(&name),
                         name: name.clone(),
                         // 子任务的摘要取那句描述；否则整包 args（含上千字 prompt）会把摘要行淹掉。
-                        summary: subagent
-                            .as_ref()
-                            .map(|call| call.description.clone())
-                            .filter(|description| !description.is_empty())
-                            .or_else(|| args.map(value_text))
-                            .unwrap_or_default(),
+                        summary: if name == KIMI_SEND_IMAGE {
+                            crate::images::send_image_call(args.unwrap_or(&serde_json::Value::Null)).1
+                        } else {
+                            subagent
+                                .as_ref()
+                                .map(|call| call.description.clone())
+                                .filter(|description| !description.is_empty())
+                                .or_else(|| args.map(value_text))
+                                .unwrap_or_default()
+                        },
                         subagent,
                         detail: tool_detail(&name, args),
                         plan: part
@@ -2171,16 +2197,89 @@ impl crate::caps::TelemetryCap for KimiTelemetry {
 
 #[cfg(test)]
 mod tests {
+    /// 面板浏览器截图的真实回执（本机 kimi 2.6.3 wire.jsonl 第 1626–1627 行，2026-11-20）：
+    /// 图不内嵌，是 `kimi-file://f_mcp_…`，原图在会话目录的 `media/`。要复制进持久目录
+    /// `images/tool/`——kimi 会清理会话、用户会删会话目录，历史里的截图不能跟着没。
+    #[test]
+    fn real_screenshot_result_kimi_file_is_copied_to_tool_dir() {
+        let base = std::env::temp_dir().join(format!("meowo-kimi-shot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let session = base.join("sessions").join("wd_ai_b6af78c099d4").join("session_53a00519");
+        let wire_dir = session.join("agents").join("main");
+        std::fs::create_dir_all(&wire_dir).unwrap();
+        std::fs::create_dir_all(session.join("media")).unwrap();
+        let id = "f_mcp_f980f7aab6abcdeff69d197592491a66f3da600a904e74a2333398f06668ddb7";
+        // 最小 JPEG 头（SOI + APP0 + SOF0 640×480），按文件头认图。
+        let jpg = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0x00, 0x00, 0xFF, 0xC0, 0x00, 0x11, 0x08, 0x01, 0xE0, 0x02, 0x80, 0x03, 0x4B];
+        std::fs::write(session.join("media").join(format!("{id}.jpg")), jpg).unwrap();
+        let call = r#"{"type":"context.append_loop_event","agentId":"main","event":{"type":"tool.call","uuid":"a18e6f42-2156-4d21-9408-a24b9285c77b","turnId":"9","step":27,"stepUuid":"96e6e7e7","toolCallId":"tool_DGQwCfYv3EgrOv43OQe6TqNO","name":"mcp__meowo__browser_screenshot","args":{}},"time":1794812465279}"#;
+        let result = format!(
+            r#"{{"type":"context.append_loop_event","agentId":"main","event":{{"type":"tool.result","parentUuid":"a18e6f42-2156-4d21-9408-a24b9285c77b","toolCallId":"tool_DGQwCfYv3EgrOv43OQe6TqNO","result":{{"output":[{{"type":"image_url","imageUrl":{{"url":"kimi-file://{id}"}}}},{{"type":"text","text":"面板浏览器截图（57 KB）\n    "}},{{"type":"text","text":"Original attachment saved at: \"media/{id}.jpg\""}}],"durationMs":83}}}},"time":1794812465362}}"#
+        );
+        assert!(!super::parse_events(call, Some(&wire_dir)).is_empty());
+        let events = super::parse_events(&result, Some(&wire_dir));
+        let text = events
+            .iter()
+            .find_map(|e| match e {
+                crate::transcript::TranscriptEvent::ToolResult { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .expect("应有回执");
+        let line = text.lines().find(|l| l.starts_with("[Image: source: ")).unwrap_or_else(|| panic!("{text}"));
+        let path = std::path::PathBuf::from(line.trim_start_matches("[Image: source: ").trim_end_matches(']'));
+        assert!(path.starts_with(crate::images::images_root().unwrap().join("tool")), "{text}");
+        // 会话目录删掉后副本还在（验收 #7）。
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(path.exists());
+    }
+
+    /// 真机样本（2026-11-21，kimi 2.6.3 `kimi -p`，default_permission_mode=manual 下靠 config.toml
+    /// 的 `[[permission.rules]]` 放行；探针目录前缀换成 C:\probe）。
+    #[test]
+    fn real_send_image_sample_parses_to_image_message() {
+        let lines: Vec<&str> = include_str!("../../../tests/fixtures/chat-replay/kimi.probe-send-image.jsonl").lines().collect();
+        let call = super::parse_events(lines[0], None);
+        let Some(crate::transcript::TranscriptEvent::ToolCall { kind, summary, .. }) = call.first() else { panic!("{call:?}") };
+        assert_eq!((*kind, summary.as_str()), (super::ToolKind::Image, "kimi 手动模式探针"));
+        let result = super::parse_events(lines[1], None);
+        let text = result
+            .iter()
+            .find_map(|e| match e {
+                crate::transcript::TranscriptEvent::ToolResult { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .expect("应有回执");
+        assert!(text.lines().any(|l| l == r"[Image: source: C:\probe\images\sent\0c6eebdca4b84ccf186723b705349400.png]"), "{text}");
+    }
+
+    /// 发图工具（`mcp__meowo__send_image`）→ Image 类，摘要是说明，详情带来源。
+    #[test]
+    fn send_image_call_maps_to_image_kind() {
+        let call = r#"{"type":"context.append_loop_event","agentId":"main","event":{"type":"tool.call","uuid":"u1","turnId":"3","step":2,"toolCallId":"tool_img","name":"mcp__meowo__send_image","args":{"source":"C:/repo/out/chart.png","caption":"本周趋势"}},"time":1794812465279}"#;
+        let events = super::parse_events(call, None);
+        let Some(crate::transcript::TranscriptEvent::ToolCall { kind, summary, detail, .. }) = events.first() else {
+            panic!("{events:?}")
+        };
+        assert_eq!(*kind, super::ToolKind::Image);
+        assert_eq!(summary, "本周趋势");
+        assert_eq!(
+            detail,
+            &Some(super::ToolDetail::Image { source: "C:/repo/out/chart.png".into(), caption: Some("本周趋势".into()) })
+        );
+    }
+
     #[test]
     fn browser_mcp_image_becomes_text_and_receipt_reference() {
         use serde_json::json;
-        let value = json!({"content":[{"type":"text","text":"面板浏览器截图"},{"type":"image","mimeType":"image/jpeg","data":"/9j/4A=="}]});
+        let value = json!({"content":[{"type":"text","text":"面板浏览器截图"},{"type":"image","mimeType":"image/jpeg","data":"/9j/wAARCAABAAEDASIAAhEBAxEB/9k="}]});
         let (plain, images) = super::tool_result_media(Some(&value), None, "kimi-browser-test");
         assert_eq!(plain.as_deref(), Some("面板浏览器截图"));
         assert_eq!(images.len(), 1);
         let path = images[0].split("[Image: source: ").nth(1).and_then(|rest| rest.strip_suffix(']')).map(std::path::PathBuf::from).unwrap();
         assert!(path.exists());
-        std::fs::remove_file(path).ok();
+        // 回执图进持久目录 images/tool/，不再进会被清理的 $TEMP/meowo-paste。按内容哈希去重，
+        // 别的测试可能存了同一张图，故不删。
+        assert!(path.starts_with(crate::images::images_root().unwrap().join("tool")));
     }
 
 
@@ -3121,7 +3220,7 @@ mod tests {
         assert_eq!(std::fs::read(&path2).unwrap(), jpg);
 
         // 带路径分隔符的 id 是脏数据，不拼路径。
-        assert!(persist_kimi_file(&wire_dir, "../../files/x").is_none());
+        assert!(persist_kimi_file(&wire_dir, "../../files/x", &persist_paste_image).is_none());
 
         let _ = std::fs::remove_file(&path1);
         let _ = std::fs::remove_file(&path2);

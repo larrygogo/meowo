@@ -163,7 +163,33 @@ export const QA_SHOTS = [
   { name: "qa-tools-codex-agents-running", scene: "flow-tools-codex-agents-running", size: W620, sel: ".chat-subagent-status.is-running" },
   { name: "qa-m-tools-codex-agents-running", page: "mobile", scene: "mobile-tools-codex-agents-running", size: PHONE, sel: ".chat-subagent-status.is-running" },
   { name: "qa-image", scene: "flow-image", sel: ".chat-image-thumb-btn" },
-  { name: "qa-browser-receipt", scene: "flow-browser-receipt", sel: ".chat-tool-browser-images img", steps: [["click", ".chat-tool > summary"]] },
+  // 工具回执里的截图：缩略图直接露在工具行下，不用展开。
+  { name: "qa-browser-receipt", scene: "flow-browser-receipt", sel: ".chat-tool-media img" },
+  // agent 发来的图片（imageScenes.ts）：单张带说明、相册、长图、小图标、正在发送；四种失败、工具行缩略图、正文图片；
+  // 悬停露出保存与在文件夹中显示；灯箱带说明与操作。手机同一份数据。
+  { name: "qa-images", scene: "flow-images-main", size: [1100, 900], sel: ".chat-sent", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300]] },
+  { name: "qa-images-bottom", scene: "flow-images-main", size: [1100, 900], sel: ".chat-sent", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 1e6"], ["tick", 300]] },
+  { name: "qa-images-states", scene: "flow-images-states", size: [1100, 1000], sel: ".chat-sent-failed", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300]] },
+  // 过程块展开：截图、读图、写图片三行的动作名都是人话（不露 mcp__meowo__browser_screenshot）。
+  // 网络图片的占位：悬停看说明；点了之后同域名放行、进入加载中（演示页里 hero.png 一直不返回）。
+  { name: "qa-images-gate-hover", scene: "flow-images-states", size: [1100, 1000], sel: "button.is-gated", steps: [["tick", 400], ["eval", "document.querySelector('button.is-gated').scrollIntoView({ block: 'center' })"], ["tick", 200], ["hover", "button.is-gated"], ["tick", 900]] },
+  { name: "qa-images-gate-clicked", scene: "flow-images-states", size: [1100, 1000], sel: ".chat-md-image", steps: [["tick", 400], ["eval", "document.querySelector('button.is-gated').scrollIntoView({ block: 'center' })"], ["tick", 200], ["click", "button.is-gated"], ["tick", 400]] },
+  { name: "qa-m-images-gate", page: "mobile", scene: "mobile-images-states", size: PHONE, sel: "button.is-gated", steps: [["tick", 400], ["eval", "document.querySelector('button.is-gated').scrollIntoView({ block: 'center' })"], ["tick", 300]] },
+  { name: "qa-images-states-open", scene: "flow-images-states", size: [1100, 1000], sel: ".chat-sent-failed", steps: [["tick", 400], OPEN_FOLDS, ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300]] },
+  { name: "qa-m-images-states-open", page: "mobile", scene: "mobile-images-states", size: PHONE, sel: ".chat-sent-failed", steps: [["tick", 400], OPEN_FOLDS, ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300]] },
+  { name: "qa-images-hover", scene: "flow-images-main", size: [1100, 900], sel: ".chat-sent", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300], ["hover", ".chat-sent-tile >> nth=0"]] },
+  { name: "qa-images-lightbox", scene: "flow-images-main", size: [1100, 800], sel: ".chat-lightbox", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300], ["click", ".chat-sent-open >> nth=0"]] },
+  { name: "qa-m-images", page: "mobile", scene: "mobile-images-main", size: PHONE, sel: ".chat-sent", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300]] },
+  { name: "qa-m-images-bottom", page: "mobile", scene: "mobile-images-main", size: PHONE, sel: ".chat-sent", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 1e6"], ["tick", 300]] },
+  { name: "qa-m-images-states", page: "mobile", scene: "mobile-images-states", size: PHONE, sel: ".chat-sent-failed", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 1e6"], ["tick", 300]] },
+  { name: "qa-m-images-lightbox", page: "mobile", scene: "mobile-images-main", size: PHONE, sel: ".chat-lightbox", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300], ["click", ".chat-sent-open >> nth=0"]] },
+  // 五家真机发图样本（后端真实解析的条目，imageScenes.ts 的 real-<家>）：桌面深浅、手机浅色各一张，外加灯箱打开态。
+  ...["claude", "codex", "kimi", "gemini", "opencode"].flatMap((agent) => [
+    { name: `qa-images-real-${agent}`, scene: `flow-images-real-${agent}`, size: [1100, 760], sel: ".chat-sent img", steps: [["tick", 400], OPEN_FOLDS, ["tick", 300]] },
+    { name: `qa-m-images-real-${agent}`, page: "mobile", scene: `mobile-images-real-${agent}`, size: PHONE, themes: ["light"], sel: ".chat-sent img", steps: [["tick", 400], OPEN_FOLDS, ["tick", 300]] },
+  ]),
+  { name: "qa-images-real-lightbox", scene: "flow-images-real-gemini", size: [1100, 760], sel: ".chat-lightbox", steps: [["tick", 400], ["click", ".chat-sent-open >> nth=0"], ["tick", 300]] },
+  { name: "qa-m-images-real-lightbox", page: "mobile", scene: "mobile-images-real-gemini", size: PHONE, themes: ["light"], sel: ".chat-lightbox", steps: [["tick", 400], ["click", ".chat-sent-open >> nth=0"], ["tick", 300]] },
   { name: "qa-lightbox", scene: "flow-image", sel: ".chat-lightbox", steps: [["click", ".chat-image-thumb-btn"]] },
   { name: "qa-drop", scene: "flow-drop", sel: ".chat-drop-overlay" },
   { name: "qa-search", scene: "flow-states", sel: ".chat-search-host", steps: [["key", "Control+f"], ["type", ".chat-search-input", "schema"]] },
@@ -254,6 +280,8 @@ export const QA_SHOTS = [
   { name: "qa-title-gitee", scene: "panel-changes", params: "forge=gitee", size: [2560, 1440], sel: ".tb-pr" },
   { name: "qa-set-forge-add-gitee", scene: "settingswin-github", size: SETTINGS, sel: "[data-testid=forge-add]", steps: [["eval", FORGE_SCROLL], ["click", "[data-testid=forge-empty] button"], ["click", "[data-testid=forge-add] [role=radio] >> nth=4"], ["eval", FORGE_ADD_SCROLL]] },
   // 查看非 active 账号只换用量视图：账号名、按下态和非 active 用量都要入镜。
+  // Agent 页：发图工具没接上（配置文件读不懂），切到 Gemini CLI 那张卡。
+  { name: "qa-set-mcp-unreadable", scene: "settingswin-account", params: "mcp=unreadable", size: [620, 640], sel: "[data-testid=agent-mcp-unreadable-gemini]", langs: ["zh", "en"], steps: [["click", ".account-agent-switch .dd-btn"], ["click", "[role=option]:has-text('Gemini CLI')"], ["tick", 300], ["eval", "document.querySelector('[data-testid=agent-mcp-unreadable-gemini]').scrollIntoView({ block: 'center' })"]] },
   { name: "qa-set-profile-usage", scene: "settingswin-account", size: SETTINGS, sel: ".usage-card-title", steps: [["click", '[data-testid="profile-usage-claude-work"]']], langs: ["zh", "en"] },
   { name: "qa-set-dropdown-sessions", scene: "settingswin-sessions", size: SETTINGS, sel: ".dd-menu", steps: [["click", ".dd > .dd-btn >> nth=1"]] },
   { name: "qa-set-focus", scene: "settingswin-general", params: "proxy=custom", size: SETTINGS, sel: ".settings", steps: [["click", ".main-body input[type=text], .main-body input:not([type])"]] },

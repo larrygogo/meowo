@@ -8,6 +8,8 @@ import type { ChatItem } from "../../api";
 import { useT } from "../../i18n";
 import { fmtElapsed, type CliRetry, type CliStatus } from "./cliStatus";
 import { liveTurnStart } from "./toolState";
+import type { Dict } from "../../i18n/zh";
+import { toolShortName } from "./ToolIcon";
 
 // 运行条活动文本的展示清洗：剥掉「cd <目录> && 」前缀（保留可能的 ›/> 提示符）。
 // 状态条截断成单行后，冗长的项目路径会把真正在跑的命令挤出可视区；完整原文在 title 里。
@@ -35,7 +37,9 @@ export function runningActivityView(
 /// 「没回执」正是「在跑」。gemini/opencode 的记录只含已收场的调用，这里给不出，调用方退回 hook 值。
 /// 有说明（Bash/PowerShell 的 description）先给说明——终端里那一行显示的也是它，多行脚本的
 /// 首行往往只是个变量赋值；完整命令进 tooltip。
-export function liveToolActivity(items: ChatItem[]): { text: string; tip: string | undefined } | null {
+/// 不露工具原名：按类别写人话（发图写「正在发图片」），其余用工具行同一个动作名（toolShortName：
+/// 收录过的给译名，MCP 工具拆成「服务 · 工具」）。2026-11-20：发图期间运行条露出 mcp__meowo__send_image。
+export function liveToolActivity(items: ChatItem[], t: Dict): { text: string; tip: string | undefined } | null {
   const turnStart = liveTurnStart(items);
   const settled = new Set<string>();
   for (let index = items.length - 1; index > turnStart; index -= 1) {
@@ -51,9 +55,11 @@ export function liveToolActivity(items: ChatItem[]): { text: string; tip: string
       if (description) return { text: description, tip: command };
       return runningActivityView(`› ${command}`, "", "");
     }
+    if (item.kind === "image") return { text: t.chat.turnToolDoing.image, tip: undefined };
     const summary = item.summary.trim();
+    const name = toolShortName(item.name, item.kind, t);
     // 认不得的工具摘要可能是整段参数 JSON，不上运行条。
-    const activity = summary && !summary.startsWith("{") ? `${item.name}: ${summary}` : item.name;
+    const activity = summary && !summary.startsWith("{") ? `${name}: ${summary}` : name;
     return { text: activity, tip: activity };
   }
   return null;

@@ -73,7 +73,9 @@ describe("U2 断行", () => {
     // 保留换行的正文（消息气泡、思考、提问、提示），pretty 对它们有用；其余都是代码、日志、终端画面。
     const PROSE = new Set([".app-confirm p > span", ".chat-queued-bubble", ".sa-toast > span", ".chat-sidebar-error.is-multiline span",
       ".chat-diff-text > .chat-diff-cmt", ".pr-comment p, .pr-event p", ".pr-confirm-body", ".chat-text", ".chat-reasoning div",
-      ".chat-tool-out", ".chat-approval-prewrap", ".chat-side-answer-body", ".up-notes-body"]);
+      ".chat-tool-out", ".chat-approval-prewrap", ".chat-side-answer-body", ".up-notes-body",
+      // 发图时 agent 附的那句说明（ChatImage.tsx）：是 agent 说的话，保留它的换行。
+      ".chat-sent-caption"]);
     // 规则写在这些元素或它们的后代上，已由退回列表覆盖（text-wrap-style 继承）。
     const covered = (selector: string) => /(^|[\s>(,])(pre|code)\b/.test(selector)
       || reset.some((sel) => sel.startsWith(".") && selector.includes(sel))

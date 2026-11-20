@@ -1,8 +1,7 @@
-import { memo, useContext, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { memo, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useFlash } from "../../hooks/useFlash";
-import { createPortal } from "react-dom";
-import { pushEscLayer } from "../../escLayers";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { Lightbox } from "./Lightbox";
+import { safeFileSrc } from "../../assetSrc";
 import { useT } from "../../i18n";
 import { deliveryStatusLabel } from "../../i18n/statusVocab";
 import { attachmentInstructionEn, attachmentInstructionZh } from "../../i18n/attachmentInstruction";
@@ -20,7 +19,7 @@ import { FILE_TOKEN_REFRESHED_EVENT, IMAGE_LOAD_FAILED_EVENT, remoteUi } from ".
 import { openSettingsAt } from "../../settingsNav";
 import { Icon } from "../../icons/Icon";
 import { icCopy, icImage, icLightbulb, icSwap, icUndo } from "../../icons/glyphs.chat";
-import { icAlert, icCheck, icClose, icTerminal } from "../../icons/glyphs";
+import { icAlert, icCheck, icTerminal } from "../../icons/glyphs";
 import { busyProps } from "../../busyButton";
 
 export function MessageCopyButton({ text, className = "chat-message-copy" }: { text: string; className?: string }) {
@@ -136,105 +135,6 @@ export function splitUserText(text: string): { body: string; images: { path: str
   return { body: body.join("\n").trim(), images };
 }
 
-/** 大图查看层：滚轮缩放、拖拽平移、双击复位；工具栏有缩放按钮与明显的关闭键。
- *  点击空白处或 Esc 也能关（拖拽松手不算点击）。 */
-function Lightbox({ src, name, onClose }: { src: string; name: string; onClose: () => void }) {
-  const t = useT();
-  const [scale, setScale] = useState(1);
-  const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const stageRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{ startX: number; startY: number; baseX: number; baseY: number; moved: boolean } | null>(null);
-  const justDraggedRef = useRef(false);
-  const clampScale = (value: number) => Math.min(8, Math.max(0.2, value));
-  const reset = () => { setScale(1); setOffset({ x: 0, y: 0 }); };
-
-  // Esc 关灯箱。挂捕获段并拦住传播：ChatWindow 有一个全局 Esc=拒绝审批的监听，
-  // 用户按 Esc 只想关图，不能顺手把审批拒了。同时注册 Esc 层（escLayers.ts）——
-  // 层栈是全局监听的统一让位判据，捕获段截停是本层自己的双保险。
-  useEffect(() => {
-    const popLayer = pushEscLayer();
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.stopPropagation();
-      onClose();
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => {
-      popLayer();
-      window.removeEventListener("keydown", onKey, true);
-    };
-  }, [onClose]);
-
-  // 滚轮缩放。React 的 onWheel 在根容器上是 passive 监听，preventDefault 无效
-  // （页面会跟着滚）——自己挂非 passive 的原生监听。
-  useEffect(() => {
-    const stage = stageRef.current;
-    if (!stage) return;
-    const onWheel = (event: WheelEvent) => {
-      event.preventDefault();
-      setScale((current) => clampScale(current * (event.deltaY < 0 ? 1.15 : 1 / 1.15)));
-    };
-    stage.addEventListener("wheel", onWheel, { passive: false });
-    return () => stage.removeEventListener("wheel", onWheel);
-  }, []);
-
-  const onMouseDown = (event: ReactMouseEvent) => {
-    event.preventDefault();
-    dragRef.current = { startX: event.clientX, startY: event.clientY, baseX: offset.x, baseY: offset.y, moved: false };
-  };
-  const onMouseMove = (event: ReactMouseEvent) => {
-    const drag = dragRef.current;
-    if (!drag) return;
-    const dx = event.clientX - drag.startX;
-    const dy = event.clientY - drag.startY;
-    if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
-    setOffset({ x: drag.baseX + dx, y: drag.baseY + dy });
-  };
-  const onMouseUp = () => {
-    if (!dragRef.current) return;
-    justDraggedRef.current = dragRef.current.moved;
-    dragRef.current = null;
-  };
-  const onStageClick = (event: ReactMouseEvent) => {
-    // 拖拽平移松手不是「点空白关闭」；只有真正点在空白处才关。
-    if (justDraggedRef.current) { justDraggedRef.current = false; return; }
-    if (event.target === event.currentTarget) onClose();
-  };
-
-  return createPortal(
-    <div className="chat-lightbox" role="dialog" aria-label={name}>
-      <div
-        ref={stageRef}
-        className="chat-lightbox-stage"
-        onClick={onStageClick}
-        onMouseDown={onMouseDown}
-        onMouseMove={onMouseMove}
-        onMouseUp={onMouseUp}
-        onMouseLeave={onMouseUp}
-        onDoubleClick={reset}
-      >
-        {/* no-referrer:远程模式下 src 是带 token 的 /file URL,不许经 Referer 外泄。 */}
-        <img
-          src={src}
-          alt={name}
-          draggable={false}
-          referrerPolicy="no-referrer"
-          style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})` }}
-        />
-      </div>
-      <div className="chat-lightbox-bar">
-        <button type="button" aria-label={t.chat.zoomOut} data-tip={t.chat.zoomOut} onClick={() => setScale((s) => clampScale(s / 1.25))}>−</button>
-        <button type="button" className="chat-lightbox-zoom" aria-label={t.chat.zoomReset} data-tip={t.chat.zoomReset} onClick={reset}>{Math.round(scale * 100)}%</button>
-        <button type="button" aria-label={t.chat.zoomIn} data-tip={t.chat.zoomIn} onClick={() => setScale((s) => clampScale(s * 1.25))}>+</button>
-        <button type="button" aria-label={t.chat.lightboxClose} data-tip={t.chat.lightboxClose} onClick={onClose}>
-          <Icon glyph={icClose} size={16} />
-        </button>
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
 /** 跨会话消息块：另一个 Claude 会话经 SendMessage 发来的一条消息。
  *  它是真的对话内容（不是 <task-notification> 那种机器记录），所以正文直接可读；
  *  但复核回执这类消息动辄几十行，收起态限高 220px，超出才给「展开全部」。
@@ -302,7 +202,9 @@ export function ImageRef({ path }: { path: string }) {
     window.addEventListener(FILE_TOKEN_REFRESHED_EVENT, retry);
     return () => window.removeEventListener(FILE_TOKEN_REFRESHED_EVENT, retry);
   }, [failed]);
-  if (failed) {
+  // 网络共享路径不进 asset 协议、也不请宿主放行（见 assetSrc.ts），直接按读不到显示。
+  const base = safeFileSrc(path);
+  if (failed || base === null) {
     return (
       <span className="chat-image-chip" data-tip={name}>
         <Icon glyph={icImage} size={12} />
@@ -310,7 +212,6 @@ export function ImageRef({ path }: { path: string }) {
       </span>
     );
   }
-  const base = convertFileSrc(path);
   const src = stage === "retry" ? `${base}${base.includes("?") ? "&" : "?"}preview=1` : base;
   return (
     <>

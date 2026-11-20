@@ -200,3 +200,22 @@ Var LegacyHadStartMenuLnk
     ${EndIf}
   ${EndIf}
 !macroend
+
+; 卸载时撤掉 Meowo 写进各家 CLI 配置文件的东西（发图工具 2026-11-21 起）：gemini settings.json 的
+; mcpServers.meowo 与 ~/.gemini/policies/meowo-images.toml、kimi mcp.json 的 meowo 一项与 config.toml
+; 里带 Meowo 标记的审批规则（各账号目录都清）。这些文件是用户自己的 CLI 配置，Meowo 卸了还留着，
+; 就是一条指向已删除 exe 的 MCP 服务器和一条没人认领的免审批规则。
+;
+; 增删逻辑与应用启动时登记的是同一份（meowo_agent::mcp_config），所以交给 sidecar 子命令做，
+; 不在 NSIS 里手改 JSON/TOML。PREUNINSTALL 在删文件之前，sidecar 还在。
+; 升级（/UPDATE：updater 或重装时调旧卸载器）不清：新版启动会重新登记，中间撤掉没有意义。
+; 寄存器用 $R0：卸载段里此刻没人占。失败不阻断卸载。
+!macro NSIS_HOOK_PREUNINSTALL
+  ${If} $UpdateMode <> 1
+    ${If} ${FileExists} "$INSTDIR\meowo-reporter.exe"
+      DetailPrint "Removing Meowo entries from agent CLI configs..."
+      nsExec::ExecToLog '"$INSTDIR\meowo-reporter.exe" uninstall-cleanup'
+      Pop $R0
+    ${EndIf}
+  ${EndIf}
+!macroend

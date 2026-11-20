@@ -238,6 +238,9 @@ fn command_text(value: &serde_json::Value) -> Option<String> {
     }
 }
 
+/// Meowo 发图工具在 codex 里的全名（MCP 工具 = `mcp__<服务器>__<工具>`）。
+const CODEX_SEND_IMAGE: &str = "mcp__meowo__send_image";
+
 /// 一次工具调用 → 语义类别、摘要与结构化详情。`name` 是脚本里 `tools.<name>` 的名字，
 /// 或直接调用（老版本、协作类工具）的函数名；`arg` 是它的实参。
 /// 表里没有的工具为 Other：协作类的 wait_agent / list_agents / interrupt_agent / send_message
@@ -333,6 +336,9 @@ fn describe_tool(name: &str, arg: &serde_json::Value) -> (ToolKind, String, Opti
             ),
             None => (ToolKind::Read, String::new(), None),
         },
+        // Meowo 的发图工具：脚本里是 `tools.mcp__meowo__send_image(…)`，直接调用时由
+        // tool_call_events 把命名空间 `mcp__meowo` 拼回同一个全名。
+        CODEX_SEND_IMAGE => crate::images::send_image_call(arg),
         "update_plan" => (
             ToolKind::Todo,
             clip_text(&text("explanation").unwrap_or_default(), SUMMARY_MAX_CHARS),
@@ -404,6 +410,14 @@ fn tool_call_events(
         .get("name")
         .and_then(|v| v.as_str())
         .unwrap_or("tool");
+    // 0.16x 起直接调用带命名空间（`"namespace":"collaboration"`、MCP 是 `mcp__<服务器>`）：
+    // MCP 工具拼回 `mcp__<服务器>__<工具>`，与脚本里的 `tools.mcp__…` 同一个名字。
+    let qualified = payload
+        .get("namespace")
+        .and_then(|v| v.as_str())
+        .filter(|ns| ns.starts_with("mcp__") && !name.starts_with(ns))
+        .map(|ns| format!("{ns}__{name}"));
+    let name = qualified.as_deref().unwrap_or(name);
     let call_id = payload
         .get("call_id")
         .and_then(|v| v.as_str())
@@ -468,27 +482,89 @@ fn tool_call_events(
         .collect()
 }
 
-fn browser_mcp_media(output: &serde_json::Value, base_id: &str) -> Option<(String, Vec<String>)> {
-    let owned = match output { serde_json::Value::String(raw) => serde_json::from_str::<serde_json::Value>(raw).ok(), _ => None };
+/// 回执里的一张内嵌图 → 持久目录里的副本。三种形态（本机 rollout 与 0.169 源码）：
+/// - MCP 工具直接调用：`{"type":"image","data":<base64>,"mimeType":…}`（或 `source.data`）；
+/// - `view_image` 与脚本里 `image(…)`：`{"type":"input_image","image_url":"data:image/png;base64,…"}`
+///   （本机 2026-07-13 rollout 实样，代码模式里调 view_image）。
+///
+/// 声明的类型不可信，落盘前按文件头判断（images 模块）；落在 `images/tool/`，按内容哈希命名。
+fn output_image(part: &serde_json::Value) -> Option<String> {
+    let path = match part.get("type").and_then(|v| v.as_str()) {
+        Some("image") => {
+            let source = part.get("source").unwrap_or(part);
+            crate::images::store_tool_base64(source.get("data")?.as_str()?)
+        }
+        Some("input_image") => {
+            let url = part
+                .get("image_url")
+                .and_then(|u| u.as_str().or_else(|| u.get("url").and_then(|v| v.as_str())))?;
+            crate::images::store_tool_data_url(url)
+        }
+        _ => None,
+    }?;
+    Some(crate::images::image_ref_line(&path))
+}
+
+/// 回执有时是 JSON 文本（老版本把 content 数组序列化成字符串）：解析出来再看。
+fn output_items(output: &serde_json::Value) -> Option<serde_json::Value> {
+    match output {
+        serde_json::Value::String(raw) => serde_json::from_str::<serde_json::Value>(raw).ok(),
+        _ => None,
+    }
+}
+
+/// 直接调用的回执里有图：返回（文字, 引用行）。没有图返回 None，回执照常处理。
+fn browser_mcp_media(output: &serde_json::Value, _base_id: &str) -> Option<(String, Vec<String>)> {
+    let owned = output_items(output);
     let output = owned.as_ref().unwrap_or(output);
     let parts = output.as_array().or_else(|| output.get("content").and_then(|v| v.as_array()))?;
-    let mut images = Vec::new();
-    for (index, part) in parts.iter().enumerate() {
-        if part.get("type").and_then(|v| v.as_str()) != Some("image") { continue; }
-        let source = part.get("source").unwrap_or(part);
-        let mime = source.get("media_type").or_else(|| source.get("mimeType")).or_else(|| source.get("mime_type")).and_then(|v| v.as_str());
-        let data = source.get("data").and_then(|v| v.as_str());
-        let (Some(mime), Some(data)) = (mime, data) else { continue };
-        let ext = match mime { "image/png" => "png", "image/jpeg" => "jpg", "image/gif" => "gif", "image/webp" => "webp", _ => continue };
-        use base64::Engine;
-        let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) else { continue };
-        let id: String = base_id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(64).collect();
-        let Some(path) = crate::fsutil::persist_paste_bytes(&format!("{id}-{index}"), ext, &bytes) else { continue };
-        images.push(format!("[Image: source: {}]", path.display()));
-    }
+    let images: Vec<String> = parts.iter().filter_map(output_image).collect();
     if images.is_empty() { return None; }
     let text = parts.iter().filter_map(|part| part.get("text").or_else(|| part.get("output_text")).and_then(|v| v.as_str())).collect::<Vec<_>>().join("\n");
     Some((text, images))
+}
+
+/// 脚本回执里的图（`image(…)` 输出的 input_image）：引用行列表，按出现顺序。
+fn script_images(output: &serde_json::Value) -> Vec<String> {
+    let owned = output_items(output);
+    let output = owned.as_ref().unwrap_or(output);
+    output
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(output_image)
+        .collect()
+}
+
+/// 脚本把发图回执当 JSON 输出时（`text(await tools.mcp__meowo__send_image(…))`），引用行被
+/// 转义在字符串里（`\\n[Image: source: C:\\\\…]`），前端认不出。把每个引用行还原成独立一行补在后面。
+fn unescaped_image_refs(text: &str) -> Vec<String> {
+    const OPEN: &str = "[Image: source: ";
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find(OPEN) {
+        let after = &rest[at + OPEN.len()..];
+        let Some(end) = after.find(']') else { break };
+        let raw = &after[..end];
+        rest = &after[end..];
+        if raw.contains('\n') || raw.contains('"') {
+            continue;
+        }
+        let line = format!("{OPEN}{}]", raw.replace("\\\\", "\\"));
+        if !text.lines().any(|l| l.trim() == line) && !out.contains(&line) {
+            out.push(line);
+        }
+    }
+    out
+}
+
+fn append_lines(text: &mut String, lines: impl IntoIterator<Item = String>) {
+    for line in lines {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(&line);
+    }
 }
 
 /// 工具回执。脚本回执按 `text()` 分段，第 i 段挂到 `<call_id>#<i>`；直接调用的回执并成一条。
@@ -544,6 +620,17 @@ fn tool_result_events(
         }
     }
     if scripted {
+        let mut parts = parts;
+        for part in parts.iter_mut() {
+            let refs = unescaped_image_refs(&part.text);
+            append_lines(&mut part.text, refs);
+        }
+        // 脚本里 image(…) 输出的图没有和哪次 tools.* 调用绑定：挂到最后一段（脚本通常先调
+        // view_image / 截图，再把结果 image() 出来；一张图都不丢是第一位的）。
+        let images = script_images(payload.get("output").unwrap_or(&serde_json::Value::Null));
+        if let Some(last) = parts.last_mut() {
+            append_lines(&mut last.text, images);
+        }
         return parts
             .into_iter()
             .enumerate()
@@ -686,6 +773,54 @@ pub(super) fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
 /// （135 条，调用带 `login:false` 时），命令原文恒在最后一项；`exit_code` 与 `duration` 恒有；
 /// 较新的版本在 payload 上另有 `started_at_ms`。只按需要的字段反序列化——`aggregated_output`
 /// 可以有几百 KB。
+/// MCP 工具调用的完整结果旁路记录（`event_msg/item_completed/McpToolCall`）里的图片引用行。
+///
+/// 代码模式下 MCP 工具是在 exec 脚本里 `await tools.mcp__<服务器>__<工具>(…)` 调的，结果交给
+/// 脚本；脚本不 `text()` / `image()` 输出时，`custom_tool_call_output` 里只有一行状态头，发图
+/// 回执的引用行、截图都看不到。这条旁路记录（0.169.0 真机：落在调用行与回执行之间，带 server、
+/// tool、arguments、完整 result 与 started_at_ms，但没有 call_id）补上它：读取层按工具全名与
+/// 时序对回调用（见 transcript.rs 的 ExitJoin）。结果里的引用行原样取，内嵌图落进持久目录。
+fn mcp_side_images(line: &str) -> Option<crate::transcript::ToolSideImages> {
+    if !line.contains("\"McpToolCall\"") {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    if value.get("type").and_then(|v| v.as_str()) != Some("event_msg") {
+        return None;
+    }
+    let payload = value.get("payload")?;
+    if payload.get("type").and_then(|v| v.as_str()) != Some("item_completed") {
+        return None;
+    }
+    let item = payload.get("item")?;
+    if item.get("type").and_then(|v| v.as_str()) != Some("McpToolCall") {
+        return None;
+    }
+    let server = item.get("server")?.as_str()?;
+    let tool = item.get("tool")?.as_str()?;
+    let mut refs = Vec::new();
+    for part in item.pointer("/result/content").and_then(|v| v.as_array()).into_iter().flatten() {
+        if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+            refs.extend(
+                text.lines()
+                    .map(str::trim)
+                    .filter(|l| l.starts_with("[Image: source: ") && l.ends_with(']'))
+                    .map(str::to_string),
+            );
+        } else if let Some(line) = output_image(part) {
+            refs.push(line);
+        }
+    }
+    if refs.is_empty() {
+        return None;
+    }
+    Some(crate::transcript::ToolSideImages {
+        tool: format!("mcp__{server}__{tool}"),
+        refs,
+        started_ms: payload.get("started_at_ms").and_then(|v| v.as_i64()),
+    })
+}
+
 fn command_exit(line: &str) -> Option<crate::transcript::CommandExit> {
     #[derive(serde::Deserialize)]
     struct Line<'a> {
@@ -901,6 +1036,10 @@ impl TranscriptSpec for CodexTranscript {
         command_exit(line)
     }
 
+    fn chat_tool_images(&self, line: &str) -> Option<crate::transcript::ToolSideImages> {
+        mcp_side_images(line)
+    }
+
     /// 关联要看的行：工具调用与回执（exec 脚本的 `custom_tool_call(_output)`、直接调用的
     /// `function_call(_output)`）、命令执行完毕的旁路记录、一轮的起点（新老两种用户消息行）与回溯。
     fn command_exit_markers(&self) -> &'static [&'static str] {
@@ -908,6 +1047,7 @@ impl TranscriptSpec for CodexTranscript {
             "\"custom_tool_call",
             "\"function_call",
             "\"CommandExecution\"",
+            "\"McpToolCall\"",
             "\"user_message\"",
             "\"UserMessage\"",
             "\"thread_rolled_back\"",
@@ -1216,12 +1356,99 @@ mod tests {
     #[test]
     fn browser_mcp_image_becomes_receipt_reference() {
         use serde_json::json;
-        let output = json!({"content":[{"type":"text","text":"面板浏览器截图"},{"type":"image","mimeType":"image/jpeg","data":"/9j/4A=="}]});
+        let output = json!({"content":[{"type":"text","text":"面板浏览器截图"},{"type":"image","mimeType":"image/jpeg","data":"/9j/wAARCAABAAEDASIAAhEBAxEB/9k="}]});
         let (text, images) = super::browser_mcp_media(&output, "codex-browser-test").unwrap();
         assert_eq!(text, "面板浏览器截图");
         let path = images[0].split("[Image: source: ").nth(1).and_then(|rest| rest.strip_suffix(']')).map(std::path::PathBuf::from).unwrap();
         assert!(path.exists());
-        std::fs::remove_file(path).ok();
+        // 回执图进持久目录 images/tool/（按内容哈希去重，别的测试可能存了同一张，故不删）。
+        assert!(path.starts_with(crate::images::images_root().unwrap().join("tool")));
+    }
+
+    const PNG_1X1_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==";
+
+    fn ref_path(text: &str) -> std::path::PathBuf {
+        let line = text.lines().find(|l| l.starts_with("[Image: source: ")).unwrap_or_else(|| panic!("没有引用行：{text}"));
+        std::path::PathBuf::from(line.trim_start_matches("[Image: source: ").trim_end_matches(']'))
+    }
+
+    /// 代码模式里调 view_image 再 image() 出来（本机 2026-07-13 rollout 第 1320–1321 行实样，
+    /// base64 换成 1×1 PNG）：回执只有状态头和一个 input_image。图要挂到 `<call_id>#0` 那条
+    /// view_image 的回执上，路径指向持久目录。
+    #[test]
+    fn exec_script_view_image_output_becomes_reference() {
+        let call = r#"{"timestamp":"2026-07-13T07:41:32.408Z","type":"response_item","payload":{"type":"custom_tool_call","id":"ctc_0744","status":"completed","call_id":"call_EXlE1YwDaOn8mwNJoyVg9aUT","name":"exec","input":"const r = await tools.view_image({\"path\":\"C:\\\\Users\\\\35122\\\\Desktop\\\\workspace\\\\meowo\\\\app\\\\src\\\\assets\\\\kimi.png\",\"detail\":\"original\"});\nimage(r.image_url);\n"}}"#;
+        let output = format!(
+            r#"{{"timestamp":"2026-07-13T07:41:32.977Z","type":"response_item","payload":{{"type":"custom_tool_call_output","call_id":"call_EXlE1YwDaOn8mwNJoyVg9aUT","output":[{{"type":"input_text","text":"Script completed\nWall time 0.6 seconds\nOutput:\n"}},{{"type":"input_image","image_url":"data:image/png;base64,{PNG_1X1_B64}","detail":"high"}}]}}}}"#
+        );
+        let calls = parse_transcript_events(call);
+        assert!(matches!(&calls[0], TranscriptEvent::ToolCall { id, name, kind: ToolKind::Read, .. } if id == "call_EXlE1YwDaOn8mwNJoyVg9aUT#0" && name == "view_image"));
+        let results = parse_transcript_events(&output);
+        let TranscriptEvent::ToolResult { tool_call_id, text, .. } = &results[0] else { panic!("{results:?}") };
+        assert_eq!(tool_call_id.as_deref(), Some("call_EXlE1YwDaOn8mwNJoyVg9aUT#0"));
+        let path = ref_path(text);
+        assert!(path.starts_with(crate::images::images_root().unwrap().join("tool")), "{text}");
+        assert!(path.exists());
+    }
+
+    /// 直接调用 view_image（function_call_output 的 output 是 content 数组，0.169 源码形态）。
+    #[test]
+    fn direct_view_image_output_becomes_reference() {
+        let output = format!(
+            r#"{{"timestamp":"t","type":"response_item","payload":{{"type":"function_call_output","call_id":"call_v","output":[{{"type":"input_image","image_url":"data:image/png;base64,{PNG_1X1_B64}"}}]}}}}"#
+        );
+        let results = parse_transcript_events(&output);
+        let TranscriptEvent::ToolResult { text, .. } = &results[0] else { panic!("{results:?}") };
+        assert!(ref_path(text).exists(), "{text}");
+    }
+
+    /// 真机样本（2026-11-21，codex-cli 0.169.0 `codex exec` 代码模式调 Meowo MCP 的 send_image，
+    /// 审批策略 never 下靠 `tools.send_image.approval_mode='approve'` 放行；探针目录前缀换成 C:\probe）。
+    #[test]
+    fn real_send_image_sample_in_exec_script() {
+        let lines: Vec<&str> = include_str!("../../../tests/fixtures/chat-replay/codex.probe-send-image.jsonl").lines().collect();
+        let calls = parse_transcript_events(lines[0]);
+        let TranscriptEvent::ToolCall { id, kind, summary, .. } = &calls[0] else { panic!("{calls:?}") };
+        assert_eq!((id.as_str(), *kind, summary.as_str()), ("call_418109bc24f5498bbe36ffaff9335194#0", ToolKind::Image, "codex 探针"));
+        let results = parse_transcript_events(lines[1]);
+        let TranscriptEvent::ToolResult { tool_call_id, text, .. } = &results[0] else { panic!("{results:?}") };
+        assert_eq!(tool_call_id.as_deref(), Some("call_418109bc24f5498bbe36ffaff9335194#0"));
+        assert!(text.lines().any(|l| l == r"[Image: source: C:\probe\images\sent\0c6eebdca4b84ccf186723b705349400.png]"), "{text}");
+    }
+
+    /// 发图工具：脚本里 `tools.mcp__meowo__send_image(…)` 与直接调用（命名空间 `mcp__meowo`）
+    /// 都是 Image 类，详情带来源与说明。本机没有 codex 调 meowo MCP 的 rollout 样本，形态按
+    /// 本机 `tools.mcp__ologs__get_profile`（2026-11-14 rollout）与 `"namespace":"collaboration"`
+    /// 的直接调用（2026-11-12 rollout）类推。
+    #[test]
+    fn send_image_maps_to_image_kind_in_script_and_direct_call() {
+        let scripted = r#"{"timestamp":"t","type":"response_item","payload":{"type":"custom_tool_call","status":"completed","call_id":"call_s","name":"exec","input":"text(await tools.mcp__meowo__send_image({source:\"C:/repo/out/chart.png\",caption:\"本周趋势\"}));"}}"#;
+        let events = parse_transcript_events(scripted);
+        let TranscriptEvent::ToolCall { kind, summary, detail, .. } = &events[0] else { panic!("{events:?}") };
+        assert_eq!(*kind, ToolKind::Image);
+        assert_eq!(summary, "本周趋势");
+        assert_eq!(
+            detail,
+            &Some(meowo_protocol::ipc::ToolDetail::Image { source: "C:/repo/out/chart.png".into(), caption: Some("本周趋势".into()) })
+        );
+        let direct = r#"{"timestamp":"t","type":"response_item","payload":{"type":"function_call","name":"send_image","namespace":"mcp__meowo","arguments":"{\"source\":\"https://example.com/a.png\"}","call_id":"call_d"}}"#;
+        let events = parse_transcript_events(direct);
+        let TranscriptEvent::ToolCall { kind, name, summary, .. } = &events[0] else { panic!("{events:?}") };
+        assert_eq!((*kind, name.as_str(), summary.as_str()), (ToolKind::Image, "mcp__meowo__send_image", "https://example.com/a.png"));
+        // 别的命名空间不拼（collaboration 的 send_message 仍叫 send_message）。
+        let collab = r#"{"timestamp":"t","type":"response_item","payload":{"type":"function_call","name":"send_message","namespace":"collaboration","arguments":"{}","call_id":"c"}}"#;
+        assert!(matches!(&parse_transcript_events(collab)[0], TranscriptEvent::ToolCall { name, .. } if name == "send_message"));
+    }
+
+    /// 脚本把发图回执当 JSON 文本输出时，引用行被转义在字符串里；补出一行干净的引用。
+    #[test]
+    fn escaped_send_image_receipt_in_script_output_is_restored() {
+        let output = r#"{"timestamp":"t","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_s","output":[{"type":"input_text","text":"Script completed\nWall time 0.3 seconds\nOutput:\n"},{"type":"input_text","text":"{\"content\":[{\"type\":\"text\",\"text\":\"图片已发给用户。\\n[Image: source: C:\\\\Users\\\\me\\\\.meowo\\\\images\\\\sent\\\\ab.png]\"}]}"}]}}"#;
+        let results = parse_transcript_events(output);
+        let TranscriptEvent::ToolResult { text, .. } = &results[0] else { panic!("{results:?}") };
+        assert!(text.lines().any(|l| l == r"[Image: source: C:\Users\me\.meowo\images\sent\ab.png]"), "{text}");
+        // 已经是干净的一行时不重复补。
+        assert_eq!(unescaped_image_refs("ok\n[Image: source: C:\\a.png]"), Vec::<String>::new());
     }
 
     #[test]
@@ -1629,9 +1856,10 @@ mod tests {
         let markers = CODEX_TRANSCRIPT.command_exit_markers();
         assert!(!markers.is_empty());
         let mut relevant = 0;
-        for name in ["codex.01a1cea4.jsonl", "codex.01a13ed0.jsonl", "codex-exit-join.jsonl"] {
+        for name in ["codex.01a1cea4.jsonl", "codex.01a13ed0.jsonl", "codex-exit-join.jsonl", "codex.01a1f9bf.jsonl"] {
             for line in replay_fixture(name).lines() {
                 let matters = command_exit(line).is_some()
+                    || mcp_side_images(line).is_some()
                     || CODEX_TRANSCRIPT.chat_line_mark(line).is_some()
                     || parse_transcript_events(line).iter().any(|event| {
                         // 子代理的开始与结局（SubAgentActivity）产出的是子任务的结局回执，不是命令的回执：

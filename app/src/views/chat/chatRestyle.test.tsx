@@ -108,12 +108,14 @@ describe("终端式工具行", () => {
     expect(document.querySelector(".chat-tool-verb")?.textContent).toBe("x · do");
   });
 
-  it("浏览器 MCP 回执显示截图数量与缩略图，不把本地引用路径摊在正文", () => {
+  it("浏览器 MCP 回执的截图直接露在工具行下（不用展开），不把本地引用路径摊在正文", () => {
     const item = { type: "tool_use" as const, id: "browser-shot", timestamp: null, name: "mcp__meowo__browser_screenshot", kind: "other" as const, summary: "" };
     const receipt = result("browser-shot", "面板浏览器截图（12 KB）\n[Image: source: C:\\tmp\\browser-shot.jpg]");
     render(<ToolActivity item={item} result={receipt} />);
-    expect(document.querySelector(".chat-tool-count")?.textContent).toBe("1 张截图");
-    expect(document.querySelector(".chat-tool-browser-images img")?.getAttribute("alt")).toBe("browser-shot.jpg");
+    const thumb = document.querySelector(".chat-tool-media img");
+    expect(thumb?.getAttribute("alt")).toBe("browser-shot.jpg");
+    // 缩略图在收起的 <details> 外面，行没展开也看得到。
+    expect(thumb?.closest("details")).toBeNull();
     expect(document.body.textContent).not.toContain("[Image: source:");
   });
 

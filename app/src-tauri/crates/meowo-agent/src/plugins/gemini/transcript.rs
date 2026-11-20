@@ -852,8 +852,82 @@ fn tool_kind(name: &str) -> ToolKind {
         "grep_search" | "search_file_content" | "glob" => ToolKind::Search,
         "google_web_search" | "web_fetch" => ToolKind::Web,
         "write_todos" => ToolKind::Todo,
+        GEMINI_SEND_IMAGE => ToolKind::Image,
         _ => ToolKind::Other,
     }
+}
+
+/// Meowo 发图工具在 gemini 里的全名（0.68.0 generateValidName：`mcp_<服务器>_<工具>`）。
+const GEMINI_SEND_IMAGE: &str = "mcp_meowo_send_image";
+/// Meowo 的 MCP 工具在 gemini 里的前缀；对话页上换成统一的 `mcp__meowo__<工具>`
+/// （[`crate::images::canonical_meowo_tool`]）。
+const GEMINI_MEOWO_PREFIX: &str = "mcp_meowo_";
+
+/// 0.68.0 把 MCP 回执的文字块包进 `<untrusted_context>`（mcp-tool.js wrapUntrusted：开标签可带
+/// ` source="…"`，标签各占一行，正文里的闭标签转义成 `&lt;/untrusted_context&gt;`）。这是给模型看的
+/// 提示注入防护，用户看到的是标签原文（2026-11-21 五家回放：发图与截图回执都带着它）。整行的标签
+/// 去掉、转义还原；正文中间不成行的同名文字不动。
+fn unwrap_untrusted(text: &str) -> String {
+    if !text.contains("</untrusted_context>") {
+        return text.to_string();
+    }
+    text.lines()
+        .filter(|line| {
+            let line = line.trim();
+            !(line == "</untrusted_context>"
+                || (line.starts_with("<untrusted_context") && line.ends_with('>') && !line[1..].contains('<')))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace("&lt;/untrusted_context&gt;", "</untrusted_context>")
+}
+
+/// MCP 图片块在 0.68.0 里先变成一句给模型的说明 `[Tool '<工具>' provided the following image data
+/// with mime-type: image/png]`，再跟着 inlineData（mcp-tool.js transformImageAudioBlock）。图已经换成
+/// 引用行显示出来，这句模板只剩噪音。只去整行、只去 image 的那种（音频、内嵌资源的说明留着）。
+fn drop_image_notes(text: &str) -> String {
+    text.lines()
+        .filter(|line| {
+            let line = line.trim();
+            !(line.starts_with("[Tool '")
+                && line.contains("' provided the following image data with mime-type: ")
+                && line.ends_with(']'))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// 回执里的内嵌图 → 持久目录副本的引用行。0.68.0 源码（mcp-tool.js transformImageAudioBlock）：
+/// MCP 返回的图变成 `{inlineData:{mimeType,data}}`，gemini-3 系列放进
+/// `functionResponse.parts`，其余模型作为与 functionResponse 并列的独立 part；read_file
+/// 读图片同样是 inlineData。gemini-3 放 parts 的形态有真机实样（2026-11-21 探针，tests/fixtures/chat-replay/gemini.probe-screenshot.jsonl），并列 part 的形态取自源码。
+/// 落在 `images/tool/`（按内容哈希），声明的 mimeType 不可信，按文件头判断。
+fn result_images(result: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut visit = |part: &Value| {
+        if let Some(path) = part
+            .pointer("/inlineData/data")
+            .and_then(Value::as_str)
+            .and_then(crate::images::store_tool_base64)
+        {
+            let line = crate::images::image_ref_line(&path);
+            if !out.contains(&line) {
+                out.push(line);
+            }
+        }
+    };
+    for part in result.as_array().into_iter().flatten() {
+        visit(part);
+        for inner in part
+            .pointer("/functionResponse/parts")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            visit(inner);
+        }
+    }
+    out
 }
 
 /// 详情正文上限（字符），与 claude 侧同值。
@@ -875,6 +949,9 @@ fn clip_detail(text: &str) -> (String, bool) {
 /// `allow_multiple` / `start_line` / `end_line` / `dir_path`）。
 fn tool_detail(name: &str, args: Option<&Value>) -> Option<ToolDetail> {
     let args = args?;
+    if name == GEMINI_SEND_IMAGE {
+        return ToolDetail::image_from_args(args);
+    }
     let text = |key: &str| args.get(key).and_then(Value::as_str).map(str::to_string);
     let num = |key: &str| {
         args.get(key)
@@ -964,9 +1041,10 @@ fn tool_summary(args: Option<&Value>) -> String {
         .find_map(|key| args.and_then(|args| args.get(key)).and_then(Value::as_str));
     match picked {
         Some(text) => clip_text(text, SUMMARY_MAX_CHARS),
+        // 没有参数的调用（浏览器截图）摘要留空，不显示成 `{}`。
         None => clip_text(
             &args
-                .filter(|args| !args.is_null())
+                .filter(|args| !args.is_null() && args.as_object().is_none_or(|map| !map.is_empty()))
                 .map(Value::to_string)
                 .unwrap_or_default(),
             SUMMARY_MAX_CHARS,
@@ -1160,27 +1238,42 @@ fn parse_line(line: &str) -> Vec<TranscriptEvent> {
                     events.push(TranscriptEvent::ToolCall {
                         id: format!("gemini-call-{call_id}"),
                         timestamp: timestamp.clone(),
-                        name: name.into(),
+                        name: crate::images::canonical_meowo_tool(name, GEMINI_MEOWO_PREFIX),
                         kind: tool_kind(name),
-                        summary: tool_summary(args),
+                        summary: if name == GEMINI_SEND_IMAGE {
+                            crate::images::send_image_call(args.unwrap_or(&Value::Null)).1
+                        } else {
+                            tool_summary(args)
+                        },
                         subagent: None,
                         detail: tool_detail(name, args),
                         plan: None,
                     });
                     if let Some(result) = call.get("result").filter(|value| !value.is_null()) {
-                        let text = result_text(result);
+                        let text = unwrap_untrusted(&result_text(result));
                         let is_error = matches!(call["status"].as_str(), Some("error" | "cancelled"))
                             || result.as_array().is_some_and(|parts| {
                                 parts.iter().any(|part| {
                                     part.pointer("/functionResponse/response/error").is_some()
                                 })
                             });
+                        // 引用行接在截断之后，长回执也不会把图截掉。图换成了引用行，CLI 给模型写的
+                        // 那句「[Tool '…' provided the following image data …]」就不再上屏。
+                        let images = result_images(result);
+                        let body = if images.is_empty() { text.clone() } else { drop_image_notes(&text) };
+                        let mut shown = clip_text(&body, RESULT_MAX_CHARS);
+                        for line in images {
+                            if !shown.is_empty() {
+                                shown.push('\n');
+                            }
+                            shown.push_str(&line);
+                        }
                         events.push(TranscriptEvent::ToolResult {
                             id: format!("gemini-result-{call_id}"),
                             timestamp: timestamp.clone(),
                             tool_call_id: Some(format!("gemini-call-{call_id}")),
                             facts: result_facts(name, call, &text, is_error),
-                            text: clip_text(&text, RESULT_MAX_CHARS),
+                            text: shown,
                             is_error,
                             subagent: None,
                             patch: result_patch(call),

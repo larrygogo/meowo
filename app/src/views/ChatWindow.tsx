@@ -101,6 +101,7 @@ import { usePanel } from "./chat/usePanel";
 import { SessionInfo } from "./chat/SessionInfo";
 import { ImageAnnotator } from "./chat/ImageAnnotator";
 import { ChatCwdContext } from "./chat/ToolActivity";
+import { ChatSessionContext } from "./chat/remoteImageGate";
 import { WelcomePanel, type WelcomeInfo } from "./chat/WelcomePanel";
 import { parseCliRetry, parseCliStatus } from "./chat/cliStatus";
 import { ChatSidebar } from "./ChatSidebar";
@@ -613,7 +614,7 @@ export function ChatWindow() {
   const compactingNow = history?.currentActivity === COMPACTING_ACTIVITY;
   // 次行优先取 transcript 里还没回执的那条调用（正在跑的那一步）；记录给不出时退回 hook 值
   // ——hook 只在工具跑完时写，长命令跑着时它是上一条已完成的命令（见 liveToolActivity）。
-  const liveTool = useMemo(() => liveToolActivity(items), [items]);
+  const liveTool = useMemo(() => liveToolActivity(items, t), [items, t]);
   const runningActivity = compactingNow ? null
     : liveTool ?? (history?.currentActivity ? runningActivityView(history.currentActivity, t.chat.compacting, t.chat.running) : null);
   const cliStatusStore = useCliStatusStore();
@@ -4554,6 +4555,8 @@ export function ChatWindow() {
 
   return (
     <div className={"chat-window" + (view === "terminal" ? " is-terminal" : "") + (compactChrome ? " is-remote-compact" : "") + (remoteListMode ? " is-remote-list" : "") + (narrow || sidebarCollapsed ? " is-sidebar-undocked" : "")}>
+      {/* 网络图片的放行按会话记，手机桥解析本地路径也要带会话（remoteImageGate.ts）。面板、Dock 都在它下面。 */}
+      <ChatSessionContext.Provider value={sessionId !== 0 ? sessionId : null}>
       <DevBadge />
       {/* 拖拽落点遮罩:文件悬在窗口上时给「松开以添加附件」的明确反馈。 */}
       {dragHover && (
@@ -6272,6 +6275,7 @@ export function ChatWindow() {
           onClose={() => setModelMarketOpen(false)}
         />
       )}
+    </ChatSessionContext.Provider>
     </div>
   );
 }

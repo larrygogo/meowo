@@ -29,6 +29,12 @@ mod screen;
 mod store;
 mod telemetry;
 
+/// 回放测试用：库里一条 part 走导出器的瘦身（附件里的图落进图片目录、只留路径），与对话页读的导出行同一份。
+#[cfg(test)]
+pub(crate) fn export_part_for_test(part: serde_json::Value) -> serde_json::Value {
+    store::slim_part_for_test(part)
+}
+
 use crate::{
     auth::{AuthScheme, CredentialSource},
     config::{CommandSpec, ConfigFormat, HookEvent, HookSpec, MissingConfig},
@@ -189,6 +195,16 @@ impl AgentPlugin for Opencode {
     }
     fn variants(&self) -> &'static [Variant] {
         &VARIANTS
+    }
+    /// Meowo 的 MCP 服务器（发图 + 面板浏览器）怎么交给它（见 [`crate::McpAttach`]）。
+    /// 1.19.5 源码取证（opencode.exe 内嵌 JS，2026-11-20）：`OPENCODE_CONFIG_CONTENT` 与磁盘配置深合并、
+    /// 优先级高于全局与项目配置；MCP 子进程环境 = `{...process.env, ...environment}`（令牌随继承环境走）；
+    /// MCP 工具名 `<服务器>_<工具>`；权限规则后写的胜出，默认 `"*": "allow"`——所以只需显式写
+    /// `meowo_send_image: allow`（用户若全局改成 ask 也照样免审批）和 `meowo_browser_evaluate: ask`。
+    fn mcp_attach(&self) -> Option<crate::McpAttach> {
+        Some(crate::McpAttach::InlineConfigEnv {
+            env: "OPENCODE_CONFIG_CONTENT",
+        })
     }
     /// 原生二进制，进程名就是它自己——不必像 gemini 那样把 `node` 收进来。
     /// reporter 由插件在 opencode 进程内 `Bun.spawn` 派生，故父链上第一个 agent 进程必是它。

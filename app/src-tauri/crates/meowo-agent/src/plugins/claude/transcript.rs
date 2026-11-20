@@ -271,6 +271,9 @@ fn tool_detail(name: &str, input: Option<&serde_json::Value>) -> Option<ToolDeta
     }
 }
 
+/// Meowo 发图工具在 CC 里的全名（`mcp__<服务器>__<工具>`）。
+const CLAUDE_SEND_IMAGE: &str = "mcp__meowo__send_image";
+
 /// CC 内置工具 → 语义类别。表里没有的（MCP、harness 内部工具如 TaskCreate / ToolSearch /
 /// KillShell / BashOutput）一律 Other，界面显示工具自己的名字——此前前端按名字子串猜，
 /// ToolSearch 因含 search 被当成「搜索」，KillShell 因含 shell 被当成「运行」。
@@ -434,17 +437,31 @@ fn inline_image_ref(base_id: &str, index: usize, block: &serde_json::Value) -> O
 /// image-cache，历史图必坏（实测本机两处 image-cache 目录均已不存在，终端贴图在对话里
 /// 看不到的根因）。图片改由同 promptId 主行的内嵌 base64 落盘提供（实测 412 条伴随行
 /// 全部配对到带 image 块的主行），伴随行整条丢弃，否则同一张图出两次。
-/// MCP browser_screenshot 的 tool_result.content 同时带 text 与 image。沿用用户图片的
-/// 引用格式，ToolActivity 拆成截图缩略图；base64 不进聊天 DTO。
-fn tool_result_image_refs(base_id: &str, block: &serde_json::Value) -> Vec<String> {
+/// tool_result.content 里的图：MCP browser_screenshot（text + image）、Read 读图片（只有 image）。
+/// 沿用用户图片的引用格式，前端拆成缩略图；base64 不进聊天 DTO。
+/// 落进持久目录 `images/tool/`（按内容哈希）：不随临时目录清理而裂图，重解析时按同内容
+/// 得到同一路径。声明的 media_type 不可信，按文件头判断。
+fn tool_result_image_refs(block: &serde_json::Value) -> Vec<String> {
     block
         .get("content")
         .and_then(|content| content.as_array())
         .into_iter()
         .flatten()
-        .enumerate()
-        .filter_map(|(index, part)| inline_image_ref(base_id, index, part))
+        .filter_map(tool_image_ref)
         .collect()
+}
+
+fn tool_image_ref(block: &serde_json::Value) -> Option<String> {
+    if block.get("type").and_then(|x| x.as_str()) != Some("image") {
+        return None;
+    }
+    let source = block.get("source")?;
+    if source.get("type").and_then(|x| x.as_str()) != Some("base64") {
+        return None;
+    }
+    let data = source.get("data").and_then(|x| x.as_str())?;
+    let path = crate::images::store_tool_base64(data)?;
+    Some(crate::images::image_ref_line(&path))
 }
 
 fn is_image_companion(v: &serde_json::Value, content: Option<&serde_json::Value>) -> bool {
@@ -775,7 +792,7 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                                 && !unfinished_receipt(&text);
                             let facts = tool_facts(&v, &text, is_error);
                             let mut result_text = compact_json(Some(&serde_json::Value::String(text)), 4000);
-                            for image_ref in tool_result_image_refs(&format!("{base_id}:{i}"), block) {
+                            for image_ref in tool_result_image_refs(block) {
                                 if !result_text.is_empty() { result_text.push('\n'); }
                                 result_text.push_str(&image_ref);
                             }
@@ -878,6 +895,26 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                         }),
                     Some("tool_use") => {
                         let name = block.get("name").and_then(|x| x.as_str()).unwrap_or("Tool");
+                        // Meowo 的发图工具（`mcp__meowo__send_image`）：对话页显示成一条图片消息。
+                        if name == CLAUDE_SEND_IMAGE {
+                            let empty = serde_json::Value::Null;
+                            let (kind, summary, detail) =
+                                crate::images::send_image_call(block.get("input").unwrap_or(&empty));
+                            return Some(TranscriptEvent::ToolCall {
+                                id: block
+                                    .get("id")
+                                    .and_then(|x| x.as_str())
+                                    .unwrap_or(base_id)
+                                    .to_string(),
+                                timestamp: timestamp.clone(),
+                                name: name.to_string(),
+                                kind,
+                                summary,
+                                subagent: None,
+                                detail,
+                                plan: None,
+                            });
+                        }
                         Some(TranscriptEvent::ToolCall {
                             id: block
                                 .get("id")
@@ -3245,13 +3282,65 @@ mod tests {
 
     #[test]
     fn browser_tool_result_image_becomes_receipt_reference() {
-        let line = r#"{"type":"user","uuid":"browser-shot","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_browser","content":[{"type":"text","text":"面板浏览器截图"},{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"/9j/4A=="}}]}]}}"#;
+        let line = r#"{"type":"user","uuid":"browser-shot","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_browser","content":[{"type":"text","text":"面板浏览器截图"},{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"/9j/wAARCAABAAEDASIAAhEBAxEB/9k="}}]}]}}"#;
         let items = parse_chat_items(line);
         let ChatItem::ToolResult { text, .. } = &items[0] else { panic!("expected ToolResult") };
         assert!(text.starts_with("面板浏览器截图\n[Image: source: "), "{text}");
         let path = text.split("[Image: source: ").nth(1).and_then(|rest| rest.strip_suffix(']')).map(PathBuf::from).unwrap();
         assert!(path.exists());
-        std::fs::remove_file(path).ok();
+        // 回执图进持久目录 images/tool/（按内容哈希去重，别的测试可能存了同一张，故不删）。
+        assert!(path.starts_with(crate::images::images_root().unwrap().join("tool")), "{text}");
+    }
+
+    /// 真机样本（2026-11-21，CC 2.1.329 headless 调 Meowo MCP 的 send_image，探针目录前缀换成
+    /// C:\probe）：调用是 Image 类、说明进摘要；回执里的引用行原样留给前端显示图片。
+    #[test]
+    fn real_send_image_sample_parses_to_image_message() {
+        let lines: Vec<&str> = include_str!("../../../tests/fixtures/chat-replay/claude.83386c1d.jsonl").lines().collect();
+        let call = parse_chat_items(lines[0]);
+        let ChatItem::ToolUse { kind, summary, detail, .. } = &call[0] else { panic!("{call:?}") };
+        assert_eq!((*kind, summary.as_str()), (ToolKind::Image, "探针测试图"));
+        assert!(matches!(detail, Some(ToolDetail::Image { source, .. }) if source == "chart.png"));
+        let result = parse_chat_items(lines[1]);
+        let ChatItem::ToolResult { text, is_error, .. } = &result[0] else { panic!("{result:?}") };
+        assert!(!is_error);
+        assert!(text.lines().any(|l| l == r"[Image: source: C:\probe\images\sent\0c6eebdca4b84ccf186723b705349400.png]"), "{text}");
+    }
+
+    /// 发图工具 `mcp__meowo__send_image` → Image 类：摘要是说明，详情带来源；回执里的引用行原样保留。
+    #[test]
+    fn send_image_tool_use_is_image_kind() {
+        let call = r#"{"type":"assistant","uuid":"a-img","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_img","name":"mcp__meowo__send_image","input":{"source":"C:/repo/out/chart.png","caption":"本周趋势"}}]}}"#;
+        let items = parse_chat_items(call);
+        let ChatItem::ToolUse { kind, summary, detail, .. } = &items[0] else { panic!("{items:?}") };
+        assert_eq!(*kind, ToolKind::Image);
+        assert_eq!(summary, "本周趋势");
+        assert_eq!(
+            detail,
+            &Some(ToolDetail::Image { source: "C:/repo/out/chart.png".into(), caption: Some("本周趋势".into()) })
+        );
+        let result = r#"{"type":"user","uuid":"u-img","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_img","content":[{"type":"text","text":"图片已发给用户。\n[Image: source: C:\\Users\\me\\.meowo\\images\\sent\\ab.png]"}]}]}}"#;
+        let ChatItem::ToolResult { text, .. } = &parse_chat_items(result)[0] else { panic!() };
+        assert!(text.ends_with(r"[Image: source: C:\Users\me\.meowo\images\sent\ab.png]"), "{text}");
+    }
+
+    /// Read 读 png 的真实形态（本机 CC 2.1.319 transcript，2026-11-09，base64 换成 1×1 PNG）：
+    /// tool_result.content 只有一个 image 块，没有文字。回执里要有指向持久目录的引用行，
+    /// 不再只剩模型看到的本地路径；重解析得到同一路径（按内容哈希）。
+    #[test]
+    fn read_image_tool_result_references_persistent_copy() {
+        let line = r#"{"parentUuid":"c91b5f03","isSidechain":false,"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_01VcPkrq8wg6CEQ2rKUg7Vf8","type":"tool_result","content":[{"type":"image","source":{"type":"base64","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==","media_type":"image/png"}}]}]},"uuid":"8d0933f4-9989-4b66-ad99-e7f386af8f9f","timestamp":"2026-11-09T13:28:13.215Z","toolUseResult":{"type":"image","file":{"base64":"iVBORw0KGgo=","type":"image/png","originalSize":1027819,"dimensions":{"originalWidth":1206,"originalHeight":2622,"displayWidth":920,"displayHeight":2000}}},"version":"2.1.319"}"#;
+        let items = parse_chat_items(line);
+        let ChatItem::ToolResult { text, .. } = &items[0] else { panic!("expected ToolResult") };
+        let path = text.strip_prefix("[Image: source: ").and_then(|rest| rest.strip_suffix(']')).map(PathBuf::from).unwrap();
+        assert!(path.starts_with(crate::images::images_root().unwrap().join("tool")), "{text}");
+        assert_eq!(path.extension().unwrap(), "png");
+        assert!(path.exists());
+        assert_eq!(parse_chat_items(line), items, "重解析结果一致");
+        // 声明是 png、实际是文本：不落盘、不出引用行。
+        let fake = line.replace("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==", "aGVsbG8gd29ybGQ=");
+        let ChatItem::ToolResult { text, .. } = &parse_chat_items(&fake)[0] else { panic!() };
+        assert!(!text.contains("[Image: source:"), "{text}");
     }
 
     /// 终端 Ctrl-V 贴图的实拍形态：主行「text + 内嵌 base64 image 块」，紧跟一条 isMeta

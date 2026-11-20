@@ -91,4 +91,10 @@ launch_options: Array<LaunchOption>,
 /**
  * 插件显式声明才存在；None 时前端不显示中转入口。
  */
-relay: RelayUi | null, };
+relay: RelayUi | null, 
+/**
+ * Meowo 发图工具（与面板浏览器）要登记进这个 agent 自己的配置文件，但那份文件 Meowo 读不懂
+ * （gemini 的 settings.json 允许注释，带注释的 JSONC 不能安全改写）时，这里是那份文件的路径；
+ * 设置页据此提示「没能接上发图工具」。接上了、或这家不靠配置文件接线时不出现。
+ */
+mcp_config_unreadable?: string, };

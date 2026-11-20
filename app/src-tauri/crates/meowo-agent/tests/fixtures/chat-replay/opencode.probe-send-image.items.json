@@ -1,0 +1,23 @@
+[
+  {
+    "type": "tool_use",
+    "id": "chatcmpl-tool-8c14d4aae694d409",
+    "timestamp": "2026-11-20T15:55:57.017Z",
+    "name": "mcp__meowo__send_image",
+    "kind": "image",
+    "summary": "opencode 探针",
+    "detail": {
+      "kind": "image",
+      "source": "C:\\probe\\work\\chart.png",
+      "caption": "opencode 探针"
+    }
+  },
+  {
+    "type": "tool_result",
+    "id": "chatcmpl-tool-8c14d4aae694d409:result",
+    "timestamp": "2026-11-20T15:55:57.022Z",
+    "tool_use_id": "chatcmpl-tool-8c14d4aae694d409",
+    "text": "图片已发给用户，对话里会直接显示这张图；不用再描述图片内容，也不要重复发送。\n[Image: source: C:\\probe\\images\\sent\\0c6eebdca4b84ccf186723b705349400.png]",
+    "is_error": false
+  }
+]

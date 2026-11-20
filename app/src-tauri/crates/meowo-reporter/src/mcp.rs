@@ -5,6 +5,10 @@
 //! `MEOWO_PTY_TOKEN`，Meowo 凭它知道是哪个会话、该操作哪个面板浏览器。别处（外部终端、
 //! Kimi Code 桌面版也读同一份 kimi `mcp.json`）没有这两个变量，工具列表就是空的，不添乱。
 //!
+//! 另有一个与浏览器无关的工具 `send_image`：agent 想让用户看到一张图时调用，Meowo 把图复制进
+//! 自己的持久目录（`~/.meowo/images/sent`），对话里显示成 agent 发来的图片消息（app 侧
+//! chat_images.rs）。浏览器开关关掉时以 `mcp --no-browser` 启动，只列这一个工具。
+//!
 //! 协议是 MCP 的 stdio 传输：每行一条 JSON-RPC 2.0 消息。只实现用得到的几个方法。
 
 use std::io::{BufRead, Read, Write};
@@ -17,10 +21,24 @@ use serde_json::{json, Value};
 /// 一次浏览器操作最多等多久（页面加载 + 脚本执行，app 侧各自另有上限）。
 const CALL_TIMEOUT: Duration = Duration::from_secs(120);
 
-pub fn run() {
+/// 只给发图工具、不给浏览器工具的启动参数（用户关了「允许 agent 操作面板浏览器」时）。
+pub const NO_BROWSER_FLAG: &str = "--no-browser";
+
+/// 发图工具名。app 侧 pty.rs 按这个名字分流，不走浏览器。
+const SEND_IMAGE: &str = "send_image";
+
+#[derive(Clone, Copy)]
+struct Options {
+    browser: bool,
+}
+
+pub fn run(args: &[String]) {
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
     let channel = broker();
+    let options = Options {
+        browser: !args.iter().any(|a| a == NO_BROWSER_FLAG),
+    };
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
         if line.trim().is_empty() {
@@ -29,7 +47,7 @@ pub fn run() {
         let Ok(message) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
-        if let Some(reply) = respond(&message, channel.as_ref()) {
+        if let Some(reply) = respond(&message, channel.as_ref(), options) {
             let _ = writeln!(stdout, "{reply}");
             let _ = stdout.flush();
         }
@@ -47,19 +65,30 @@ fn broker() -> Option<(String, String)> {
 }
 
 /// 处理一条消息；通知（没有 id）不回。
-fn respond(message: &Value, channel: Option<&(String, String)>) -> Option<Value> {
+fn respond(message: &Value, channel: Option<&(String, String)>, options: Options) -> Option<Value> {
     let id = message.get("id")?.clone();
     let method = message.get("method").and_then(Value::as_str).unwrap_or("");
     let params = message.get("params").cloned().unwrap_or(Value::Null);
     let result = match method {
-        "initialize" => json!({
-            "protocolVersion": params.get("protocolVersion").and_then(Value::as_str).unwrap_or("2025-06-18"),
-            "capabilities": { "tools": {} },
-            "serverInfo": { "name": "meowo", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": "这是 Meowo 对话窗右侧面板里的浏览器，用户就在旁边看着。凡是要打开网页、在网站上操作（填表、点按钮、查信息）、看本地 dev server 效果的，都优先用这组工具，不用找别的浏览器扩展或桌面控制。需要登录的网站，打开后让用户直接在面板里登录，再继续。用法：先 browser_open 或 browser_snapshot 拿到元素编号（如 e12），再按编号 browser_click / browser_type。提交、付款这类不可撤销的操作，先跟用户确认。面板通常比桌面浏览器窄，快照开头会写当前视口：测响应式布局或按 UA 出页面的 SSR 网站前先看一眼，需要桌面版、手机版或特定请求头时先用 browser_emulate 设好再测。",
-        }),
+        "initialize" => {
+            let mut result = json!({
+                "protocolVersion": params.get("protocolVersion").and_then(Value::as_str).unwrap_or("2025-06-18"),
+                "capabilities": { "tools": {} },
+                "serverInfo": { "name": "meowo", "version": env!("CARGO_PKG_VERSION") },
+            });
+            // 没有 Meowo 会话令牌（外部终端、Kimi 桌面版、用户自己起的 gemini 读到同一份配置）时
+            // 工具列表是空的，也不给说明：否则这段话会进那边模型的系统提示，教它用一组根本不存在的工具。
+            if channel.is_some() {
+                result["instructions"] = json!(if options.browser {
+                    INSTRUCTIONS_WITH_BROWSER
+                } else {
+                    INSTRUCTIONS_IMAGES_ONLY
+                });
+            }
+            result
+        }
         "ping" => json!({}),
-        "tools/list" => json!({ "tools": if channel.is_some() { tools() } else { Vec::new() } }),
+        "tools/list" => json!({ "tools": if channel.is_some() { tools(options) } else { Vec::new() } }),
         "tools/call" => {
             let name = params.get("name").and_then(Value::as_str).unwrap_or("");
             let args = params
@@ -67,13 +96,17 @@ fn respond(message: &Value, channel: Option<&(String, String)>) -> Option<Value>
                 .cloned()
                 .unwrap_or_else(|| json!({}));
             let (content, is_error) = match channel {
-                Some(channel) => match call(channel, name, args) {
+                Some(_) if name != SEND_IMAGE && !options.browser => (
+                    vec![json!({ "type": "text", "text": "用户在 Meowo 设置里关掉了「允许 agent 操作面板浏览器」，这组工具现在不能用。" })],
+                    true,
+                ),
+                Some(channel) => match call(channel, name, prepare_args(name, args)) {
                     Ok(content) => (content, false),
-                    Err(error) => (vec![json!({ "type": "text", "text": error })], true),
+                    Err(error) => (vec![json!({ "type": "text", "text": error_text(name, error) })], true),
                 },
                 None => (
                     vec![
-                        json!({ "type": "text", "text": "只有在 Meowo 里托管的会话才能用面板浏览器" }),
+                        json!({ "type": "text", "text": error_text(name, "只有在 Meowo 里托管的会话才能用这组工具".into()) }),
                     ],
                     true,
                 ),
@@ -87,6 +120,67 @@ fn respond(message: &Value, channel: Option<&(String, String)>) -> Option<Value>
         }
     };
     Some(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
+}
+
+const SEND_IMAGE_HINT: &str = "想让用户看到一张图（你截的图、画的图表、改过的图标、找到的参考图）时，用 send_image 把它发给用户：给本地图片文件的路径，可带一句说明。网络上的图先用你自己的下载工具存到本地再发。图片会直接显示在用户的对话里；只在路径里提到图片，用户是看不到的。";
+
+const INSTRUCTIONS_IMAGES_ONLY: &str = SEND_IMAGE_HINT;
+
+const INSTRUCTIONS_WITH_BROWSER: &str = concat!(
+    "这是 Meowo 对话窗右侧面板里的浏览器，用户就在旁边看着。凡是要打开网页、在网站上操作（填表、点按钮、查信息）、看本地 dev server 效果的，都优先用这组工具，不用找别的浏览器扩展或桌面控制。需要登录的网站，打开后让用户直接在面板里登录，再继续。用法：先 browser_open 或 browser_snapshot 拿到元素编号（如 e12），再按编号 browser_click / browser_type。提交、付款这类不可撤销的操作，先跟用户确认。面板通常比桌面浏览器窄，快照开头会写当前视口：测响应式布局或按 UA 出页面的 SSR 网站前先看一眼，需要桌面版、手机版或特定请求头时先用 browser_emulate 设好再测。",
+    "
+
+",
+    "想让用户看到一张图（你截的图、画的图表、改过的图标、找到的参考图）时，用 send_image 把它发给用户：给本地图片文件的路径，可带一句说明。网络上的图先用你自己的下载工具存到本地再发。图片会直接显示在用户的对话里；只在路径里提到图片，用户是看不到的。",
+);
+
+/// 发图失败的回执固定以 `[Image error: <code>] ` 开头（contract.md）：app 侧的失败已带前缀，
+/// 这里补上连不上 Meowo 这类通道层失败，前端只认一种形态。
+fn error_text(tool: &str, error: String) -> String {
+    if tool != SEND_IMAGE || error.starts_with(meowo_agent::images::ERROR_PREFIX) {
+        return error;
+    }
+    meowo_agent::images::ImageError::new(meowo_agent::images::ImageErrorCode::Forbidden, error)
+        .receipt()
+}
+
+/// 发图的本地相对路径按本进程的工作目录补全：本服务器由 agent 拉起，工作目录就是 agent 的；
+/// Meowo 那边不知道 agent 在哪个目录。`~/` 也在这里展开。网址原样转发。
+fn prepare_args(tool: &str, mut args: Value) -> Value {
+    if tool != SEND_IMAGE {
+        return args;
+    }
+    let Some(source) = args.get("source").and_then(Value::as_str).map(str::trim) else {
+        return args;
+    };
+    if let Some(path) = absolute_source(source, std::env::current_dir().ok().as_deref()) {
+        args["source"] = json!(path.to_string_lossy());
+    }
+    args
+}
+
+fn absolute_source(source: &str, cwd: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+    if source.is_empty() {
+        return None;
+    }
+    // 网址（含 file:）原样转发；Windows 盘符 `C:` 不算网址方案。
+    if let Some((scheme, _)) = source.split_once(':') {
+        if scheme.len() > 1
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+        {
+            return None;
+        }
+    }
+    if let Some(rest) = source.strip_prefix("~/").or_else(|| source.strip_prefix("~\\")) {
+        return meowo_agent::home_dir().map(|home| home.join(rest));
+    }
+    let path = std::path::Path::new(source);
+    if path.is_absolute() {
+        return None;
+    }
+    cwd.map(|cwd| cwd.join(path))
 }
 
 /// 转给 Meowo 执行，回来的是 MCP 的 content 列表：文字一段，截图另加一张图。
@@ -154,7 +248,27 @@ fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> 
     })
 }
 
-fn tools() -> Vec<Value> {
+fn send_image_tool() -> Value {
+    tool(
+        SEND_IMAGE,
+        "把一张本地图片发给用户看：图片会直接显示在用户的 Meowo 对话里（手机上也能看），用户可以点开看大图、保存。想让用户看到一张图时就用它——你截的图、画的图表、生成或改过的图标/图片文件。只在回复里写图片路径，用户是看不到图的。只接受本地文件，不接受网址：网络上的图先用你自己的下载工具保存到本地，再把本地路径发过来。支持 PNG、JPEG、GIF、WebP、SVG，单张不超过 20MB。调用后你只会收到一句确认，图片不会回传给你。",
+        json!({
+            "source": { "type": "string", "description": "图片文件的本地路径（绝对路径，或相对当前工作目录）。不接受网址" },
+            "caption": { "type": "string", "description": "可选。随图显示给用户的一句说明" }
+        }),
+        &["source"],
+    )
+}
+
+fn tools(options: Options) -> Vec<Value> {
+    let mut list = vec![send_image_tool()];
+    if options.browser {
+        list.extend(browser_tools());
+    }
+    list
+}
+
+fn browser_tools() -> Vec<Value> {
     let r = json!({ "type": "string", "description": "元素编号，来自 browser_snapshot，如 e12" });
     vec![
         tool(
@@ -240,21 +354,40 @@ fn tools() -> Vec<Value> {
 mod tests {
     use super::*;
 
+    const ALL: Options = Options { browser: true };
+    const IMAGES_ONLY: Options = Options { browser: false };
+
+    fn names(list: &Value) -> Vec<String> {
+        list["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect()
+    }
+
     #[test]
     fn handshake_and_tool_list() {
-        let init = respond(&json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "protocolVersion": "2025-03-26" } }), None).unwrap();
+        let init = respond(&json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "protocolVersion": "2025-03-26" } }), None, ALL).unwrap();
         assert_eq!(init["result"]["protocolVersion"], "2025-03-26");
         assert_eq!(init["result"]["serverInfo"]["name"], "meowo");
+        // 没有令牌（不在 Meowo 托管的会话里）：不给说明，免得教别处的模型用不存在的工具。
+        assert!(init["result"].get("instructions").is_none(), "{init}");
+        let channel = ("127.0.0.1:1".to_string(), "t".to_string());
+        let init = respond(&json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }), Some(&channel), ALL).unwrap();
+        assert!(init["result"]["instructions"].as_str().unwrap().contains("send_image"));
         // 通知不回。
         assert!(respond(
             &json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
-            None
+            None,
+            ALL
         )
         .is_none());
         // 不在 Meowo 托管的会话里：没有工具，免得在别处添乱。
         let list = respond(
             &json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }),
             None,
+            ALL,
         )
         .unwrap();
         assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 0);
@@ -262,21 +395,59 @@ mod tests {
         let list = respond(
             &json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/list" }),
             Some(&channel),
+            ALL,
         )
         .unwrap();
-        let names: Vec<&str> = list["result"]["tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|t| t["name"].as_str().unwrap())
-            .collect();
-        assert!(names.contains(&"browser_snapshot") && names.contains(&"browser_click"));
+        let all = names(&list);
+        assert!(all.iter().any(|n| n == "browser_snapshot") && all.iter().any(|n| n == "browser_click"));
+        assert!(all.iter().any(|n| n == "send_image"));
         let unknown = respond(
             &json!({ "jsonrpc": "2.0", "id": 4, "method": "resources/list" }),
             None,
+            ALL,
         )
         .unwrap();
         assert_eq!(unknown["error"]["code"], -32601);
+    }
+
+    /// 浏览器开关关掉（`mcp --no-browser`）：只列发图工具，浏览器工具调用被拒。
+    #[test]
+    fn no_browser_lists_only_send_image() {
+        let channel = ("127.0.0.1:1".to_string(), "t".to_string());
+        let list = respond(
+            &json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }),
+            Some(&channel),
+            IMAGES_ONLY,
+        )
+        .unwrap();
+        assert_eq!(names(&list), vec!["send_image".to_string()]);
+        let reply = respond(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "browser_snapshot" } }), Some(&channel), IMAGES_ONLY).unwrap();
+        assert_eq!(reply["result"]["isError"], true);
+        let init = respond(&json!({ "jsonrpc": "2.0", "id": 3, "method": "initialize", "params": {} }), Some(&channel), IMAGES_ONLY).unwrap();
+        assert!(!init["result"]["instructions"].as_str().unwrap().contains("browser_open"));
+    }
+
+    #[test]
+    fn send_image_schema_and_description() {
+        let tool = send_image_tool();
+        assert_eq!(tool["inputSchema"]["required"], json!(["source"]));
+        assert!(tool["inputSchema"]["properties"]["caption"].is_object());
+        assert!(tool["description"].as_str().unwrap().contains("想让用户看到一张图"));
+    }
+
+    /// 发图只收本地文件（做空第一轮）：工具描述、参数说明、服务器说明都不再说「可以给网址」，
+    /// 并告诉 agent 网络图先下载到本地。
+    #[test]
+    fn send_image_is_described_as_local_only() {
+        let tool = send_image_tool();
+        let description = tool["description"].as_str().unwrap();
+        let source = tool["inputSchema"]["properties"]["source"]["description"].as_str().unwrap();
+        for text in [description, source, INSTRUCTIONS_IMAGES_ONLY, INSTRUCTIONS_WITH_BROWSER] {
+            assert!(!text.contains("http(s)"), "{text}");
+        }
+        assert!(description.contains("不接受网址") && description.contains("保存到本地"));
+        assert!(source.contains("不接受网址"));
+        assert!(INSTRUCTIONS_IMAGES_ONLY.contains("存到本地"));
     }
 
     #[test]
@@ -292,9 +463,42 @@ mod tests {
         assert_eq!(content_of(&json!({ "ok": true, "text": "t" })).len(), 1);
     }
 
+    /// 发图成功回执：app 回的只有文字（一句话 + 引用行），不会出现 image 块。
+    #[test]
+    fn send_image_reply_is_text_only() {
+        let content = content_of(&json!({ "ok": true, "text": "图片已发给用户。\n[Image: source: C:/x.png]" }));
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "text");
+    }
+
     #[test]
     fn call_outside_meowo_explains_why() {
-        let reply = respond(&json!({ "jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": { "name": "browser_snapshot" } }), None).unwrap();
+        let reply = respond(&json!({ "jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": { "name": "browser_snapshot" } }), None, ALL).unwrap();
         assert_eq!(reply["result"]["isError"], true);
+        // 发图失败一律带 `[Image error: <code>] ` 前缀（contract.md）。
+        let reply = respond(&json!({ "jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": { "name": "send_image", "arguments": { "source": "a.png" } } }), None, ALL).unwrap();
+        assert_eq!(reply["result"]["isError"], true);
+        assert!(reply["result"]["content"][0]["text"].as_str().unwrap().starts_with("[Image error: forbidden] "));
+        // 连不上 Meowo（端口 1 没人听）：同样带前缀。
+        let channel = ("127.0.0.1:1".to_string(), "t".to_string());
+        let reply = respond(&json!({ "jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": { "name": "send_image", "arguments": { "source": "C:/a.png" } } }), Some(&channel), ALL).unwrap();
+        assert!(reply["result"]["content"][0]["text"].as_str().unwrap().starts_with("[Image error: "));
+    }
+
+    #[test]
+    fn relative_source_resolves_against_cwd() {
+        let cwd = std::path::Path::new(if cfg!(windows) { "C:/proj" } else { "/proj" });
+        assert_eq!(
+            absolute_source("out/chart.png", Some(cwd)),
+            Some(cwd.join("out/chart.png"))
+        );
+        // 绝对路径、网址、file: 网址原样转发（None = 不改）。
+        let abs = if cfg!(windows) { "C:/a/b.png" } else { "/a/b.png" };
+        assert_eq!(absolute_source(abs, Some(cwd)), None);
+        assert_eq!(absolute_source("https://x.com/a.png", Some(cwd)), None);
+        assert_eq!(absolute_source("file:///C:/a.png", Some(cwd)), None);
+        assert_eq!(absolute_source("", Some(cwd)), None);
+        let args = prepare_args("browser_open", json!({ "url": "a" }));
+        assert_eq!(args, json!({ "url": "a" }));
     }
 }
