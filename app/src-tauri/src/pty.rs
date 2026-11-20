@@ -2544,14 +2544,12 @@ impl PtyBroker {
     }
 
     /// 此刻挂着同步题面(AskUserQuestion)的会话(批量版,供远程徽标扫描)。
-    /// 与 [`Self::interactive_question`] 同一 TTL 口径:过期条目就地清掉,不点亮徽标。
+    /// 与 [`Self::interactive_question`] 同一 TTL 口径（共用 pruned_interactive_questions，
+    /// 挂起代答中的题面不过期）:过期条目就地清掉,不点亮徽标。
     pub(crate) fn interactive_question_session_ids(&self) -> HashSet<i64> {
-        let Ok(mut questions) = self.attach.interactive_questions.lock() else {
-            return HashSet::new();
-        };
-        let now = crate::now_ms();
-        questions.retain(|_, (_, at)| now.saturating_sub(*at) < INTERACTIVE_QUESTION_TTL_MS);
-        questions.keys().copied().collect()
+        self.pruned_interactive_questions()
+            .map(|questions| questions.keys().copied().collect())
+            .unwrap_or_default()
     }
 
     #[cfg(test)]
@@ -2605,9 +2603,22 @@ impl PtyBroker {
     /// 前端的收卡信号决定（作答/取消后 transcript 增长或回合结束），后端无从得知用户
     /// 何时答完，只能靠 TTL 兜底——与前端的 180s 兜底同一量级，早于它过期即可。
     pub(crate) fn interactive_question(&self, session_id: i64) -> Option<ApprovalRequest> {
-        // 挂起代答中的题面（request_id 仍在 approvals 表）豁免 TTL：代答不限时，
-        // 远比 TTL 长，不豁免的话挂起中途题面就被 retain 清掉、轮询丢卡。
-        // 先取 approvals 快照再锁 questions，两把锁不嵌套。
+        self.pruned_interactive_questions()?
+            .get(&session_id)
+            .map(|(request, _)| request.clone())
+    }
+
+    /// 按 TTL 清掉过期题面后返回题面表（已加锁）。所有读题面表的出口都必须经这里，
+    /// TTL 口径只有这一份。
+    ///
+    /// 挂起代答中的题面（request_id 仍在 approvals 表）豁免 TTL：代答不限时，远比 TTL 长，
+    /// 不豁免的话挂起中途题面就被清掉、轮询丢卡。2026-11-20 实拍：手机徽标扫描
+    /// （interactive_question_session_ids）曾自带一份不豁免的 TTL，提问挂了 9 小时后手机一打开
+    /// 就把题面删了，只剩答不了的兜底卡。
+    /// 先取 approvals 快照再锁 questions，两把锁不嵌套。
+    fn pruned_interactive_questions(
+        &self,
+    ) -> Option<std::sync::MutexGuard<'_, HashMap<i64, (ApprovalRequest, i64)>>> {
         let held: HashSet<String> = self
             .attach
             .approvals
@@ -2620,9 +2631,7 @@ impl PtyBroker {
             held.contains(&request.request_id)
                 || now.saturating_sub(*at) < INTERACTIVE_QUESTION_TTL_MS
         });
-        questions
-            .get(&session_id)
-            .map(|(request, _)| request.clone())
+        Some(questions)
     }
 
     /// 题面的 GUI 出口：answerable = broker 此刻仍持有该请求（挂起中，可 resolve 代答）。
@@ -2911,9 +2920,10 @@ impl PtyBroker {
     /// 前端的收卡判断是推测（transcript 变长、回合状态），持有中的请求以 broker 为准。
     /// 返回是否真的撤下。
     ///
-    /// 锁顺序 approvals → interactive_questions：两把锁在别处都不嵌套，这里嵌套是为了让
-    /// 「是否持有」与「删除」原子化——handle_approval 先入题面表、后入 approvals，分开取
-    /// 快照会在两步之间误删刚入表的新提问。
+    /// 锁顺序 approvals → interactive_questions（别处两把锁都不嵌套，不会反序）：「是否持有」
+    /// 与「删除」在同一临界区里判定。残留窗口：handle_approval 先入题面表、隔一次建通道再入
+    /// approvals，收卡恰好落在这两步之间仍会被当成未持有——微秒级，且前端没见过这张卡就不会
+    /// 来收它，接受。
     pub(crate) fn dismiss_settled_interactive_question(&self, session_id: i64) -> bool {
         let Ok(approvals) = self.attach.approvals.lock() else {
             return false;
