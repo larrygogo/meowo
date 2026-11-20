@@ -685,6 +685,75 @@ pub fn store_tool_base64(data: &str) -> Option<PathBuf> {
     store_bytes(ImageKind::Tool, &bytes).ok()
 }
 
+// ── 写出 / 修改的图片：按调用留快照 ─────────────────────
+
+/// 「写入或修改了图片文件」的工具调用 → 它写的图片路径。解析器看到调用时登记，看到回执时
+/// 取出来做快照（见 [`snapshot_written`]）。调用与回执常在不同的增量批次里，所以放进程级表；
+/// 快照本身落盘按调用 id 命名，表丢了（重启）也只是这一次回执没在同一批里时少补一行，
+/// 下次整读会补上。
+static WRITTEN_IMAGES: std::sync::Mutex<Option<std::collections::HashMap<String, Vec<PathBuf>>>> =
+    std::sync::Mutex::new(None);
+/// 表里有没有东西：没有图片写入的会话（绝大多数）在每条回执上只多一次原子读，不碰锁。
+static WRITTEN_ANY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// 表的上限：一个进程里见过的图片写入调用通常几十个；超了整表清掉重来（只影响跨批次补图）。
+const WRITTEN_MAX: usize = 4096;
+
+fn is_image_ext(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg"))
+}
+
+/// 登记一次写入调用写了哪些文件；只留绝对路径、图片扩展名、不是 UNC 的（相对路径不知道相对谁，
+/// 交给前端按 detail.path 现解析）。
+pub fn remember_written(call_id: &str, paths: impl IntoIterator<Item = String>) {
+    let paths: Vec<PathBuf> = paths
+        .into_iter()
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute() && is_image_ext(p) && !is_remote(p))
+        .collect();
+    if paths.is_empty() {
+        return;
+    }
+    let mut table = WRITTEN_IMAGES.lock().unwrap_or_else(|e| e.into_inner());
+    let table = table.get_or_insert_with(Default::default);
+    if table.len() >= WRITTEN_MAX {
+        table.clear();
+    }
+    table.insert(call_id.to_string(), paths);
+    WRITTEN_ANY.store(true, Ordering::Relaxed);
+}
+
+/// 这次回执对应的调用写过哪些图片（没登记过为 None）。
+pub fn written_for(call_id: &str) -> Option<Vec<PathBuf>> {
+    if !WRITTEN_ANY.load(Ordering::Relaxed) {
+        return None;
+    }
+    WRITTEN_IMAGES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()?
+        .get(call_id)
+        .cloned()
+}
+
+/// 给「调用 `call_id` 写出的 `path`」留快照：第一次调用时把当时的文件内容存进 `tool/`
+/// （按「调用 id + 路径」命名），之后再调直接返回同一份，不再读原文件——同一路径写三次就是
+/// 三张不同的图，原文件改了、删了也不影响已有的快照。原文件读不了或不是真图返回 None。
+pub fn snapshot_written_in(root: &Path, call_id: &str, path: &Path) -> Option<PathBuf> {
+    let key = format!("write\n{call_id}\n{}", path.display());
+    if let Some(hit) = cached_keyed_in(root, ImageKind::Tool, &key) {
+        return Some(hit);
+    }
+    let bytes = read_image_file(path).ok()?;
+    store_keyed_in(root, ImageKind::Tool, &key, &bytes).ok()
+}
+
+/// 同上，默认根目录。
+pub fn snapshot_written(call_id: &str, path: &Path) -> Option<PathBuf> {
+    snapshot_written_in(&images_root()?, call_id, path)
+}
+
 /// 同上，输入是 `data:image/...;base64,...` 网址（OpenCode 的附件形态）。
 pub fn store_tool_data_url(url: &str) -> Option<PathBuf> {
     let rest = url.strip_prefix("data:")?;

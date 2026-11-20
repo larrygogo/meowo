@@ -1126,11 +1126,51 @@ fn parse_lines(spec: &dyn TranscriptSpec, path: &Path, base: u64, buf: &[u8]) ->
         let items = if matches!(mark, Some(ChatLineMark::Undo(_))) || exit.is_some() || images.is_some() {
             Vec::new()
         } else {
-            spec.parse_transcript_line_in(path, line).into_iter().map(ChatItem::from).collect()
+            let mut items: Vec<ChatItem> =
+                spec.parse_transcript_line_in(path, line).into_iter().map(ChatItem::from).collect();
+            snapshot_written_images(&mut items);
+            items
         };
         out.push(ParsedLine { start, modes, mark, exit, images, items });
     }
     out
+}
+
+/// 写出 / 修改图片文件的调用：调用处登记它写的图片路径，回执处按调用 id 留快照并在回执末尾
+/// 追加引用行（见 [`crate::images::snapshot_written`]）。五家共用，只认 [`ToolDetail`] 的
+/// write / edit / patch，不看工具名。失败、被打断的回执不补（那次没写成）。
+fn snapshot_written_images(items: &mut [ChatItem]) {
+    for item in items.iter_mut() {
+        match item {
+            ChatItem::ToolUse { id, detail: Some(detail), .. } => {
+                let paths: Vec<String> = match detail {
+                    ToolDetail::Write { path, .. } | ToolDetail::Edit { path, .. } => vec![path.clone()],
+                    ToolDetail::Patch { files } => files
+                        .iter()
+                        .filter(|file| file.op != "delete")
+                        .map(|file| file.move_to.clone().unwrap_or_else(|| file.path.clone()))
+                        .collect(),
+                    _ => continue,
+                };
+                crate::images::remember_written(id, paths);
+            }
+            ChatItem::ToolResult { tool_use_id: Some(id), is_error: false, interrupted: false, text, .. } => {
+                let Some(paths) = crate::images::written_for(id) else { continue };
+                for path in paths {
+                    let Some(snapshot) = crate::images::snapshot_written(id, &path) else { continue };
+                    let line = crate::images::image_ref_line(&snapshot);
+                    if text.contains(&line) {
+                        continue;
+                    }
+                    if !text.is_empty() {
+                        text.push('\n');
+                    }
+                    text.push_str(&line);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// [`fold_lines`] 的结果：每条已解析消息留不留（按行顺序平铺），`offsets[i]..offsets[i+1]`
@@ -3883,6 +3923,76 @@ mod tests {
         assert_eq!(items.iter().filter(|i| matches!(i, ChatItem::ToolResult { .. })).count(), 1);
         std::fs::remove_file(copy).ok();
         assert_chunked_equals_whole(spec, "mcp_side_images_chunks", &content);
+    }
+
+    /// 做空第一轮：写出或修改的图片在工具行上显示的是「现在的文件」——同一路径写三次，三行
+    /// 都显示最后那张；原文件删了就裂图。现在解析器第一次解析到这次写入的回执时，把当时的
+    /// 文件内容存进 `tool/`（按调用 id 记住），回执末尾追加引用行；之后重解析、增量读、尾读
+    /// 都复用同一份。
+    #[test]
+    fn written_image_is_snapshotted_once_per_call() {
+        let spec = spec_of("claude");
+        let dir = std::env::temp_dir().join(format!("meowo_write_snap_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let svg = dir.join("icon.svg");
+        let svg_json = serde_json::to_string(&svg.to_string_lossy()).unwrap();
+        let transcript = dir.join("session.jsonl");
+        let mut content = String::new();
+        let mut offset = 0;
+        let colors = ["red", "green", "blue"];
+        for (i, color) in colors.iter().enumerate() {
+            let body = format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"><rect width=\"8\" height=\"8\" fill=\"{color}\"/></svg>");
+            std::fs::write(&svg, &body).unwrap();
+            content.push_str(&format!(
+                r#"{{"type":"assistant","uuid":"a{i}","timestamp":"2026-11-21T01:0{i}:00Z","message":{{"role":"assistant","content":[{{"type":"tool_use","id":"toolu_write_{i}","name":"Write","input":{{"file_path":{svg_json},"content":{}}}}}]}}}}"#,
+                serde_json::to_string(&body).unwrap()
+            ));
+            content.push('\n');
+            content.push_str(&format!(
+                r#"{{"type":"user","uuid":"u{i}","timestamp":"2026-11-21T01:0{i}:01Z","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"toolu_write_{i}","content":"File created successfully"}}]}}}}"#
+            ));
+            content.push('\n');
+            std::fs::write(&transcript, &content).unwrap();
+            // 实时：每次写完文件、回执落盘后增量读一次（第一次解析就在这时）。
+            offset = read_chat_delta(spec, &transcript, offset, None).offset;
+        }
+        let refs = |items: &[ChatItem]| -> Vec<String> {
+            items
+                .iter()
+                .filter_map(|item| match item {
+                    ChatItem::ToolResult { text, .. } => text
+                        .lines()
+                        .find_map(|l| l.strip_prefix("[Image: source: ").and_then(|r| r.strip_suffix(']')))
+                        .map(str::to_string),
+                    _ => None,
+                })
+                .collect()
+        };
+        let whole = refs(&read_chat_delta(spec, &transcript, 0, None).items);
+        assert_eq!(whole.len(), 3, "{whole:?}");
+        for (path, color) in whole.iter().zip(colors) {
+            let saved = std::fs::read_to_string(path).unwrap();
+            assert!(saved.contains(color), "{path} 应是写入当时的内容（{color}）：{saved}");
+            assert!(Path::new(path).starts_with(crate::images::images_root().unwrap().join("tool")));
+        }
+        // 原文件删掉：重解析仍指向同三份；整读、分段增量读、尾读一致。
+        std::fs::remove_file(&svg).unwrap();
+        assert_eq!(refs(&read_chat_delta(spec, &transcript, 0, None).items), whole);
+        assert_eq!(refs(&read_chat_delta_paged(spec, &transcript, 0, None, 2).items), whole[2..].to_vec());
+        assert_chunked_equals_whole(spec, "write_snap_chunks", &content);
+        // 尾读（首屏只解析末尾一段）：每种屏大小都等于整读的末尾几条。
+        let all = read_chat_delta(spec, &transcript, 0, None).items;
+        for page in 1..=all.len() {
+            let tail = read_chat_delta_paged(spec, &transcript, 0, None, page).items;
+            assert_eq!(tail, all[all.len() - page..].to_vec(), "page {page}");
+        }
+        // 失败的写入不补图。
+        let failed = content.replace(r#""content":"File created successfully"}"#, r#""content":"error","is_error":true}"#);
+        let failed_path = write_tmp("write_snap_failed", &failed);
+        assert!(refs(&read_chat_delta(spec, &failed_path, 0, None).items).is_empty());
+        std::fs::remove_file(failed_path).ok();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 回执自己已经带引用行（脚本 `text(...)` 了结果）：不重复补；同一行旁路记录换成别的工具名：对不上，不补。
