@@ -641,7 +641,7 @@ Function MeowoMainPage
   ${MeowoText} $MeowoVersionLabel 20 372 240 16 "0" "$(meowoVersion)" $MeowoSmallFont ${MEOWO_COL_FAINT} ${MEOWO_COL_BASE}
 
   ; ---- 选项卡片（默认隐藏；卡片 32,340 576x128，输入框 52,378 536x34，勾选框 52,432 18x18）----
-  ; 2026-11-20 起不再提供「对话窗口功能」开关：一律按完整模式安装（leader），轻量模式只在设置里切。
+  ; 2026-11-20 起不再提供「对话窗口功能」开关：应用本身已去掉轻量模式（leader），只有完整模式一种形态。
   ${MeowoText} $MeowoDirLabel 52 354 300 18 "0" "$(meowoInstallPath)" $MeowoSmallFont ${MEOWO_COL_SUB} ${MEOWO_COL_CARD}
 
   ; 路径输入：无边框 EDIT 嵌在烙好的圆角输入框里（原生带边框的白底输入框在暗色下像另一个程序）。
@@ -1270,9 +1270,9 @@ Section Install
   !endif
 
   ; MEOWO-BEGIN chat-enabled-seed
-  ; 安装器不再提供「对话窗口功能」开关（2026-11-20 起一律完整模式），也就不再写 ChatEnabled 种子：
-  ; 新装按应用默认（chat_enabled = true），老用户在设置里的选择原样保留。应用侧 seed.rs 照旧
-  ; 消化旧版安装器留下的种子，卸载器照旧兜底清理。
+  ; 安装器不再提供「对话窗口功能」开关，也不再写 ChatEnabled 种子：2026-11-20 起应用已去掉轻量模式
+  ; （没有 chat_enabled 设置项），也不再读这个种子（seed.rs 已删）。旧版安装器可能留下的注册表值
+  ; 由卸载器清理。
   ; MEOWO-END chat-enabled-seed
 
   ; Create start menu shortcut
@@ -1432,7 +1432,8 @@ Section Uninstall
   ; We do this when not updating (to preserve the registry value on updates)
   ${If} $UpdateMode <> 1
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
-    ; MEOWO: 对话功能种子正常已被应用读后即焚，这里是「装完从未启动就卸载」的兜底。
+    ; MEOWO: 清理旧版安装器写下的对话功能种子（ChatEnabled）。应用 2026-11-20 起已不再读它，
+    ; 旧版本留下的值没人会删，卸载时顺手清掉。
     DeleteRegValue SHCTX "${MANUPRODUCTKEY}" "ChatEnabled"
   ${EndIf}
 

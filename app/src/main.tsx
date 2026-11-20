@@ -19,9 +19,6 @@ import "./styles.css";
 // (useShowWhenReady),懒加载多的一拍不产生可见闪烁。
 const About = React.lazy(() => import("./views/About").then((m) => ({ default: m.About })));
 const Updater = React.lazy(() => import("./views/Updater").then((m) => ({ default: m.Updater })));
-const NewSessionPanel = React.lazy(() =>
-  import("./views/NewSessionPanel").then((m) => ({ default: m.NewSessionPanel })),
-);
 const Onboarding = React.lazy(() =>
   import("./views/Onboarding").then((m) => ({ default: m.Onboarding })),
 );
@@ -88,8 +85,6 @@ void Promise.all([detectHostOs(), bootI18n(), bootWindowMaterial()]).then(() => 
               <About />
             ) : label === "updater" ? (
               <Updater />
-            ) : label === "new-session" ? (
-              <NewSessionPanel />
             ) : label === "onboarding" ? (
               <Onboarding />
             ) : label === "chat" ? (

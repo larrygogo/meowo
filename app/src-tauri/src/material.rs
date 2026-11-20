@@ -72,7 +72,8 @@ fn kill_switch_on(value: Option<&str>) -> bool {
 /// 灵动岛定案纯黑。macOS 只做对话窗与设置窗（SPEC 终态），其余小窗保持不透明。
 fn wants_material(label: &str) -> bool {
     if cfg!(target_os = "windows") {
-        matches!(label, "chat" | "about" | "onboarding" | "updater" | "new-session")
+        // 独立新建会话小窗（new-session）随 2026-11-20 去掉轻量模式删除，不再列入。
+        matches!(label, "chat" | "about" | "onboarding" | "updater")
     } else if cfg!(target_os = "macos") {
         matches!(label, "chat" | "about")
     } else {
@@ -416,11 +417,7 @@ mod tests {
             assert!(wants_material("chat") && wants_material("about"));
         }
         if cfg!(target_os = "windows") {
-            assert!(
-                wants_material("onboarding")
-                    && wants_material("updater")
-                    && wants_material("new-session")
-            );
+            assert!(wants_material("onboarding") && wants_material("updater"));
         }
     }
 

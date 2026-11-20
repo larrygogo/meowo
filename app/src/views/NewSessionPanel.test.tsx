@@ -19,7 +19,7 @@ vi.mock("../api", async (orig) => ({ ...(await orig<typeof import("../api")>()),
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 const closeMock = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ close: closeMock }) }));
-// 收集 login-done 回调，测试里手动广播（模拟 Tauri emit）。其余事件（ns-prefill）照常返回 unlisten。
+// 收集 login-done 回调，测试里手动广播（模拟 Tauri emit）。其余事件照常返回 unlisten。
 const ev = vi.hoisted(() => ({ loginCbs: [] as Array<(e: unknown) => void>, profileCbs: [] as Array<(e: unknown) => void> }));
 const emitMock = vi.hoisted(() => vi.fn((_event: string, _payload?: unknown) => Promise.resolve()));
 vi.mock("@tauri-apps/api/event", () => ({
