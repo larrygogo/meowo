@@ -168,44 +168,67 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 ;
 ; 色值与 icons/nsis-oneclick-bg.bmp 的分区底色一一对应（scripts/generate-nsis-bitmaps.py
 ; 有同名注释）：原生控件文字背景只能靠 SetCtlColors 配纯色，控件落在哪个分区就配哪个色。
-!define MEOWO_COL_BASE "17171a"
-!define MEOWO_COL_TEXT "f5f5f7"
-!define MEOWO_COL_SUB  "a0a0a8"
-!define MEOWO_COL_LINK "d4f64c"
+!define MEOWO_COL_BASE   "17171a"
+!define MEOWO_COL_CARD   "1d1d21"
+!define MEOWO_COL_FIELD  "141416"
+!define MEOWO_COL_TEXT   "f5f5f7"
+!define MEOWO_COL_SUB    "a0a0a8"
+!define MEOWO_COL_FAINT  "6e6e76"
+!define MEOWO_COL_LINK   "d4f64c"
+!define MEOWO_COL_ONLINK "1c2600"
+; 布局（逻辑 px，96dpi）。与 scripts/generate-nsis-bitmaps.py 的同名几何常量一一对应：
+; 底图上烙好的胶囊、卡片、输入框外框、勾选框外框都按这组坐标画，控件按同一组坐标叠上去。
+!define MEOWO_W      640
+!define MEOWO_H      400
+!define MEOWO_EXPAND 92
 !define /ifndef SS_CENTER 0x1
+!define /ifndef SS_RIGHT 0x2
+!define /ifndef SS_CENTERIMAGE 0x200
 !define /ifndef SS_NOTIFY 0x100
+!define /ifndef SS_BITMAP 0xE
+!define /ifndef ES_AUTOHSCROLL 0x80
 !define /ifndef SW_HIDE 0
 !define /ifndef SW_SHOW 5
 ; 背景位图与 headerImage 同目录：从 HEADERIMAGE（bundler 渲染时已绝对化）推导，
 ; 不依赖 makensis 的 CWD。重命名这些文件时必须同步这里。
-; 两个变体：-btn 带烙好的胶囊按钮（主页/完成页），无后缀的给进度页（没有按钮）。
+; 三个变体：无后缀给进度页（没有按钮），-btn 给主页收起态与完成页，-expanded 给主页展开态。
 !searchreplace MEOWO_BG_PATH "${HEADERIMAGE}" "nsis-header.bmp" "nsis-oneclick-bg.bmp"
 !searchreplace MEOWO_BGBTN_PATH "${HEADERIMAGE}" "nsis-header.bmp" "nsis-oneclick-bg-btn.bmp"
+!searchreplace MEOWO_BGEXP_PATH "${HEADERIMAGE}" "nsis-header.bmp" "nsis-oneclick-bg-expanded.bmp"
 ReserveFile "${MEOWO_BG_PATH}"
 ReserveFile "${MEOWO_BGBTN_PATH}"
+ReserveFile "${MEOWO_BGEXP_PATH}"
+; 勾选框两态按显示缩放各一套（icons/nsis-ui/toggle-{on,off}-{dpi}.bmp），按 DPI 取原尺寸那张，不拉伸。
+!searchreplace MEOWO_UI_DIR "${HEADERIMAGE}" "nsis-header.bmp" "nsis-ui"
 
 Var MeowoDpi
-Var MeowoW            ; 外窗 client 宽/高（px，MeowoGuiInit 填）
+Var MeowoW            ; 外窗 client 宽/高（物理 px，MeowoFitClient 填）
 Var MeowoH
+Var MeowoFrameW       ; 外框尺寸 - client 尺寸（边框 + 标题栏），改窗口高度时用
+Var MeowoFrameH
 Var MeowoTitleFont
+Var MeowoBodyFont
 Var MeowoBtnFont
 Var MeowoSmallFont
-Var MeowoLinkFont
+Var MeowoIconFont
+Var MeowoWordFont
+Var MeowoUiDpi        ; 勾选框位图取哪一档（96/120/144/168/192/240/288）
+Var MeowoToggleOn     ; 勾选框两态的 HBITMAP（主页建页时加载，整页复用）
+Var MeowoToggleOff
 Var MeowoHasExisting  ; 0/1：检测到已有安装（MeowoDetectExisting 填）
-Var MeowoChatEnabled  ; 1/0：「对话窗口功能」勾选，Section 里写注册表种子
 Var MeowoDesktopLnk   ; 1/0：「创建桌面快捷方式」勾选
-Var MeowoExpanded     ; 0/1：自定义安装区是否展开
-Var MeowoBgHandle     ; 主页/完成页背景的 HBITMAP（NSD_SetStretchedImage 管理）
+Var MeowoExpanded     ; 0/1：自定义安装选项是否展开
+Var MeowoPage         ; 当前自绘页（nsDialogs 对话框）
+Var MeowoBgCtl        ; 当前自绘页的背景位图控件
+Var MeowoBgHandle     ; 背景 HBITMAP（NSD_SetStretchedImage 管理）
 Var MeowoDirLabel
 Var MeowoDirText
-Var MeowoBrowseBtn
-Var MeowoChatCheck
-Var MeowoChatLabel
-Var MeowoChatHint
-Var MeowoDesktopCheck
+Var MeowoChangeLink
+Var MeowoDesktopBox
 Var MeowoDesktopLabel
 Var MeowoCustomLink
 Var MeowoNoteLabel
+Var MeowoVersionLabel
 
 ; 逻辑像素 → 物理像素（96dpi 基准，MeowoGuiInit 之后可用）。
 !macro MeowoScale out in
@@ -214,11 +237,35 @@ Var MeowoNoteLabel
 !macroend
 !define MeowoScale "!insertmacro MeowoScale"
 
-; 一次性改造向导外框：resize + 居中、隐藏向导 chrome、内页占位控件(1018)撑满。
+; 在当前 nsDialogs 页上按逻辑坐标建一个文字控件（STATIC）。占用 $2-$5，不碰 $R*。
+!macro MeowoText out x y w h style text font fg bg
+  ${MeowoScale} $2 ${x}
+  ${MeowoScale} $3 ${y}
+  ${MeowoScale} $4 ${w}
+  ${MeowoScale} $5 ${h}
+  nsDialogs::CreateControl STATIC "${__NSD_Label_STYLE}|${style}" "${__NSD_Label_EXSTYLE}" $2 $3 $4 $5 "${text}"
+  Pop ${out}
+  SetCtlColors ${out} "${fg}" "${bg}"
+  SendMessage ${out} ${WM_SETFONT} ${font} 1
+!macroend
+!define MeowoText "!insertmacro MeowoText"
+
+; 自绘勾选：一个 SS_BITMAP 静态控件，按状态换成预先画好的圆角位图（选中 = 青柠圆角块 + 对勾）。
+; 不用原生复选框：themed 复选框的框是系统蓝、文字不吃 SetCtlColors（实拍黑字糊在暗底上）；
+; 也不用「圆角框里叠一块变色方块」：选中时那块是直角（leader：「勾选了之后没有圆角」）。
+!macro MeowoPaintToggle ctl state
+  ${If} ${state} = 1
+    SendMessage ${ctl} 0x172 0 $MeowoToggleOn   ; STM_SETIMAGE(IMAGE_BITMAP)
+  ${Else}
+    SendMessage ${ctl} 0x172 0 $MeowoToggleOff
+  ${EndIf}
+!macroend
+!define MeowoPaintToggle "!insertmacro MeowoPaintToggle"
+
+; 一次性改造向导外框：去掉最大化、resize 到设计尺寸并居中、隐藏向导 chrome、内页占位控件(1018)撑满。
 ; 之后所有页面（含 MUI 的 INSTFILES）都按全屏 client 区排版。passive 也走这里
 ; （/P 进度窗与 GUI 同一视觉——但 updater 已改传 /S 全静默，见 README「必须保留的
-; 语义」：0.5.15 首次实跑 /P 弹窗且界面错乱，修好并截图验证前更新链路不走这条路）；
-; silent 无窗口直接返回。
+; 语义」）；silent 无窗口直接返回。
 !define MUI_CUSTOMFUNCTION_GUIINIT MeowoGuiInit
 Function MeowoGuiInit
   ${If} ${Silent}
@@ -230,53 +277,124 @@ Function MeowoGuiInit
   ${If} $MeowoDpi < 96
     StrCpy $MeowoDpi 96
   ${EndIf}
+  ; 勾选框位图档位：取最接近的一档（常见缩放 100/125/150/175/200/250/300% 正好命中）。
+  ${If} $MeowoDpi >= 264
+    StrCpy $MeowoUiDpi 288
+  ${ElseIf} $MeowoDpi >= 216
+    StrCpy $MeowoUiDpi 240
+  ${ElseIf} $MeowoDpi >= 180
+    StrCpy $MeowoUiDpi 192
+  ${ElseIf} $MeowoDpi >= 156
+    StrCpy $MeowoUiDpi 168
+  ${ElseIf} $MeowoDpi >= 132
+    StrCpy $MeowoUiDpi 144
+  ${ElseIf} $MeowoDpi >= 108
+    StrCpy $MeowoUiDpi 120
+  ${Else}
+    StrCpy $MeowoUiDpi 96
+  ${EndIf}
 
-  ; 外窗改为 780x512（含标题栏），以**原窗口中心**为锚重定位：NSIS 已把窗口按启动
-  ; 显示器居中，拿主屏 GetSystemMetrics 重算会在多屏环境跑偏（实测跑到角落）。
-  ; SWP_NOZORDER|SWP_NOACTIVATE = 0x14。
-  ${MeowoScale} $0 780
-  ${MeowoScale} $1 512
+  ; 去掉最大化按钮（WS_MAXIMIZEBOX = 0x10000）：固定尺寸的安装窗口不该能最大化。
+  System::Call "user32::GetWindowLongW(p $HWNDPARENT, i -16) i .r0"
+  IntOp $0 $0 & 0xFFFEFFFF
+  System::Call "user32::SetWindowLongW(p $HWNDPARENT, i -16, i r0)"
+
+  ; 量出边框差（外框 - client），按设计 client 尺寸反推外框，以**原窗口中心**为锚重定位：
+  ; NSIS 已把窗口按启动显示器居中，拿主屏 GetSystemMetrics 重算会在多屏环境跑偏（实测跑到角落）。
   System::Call "*(i 0, i 0, i 0, i 0) p .r4"
   System::Call "user32::GetWindowRect(p $HWNDPARENT, p r4)"
   System::Call "*$4(i .r2, i .r3, i .r5, i .r6)"
+  System::Call "user32::GetClientRect(p $HWNDPARENT, p r4)"
+  System::Call "*$4(i, i, i .r7, i .r8)"
   System::Free $4
+  IntOp $0 $5 - $2
+  IntOp $MeowoFrameW $0 - $7
+  IntOp $0 $6 - $3
+  IntOp $MeowoFrameH $0 - $8
   IntOp $2 $2 + $5
-  IntOp $2 $2 / 2
+  IntOp $2 $2 / 2         ; 原中心 x
   IntOp $3 $3 + $6
-  IntOp $3 $3 / 2
+  IntOp $3 $3 / 2         ; 原中心 y
+  ${MeowoScale} $0 ${MEOWO_W}
+  IntOp $0 $0 + $MeowoFrameW
+  ${MeowoScale} $1 ${MEOWO_H}
+  IntOp $1 $1 + $MeowoFrameH
   IntOp $5 $0 / 2
   IntOp $2 $2 - $5
   IntOp $5 $1 / 2
   IntOp $3 $3 - $5
-  System::Call "user32::SetWindowPos(p $HWNDPARENT, p 0, i r2, i r3, i r0, i r1, i 0x14)"
+  ; SWP_NOZORDER|SWP_NOACTIVATE|SWP_FRAMECHANGED = 0x34（FRAMECHANGED 让去掉的最大化按钮立即生效）。
+  System::Call "user32::SetWindowPos(p $HWNDPARENT, p 0, i r2, i r3, i r0, i r1, i 0x34)"
 
   ; 隐藏向导 chrome。「下一步」(ID 1) 只是视觉隐藏——自绘按钮靠
   ; SendMessage WM_COMMAND 1 驱动它走标准页流（leave 校验照常触发）。
   ; 1028/1256=branding，1034-1038=header 区，1045=按钮上方分隔线。
-  GetDlgItem $0 $HWNDPARENT 1
-  ShowWindow $0 ${SW_HIDE}
-  GetDlgItem $0 $HWNDPARENT 2
-  ShowWindow $0 ${SW_HIDE}
-  GetDlgItem $0 $HWNDPARENT 3
-  ShowWindow $0 ${SW_HIDE}
-  GetDlgItem $0 $HWNDPARENT 1028
-  ShowWindow $0 ${SW_HIDE}
-  GetDlgItem $0 $HWNDPARENT 1034
-  ShowWindow $0 ${SW_HIDE}
-  GetDlgItem $0 $HWNDPARENT 1035
-  ShowWindow $0 ${SW_HIDE}
-  GetDlgItem $0 $HWNDPARENT 1036
-  ShowWindow $0 ${SW_HIDE}
-  GetDlgItem $0 $HWNDPARENT 1037
-  ShowWindow $0 ${SW_HIDE}
-  GetDlgItem $0 $HWNDPARENT 1038
-  ShowWindow $0 ${SW_HIDE}
-  GetDlgItem $0 $HWNDPARENT 1045
-  ShowWindow $0 ${SW_HIDE}
-  GetDlgItem $0 $HWNDPARENT 1256
-  ShowWindow $0 ${SW_HIDE}
+  Call MeowoHideChrome
+  StrCpy $MeowoPage ""
+  StrCpy $MeowoBgCtl ""
+  Call MeowoFitClient
 
-  ; 内页占位控件(1018)撑满 client 区，并记下 client 尺寸供各页排版。
+  ; 标题栏切暗色，与深色内容匹配（DWMWA_USE_IMMERSIVE_DARK_MODE=20；Win10 老构建
+  ; 不认该属性，静默失败退回亮色）。
+  System::Call "dwmapi::DwmSetWindowAttribute(p $HWNDPARENT, i 20, *i 1, i 4)"
+  ; 隐藏 chrome + 改窗口尺寸后强制整窗重绘：被隐藏控件与新暴露区域不会自动擦除，
+  ; 不刷会在右/下边缘留未初始化的花屏残影（实拍）。
+  System::Call "user32::InvalidateRect(p $HWNDPARENT, p 0, i 1)"
+
+  ; 字体（逻辑 px 随 DPI 缩放；DEFAULT_CHARSET=1，CLEARTYPE_QUALITY=5）。显式用微软雅黑 UI——
+  ; $(^Font) 是 MS Shell Dlg，中文会映射到宋体，衬线在暗色大字下惨不忍睹（实拍）。
+  ; 标题 20 / 正文 14 / 按钮 15 / 小字 12 / 图标 16（字标 30 见末尾）。
+  ${MeowoScale} $0 20
+  IntOp $0 0 - $0
+  System::Call "gdi32::CreateFont(i r0, i 0, i 0, i 0, i 600, i 0, i 0, i 0, i 1, i 0, i 0, i 5, i 0, t 'Microsoft YaHei UI') p .s"
+  Pop $MeowoTitleFont
+  ${MeowoScale} $0 14
+  IntOp $0 0 - $0
+  System::Call "gdi32::CreateFont(i r0, i 0, i 0, i 0, i 400, i 0, i 0, i 0, i 1, i 0, i 0, i 5, i 0, t 'Microsoft YaHei UI') p .s"
+  Pop $MeowoBodyFont
+  ${MeowoScale} $0 15
+  IntOp $0 0 - $0
+  System::Call "gdi32::CreateFont(i r0, i 0, i 0, i 0, i 600, i 0, i 0, i 0, i 1, i 0, i 0, i 5, i 0, t 'Microsoft YaHei UI') p .s"
+  Pop $MeowoBtnFont
+  ${MeowoScale} $0 12
+  IntOp $0 0 - $0
+  System::Call "gdi32::CreateFont(i r0, i 0, i 0, i 0, i 400, i 0, i 0, i 0, i 1, i 0, i 0, i 5, i 0, t 'Microsoft YaHei UI') p .s"
+  Pop $MeowoSmallFont
+  ; 图标字体：Windows 10/11 自带的 Segoe MDL2 Assets（矢量字形，任何缩放都清晰，能配色）。
+  ${MeowoScale} $0 16
+  IntOp $0 0 - $0
+  System::Call "gdi32::CreateFont(i r0, i 0, i 0, i 0, i 400, i 0, i 0, i 0, i 1, i 0, i 0, i 5, i 0, t 'Segoe MDL2 Assets') p .s"
+  Pop $MeowoIconFont
+  ; 字标「Meowo」：Segoe UI Bold 30（拉丁字标，与应用图标旁的字标同字族）。
+  ${MeowoScale} $0 30
+  IntOp $0 0 - $0
+  System::Call "gdi32::CreateFont(i r0, i 0, i 0, i 0, i 700, i 0, i 0, i 0, i 1, i 0, i 0, i 5, i 0, t 'Segoe UI') p .s"
+  Pop $MeowoWordFont
+FunctionEnd
+
+!macro MeowoHideDlgItem id
+  GetDlgItem $0 $HWNDPARENT ${id}
+  ShowWindow $0 ${SW_HIDE}
+!macroend
+
+; 隐藏向导自带的导航按钮与 header/branding。NSIS 换页时会按页面能力重新显示导航按钮
+; （实拍进度页冒出「上一步」），故每个页面显示时都再调一次。
+Function MeowoHideChrome
+  !insertmacro MeowoHideDlgItem 1
+  !insertmacro MeowoHideDlgItem 2
+  !insertmacro MeowoHideDlgItem 3
+  !insertmacro MeowoHideDlgItem 1028
+  !insertmacro MeowoHideDlgItem 1034
+  !insertmacro MeowoHideDlgItem 1035
+  !insertmacro MeowoHideDlgItem 1036
+  !insertmacro MeowoHideDlgItem 1037
+  !insertmacro MeowoHideDlgItem 1038
+  !insertmacro MeowoHideDlgItem 1045
+  !insertmacro MeowoHideDlgItem 1256
+FunctionEnd
+
+; 量 client 区填 MeowoW/H，并让 1018 占位、当前自绘页、背景控件跟着铺满。
+Function MeowoFitClient
   System::Call "*(i 0, i 0, i 0, i 0) p .r4"
   System::Call "user32::GetClientRect(p $HWNDPARENT, p r4)"
   System::Call "*$4(i, i, i .r5, i .r6)"
@@ -285,35 +403,55 @@ Function MeowoGuiInit
   StrCpy $MeowoH $6
   GetDlgItem $0 $HWNDPARENT 1018
   System::Call "user32::MoveWindow(p r0, i 0, i 0, i r5, i r6, i 1)"
-
-  ; 标题栏切暗色，与深色内容匹配（DWMWA_USE_IMMERSIVE_DARK_MODE=20；Win10 老构建
-  ; 不认该属性，静默失败退回亮色）。
-  System::Call "dwmapi::DwmSetWindowAttribute(p $HWNDPARENT, i 20, *i 1, i 4)"
-  ; 隐藏 chrome + 扩大窗口后强制整窗重绘：被隐藏控件与新暴露区域不会自动擦除，
-  ; 不刷会在右/下边缘留未初始化的花屏残影（实拍）。
-  System::Call "user32::InvalidateRect(p $HWNDPARENT, p 0, i 1)"
-
-  ; 字体：标题 26 / 按钮 15 / 小字 12（逻辑 px 随 DPI 缩放；DEFAULT_CHARSET=1，
-  ; CLEARTYPE_QUALITY=5）。显式用微软雅黑 UI——$(^Font) 是 MS Shell Dlg，
-  ; 中文会映射到宋体，衬线在暗色大字下惨不忍睹（实拍）；雅黑渲染拉丁字形同样体面。
-  ${MeowoScale} $0 26
-  IntOp $0 0 - $0
-  System::Call "gdi32::CreateFont(i r0, i 0, i 0, i 0, i 600, i 0, i 0, i 0, i 1, i 0, i 0, i 5, i 0, t 'Microsoft YaHei UI') p .s"
-  Pop $MeowoTitleFont
-  ${MeowoScale} $0 15
-  IntOp $0 0 - $0
-  System::Call "gdi32::CreateFont(i r0, i 0, i 0, i 0, i 500, i 0, i 0, i 0, i 1, i 0, i 0, i 5, i 0, t 'Microsoft YaHei UI') p .s"
-  Pop $MeowoBtnFont
-  ${MeowoScale} $0 12
-  IntOp $0 0 - $0
-  System::Call "gdi32::CreateFont(i r0, i 0, i 0, i 0, i 400, i 0, i 0, i 0, i 1, i 0, i 0, i 5, i 0, t 'Microsoft YaHei UI') p .s"
-  Pop $MeowoSmallFont
-  ; 链接字体 = 小字加下划线。链接控件不能用 NSD_CreateLink：owner-draw 按钮在对话框
-  ; 首次获焦时会误发一次点击（实拍：启动即自动展开自定义区），改用 SS_NOTIFY STATIC，
-  ; 可点性由下划线 + 强调色表达。
-  System::Call "gdi32::CreateFont(i r0, i 0, i 0, i 0, i 400, i 0, i 1, i 0, i 1, i 0, i 0, i 5, i 0, t 'Microsoft YaHei UI') p .s"
-  Pop $MeowoLinkFont
+  ${If} $MeowoPage != ""
+    System::Call "user32::MoveWindow(p $MeowoPage, i 0, i 0, i r5, i r6, i 1)"
+  ${EndIf}
+  ${If} $MeowoBgCtl != ""
+    System::Call "user32::MoveWindow(p $MeowoBgCtl, i 0, i 0, i r5, i r6, i 1)"
+  ${EndIf}
 FunctionEnd
+
+; 把 client 高度改成 $0（逻辑 px），左上角不动（展开时窗口向下长）。
+Function MeowoSetClientHeight
+  ${MeowoScale} $1 $0
+  IntOp $1 $1 + $MeowoFrameH
+  ${MeowoScale} $0 ${MEOWO_W}
+  IntOp $0 $0 + $MeowoFrameW
+  ; SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE = 0x16。
+  System::Call "user32::SetWindowPos(p $HWNDPARENT, p 0, i 0, i 0, i r0, i r1, i 0x16)"
+  Call MeowoFitClient
+FunctionEnd
+
+; 背景位图控件补 WS_CLIPSIBLINGS（0x04000000）：它在 z 序最底，但没有这个样式时重绘（换图、
+; 窗口长高）会把压在上面的文字控件整块盖掉，而文字控件不会跟着重画（实拍：展开后标语、
+; 按钮字、选项文字全没了）。
+Function MeowoClipBg
+  System::Call "user32::GetWindowLongW(p $MeowoBgCtl, i -16) i .r0"
+  IntOp $0 $0 | 0x04000000
+  System::Call "user32::SetWindowLongW(p $MeowoBgCtl, i -16, i r0)"
+FunctionEnd
+
+; 自绘页补 WS_CLIPCHILDREN（0x02000000）：nsDialogs 建的页对话框没有这个样式，页面自己擦背景时会
+; 把压在上面的文字控件一起涂掉，而文字控件不一定跟着重画（实拍：展开、点勾选后标语和按钮字时有时无）。
+Function MeowoClipPage
+  System::Call "user32::GetWindowLongW(p $MeowoPage, i -16) i .r0"
+  IntOp $0 $0 | 0x02000000
+  System::Call "user32::SetWindowLongW(p $MeowoPage, i -16, i r0)"
+FunctionEnd
+
+; 整窗连同所有子控件重画（RDW_INVALIDATE|RDW_ERASE|RDW_ALLCHILDREN|RDW_UPDATENOW = 0x185）。
+; 只 InvalidateRect 父窗口不会刷新子控件。
+Function MeowoRedrawAll
+  System::Call "user32::RedrawWindow(p $HWNDPARENT, p 0, p 0, i 0x185)"
+FunctionEnd
+
+; 只释出当前 DPI 档位那一套勾选位图（File 必须在编译期写死，故每档一个分支）。
+!macro MeowoToggleFiles dpi
+  ${If} $MeowoUiDpi = ${dpi}
+    File "/oname=$PLUGINSDIR\meowo-toggle-on.bmp" "${MEOWO_UI_DIR}\toggle-on-${dpi}.bmp"
+    File "/oname=$PLUGINSDIR\meowo-toggle-off.bmp" "${MEOWO_UI_DIR}\toggle-off-${dpi}.bmp"
+  ${EndIf}
+!macroend
 
 ; 背景图释出到 $PLUGINSDIR（主页与 INSTFILES 都要用；passive 跳过主页，故两处都调）。
 Function MeowoEnsureBg
@@ -321,8 +459,24 @@ Function MeowoEnsureBg
   ${IfNot} ${FileExists} "$PLUGINSDIR\meowo-bg.bmp"
     File "/oname=$PLUGINSDIR\meowo-bg.bmp" "${MEOWO_BG_PATH}"
     File "/oname=$PLUGINSDIR\meowo-bg-btn.bmp" "${MEOWO_BGBTN_PATH}"
+    File "/oname=$PLUGINSDIR\meowo-bg-expanded.bmp" "${MEOWO_BGEXP_PATH}"
+    !insertmacro MeowoToggleFiles 96
+    !insertmacro MeowoToggleFiles 120
+    !insertmacro MeowoToggleFiles 144
+    !insertmacro MeowoToggleFiles 168
+    !insertmacro MeowoToggleFiles 192
+    !insertmacro MeowoToggleFiles 240
+    !insertmacro MeowoToggleFiles 288
   ${EndIf}
 FunctionEnd
+
+; 主页 / 完成页的主按钮：胶囊烙在底图里（原生按钮的白底灰边在暗色下扎眼，owner-draw 在裸
+; NSIS 不可行），这里只叠一条同色可点文字带，落在胶囊直边区内（x 210..430，避开两端半圆）。
+; Enter 仍走被隐藏的默认「下一步」按钮，键盘可达性不丢。
+!macro MeowoPrimaryButton out text onclick
+  ${MeowoText} ${out} 210 240 220 44 "${SS_CENTER}|${SS_CENTERIMAGE}|${SS_NOTIFY}" "${text}" $MeowoBtnFont ${MEOWO_COL_ONLINK} ${MEOWO_COL_LINK}
+  ${NSD_OnClick} ${out} ${onclick}
+!macroend
 
 ; ===== 旧版检测（上游 PageReinstall 的纯逻辑段，UI 剥离）=====
 ; 输出：$MeowoHasExisting(0/1)、$WixMode、$R6(WiX 卸载键)、$R0(0=同版/1=升级/-1=降级)。
@@ -435,7 +589,7 @@ Function MeowoApplyReinstall
   reinst_done:
 FunctionEnd
 
-; ===== 自绘主页：品牌区 + 大按钮 + 底部「自定义安装」展开区 =====
+; ===== 自绘主页：品牌区 → 标语 → 主按钮 → 紧贴其下的「自定义安装选项」，展开时窗口向下长出选项卡片 =====
 Page custom MeowoMainPage MeowoMainLeave
 
 Function MeowoMainPage
@@ -448,38 +602,25 @@ Function MeowoMainPage
   ${EndIf}
 
   Call MeowoEnsureBg
+  Call MeowoHideChrome
   nsDialogs::Create 1018
-  Pop $0
-  ${If} $0 == error
+  Pop $MeowoPage
+  ${If} $MeowoPage == error
     Abort
   ${EndIf}
-  SetCtlColors $0 "${MEOWO_COL_TEXT}" "${MEOWO_COL_BASE}"
+  SetCtlColors $MeowoPage "${MEOWO_COL_TEXT}" "${MEOWO_COL_BASE}"
+  Call MeowoClipPage
 
   ; 注意：背景位图在本函数**最末**创建（nsDialogs::Show 之前）。nsDialogs 的 z 序
   ; 即创建序——先建在顶、后建垫底（Z 走查实锤；SetWindowPos(HWND_BOTTOM) 在
   ; nsDialogs 页上会被吞）。位图先建就会盖住并吞掉所有控件的点击（实拍翻车过）。
+  ; 图标烙在底图里（y 56..128），字标用字体渲染（理由见 generate-nsis-bitmaps.py 的 _brand）。
+  ${MeowoText} $0 0 138 ${MEOWO_W} 40 "${SS_CENTER}" "Meowo" $MeowoWordFont ${MEOWO_COL_TEXT} ${MEOWO_COL_BASE}
 
-  ; tagline：y=40%，宽 60% 居中（品牌图标与字标已烙在背景图里）。
-  IntOp $2 $MeowoW * 20
-  IntOp $2 $2 / 100
-  IntOp $3 $MeowoH * 40
-  IntOp $3 $3 / 100
-  IntOp $4 $MeowoW * 60
-  IntOp $4 $4 / 100
-  ${MeowoScale} $5 20
-  nsDialogs::CreateControl STATIC "${__NSD_Label_STYLE}|${SS_CENTER}" "${__NSD_Label_EXSTYLE}" $2 $3 $4 $5 "$(meowoTagline)"
-  Pop $6
-  SetCtlColors $6 "${MEOWO_COL_SUB}" "${MEOWO_COL_BASE}"
-  SendMessage $6 ${WM_SETFONT} $MeowoBtnFont 1
+  ${MeowoText} $0 0 182 ${MEOWO_W} 22 "${SS_CENTER}" "$(meowoTagline)" $MeowoBodyFont ${MEOWO_COL_SUB} ${MEOWO_COL_BASE}
 
-  ; 旧版提示：y=47%（透明度换信任——一键化省掉了问询页，但要说清会发生什么）。
-  IntOp $3 $MeowoH * 47
-  IntOp $3 $3 / 100
-  ${MeowoScale} $5 18
-  nsDialogs::CreateControl STATIC "${__NSD_Label_STYLE}|${SS_CENTER}" "${__NSD_Label_EXSTYLE}" $2 $3 $4 $5 ""
-  Pop $MeowoNoteLabel
-  SetCtlColors $MeowoNoteLabel "${MEOWO_COL_SUB}" "${MEOWO_COL_BASE}"
-  SendMessage $MeowoNoteLabel ${WM_SETFONT} $MeowoSmallFont 1
+  ; 旧版提示（透明度换信任——一键化省掉了问询页，但要说清会发生什么）。
+  ${MeowoText} $MeowoNoteLabel 0 206 ${MEOWO_W} 18 "${SS_CENTER}" "" $MeowoSmallFont ${MEOWO_COL_FAINT} ${MEOWO_COL_BASE}
   ${If} $MeowoHasExisting = 1
     ${If} $R0 = 1
       ${NSD_SetText} $MeowoNoteLabel "$(meowoNoteUpgrade)"
@@ -490,135 +631,74 @@ Function MeowoMainPage
     ${EndIf}
   ${EndIf}
 
-  ; 立即安装：320x52 胶囊烙在 -btn 背景图里（原生按钮的白底灰边在暗色下扎眼，
-  ; owner-draw 在裸 NSIS 不可行）。控件只是胶囊中带一条同色可点文字（SS_NOTIFY），
-  ; 圆角由位图承担；Enter 仍走被隐藏的默认「下一步」按钮，键盘可达性不丢。
-  ${MeowoScale} $4 300
-  IntOp $2 $MeowoW - $4
-  IntOp $2 $2 / 2
-  IntOp $3 $MeowoH * 56
-  IntOp $3 $3 / 100
-  ${MeowoScale} $5 15
-  IntOp $3 $3 + $5
-  ${MeowoScale} $5 22
-  nsDialogs::CreateControl STATIC "${__NSD_Label_STYLE}|${SS_CENTER}|${SS_NOTIFY}" "${__NSD_Label_EXSTYLE}" $2 $3 $4 $5 "$(meowoOneClick)"
-  Pop $7
-  SetCtlColors $7 "1c2600" "${MEOWO_COL_LINK}"
-  SendMessage $7 ${WM_SETFONT} $MeowoBtnFont 1
-  ${NSD_OnClick} $7 MeowoOnInstallClick
+  !insertmacro MeowoPrimaryButton $0 "$(meowoOneClick)" MeowoOnInstallClick
 
-  ; ---- 底部展开区（75% 以下；与主区同一底色，不再单独压深色带——收起时只剩一个链接，空带像没画完，2026-11-20 实拍）----
-  IntOp $8 $MeowoH * 75
-  IntOp $8 $8 / 100
-
-  ; 「自定义安装 ▾」链接：右下角。
-  ${MeowoScale} $4 150
-  ${MeowoScale} $5 24
-  IntOp $2 $MeowoW - $4
-  IntOp $2 $2 - $5
-  ${MeowoScale} $6 18
-  ${MeowoScale} $5 16
-  IntOp $3 $MeowoH - $6
-  IntOp $3 $3 - $5
-  nsDialogs::CreateControl STATIC "${__NSD_Label_STYLE}|${SS_NOTIFY}" "${__NSD_Label_EXSTYLE}" $2 $3 $4 $6 "$(meowoCustomOpen)"
-  Pop $MeowoCustomLink
-  SetCtlColors $MeowoCustomLink "${MEOWO_COL_LINK}" "${MEOWO_COL_BASE}"
-  SendMessage $MeowoCustomLink ${WM_SETFONT} $MeowoLinkFont 1
+  ; 次级入口紧贴主按钮下方居中（原先缩在右下角，与主按钮没有关系）。
+  ${MeowoText} $MeowoCustomLink 220 298 200 20 "${SS_CENTER}|${SS_NOTIFY}" "$(meowoCustomOpen)" $MeowoSmallFont ${MEOWO_COL_SUB} ${MEOWO_COL_BASE}
   ${NSD_OnClick} $MeowoCustomLink MeowoOnToggleCustom
 
-  ; ---- 自定义安装区（默认隐藏；隐藏控件的勾选值照常生效 = 产品默认）----
-  ; 安装位置行：y = 展开区顶 + 14。
-  ${MeowoScale} $5 14
-  IntOp $3 $8 + $5
-  ${MeowoScale} $2 24
-  ${MeowoScale} $4 84
-  ${MeowoScale} $6 18
-  ${NSD_CreateLabel} $2 $3 $4 $6 "$(meowoInstallPath)"
-  Pop $MeowoDirLabel
-  SetCtlColors $MeowoDirLabel "${MEOWO_COL_SUB}" "${MEOWO_COL_BASE}"
-  SendMessage $MeowoDirLabel ${WM_SETFONT} $MeowoSmallFont 1
+  ; 左下角版本号（展开时被选项卡片占位，随之隐藏）。
+  ${MeowoText} $MeowoVersionLabel 20 372 240 16 "0" "$(meowoVersion)" $MeowoSmallFont ${MEOWO_COL_FAINT} ${MEOWO_COL_BASE}
 
-  ${MeowoScale} $2 116
-  ${MeowoScale} $4 220     ; 右侧留白：24 边距 + 88 浏览钮 + 8 间距 + 100 链接列
-  IntOp $4 $MeowoW - $4
-  IntOp $4 $4 - $2
-  ${MeowoScale} $6 22
-  ${MeowoScale} $5 12
-  IntOp $3 $8 + $5
-  ${NSD_CreateText} $2 $3 $4 $6 "$INSTDIR"
+  ; ---- 选项卡片（默认隐藏；卡片 32,340 576x128，输入框 52,378 536x34，勾选框 52,432 18x18）----
+  ; 2026-11-20 起不再提供「对话窗口功能」开关：一律按完整模式安装（leader），轻量模式只在设置里切。
+  ${MeowoText} $MeowoDirLabel 52 354 300 18 "0" "$(meowoInstallPath)" $MeowoSmallFont ${MEOWO_COL_SUB} ${MEOWO_COL_CARD}
+
+  ; 路径输入：无边框 EDIT 嵌在烙好的圆角输入框里（原生带边框的白底输入框在暗色下像另一个程序）。
+  ${MeowoScale} $2 64
+  ${MeowoScale} $3 386
+  ${MeowoScale} $4 476
+  ${MeowoScale} $5 18
+  nsDialogs::CreateControl EDIT "${DEFAULT_STYLES}|${WS_TABSTOP}|${ES_AUTOHSCROLL}" 0 $2 $3 $4 $5 "$INSTDIR"
   Pop $MeowoDirText
+  SetCtlColors $MeowoDirText "${MEOWO_COL_TEXT}" "${MEOWO_COL_FIELD}"
   SendMessage $MeowoDirText ${WM_SETFONT} $MeowoSmallFont 1
 
-  IntOp $2 $2 + $4
-  ${MeowoScale} $5 8
-  IntOp $2 $2 + $5
-  ${MeowoScale} $4 88
-  ${NSD_CreateButton} $2 $3 $4 $6 "$(meowoBrowse)"
-  Pop $MeowoBrowseBtn
-  SendMessage $MeowoBrowseBtn ${WM_SETFONT} $MeowoSmallFont 1
-  ${NSD_OnClick} $MeowoBrowseBtn MeowoOnBrowse
+  ; 选文件夹：输入框右端一个文件夹图标（Segoe MDL2 Assets 的 OpenFolderHorizontal 字形 U+ED25（U+E8B7 在这款字体里是一张纸，不像文件夹）），替代「更改」文字。
+  ${MeowoText} $MeowoChangeLink 550 384 28 22 "${SS_CENTER}|${SS_CENTERIMAGE}|${SS_NOTIFY}" "${U+ED25}" $MeowoIconFont ${MEOWO_COL_SUB} ${MEOWO_COL_FIELD}
+  ${NSD_OnClick} $MeowoChangeLink MeowoOnBrowse
 
-  ; 「对话窗口功能」勾选（默认勾；取消 = 轻量模式：只留灵动岛，会话在外部终端进行）。
-  ; themed 复选框（Button 类）的文字颜色不吃 SetCtlColors（Win32 已知行为，实拍
-  ; 黑字糊在暗带上）——框与文字拆开：框只留方块，文字用可点 Label 代理切换勾选。
-  ${MeowoScale} $2 24
-  ${MeowoScale} $5 48
-  IntOp $3 $8 + $5
-  ${MeowoScale} $4 16
-  ${MeowoScale} $6 18
-  ${NSD_CreateCheckbox} $2 $3 $4 $6 ""
-  Pop $MeowoChatCheck
-  ${NSD_Check} $MeowoChatCheck
-  ${MeowoScale} $2 46
-  ${MeowoScale} $4 290     ; 右侧给链接列留位，不与之重叠
-  IntOp $4 $MeowoW - $4
-  nsDialogs::CreateControl STATIC "${__NSD_Label_STYLE}|${SS_NOTIFY}" "${__NSD_Label_EXSTYLE}" $2 $3 $4 $6 "$(meowoChatFeature)"
-  Pop $MeowoChatLabel
-  SetCtlColors $MeowoChatLabel "${MEOWO_COL_TEXT}" "${MEOWO_COL_BASE}"
-  SendMessage $MeowoChatLabel ${WM_SETFONT} $MeowoSmallFont 1
-  ${NSD_OnClick} $MeowoChatLabel MeowoOnChatLabel
+  ; 「创建桌面快捷方式」（语义 = 上游 FINISH 页那颗，建档时机挪进 Section）。勾选框是位图控件，
+  ; 两态位图按 DPI 档位加载一次（LR_LOADFROMFILE = 0x10，原尺寸），切换时只换图。
+  System::Call "user32::LoadImage(p 0, t '$PLUGINSDIR\meowo-toggle-on.bmp', i 0, i 0, i 0, i 0x10) p .s"
+  Pop $MeowoToggleOn
+  System::Call "user32::LoadImage(p 0, t '$PLUGINSDIR\meowo-toggle-off.bmp', i 0, i 0, i 0, i 0x10) p .s"
+  Pop $MeowoToggleOff
+  ${MeowoScale} $2 52
+  ${MeowoScale} $3 432
+  ${MeowoScale} $4 18
+  nsDialogs::CreateControl STATIC "${DEFAULT_STYLES}|${SS_BITMAP}|${SS_NOTIFY}" 0 $2 $3 $4 $4 ""
+  Pop $MeowoDesktopBox
+  ${NSD_OnClick} $MeowoDesktopBox MeowoOnDesktopToggle
+  ${MeowoText} $MeowoDesktopLabel 80 431 480 20 "${SS_NOTIFY}" "$(meowoDesktopLnk)" $MeowoSmallFont ${MEOWO_COL_TEXT} ${MEOWO_COL_CARD}
+  ${NSD_OnClick} $MeowoDesktopLabel MeowoOnDesktopToggle
 
-  ${MeowoScale} $2 46
-  ${MeowoScale} $5 70
-  IntOp $3 $8 + $5
-  ${NSD_CreateLabel} $2 $3 $4 $6 "$(meowoChatHint)"
-  Pop $MeowoChatHint
-  SetCtlColors $MeowoChatHint "${MEOWO_COL_SUB}" "${MEOWO_COL_BASE}"
-  SendMessage $MeowoChatHint ${WM_SETFONT} $MeowoSmallFont 1
-
-  ; 「创建桌面快捷方式」勾选（语义 = 上游 FINISH 页那颗，建档时机挪进 Section）。
-  ${MeowoScale} $2 24
-  ${MeowoScale} $5 94
-  IntOp $3 $8 + $5
-  ${MeowoScale} $4 16
-  ${NSD_CreateCheckbox} $2 $3 $4 $6 ""
-  Pop $MeowoDesktopCheck
-  ${NSD_Check} $MeowoDesktopCheck
-  ${MeowoScale} $2 46
-  ${MeowoScale} $4 290
-  IntOp $4 $MeowoW - $4
-  nsDialogs::CreateControl STATIC "${__NSD_Label_STYLE}|${SS_NOTIFY}" "${__NSD_Label_EXSTYLE}" $2 $3 $4 $6 "$(meowoDesktopLnk)"
-  Pop $MeowoDesktopLabel
-  SetCtlColors $MeowoDesktopLabel "${MEOWO_COL_TEXT}" "${MEOWO_COL_BASE}"
-  SendMessage $MeowoDesktopLabel ${WM_SETFONT} $MeowoSmallFont 1
-  ${NSD_OnClick} $MeowoDesktopLabel MeowoOnDesktopLabel
+  ; 勾选状态来自 .onInit 写好的产品默认（oneclick-defaults）；从别页返回时保留用户的选择。
+  ${MeowoPaintToggle} $MeowoDesktopBox $MeowoDesktopLnk
 
   StrCpy $MeowoExpanded 0
-  ShowWindow $MeowoDirLabel ${SW_HIDE}
-  ShowWindow $MeowoDirText ${SW_HIDE}
-  ShowWindow $MeowoBrowseBtn ${SW_HIDE}
-  ShowWindow $MeowoChatCheck ${SW_HIDE}
-  ShowWindow $MeowoChatLabel ${SW_HIDE}
-  ShowWindow $MeowoChatHint ${SW_HIDE}
-  ShowWindow $MeowoDesktopCheck ${SW_HIDE}
-  ShowWindow $MeowoDesktopLabel ${SW_HIDE}
+  StrCpy $1 ${SW_HIDE}
+  Call MeowoShowOptions
 
   ; 背景位图最后创建 = z 序垫底（理由见函数开头注释）。单张 2x 图缩小采样。
   ${NSD_CreateBitmap} 0 0 100% 100% ""
-  Pop $1
-  ${NSD_SetStretchedImage} $1 "$PLUGINSDIR\meowo-bg-btn.bmp" $MeowoBgHandle
+  Pop $MeowoBgCtl
+  Call MeowoClipBg
+  ${NSD_SetStretchedImage} $MeowoBgCtl "$PLUGINSDIR\meowo-bg-btn.bmp" $MeowoBgHandle
 
   nsDialogs::Show
+  ; 页面销毁后句柄失效，别让后面的 MeowoFitClient 去挪已不存在的窗口。
+  StrCpy $MeowoPage ""
+  StrCpy $MeowoBgCtl ""
+FunctionEnd
+
+; 选项卡片里的控件一起显隐（$1 = SW_SHOW / SW_HIDE）。
+Function MeowoShowOptions
+  ShowWindow $MeowoDirLabel $1
+  ShowWindow $MeowoDirText $1
+  ShowWindow $MeowoChangeLink $1
+  ShowWindow $MeowoDesktopBox $1
+  ShowWindow $MeowoDesktopLabel $1
 FunctionEnd
 
 Function MeowoOnInstallClick
@@ -627,46 +707,38 @@ Function MeowoOnInstallClick
   SendMessage $HWNDPARENT ${WM_COMMAND} 1 0
 FunctionEnd
 
+; 展开 / 收起选项卡片：窗口向下长出（或缩回）MEOWO_EXPAND，换对应底图，卡片控件显隐。
 Function MeowoOnToggleCustom
   Pop $0
   ${If} $MeowoExpanded = 0
     StrCpy $MeowoExpanded 1
-    StrCpy $1 ${SW_SHOW}
+    IntOp $0 ${MEOWO_H} + ${MEOWO_EXPAND}
+    Call MeowoSetClientHeight
+    ${NSD_FreeImage} $MeowoBgHandle
+    ${NSD_SetStretchedImage} $MeowoBgCtl "$PLUGINSDIR\meowo-bg-expanded.bmp" $MeowoBgHandle
     ${NSD_SetText} $MeowoCustomLink "$(meowoCustomClose)"
+    ShowWindow $MeowoVersionLabel ${SW_HIDE}
+    StrCpy $1 ${SW_SHOW}
   ${Else}
     StrCpy $MeowoExpanded 0
     StrCpy $1 ${SW_HIDE}
+    Call MeowoShowOptions
+    StrCpy $0 ${MEOWO_H}
+    Call MeowoSetClientHeight
+    ${NSD_FreeImage} $MeowoBgHandle
+    ${NSD_SetStretchedImage} $MeowoBgCtl "$PLUGINSDIR\meowo-bg-btn.bmp" $MeowoBgHandle
     ${NSD_SetText} $MeowoCustomLink "$(meowoCustomOpen)"
+    ShowWindow $MeowoVersionLabel ${SW_SHOW}
+    StrCpy $1 ${SW_HIDE}
   ${EndIf}
-  ShowWindow $MeowoDirLabel $1
-  ShowWindow $MeowoDirText $1
-  ShowWindow $MeowoBrowseBtn $1
-  ShowWindow $MeowoChatCheck $1
-  ShowWindow $MeowoChatLabel $1
-  ShowWindow $MeowoChatHint $1
-  ShowWindow $MeowoDesktopCheck $1
-  ShowWindow $MeowoDesktopLabel $1
+  Call MeowoShowOptions
+  Call MeowoRedrawAll
 FunctionEnd
 
-; 勾选项文字 Label 的点击代理（框与文字为何拆开见主页创建处注释）。
-Function MeowoOnChatLabel
+Function MeowoOnDesktopToggle
   Pop $0
-  ${NSD_GetState} $MeowoChatCheck $1
-  ${If} $1 = ${BST_CHECKED}
-    ${NSD_Uncheck} $MeowoChatCheck
-  ${Else}
-    ${NSD_Check} $MeowoChatCheck
-  ${EndIf}
-FunctionEnd
-
-Function MeowoOnDesktopLabel
-  Pop $0
-  ${NSD_GetState} $MeowoDesktopCheck $1
-  ${If} $1 = ${BST_CHECKED}
-    ${NSD_Uncheck} $MeowoDesktopCheck
-  ${Else}
-    ${NSD_Check} $MeowoDesktopCheck
-  ${EndIf}
+  IntOp $MeowoDesktopLnk 1 - $MeowoDesktopLnk
+  ${MeowoPaintToggle} $MeowoDesktopBox $MeowoDesktopLnk
 FunctionEnd
 
 Function MeowoOnBrowse
@@ -686,8 +758,7 @@ Function MeowoOnBrowse
 FunctionEnd
 
 Function MeowoMainLeave
-  ${NSD_GetState} $MeowoChatCheck $MeowoChatEnabled
-  ${NSD_GetState} $MeowoDesktopCheck $MeowoDesktopLnk
+  ; 勾选值已由 MeowoOnDesktopToggle 实时写进 $MeowoDesktopLnk。
   ${NSD_GetText} $MeowoDirText $0
   ${If} $0 == ""
     MessageBox MB_ICONEXCLAMATION "$(meowoBadPath)"
@@ -695,6 +766,15 @@ Function MeowoMainLeave
   ${EndIf}
   StrCpy $INSTDIR $0
   Call MeowoApplyReinstall
+  ; 后面的进度页、完成页按收起态尺寸排版：展开着就先缩回去（放在可能 Abort 的校验之后，
+  ; 回到本页时卡片仍是展开的样子）。
+  ${If} $MeowoExpanded = 1
+    StrCpy $MeowoExpanded 0
+    StrCpy $1 ${SW_HIDE}
+    Call MeowoShowOptions
+    StrCpy $0 ${MEOWO_H}
+    Call MeowoSetClientHeight
+  ${EndIf}
 FunctionEnd
 ; MEOWO-END oneclick-ui
 
@@ -729,50 +809,63 @@ Var AppStartMenuFolder
 !insertmacro MUI_PAGE_INSTFILES
 
 ; INSTFILES 只能由 Section 驱动（NSIS 没有「custom 页后台跑 Section」的机制），
-; 故不另起炉灶，就地改造：隐藏细节列表，进度条与状态行居中，背景图压 z 序最底。
-; 状态行(1006)滚动显示 DetailPrint（含 WebView2 下载文案），白捡一条动态进度文案。
+; 故不另起炉灶，就地改造：隐藏细节列表与原状态行，自绘字标 + 状态文案 + 细进度条，背景图压 z 序最底。
 Function MeowoInstFilesShow
   Call MeowoEnsureBg
+  Call MeowoHideChrome
   FindWindow $1 "#32770" "" $HWNDPARENT
-  ; 页面对话框本身铺满 client 区：MUI 按原始尺寸建内页，不铺满的话下面按整窗比例摆的
+  ; 页面对话框本身铺满 client 区：MUI 按原始尺寸建内页，不铺满的话按整窗坐标摆的
   ; 进度条/状态行落在小对话框外被裁掉，背景只画出左上一块、其余露系统灰底（实拍）。
   System::Call "user32::MoveWindow(p r1, i 0, i 0, i $MeowoW, i $MeowoH, i 1)"
-  ; NSIS 换页时按页面能力重新显示导航按钮（实拍进度页冒出「上一步」），每页 SHOW 再藏一次。
-  GetDlgItem $0 $HWNDPARENT 1
-  ShowWindow $0 ${SW_HIDE}
-  GetDlgItem $0 $HWNDPARENT 2
-  ShowWindow $0 ${SW_HIDE}
-  GetDlgItem $0 $HWNDPARENT 3
-  ShowWindow $0 ${SW_HIDE}
   GetDlgItem $0 $1 1016    ; 细节列表
   ShowWindow $0 ${SW_HIDE}
   GetDlgItem $0 $1 1027    ; 「显示细节」按钮
   ShowWindow $0 ${SW_HIDE}
 
-  ; 状态行：y=52%，宽 60% 居中，亮字配主区底色。
-  IntOp $2 $MeowoW * 20
-  IntOp $2 $2 / 100
-  IntOp $3 $MeowoH * 52
-  IntOp $3 $3 / 100
-  IntOp $4 $MeowoW * 60
-  IntOp $4 $4 / 100
-  ${MeowoScale} $5 20
+  ; 状态行：MUI 的 1006 不吃 SetCtlColors（INSTFILES 页的对话框过程不按我们的配色画它，
+  ; 实拍是一块系统浅灰底），藏掉它，换成自己的一行固定文案。代价是看不到逐文件的
+  ; DetailPrint（含 WebView2 下载提示）；进度条照常走。
   GetDlgItem $0 $1 1006
-  System::Call "user32::MoveWindow(p r0, i r2, i r3, i r4, i r5, i 1)"
+  ShowWindow $0 ${SW_HIDE}
+  ${MeowoScale} $3 208
+  ${MeowoScale} $5 20
+  ; WS_CHILD|WS_VISIBLE|SS_CENTER = 0x50000001
+  System::Call "user32::CreateWindowEx(i 0, t 'STATIC', t '$(meowoInstalling)', i 0x50000001, i 0, i r3, i $MeowoW, i r5, p $1, p 0, p 0, p 0) p .r0"
   SetCtlColors $0 "${MEOWO_COL_SUB}" "${MEOWO_COL_BASE}"
   SendMessage $0 ${WM_SETFONT} $MeowoSmallFont 1
 
-  ; 进度条：y=58%，与状态行同宽居中。
-  IntOp $3 $MeowoH * 58
-  IntOp $3 $3 / 100
-  ${MeowoScale} $5 12
+  ; 进度条：y=244，320x6 居中的细条。去掉视觉样式与边框后才能自定颜色——
+  ; themed 进度条恒为系统绿配浅灰轨道（实拍），PBM_SETBARCOLOR 只对无主题控件生效。
   GetDlgItem $0 $1 1004
-  System::Call "user32::MoveWindow(p r0, i r2, i r3, i r4, i r5, i 1)"
+  System::Call "uxtheme::SetWindowTheme(p r0, w '', w '')"
+  System::Call "user32::GetWindowLongW(p r0, i -16) i .r2"
+  IntOp $2 $2 & 0xFF7FFFFF                  ; 去 WS_BORDER
+  System::Call "user32::SetWindowLongW(p r0, i -16, i r2)"
+  System::Call "user32::GetWindowLongW(p r0, i -20) i .r2"
+  IntOp $2 $2 & 0xFFFDFDFF                  ; 去 WS_EX_STATICEDGE(0x20000) / WS_EX_CLIENTEDGE(0x200)
+  System::Call "user32::SetWindowLongW(p r0, i -20, i r2)"
+  ${MeowoScale} $2 160
+  ${MeowoScale} $3 244
+  ${MeowoScale} $4 320
+  ${MeowoScale} $5 6
+  ; SWP_FRAMECHANGED|SWP_NOZORDER|SWP_NOACTIVATE = 0x34：边框样式改动要靠 FRAMECHANGED 生效。
+  System::Call "user32::SetWindowPos(p r0, p 0, i r2, i r3, i r4, i r5, i 0x34)"
+  SendMessage $0 0x0409 0 0x004CF6D4         ; PBM_SETBARCOLOR：青柠 d4f64c（COLORREF = 0x00BBGGRR）
+  SendMessage $0 0x2001 0 0x002F2A2A         ; PBM_SETBKCOLOR：轨道 2a2a2f
 
-  ; 背景图：SS_BITMAP static（WS_CHILD|WS_VISIBLE|SS_BITMAP = 0x5000000E），
+  ; 字标：同主页几何，SS_CENTER 的 STATIC（WS_CHILD|WS_VISIBLE|SS_CENTER = 0x50000001）。
+  ${MeowoScale} $3 138
+  ${MeowoScale} $5 40
+  System::Call "user32::CreateWindowEx(i 0, t 'STATIC', t 'Meowo', i 0x50000001, i 0, i r3, i $MeowoW, i r5, p $1, p 0, p 0, p 0) p .r0"
+  SetCtlColors $0 "${MEOWO_COL_TEXT}" "${MEOWO_COL_BASE}"
+  SendMessage $0 ${WM_SETFONT} $MeowoWordFont 1
+
+  ; 背景图：SS_BITMAP static（WS_CHILD|WS_VISIBLE|WS_CLIPSIBLINGS|SS_BITMAP = 0x5400000E），
   ; LR_LOADFROMFILE=0x10 按 client 尺寸缩放加载，SetWindowPos 压到 HWND_BOTTOM。
+  ; WS_CLIPSIBLINGS 不能省：没有它，背景重绘时会把压在上面的状态行整块盖掉（状态行只在文字
+  ; 变化时重绘，实拍进度页一直看不到状态行）。
   System::Call "user32::LoadImage(p 0, t '$PLUGINSDIR\meowo-bg.bmp', i 0, i $MeowoW, i $MeowoH, i 0x10) p .r6"
-  System::Call "user32::CreateWindowEx(i 0, t 'STATIC', t '', i 0x5000000E, i 0, i 0, i $MeowoW, i $MeowoH, p $1, p 0, p 0, p 0) p .r7"
+  System::Call "user32::CreateWindowEx(i 0, t 'STATIC', t '', i 0x5400000E, i 0, i 0, i $MeowoW, i $MeowoH, p $1, p 0, p 0, p 0) p .r7"
   SendMessage $7 0x172 0 $6 ; STM_SETIMAGE(IMAGE_BITMAP)
   System::Call "user32::SetWindowPos(p r7, p 1, i 0, i 0, i 0, i 0, i 0x13)"
 FunctionEnd
@@ -781,7 +874,7 @@ FunctionEnd
 ; 8. Finish page
 ; MEOWO-BEGIN done-page
 ; 上游 FINISH 页换成同视觉体系的自绘完成页：桌面快捷方式勾选已挪进主页
-; （建档时机随之挪进 Section），这里零决策——一颗「立即体验」+ 一个「关闭」链接。
+; （建档时机随之挪进 Section），这里零决策——一颗「立即体验」+ 其下一个「关闭」链接。
 Page custom MeowoDonePage
 
 Function RunMainBinary
@@ -794,65 +887,32 @@ Function MeowoDonePage
     Return
   ${EndIf}
   Call MeowoEnsureBg
+  Call MeowoHideChrome
   nsDialogs::Create 1018
-  Pop $0
-  ${If} $0 == error
+  Pop $MeowoPage
+  ${If} $MeowoPage == error
     Abort
   ${EndIf}
-  SetCtlColors $0 "${MEOWO_COL_TEXT}" "${MEOWO_COL_BASE}"
+  SetCtlColors $MeowoPage "${MEOWO_COL_TEXT}" "${MEOWO_COL_BASE}"
+  Call MeowoClipPage
 
   ; 同主页：背景位图在本函数最末创建（z 序 = 创建序，后建垫底）。
-
-  ; 「安装完成」：y=42%，标题字。
-  IntOp $2 $MeowoW * 20
-  IntOp $2 $2 / 100
-  IntOp $3 $MeowoH * 42
-  IntOp $3 $3 / 100
-  IntOp $4 $MeowoW * 60
-  IntOp $4 $4 / 100
-  ${MeowoScale} $5 34
-  nsDialogs::CreateControl STATIC "${__NSD_Label_STYLE}|${SS_CENTER}" "${__NSD_Label_EXSTYLE}" $2 $3 $4 $5 "$(meowoDoneTitle)"
-  Pop $6
-  SetCtlColors $6 "${MEOWO_COL_TEXT}" "${MEOWO_COL_BASE}"
-  SendMessage $6 ${WM_SETFONT} $MeowoTitleFont 1
-
-  ; 「立即体验」：与主页安装按钮同几何（胶囊烙在 -btn 背景图同一位置）。
-  ${MeowoScale} $4 300
-  IntOp $2 $MeowoW - $4
-  IntOp $2 $2 / 2
-  IntOp $3 $MeowoH * 56
-  IntOp $3 $3 / 100
-  ${MeowoScale} $5 15
-  IntOp $3 $3 + $5
-  ${MeowoScale} $5 22
-  nsDialogs::CreateControl STATIC "${__NSD_Label_STYLE}|${SS_CENTER}|${SS_NOTIFY}" "${__NSD_Label_EXSTYLE}" $2 $3 $4 $5 "$(meowoLaunch)"
-  Pop $7
-  SetCtlColors $7 "1c2600" "${MEOWO_COL_LINK}"
-  SendMessage $7 ${WM_SETFONT} $MeowoBtnFont 1
-  ${NSD_OnClick} $7 MeowoOnLaunchClick
-
-  ; 「关闭」链接：右下角（与主页「自定义安装」同位）。
-  ${MeowoScale} $4 150
-  ${MeowoScale} $5 24
-  IntOp $2 $MeowoW - $4
-  IntOp $2 $2 - $5
-  ${MeowoScale} $6 18
-  ${MeowoScale} $5 16
-  IntOp $3 $MeowoH - $6
-  IntOp $3 $3 - $5
+  ; 字标同主页；「安装完成」占主页标语 + 提示两行的位置，主按钮与次级链接与主页同几何。
+  ${MeowoText} $0 0 138 ${MEOWO_W} 40 "${SS_CENTER}" "Meowo" $MeowoWordFont ${MEOWO_COL_TEXT} ${MEOWO_COL_BASE}
+  ${MeowoText} $0 0 184 ${MEOWO_W} 32 "${SS_CENTER}" "$(meowoDoneTitle)" $MeowoTitleFont ${MEOWO_COL_TEXT} ${MEOWO_COL_BASE}
+  !insertmacro MeowoPrimaryButton $0 "$(meowoLaunch)" MeowoOnLaunchClick
   ; 同主页链接：不能用 NSD_CreateLink（首次获焦误触发点击——在这页等于装完瞬间关窗）。
-  nsDialogs::CreateControl STATIC "${__NSD_Label_STYLE}|${SS_NOTIFY}" "${__NSD_Label_EXSTYLE}" $2 $3 $4 $6 "$(meowoFinish)"
-  Pop $8
-  SetCtlColors $8 "${MEOWO_COL_SUB}" "${MEOWO_COL_BASE}"
-  SendMessage $8 ${WM_SETFONT} $MeowoLinkFont 1
-  ${NSD_OnClick} $8 MeowoOnFinishClick
+  ${MeowoText} $0 220 298 200 20 "${SS_CENTER}|${SS_NOTIFY}" "$(meowoFinish)" $MeowoSmallFont ${MEOWO_COL_SUB} ${MEOWO_COL_BASE}
+  ${NSD_OnClick} $0 MeowoOnFinishClick
 
-  ; 背景位图最后创建 = z 序垫底（理由见 MeowoMainPage 开头注释）。
   ${NSD_CreateBitmap} 0 0 100% 100% ""
-  Pop $1
-  ${NSD_SetStretchedImage} $1 "$PLUGINSDIR\meowo-bg-btn.bmp" $MeowoBgHandle
+  Pop $MeowoBgCtl
+  Call MeowoClipBg
+  ${NSD_SetStretchedImage} $MeowoBgCtl "$PLUGINSDIR\meowo-bg-btn.bmp" $MeowoBgHandle
 
   nsDialogs::Show
+  StrCpy $MeowoPage ""
+  StrCpy $MeowoBgCtl ""
 FunctionEnd
 
 Function MeowoOnLaunchClick
@@ -928,18 +988,12 @@ LangString meowoTagline ${LANG_SIMPCHINESE} "在一个地方运行你所有的 A
 LangString meowoTagline ${LANG_ENGLISH} "Run all your AI coding sessions in one place"
 LangString meowoOneClick ${LANG_SIMPCHINESE} "立即安装"
 LangString meowoOneClick ${LANG_ENGLISH} "Install Now"
-LangString meowoCustomOpen ${LANG_SIMPCHINESE} "自定义安装 ▾"
-LangString meowoCustomOpen ${LANG_ENGLISH} "Custom install ▾"
-LangString meowoCustomClose ${LANG_SIMPCHINESE} "收起自定义 ▴"
-LangString meowoCustomClose ${LANG_ENGLISH} "Hide custom ▴"
+LangString meowoCustomOpen ${LANG_SIMPCHINESE} "自定义安装选项"
+LangString meowoCustomOpen ${LANG_ENGLISH} "Install options"
+LangString meowoCustomClose ${LANG_SIMPCHINESE} "收起选项"
+LangString meowoCustomClose ${LANG_ENGLISH} "Hide options"
 LangString meowoInstallPath ${LANG_SIMPCHINESE} "安装位置"
 LangString meowoInstallPath ${LANG_ENGLISH} "Install to"
-LangString meowoBrowse ${LANG_SIMPCHINESE} "浏览…"
-LangString meowoBrowse ${LANG_ENGLISH} "Browse…"
-LangString meowoChatFeature ${LANG_SIMPCHINESE} "对话窗口功能（完整模式）"
-LangString meowoChatFeature ${LANG_ENGLISH} "Chat window (full mode)"
-LangString meowoChatHint ${LANG_SIMPCHINESE} "取消进入轻量模式：只留灵动岛，会话在外部终端进行；可在设置中开启"
-LangString meowoChatHint ${LANG_ENGLISH} "Off = lite mode: island + external terminal"
 LangString meowoDesktopLnk ${LANG_SIMPCHINESE} "创建桌面快捷方式"
 LangString meowoDesktopLnk ${LANG_ENGLISH} "Create desktop shortcut"
 LangString meowoNoteSame ${LANG_SIMPCHINESE} "检测到相同版本已安装，将原地重新安装"
@@ -956,6 +1010,10 @@ LangString meowoLaunch ${LANG_SIMPCHINESE} "立即体验"
 LangString meowoLaunch ${LANG_ENGLISH} "Launch Meowo"
 LangString meowoFinish ${LANG_SIMPCHINESE} "关闭"
 LangString meowoFinish ${LANG_ENGLISH} "Close"
+LangString meowoInstalling ${LANG_SIMPCHINESE} "正在安装 Meowo…"
+LangString meowoInstalling ${LANG_ENGLISH} "Installing Meowo…"
+LangString meowoVersion ${LANG_SIMPCHINESE} "版本 ${VERSION}"
+LangString meowoVersion ${LANG_ENGLISH} "Version ${VERSION}"
 ; MEOWO-END oneclick-langstrings
 
 Function .onInit
@@ -976,7 +1034,6 @@ Function .onInit
 
   ; MEOWO-BEGIN oneclick-defaults
   ; 勾选默认值：主页 leave 不执行（passive/silent）时 Section 仍能读到产品默认。
-  StrCpy $MeowoChatEnabled 1
   StrCpy $MeowoDesktopLnk 1
   ; STARTMENU 页已移除，按配置回填其变量（本项目恒空 → 快捷方式建在 $SMPROGRAMS 根）。
   !if "${STARTMENUFOLDER}" != ""
@@ -1213,14 +1270,9 @@ Section Install
   !endif
 
   ; MEOWO-BEGIN chat-enabled-seed
-  ; 「对话窗口功能」勾选写成注册表种子，应用首启读取合并进 settings.json 后即焚
-  ; （app/src-tauri/src/seed.rs）。只在 GUI 交互安装写：updater 静默升级(/P /UPDATE)
-  ; 与 /S 静默装不代表用户做了新选择，绝不覆写存量用户的偏好。
-  ${If} $UpdateMode <> 1
-  ${AndIf} $PassiveMode <> 1
-  ${AndIfNot} ${Silent}
-    WriteRegDWORD SHCTX "${MANUPRODUCTKEY}" "ChatEnabled" $MeowoChatEnabled
-  ${EndIf}
+  ; 安装器不再提供「对话窗口功能」开关（2026-11-20 起一律完整模式），也就不再写 ChatEnabled 种子：
+  ; 新装按应用默认（chat_enabled = true），老用户在设置里的选择原样保留。应用侧 seed.rs 照旧
+  ; 消化旧版安装器留下的种子，卸载器照旧兜底清理。
   ; MEOWO-END chat-enabled-seed
 
   ; Create start menu shortcut
