@@ -781,10 +781,11 @@ fn wait_discovers_an_answer_within_a_bounded_poll_latency() {
     let finished = Instant::now();
     let answered = received.recv().unwrap();
     writer.join().unwrap();
-    // 关卡文件一旦原子写入，等待 hook 最多错过一个 poll；预算留出 Windows 调度空间，
-    // 防止手机答复已保存却被旧的2秒轮询拖慢后续模型唤醒。
+    // 关卡文件一旦原子写入，等待 hook 最多错过一个 poll；预算留出 CI 调度空间，
+    // 防止手机答复已保存却被旧的2秒轮询拖慢后续模型唤醒。200ms 在 macOS runner 上实测
+    // 偶发超出（207ms，2026-11-20）；500ms 仍远低于 2 秒，退回慢轮询照样会被抓到。
     assert!(
-        finished.duration_since(answered) < Duration::from_millis(200),
+        finished.duration_since(answered) < Duration::from_millis(500),
         "wait answer discovery exceeded budget: {:?}",
         finished.duration_since(answered)
     );
