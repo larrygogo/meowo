@@ -192,6 +192,38 @@ describe("工具行的图片", () => {
     expect(document.querySelector(".chat-tool-media svg:not(.icon)")).toBeNull();
   });
 
+  it("同一路径写三次、回执各带当时副本的引用行：三行显示三张不同的图，不按路径现解析", async () => {
+    const write = (id: string): Extract<ChatItem, { type: "tool_use" }> =>
+      ({ type: "tool_use", id, timestamp: null, name: "Write", kind: "write", summary: "logo.png", detail: { kind: "write", path: "C:\\dev\\logo.png", content: "", lines: 0, truncated: false } });
+    const copy = (hash: string) => `C:\\Users\\me\\.meowo\\images\\tool\\${hash}.png`;
+    const items: ChatItem[] = [
+      { type: "user_text", id: "u", timestamp: null, text: "改三版图标" },
+      write("w1"), result("w1", `File written\n[Image: source: ${copy("aaa1")}]`),
+      write("w2"), result("w2", `File written\n[Image: source: ${copy("bbb2")}]`),
+      write("w3"), result("w3", `File written\n[Image: source: ${copy("ccc3")}]`),
+      { type: "assistant_text", id: "a", timestamp: null, text: "好了" },
+    ];
+    render(<ChatCwdContext.Provider value={CWD}><Transcript sessionId={1} items={items} /></ChatCwdContext.Provider>);
+    // 过程块收着时缩略图露在摘要行下；展开后每行各一张。两处都应是三张不同的副本。
+    const folded = [...document.querySelectorAll(".chat-tool-media img")].map((img) => img.getAttribute("src"));
+    expect(folded).toEqual(["aaa1", "bbb2", "ccc3"].map((hash) => `asset://local/${copy(hash)}`));
+    fireEvent.click(document.querySelector(".turn-fold-head")!);
+    await act(async () => {});
+    const rows = [...document.querySelectorAll("details.chat-tool")].map((row) => row.nextElementSibling?.querySelector("img")?.getAttribute("src"));
+    expect(new Set(rows).size).toBe(3);
+    expect(rows).toEqual(["aaa1", "bbb2", "ccc3"].map((hash) => `asset://local/${copy(hash)}`));
+    expect(resolveChatImage).not.toHaveBeenCalled();
+  });
+
+  it("旧数据（回执没有引用行）才按 detail.path 现解析", async () => {
+    vi.mocked(resolveChatImage).mockResolvedValue({ path: "C:\\Users\\me\\.meowo\\images\\local\\logo.png" });
+    render(<ChatCwdContext.Provider value={CWD}><ToolActivity
+      item={{ type: "tool_use", id: "w0", timestamp: null, name: "Write", kind: "write", summary: "logo.png", detail: { kind: "write", path: "C:\\dev\\logo.png", content: "", lines: 0, truncated: false } }}
+      result={result("w0", "File written")} /></ChatCwdContext.Provider>);
+    await act(async () => {});
+    expect(resolveChatImage).toHaveBeenCalledWith("C:\\dev\\logo.png", "C:\\dev", null);
+  });
+
   it("写 .ts 不露缩略图，失败的写入也不露", () => {
     render(<ToolActivity item={{ type: "tool_use", id: "w2", timestamp: null, name: "Write", kind: "write", summary: "a.ts", detail: { kind: "write", path: "C:\\dev\\a.ts", content: "x", lines: 1, truncated: false } }} result={result("w2", "ok")} />);
     expect(document.querySelector(".chat-tool-media")).toBeNull();

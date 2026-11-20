@@ -288,6 +288,8 @@ export const SentImageMessage = memo(function SentImageMessage({ item, result }:
 });
 
 /// 这次调用读出或写出的图片文件（回执里没带图片引用行时才用）：读图片、写出或修改 png/jpg/gif/webp/svg。
+/// 后端在第一次解析到写图调用时就把当时的文件存进 tool/，并在回执里补引用行，所以同一路径写三次是三张不同的图；
+/// 只有这条规则之前的旧数据才走到这里，按 detail.path 现解析（显示的是现在的文件内容）。
 /// 删除的不算；失败的调用不露图（文件多半没写成）。
 export function fileImages(item: ToolUseItem, result: ToolResultItem | undefined): string[] {
   if (!result || result.is_error || result.interrupted) return [];
