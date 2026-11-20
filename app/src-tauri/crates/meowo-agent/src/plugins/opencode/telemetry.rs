@@ -628,6 +628,35 @@ mod tests {
         assert!(text.starts_with("面板浏览器截图"));
     }
 
+    /// 真机样本（2026-11-21，opencode 1.19.5 `opencode run` 调 meowo_browser_screenshot，库里的
+    /// tool part 原样）：attachments 每项还带 id / sessionID / messageID，图是 data URL。
+    #[test]
+    fn real_screenshot_attachment_sample_becomes_reference() {
+        let part: Value = serde_json::from_str(include_str!("fixtures/screenshot.json").trim()).unwrap();
+        assert!(part.pointer("/state/attachments/0/url").and_then(Value::as_str).is_some_and(|u| u.starts_with("data:image/png;base64,")));
+        let slim = crate::plugins::opencode::store::slim_part_for_test(part);
+        let line = json!({"kind": "part", "msg": "m", "key": "p", "time": 1, "part": slim}).to_string();
+        let items = parse_chat_items(&line);
+        let Some(ChatItem::ToolResult { text, .. }) = items.get(1) else { panic!("{items:?}") };
+        let line = text.lines().find(|l| l.starts_with("[Image: source: ")).unwrap_or_else(|| panic!("{text}"));
+        let path = std::path::PathBuf::from(line.trim_start_matches("[Image: source: ").trim_end_matches(']'));
+        assert!(path.starts_with(crate::images::images_root().unwrap().join("tool")) && path.exists());
+    }
+
+    /// 真机样本（2026-11-21，opencode 1.19.5 `opencode run`，OPENCODE_CONFIG_CONTENT 挂 MCP；库里的
+    /// tool part 原样，探针目录前缀换成 C:\probe），经导出瘦身再解析。
+    #[test]
+    fn real_send_image_sample_parses_to_image_message() {
+        let part: Value = serde_json::from_str(include_str!("fixtures/send_image.json").trim()).unwrap();
+        let slim = crate::plugins::opencode::store::slim_part_for_test(part);
+        let line = json!({"kind": "part", "msg": "m", "key": "p", "time": 1, "part": slim}).to_string();
+        let items = parse_chat_items(&line);
+        let Some(ChatItem::ToolUse { kind, summary, .. }) = items.first() else { panic!("{items:?}") };
+        assert_eq!((*kind, summary.as_str()), (ToolKind::Image, "opencode 探针"));
+        let Some(ChatItem::ToolResult { text, .. }) = items.get(1) else { panic!("{items:?}") };
+        assert!(text.lines().any(|l| l == r"[Image: source: C:\probe\images\sent\0c6eebdca4b84ccf186723b705349400.png]"), "{text}");
+    }
+
     /// 发图工具在 opencode 里叫 `meowo_send_image` → Image 类，摘要是说明，详情带来源。
     #[test]
     fn send_image_maps_to_image_kind() {

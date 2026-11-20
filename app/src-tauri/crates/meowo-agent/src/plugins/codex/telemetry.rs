@@ -1348,6 +1348,20 @@ mod tests {
         assert!(ref_path(text).exists(), "{text}");
     }
 
+    /// 真机样本（2026-11-21，codex-cli 0.169.0 `codex exec` 代码模式调 Meowo MCP 的 send_image，
+    /// 审批策略 never 下靠 `tools.send_image.approval_mode='approve'` 放行；探针目录前缀换成 C:\probe）。
+    #[test]
+    fn real_send_image_sample_in_exec_script() {
+        let lines: Vec<&str> = include_str!("fixtures/send_image.jsonl").lines().collect();
+        let calls = parse_transcript_events(lines[0]);
+        let TranscriptEvent::ToolCall { id, kind, summary, .. } = &calls[0] else { panic!("{calls:?}") };
+        assert_eq!((id.as_str(), *kind, summary.as_str()), ("call_418109bc24f5498bbe36ffaff9335194#0", ToolKind::Image, "codex 探针"));
+        let results = parse_transcript_events(lines[1]);
+        let TranscriptEvent::ToolResult { tool_call_id, text, .. } = &results[0] else { panic!("{results:?}") };
+        assert_eq!(tool_call_id.as_deref(), Some("call_418109bc24f5498bbe36ffaff9335194#0"));
+        assert!(text.lines().any(|l| l == r"[Image: source: C:\probe\images\sent\0c6eebdca4b84ccf186723b705349400.png]"), "{text}");
+    }
+
     /// 发图工具：脚本里 `tools.mcp__meowo__send_image(…)` 与直接调用（命名空间 `mcp__meowo`）
     /// 都是 Image 类，详情带来源与说明。本机没有 codex 调 meowo MCP 的 rollout 样本，形态按
     /// 本机 `tools.mcp__ologs__get_profile`（2026-11-14 rollout）与 `"namespace":"collaboration"`

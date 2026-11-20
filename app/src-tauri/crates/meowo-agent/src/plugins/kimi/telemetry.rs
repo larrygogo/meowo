@@ -2233,6 +2233,25 @@ mod tests {
         assert!(path.exists());
     }
 
+    /// 真机样本（2026-11-21，kimi 2.6.3 `kimi -p`，default_permission_mode=manual 下靠 config.toml
+    /// 的 `[[permission.rules]]` 放行；探针目录前缀换成 C:\probe）。
+    #[test]
+    fn real_send_image_sample_parses_to_image_message() {
+        let lines: Vec<&str> = include_str!("fixtures/send_image.jsonl").lines().collect();
+        let call = super::parse_events(lines[0], None);
+        let Some(crate::transcript::TranscriptEvent::ToolCall { kind, summary, .. }) = call.first() else { panic!("{call:?}") };
+        assert_eq!((*kind, summary.as_str()), (super::ToolKind::Image, "kimi 手动模式探针"));
+        let result = super::parse_events(lines[1], None);
+        let text = result
+            .iter()
+            .find_map(|e| match e {
+                crate::transcript::TranscriptEvent::ToolResult { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .expect("应有回执");
+        assert!(text.lines().any(|l| l == r"[Image: source: C:\probe\images\sent\0c6eebdca4b84ccf186723b705349400.png]"), "{text}");
+    }
+
     /// 发图工具（`mcp__meowo__send_image`）→ Image 类，摘要是说明，详情带来源。
     #[test]
     fn send_image_call_maps_to_image_kind() {

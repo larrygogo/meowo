@@ -3292,6 +3292,21 @@ mod tests {
         assert!(path.starts_with(crate::images::images_root().unwrap().join("tool")), "{text}");
     }
 
+    /// 真机样本（2026-11-21，CC 2.1.329 headless 调 Meowo MCP 的 send_image，探针目录前缀换成
+    /// C:\probe）：调用是 Image 类、说明进摘要；回执里的引用行原样留给前端显示图片。
+    #[test]
+    fn real_send_image_sample_parses_to_image_message() {
+        let lines: Vec<&str> = include_str!("fixtures/send_image.jsonl").lines().collect();
+        let call = parse_chat_items(lines[0]);
+        let ChatItem::ToolUse { kind, summary, detail, .. } = &call[0] else { panic!("{call:?}") };
+        assert_eq!((*kind, summary.as_str()), (ToolKind::Image, "探针测试图"));
+        assert!(matches!(detail, Some(ToolDetail::Image { source, .. }) if source == "chart.png"));
+        let result = parse_chat_items(lines[1]);
+        let ChatItem::ToolResult { text, is_error, .. } = &result[0] else { panic!("{result:?}") };
+        assert!(!is_error);
+        assert!(text.lines().any(|l| l == r"[Image: source: C:\probe\images\sent\0c6eebdca4b84ccf186723b705349400.png]"), "{text}");
+    }
+
     /// 发图工具 `mcp__meowo__send_image` → Image 类：摘要是说明，详情带来源；回执里的引用行原样保留。
     #[test]
     fn send_image_tool_use_is_image_kind() {
