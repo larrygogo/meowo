@@ -271,6 +271,9 @@ fn tool_detail(name: &str, input: Option<&serde_json::Value>) -> Option<ToolDeta
     }
 }
 
+/// Meowo 发图工具在 CC 里的全名（`mcp__<服务器>__<工具>`）。
+const CLAUDE_SEND_IMAGE: &str = "mcp__meowo__send_image";
+
 /// CC 内置工具 → 语义类别。表里没有的（MCP、harness 内部工具如 TaskCreate / ToolSearch /
 /// KillShell / BashOutput）一律 Other，界面显示工具自己的名字——此前前端按名字子串猜，
 /// ToolSearch 因含 search 被当成「搜索」，KillShell 因含 shell 被当成「运行」。
@@ -892,6 +895,26 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                         }),
                     Some("tool_use") => {
                         let name = block.get("name").and_then(|x| x.as_str()).unwrap_or("Tool");
+                        // Meowo 的发图工具（`mcp__meowo__send_image`）：对话页显示成一条图片消息。
+                        if name == CLAUDE_SEND_IMAGE {
+                            let empty = serde_json::Value::Null;
+                            let (kind, summary, detail) =
+                                crate::images::send_image_call(block.get("input").unwrap_or(&empty));
+                            return Some(TranscriptEvent::ToolCall {
+                                id: block
+                                    .get("id")
+                                    .and_then(|x| x.as_str())
+                                    .unwrap_or(base_id)
+                                    .to_string(),
+                                timestamp: timestamp.clone(),
+                                name: name.to_string(),
+                                kind,
+                                summary,
+                                subagent: None,
+                                detail,
+                                plan: None,
+                            });
+                        }
                         Some(TranscriptEvent::ToolCall {
                             id: block
                                 .get("id")
@@ -3267,6 +3290,23 @@ mod tests {
         assert!(path.exists());
         // 回执图进持久目录 images/tool/（按内容哈希去重，别的测试可能存了同一张，故不删）。
         assert!(path.starts_with(crate::images::images_root().unwrap().join("tool")), "{text}");
+    }
+
+    /// 发图工具 `mcp__meowo__send_image` → Image 类：摘要是说明，详情带来源；回执里的引用行原样保留。
+    #[test]
+    fn send_image_tool_use_is_image_kind() {
+        let call = r#"{"type":"assistant","uuid":"a-img","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_img","name":"mcp__meowo__send_image","input":{"source":"C:/repo/out/chart.png","caption":"本周趋势"}}]}}"#;
+        let items = parse_chat_items(call);
+        let ChatItem::ToolUse { kind, summary, detail, .. } = &items[0] else { panic!("{items:?}") };
+        assert_eq!(*kind, ToolKind::Image);
+        assert_eq!(summary, "本周趋势");
+        assert_eq!(
+            detail,
+            &Some(ToolDetail::Image { source: "C:/repo/out/chart.png".into(), caption: Some("本周趋势".into()) })
+        );
+        let result = r#"{"type":"user","uuid":"u-img","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_img","content":[{"type":"text","text":"图片已发给用户。\n[Image: source: C:\\Users\\me\\.meowo\\images\\sent\\ab.png]"}]}]}}"#;
+        let ChatItem::ToolResult { text, .. } = &parse_chat_items(result)[0] else { panic!() };
+        assert!(text.ends_with(r"[Image: source: C:\Users\me\.meowo\images\sent\ab.png]"), "{text}");
     }
 
     /// Read 读 png 的真实形态（本机 CC 2.1.319 transcript，2026-11-09，base64 换成 1×1 PNG）：

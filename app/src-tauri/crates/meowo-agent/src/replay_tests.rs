@@ -116,6 +116,7 @@ fn blocks(items: &[ChatItem]) -> BTreeSet<&'static str> {
                     ToolKind::Agent => "子任务",
                     ToolKind::Web => "网页",
                     ToolKind::Todo => "待办",
+                    ToolKind::Image => "发图",
                     ToolKind::Other => "其他",
                 });
             }

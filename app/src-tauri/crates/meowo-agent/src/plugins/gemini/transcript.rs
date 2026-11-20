@@ -852,8 +852,45 @@ fn tool_kind(name: &str) -> ToolKind {
         "grep_search" | "search_file_content" | "glob" => ToolKind::Search,
         "google_web_search" | "web_fetch" => ToolKind::Web,
         "write_todos" => ToolKind::Todo,
+        GEMINI_SEND_IMAGE => ToolKind::Image,
         _ => ToolKind::Other,
     }
+}
+
+/// Meowo 发图工具在 gemini 里的全名（0.68.0 generateValidName：`mcp_<服务器>_<工具>`）。
+const GEMINI_SEND_IMAGE: &str = "mcp_meowo_send_image";
+
+/// 回执里的内嵌图 → 持久目录副本的引用行。0.68.0 源码（mcp-tool.js transformImageAudioBlock）：
+/// MCP 返回的图变成 `{inlineData:{mimeType,data}}`，gemini-3 系列放进
+/// `functionResponse.parts`，其余模型作为与 functionResponse 并列的独立 part；read_file
+/// 读图片同样是 inlineData。本机 51 份会话里没有带 inlineData 的样本，形态取自源码。
+/// 落在 `images/tool/`（按内容哈希），声明的 mimeType 不可信，按文件头判断。
+fn result_images(result: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut visit = |part: &Value| {
+        if let Some(path) = part
+            .pointer("/inlineData/data")
+            .and_then(Value::as_str)
+            .and_then(crate::images::store_tool_base64)
+        {
+            let line = crate::images::image_ref_line(&path);
+            if !out.contains(&line) {
+                out.push(line);
+            }
+        }
+    };
+    for part in result.as_array().into_iter().flatten() {
+        visit(part);
+        for inner in part
+            .pointer("/functionResponse/parts")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            visit(inner);
+        }
+    }
+    out
 }
 
 /// 详情正文上限（字符），与 claude 侧同值。
@@ -875,6 +912,9 @@ fn clip_detail(text: &str) -> (String, bool) {
 /// `allow_multiple` / `start_line` / `end_line` / `dir_path`）。
 fn tool_detail(name: &str, args: Option<&Value>) -> Option<ToolDetail> {
     let args = args?;
+    if name == GEMINI_SEND_IMAGE {
+        return ToolDetail::image_from_args(args);
+    }
     let text = |key: &str| args.get(key).and_then(Value::as_str).map(str::to_string);
     let num = |key: &str| {
         args.get(key)
@@ -1162,7 +1202,11 @@ fn parse_line(line: &str) -> Vec<TranscriptEvent> {
                         timestamp: timestamp.clone(),
                         name: name.into(),
                         kind: tool_kind(name),
-                        summary: tool_summary(args),
+                        summary: if name == GEMINI_SEND_IMAGE {
+                            crate::images::send_image_call(args.unwrap_or(&Value::Null)).1
+                        } else {
+                            tool_summary(args)
+                        },
                         subagent: None,
                         detail: tool_detail(name, args),
                         plan: None,
@@ -1175,12 +1219,20 @@ fn parse_line(line: &str) -> Vec<TranscriptEvent> {
                                     part.pointer("/functionResponse/response/error").is_some()
                                 })
                             });
+                        // 引用行接在截断之后，长回执也不会把图截掉。
+                        let mut shown = clip_text(&text, RESULT_MAX_CHARS);
+                        for line in result_images(result) {
+                            if !shown.is_empty() {
+                                shown.push('\n');
+                            }
+                            shown.push_str(&line);
+                        }
                         events.push(TranscriptEvent::ToolResult {
                             id: format!("gemini-result-{call_id}"),
                             timestamp: timestamp.clone(),
                             tool_call_id: Some(format!("gemini-call-{call_id}")),
                             facts: result_facts(name, call, &text, is_error),
-                            text: clip_text(&text, RESULT_MAX_CHARS),
+                            text: shown,
                             is_error,
                             subagent: None,
                             patch: result_patch(call),

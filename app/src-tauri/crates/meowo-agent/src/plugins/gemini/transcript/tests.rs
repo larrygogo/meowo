@@ -571,3 +571,53 @@ fn steering_update_shows_the_users_own_words_as_an_interjection() {
         [TranscriptEvent::UserMessage { interjected: false, .. }]
     ));
 }
+
+const PNG_1X1_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==";
+
+fn image_ref_of(events: &[TranscriptEvent]) -> Vec<std::path::PathBuf> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            TranscriptEvent::ToolResult { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .flat_map(|text| {
+            text.lines()
+                .filter_map(|l| l.strip_prefix("[Image: source: ")?.strip_suffix(']').map(std::path::PathBuf::from))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// MCP 截图回执的两种落法（0.68.0 源码 mcp-tool.js transformImageAudioBlock + 会话记录的
+/// toolCalls[].result；本机会话里没有带 inlineData 的真实样本，形态按源码构造）：
+/// gemini-3 系列把图放进 functionResponse.parts，其余模型作为并列 part。两种都要落进
+/// 持久目录 images/tool/，回执里出现引用行；此前这些图整张丢掉。
+#[test]
+fn mcp_image_in_function_response_parts_or_sibling_part_is_kept() {
+    let nested = format!(
+        r#"{{"id":"a9","timestamp":"t","type":"gemini","content":"","model":"gemini-3.8-flash","toolCalls":[{{"id":"c9","name":"mcp_meowo_browser_screenshot","args":{{}},"status":"success","result":[{{"functionResponse":{{"id":"c9","name":"mcp_meowo_browser_screenshot","response":{{"output":"面板浏览器截图（1 KB）"}},"parts":[{{"text":"[Tool 'browser_screenshot' provided the following image data with mime-type: image/png]"}},{{"inlineData":{{"mimeType":"image/png","data":"{PNG_1X1_B64}"}}}}]}}}}]}}]}}"#
+    );
+    let sibling = format!(
+        r#"{{"id":"a8","timestamp":"t","type":"gemini","content":"","model":"gemini-2.5-pro","toolCalls":[{{"id":"c8","name":"read_file","args":{{"file_path":"shot.png"}},"status":"success","result":[{{"functionResponse":{{"id":"c8","name":"read_file","response":{{"output":"Binary content provided (1 item(s))."}}}}}},{{"inlineData":{{"mimeType":"image/png","data":"{PNG_1X1_B64}"}}}}]}}]}}"#
+    );
+    for line in [nested, sibling] {
+        let refs = image_ref_of(&parse_line(&line));
+        assert_eq!(refs.len(), 1, "{line}");
+        assert!(refs[0].starts_with(crate::images::images_root().unwrap().join("tool")));
+        assert!(refs[0].exists());
+    }
+}
+
+/// 发图工具在 gemini 里叫 `mcp_meowo_send_image`（0.68.0 generateValidName）→ Image 类。
+#[test]
+fn send_image_maps_to_image_kind() {
+    let line = r#"{"id":"a7","timestamp":"t","type":"gemini","content":"","model":"gemini-3.8-flash","toolCalls":[{"id":"c7","name":"mcp_meowo_send_image","args":{"source":"C:/repo/chart.png","caption":"趋势图"},"status":"success","result":[{"functionResponse":{"id":"c7","name":"mcp_meowo_send_image","response":{"output":"图片已发给用户。\n[Image: source: C:/Users/me/.meowo/images/sent/ab.png]"}}}]}]}"#;
+    let events = parse_line(line);
+    let Some(TranscriptEvent::ToolCall { kind, summary, detail, .. }) = events.first() else { panic!("{events:?}") };
+    assert_eq!(*kind, ToolKind::Image);
+    assert_eq!(summary, "趋势图");
+    assert_eq!(detail, &Some(ToolDetail::Image { source: "C:/repo/chart.png".into(), caption: Some("趋势图".into()) }));
+    let TranscriptEvent::ToolResult { text, .. } = &events[1] else { panic!() };
+    assert!(text.ends_with("[Image: source: C:/Users/me/.meowo/images/sent/ab.png]"), "{text}");
+}

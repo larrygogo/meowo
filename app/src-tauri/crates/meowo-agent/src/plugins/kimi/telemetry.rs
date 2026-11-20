@@ -94,6 +94,9 @@ fn clip_detail(text: &str) -> (String, bool) {
 /// 前端的增删行数、diff 与语法高亮才有输入；此前 detail 恒为 None，只剩一行结果文案。
 fn tool_detail(name: &str, input: Option<&serde_json::Value>) -> Option<ToolDetail> {
     let input = input?;
+    if name == KIMI_SEND_IMAGE {
+        return ToolDetail::image_from_args(input);
+    }
     let text = |key: &str| input.get(key).and_then(|v| v.as_str()).map(str::to_string);
     let path = || text("path").or_else(|| text("file_path"));
     let num = |key: &str| {
@@ -180,9 +183,13 @@ fn tool_kind(name: &str) -> ToolKind {
         "FetchURL" | "WebSearch" => ToolKind::Web,
         "Agent" | "AgentSwarm" => ToolKind::Agent,
         "TodoList" => ToolKind::Todo,
+        KIMI_SEND_IMAGE => ToolKind::Image,
         _ => ToolKind::Other,
     }
 }
+
+/// Meowo 发图工具在 kimi 里的全名（2.6.3 qualifyMcpToolName：`mcp__<服务器>__<工具>`）。
+const KIMI_SEND_IMAGE: &str = "mcp__meowo__send_image";
 
 /// 图片 mime → 扩展名。渲染端按扩展名认图（Message.tsx 的 IMAGE_EXTENSIONS），未知类型不落盘。
 fn image_ext(mime: &str) -> Option<&'static str> {
@@ -772,12 +779,16 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
                         kind: tool_kind(&name),
                         name: name.clone(),
                         // 子任务的摘要取那句描述；否则整包 args（含上千字 prompt）会把摘要行淹掉。
-                        summary: subagent
-                            .as_ref()
-                            .map(|call| call.description.clone())
-                            .filter(|description| !description.is_empty())
-                            .or_else(|| args.map(value_text))
-                            .unwrap_or_default(),
+                        summary: if name == KIMI_SEND_IMAGE {
+                            crate::images::send_image_call(args.unwrap_or(&serde_json::Value::Null)).1
+                        } else {
+                            subagent
+                                .as_ref()
+                                .map(|call| call.description.clone())
+                                .filter(|description| !description.is_empty())
+                                .or_else(|| args.map(value_text))
+                                .unwrap_or_default()
+                        },
                         subagent,
                         detail: tool_detail(&name, args),
                         plan: part
@@ -2186,6 +2197,58 @@ impl crate::caps::TelemetryCap for KimiTelemetry {
 
 #[cfg(test)]
 mod tests {
+    /// 面板浏览器截图的真实回执（本机 kimi 2.6.3 wire.jsonl 第 1626–1627 行，2026-11-20）：
+    /// 图不内嵌，是 `kimi-file://f_mcp_…`，原图在会话目录的 `media/`。要复制进持久目录
+    /// `images/tool/`——kimi 会清理会话、用户会删会话目录，历史里的截图不能跟着没。
+    #[test]
+    fn real_screenshot_result_kimi_file_is_copied_to_tool_dir() {
+        let base = std::env::temp_dir().join(format!("meowo-kimi-shot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let session = base.join("sessions").join("wd_ai_b6af78c099d4").join("session_53a00519");
+        let wire_dir = session.join("agents").join("main");
+        std::fs::create_dir_all(&wire_dir).unwrap();
+        std::fs::create_dir_all(session.join("media")).unwrap();
+        let id = "f_mcp_f980f7aab6abcdeff69d197592491a66f3da600a904e74a2333398f06668ddb7";
+        // 最小 JPEG 头（SOI + APP0 + SOF0 640×480），按文件头认图。
+        let jpg = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0x00, 0x00, 0xFF, 0xC0, 0x00, 0x11, 0x08, 0x01, 0xE0, 0x02, 0x80, 0x03, 0x4B];
+        std::fs::write(session.join("media").join(format!("{id}.jpg")), jpg).unwrap();
+        let call = r#"{"type":"context.append_loop_event","agentId":"main","event":{"type":"tool.call","uuid":"a18e6f42-2156-4d21-9408-a24b9285c77b","turnId":"9","step":27,"stepUuid":"96e6e7e7","toolCallId":"tool_DGQwCfYv3EgrOv43OQe6TqNO","name":"mcp__meowo__browser_screenshot","args":{}},"time":1794812465279}"#;
+        let result = format!(
+            r#"{{"type":"context.append_loop_event","agentId":"main","event":{{"type":"tool.result","parentUuid":"a18e6f42-2156-4d21-9408-a24b9285c77b","toolCallId":"tool_DGQwCfYv3EgrOv43OQe6TqNO","result":{{"output":[{{"type":"image_url","imageUrl":{{"url":"kimi-file://{id}"}}}},{{"type":"text","text":"面板浏览器截图（57 KB）\n    "}},{{"type":"text","text":"Original attachment saved at: \"media/{id}.jpg\""}}],"durationMs":83}}}},"time":1794812465362}}"#
+        );
+        assert!(!super::parse_events(call, Some(&wire_dir)).is_empty());
+        let events = super::parse_events(&result, Some(&wire_dir));
+        let text = events
+            .iter()
+            .find_map(|e| match e {
+                crate::transcript::TranscriptEvent::ToolResult { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .expect("应有回执");
+        let line = text.lines().find(|l| l.starts_with("[Image: source: ")).unwrap_or_else(|| panic!("{text}"));
+        let path = std::path::PathBuf::from(line.trim_start_matches("[Image: source: ").trim_end_matches(']'));
+        assert!(path.starts_with(crate::images::images_root().unwrap().join("tool")), "{text}");
+        // 会话目录删掉后副本还在（验收 #7）。
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(path.exists());
+    }
+
+    /// 发图工具（`mcp__meowo__send_image`）→ Image 类，摘要是说明，详情带来源。
+    #[test]
+    fn send_image_call_maps_to_image_kind() {
+        let call = r#"{"type":"context.append_loop_event","agentId":"main","event":{"type":"tool.call","uuid":"u1","turnId":"3","step":2,"toolCallId":"tool_img","name":"mcp__meowo__send_image","args":{"source":"C:/repo/out/chart.png","caption":"本周趋势"}},"time":1794812465279}"#;
+        let events = super::parse_events(call, None);
+        let Some(crate::transcript::TranscriptEvent::ToolCall { kind, summary, detail, .. }) = events.first() else {
+            panic!("{events:?}")
+        };
+        assert_eq!(*kind, super::ToolKind::Image);
+        assert_eq!(summary, "本周趋势");
+        assert_eq!(
+            detail,
+            &Some(super::ToolDetail::Image { source: "C:/repo/out/chart.png".into(), caption: Some("本周趋势".into()) })
+        );
+    }
+
     #[test]
     fn browser_mcp_image_becomes_text_and_receipt_reference() {
         use serde_json::json;

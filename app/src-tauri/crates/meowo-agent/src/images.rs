@@ -128,6 +128,31 @@ impl From<Result<PathBuf, ImageError>> for ResolvedChatImage {
     }
 }
 
+/// Meowo MCP 服务器在各家那边的名字与发图工具名（meowo-reporter mcp.rs）。各家插件按自己的
+/// MCP 命名形态拼全名（claude/kimi `mcp__meowo__send_image`、gemini `mcp_meowo_send_image`、
+/// opencode `meowo_send_image`、codex 命名空间 `mcp__meowo` + `send_image`）。
+pub const MCP_SERVER: &str = "meowo";
+pub const SEND_IMAGE: &str = "send_image";
+
+/// 发图调用 → (类别, 摘要, 详情)：五家插件共用。摘要优先用说明，没有说明给来源。
+pub fn send_image_call(
+    args: &serde_json::Value,
+) -> (
+    meowo_protocol::ipc::ToolKind,
+    String,
+    Option<meowo_protocol::ipc::ToolDetail>,
+) {
+    let detail = meowo_protocol::ipc::ToolDetail::image_from_args(args);
+    let summary = match &detail {
+        Some(meowo_protocol::ipc::ToolDetail::Image { source, caption }) => {
+            caption.clone().unwrap_or_else(|| source.clone())
+        }
+        _ => String::new(),
+    };
+    let summary: String = summary.chars().take(200).collect();
+    (meowo_protocol::ipc::ToolKind::Image, summary, detail)
+}
+
 /// 失败回执的固定前缀（后跟代码与 `] `）。
 pub const ERROR_PREFIX: &str = "[Image error: ";
 

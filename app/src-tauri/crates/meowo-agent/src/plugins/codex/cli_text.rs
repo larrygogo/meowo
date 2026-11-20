@@ -175,4 +175,10 @@ pub(super) static DEPS: &[D] = &[
         "aborted by user after 20.9s",
         "0.167.2 rollout 实样（脚本被用户打断时的回执，工具行据此显示已中断）；codex.exe 4 处",
     ),
+    D::record(
+        "record:input_image",
+        "input_image",
+        r#"{"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_EXlE1YwDaOn8mwNJoyVg9aUT","output":[{"type":"input_text","text":"Script completed\nWall time 0.6 seconds\nOutput:\n"},{"type":"input_image","image_url":"data:image/png;base64,iVBORw0KGgo=","detail":"high"}]}}"#,
+        "rollout 实样（2026-07-13，代码模式里 view_image 再 image() 出来，回执里的图据此显示）",
+    ),
 ];

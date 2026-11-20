@@ -324,26 +324,37 @@ fn tool_events(key: &str, part: &Value, timestamp: Option<String>) -> Vec<Transc
         .and_then(|s| s.get("title"))
         .and_then(Value::as_str)
         .filter(|t| !t.is_empty());
+    let image_call = (name == OPENCODE_SEND_IMAGE)
+        .then(|| crate::images::send_image_call(input.unwrap_or(&Value::Null)));
+    let (summary, detail) = match image_call {
+        Some((_, summary, detail)) => (summary, detail),
+        None => (tool_summary(&name, input, title), tool_detail(&name, input)),
+    };
     let call = TranscriptEvent::ToolCall {
         id: call_id.clone(),
         timestamp: timestamp.clone(),
         kind: tool_kind(&name),
-        summary: tool_summary(&name, input, title),
-        detail: tool_detail(&name, input),
+        summary,
+        detail,
         name,
         subagent: None,
         plan: None,
     };
     let (text, is_error, interrupted) = match status {
-        "completed" => (
-            state
+        "completed" => {
+            let mut text = state
                 .and_then(|s| s.get("output"))
                 .and_then(Value::as_str)
                 .unwrap_or_default()
-                .to_string(),
-            false,
-            false,
-        ),
+                .to_string();
+            for line in attachment_refs(state) {
+                if !text.is_empty() {
+                    text.push('\n');
+                }
+                text.push_str(&line);
+            }
+            (text, false, false)
+        }
         "error" => {
             let error = state
                 .and_then(|s| s.get("error"))
@@ -398,8 +409,30 @@ fn tool_kind(name: &str) -> ToolKind {
         "webfetch" | "websearch" => ToolKind::Web,
         "task" => ToolKind::Agent,
         "todowrite" | "todoread" => ToolKind::Todo,
+        OPENCODE_SEND_IMAGE => ToolKind::Image,
         _ => ToolKind::Other,
     }
+}
+
+/// Meowo 发图工具在 opencode 里的全名（1.19.5：MCP 工具 = `<服务器>_<工具>`）。
+const OPENCODE_SEND_IMAGE: &str = "meowo_send_image";
+
+/// 回执附件里的图 → 引用行。导出行里是 slim 后的 `{image: <路径>}`（store::slim_attachments）；
+/// 直接读未瘦身的 part 时是 `{url: "data:…"}`，同样落进持久目录。
+fn attachment_refs(state: Option<&Value>) -> Vec<String> {
+    state
+        .and_then(|s| s.get("attachments"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let path = match item.get("image").and_then(Value::as_str) {
+                Some(path) => std::path::PathBuf::from(path),
+                None => crate::images::store_tool_data_url(item.get("url")?.as_str()?)?,
+            };
+            Some(crate::images::image_ref_line(&path))
+        })
+        .collect()
 }
 
 /// 摘要取各工具最能说明「在干什么」的那个入参（opencode 的入参是 camelCase），
@@ -565,6 +598,53 @@ mod tests {
     use super::*;
     use crate::plugins::opencode::store::test_support::*;
     use serde_json::json;
+
+    const PNG_1X1_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==";
+
+    /// MCP 截图回执（1.19.5 源码形态：MCP 的 image 块 → `state.attachments[]` 的 file part，
+    /// url 是 data URL；本机库里没有带 attachments 的 tool part，形态取自 opencode.exe 内嵌源码）。
+    /// 走导出（slim_part）再解析的真实路径：附件落进持久目录，回执里出现引用行。
+    #[test]
+    fn mcp_image_attachment_survives_export_and_becomes_reference() {
+        let raw = json!({"type": "tool", "tool": "meowo_browser_screenshot", "callID": "call_1",
+            "state": {"status": "completed", "input": {}, "output": "面板浏览器截图（1 KB）",
+                "title": "", "time": {"start": 1, "end": 2},
+                "attachments": [
+                    {"type": "file", "mime": "image/png", "url": format!("data:image/png;base64,{PNG_1X1_B64}")},
+                    {"type": "file", "mime": "text/plain", "url": "data:text/plain;base64,aGk="}
+                ]}});
+        let slim = crate::plugins::opencode::store::slim_part_for_test(raw);
+        // 导出行里不留整段 data URL。
+        assert!(!slim.to_string().contains("base64,"), "{slim}");
+        let line = json!({"kind": "part", "msg": "m", "key": "p", "time": 1, "part": slim}).to_string();
+        let items = parse_chat_items(&line);
+        let Some(ChatItem::ToolResult { text, .. }) = items.iter().find(|i| matches!(i, ChatItem::ToolResult { .. })) else {
+            panic!("{items:?}")
+        };
+        let refs: Vec<&str> = text.lines().filter(|l| l.starts_with("[Image: source: ")).collect();
+        assert_eq!(refs.len(), 1, "{text}");
+        let path = std::path::PathBuf::from(refs[0].trim_start_matches("[Image: source: ").trim_end_matches(']'));
+        assert!(path.starts_with(crate::images::images_root().unwrap().join("tool")));
+        assert!(text.starts_with("面板浏览器截图"));
+    }
+
+    /// 发图工具在 opencode 里叫 `meowo_send_image` → Image 类，摘要是说明，详情带来源。
+    #[test]
+    fn send_image_maps_to_image_kind() {
+        let line = json!({"kind": "part", "msg": "m", "key": "p2", "time": 1, "part": {"type": "tool",
+            "tool": "meowo_send_image", "callID": "call_2", "state": {"status": "completed",
+            "input": {"source": "https://example.com/a.png", "caption": "参考图"},
+            "output": "图片已发给用户。\n[Image: source: C:/Users/me/.meowo/images/sent/ab.png]", "time": {"start": 1, "end": 2}}}})
+        .to_string();
+        let items = parse_chat_items(&line);
+        let Some(ChatItem::ToolUse { kind, summary, detail, .. }) = items.first() else { panic!("{items:?}") };
+        assert_eq!(*kind, ToolKind::Image);
+        assert_eq!(summary, "参考图");
+        assert_eq!(
+            detail,
+            &Some(ToolDetail::Image { source: "https://example.com/a.png".into(), caption: Some("参考图".into()) })
+        );
+    }
 
     #[test]
     fn epoch_ms_becomes_iso_with_millis() {

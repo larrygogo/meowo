@@ -191,6 +191,9 @@ pub enum ToolKind {
     Agent,
     /// 待办清单。
     Todo,
+    /// agent 主动发给用户的图（Meowo MCP 的 `send_image`）。对话页把它显示成一条图片消息，
+    /// 不是收起的工具行：图片路径在回执的 `[Image: source: …]` 引用行里，说明在 detail 里。
+    Image,
     #[default]
     Other,
 }
@@ -266,6 +269,29 @@ pub enum ToolDetail {
         /// 除已列出的那个之外，这次调用还带了几个地址或查询。
         more: u32,
     },
+    /// 发图（[`ToolKind::Image`]）：agent 给的来源（本地路径或网址，原样）与随图说明。
+    /// 显示用的持久副本路径不在这里，在回执的引用行里（调用时还没复制）。
+    Image {
+        source: String,
+        caption: Option<String>,
+    },
+}
+
+impl ToolDetail {
+    /// 从发图工具的实参（`{source, caption}`）取详情；五家插件共用，参数名是 Meowo 自己定的。
+    pub fn image_from_args(args: &serde_json::Value) -> Option<Self> {
+        let text = |key: &str| {
+            args.get(key)
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        };
+        Some(Self::Image {
+            source: text("source")?,
+            caption: text("caption"),
+        })
+    }
 }
 
 /// Provider 日志经插件解析后交给聊天归一化层的稳定消息单元。

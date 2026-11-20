@@ -12,4 +12,4 @@ export type ToolDetail = { "kind": "write", path: string, content: string, lines
 /**
  * 除已列出的那个之外，这次调用还带了几个地址或查询。
  */
-more: number, };
+more: number, } | { "kind": "image", source: string, caption: string | null, };
