@@ -37,6 +37,7 @@ pub mod extensions;
 pub mod fsutil;
 pub mod handoff;
 pub mod id;
+pub mod images;
 pub mod install;
 pub mod launch;
 pub mod launch_options;

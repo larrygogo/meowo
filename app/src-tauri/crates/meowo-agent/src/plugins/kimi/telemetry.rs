@@ -234,10 +234,24 @@ fn tool_result_media(value: Option<&serde_json::Value>, wire_dir: Option<&Path>,
     let text = parts.iter().filter_map(|part| part.get("text").and_then(|v| v.as_str())).collect::<Vec<_>>().join("\n");
     let images = parts.iter().enumerate().filter_map(|(index, part)| {
         let url = mcp_image_url(part)?;
-        let path = persist_image_url(wire_dir, base_id, index, &url)?;
-        Some(format!("[Image: source: {}]", path.display()))
+        // 回执里的图落进持久目录 `images/tool/`（按内容哈希），不再进会被清理的临时目录。
+        let path = persist_image_url(wire_dir, base_id, index, &url, &persist_tool_image)?;
+        Some(crate::images::image_ref_line(&path))
     }).collect();
     (Some(text), images)
+}
+
+/// 落盘方式：用户消息里的图仍进粘贴临时目录（与粘贴附件同生命周期），工具回执里的图进
+/// 持久图片目录（见 [`persist_tool_image`]）。参数是 (文件名主干, 扩展名, 字节)。
+type Persist<'a> = &'a dyn Fn(&str, &str, &[u8]) -> Option<PathBuf>;
+
+fn persist_paste_image(stem: &str, ext: &str, bytes: &[u8]) -> Option<PathBuf> {
+    crate::fsutil::persist_paste_bytes(stem, ext, bytes)
+}
+
+/// 工具回执内嵌图：按内容哈希存进 `images/tool/`，文件头不是图片就不收。
+fn persist_tool_image(_stem: &str, _ext: &str, bytes: &[u8]) -> Option<PathBuf> {
+    crate::images::store_bytes(crate::images::ImageKind::Tool, bytes).ok()
 }
 
 fn persist_image_url(
@@ -245,6 +259,7 @@ fn persist_image_url(
     base_id: &str,
     index: usize,
     url: &str,
+    persist: Persist<'_>,
 ) -> Option<PathBuf> {
     use crate::fsutil::PASTE_MAX_BYTES;
     if let Some(rest) = url.strip_prefix("blobref:") {
@@ -265,10 +280,10 @@ fn persist_image_url(
             return None;
         }
         let bytes = std::fs::read(&src).ok()?;
-        return crate::fsutil::persist_paste_bytes(&format!("kimi-{sha}"), ext, &bytes);
+        return persist(&format!("kimi-{sha}"), ext, &bytes);
     }
     if let Some(rest) = url.strip_prefix(KIMI_FILE_SCHEME) {
-        return persist_kimi_file(wire_dir?, rest);
+        return persist_kimi_file(wire_dir?, rest, persist);
     }
     if let Some(rest) = url.strip_prefix("data:") {
         let (mime, data) = rest.split_once(";base64,")?;
@@ -289,7 +304,7 @@ fn persist_image_url(
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(data.as_bytes())
             .ok()?;
-        return crate::fsutil::persist_paste_bytes(&format!("kimi-{safe_id}-{index}"), ext, &bytes);
+        return persist(&format!("kimi-{safe_id}-{index}"), ext, &bytes);
     }
     None
 }
@@ -308,7 +323,7 @@ const KIMI_FILE_SCHEME: &str = "kimi-file://";
 ///
 /// 只认图片：扩展名或文件头是 png/jpeg/gif/webp 才落盘。都找不到（kimi 会按期清理
 /// `files/`）就返回 None，正文照常显示。
-fn persist_kimi_file(wire_dir: &Path, rest: &str) -> Option<PathBuf> {
+fn persist_kimi_file(wire_dir: &Path, rest: &str, persist: Persist<'_>) -> Option<PathBuf> {
     use crate::fsutil::PASTE_MAX_BYTES;
     let raw_id = rest.split('?').next().unwrap_or("");
     // id 直接拼进路径与文件名：只留 id 字符集，挡掉脏数据里的路径分隔符与 `..`。
@@ -357,7 +372,7 @@ fn persist_kimi_file(wire_dir: &Path, rest: &str) -> Option<PathBuf> {
         candidates.push(share.join("files").join(&id));
     }
     let (bytes, ext) = candidates.iter().find_map(|path| read_image(path))?;
-    crate::fsutil::persist_paste_bytes(&format!("kimi-{id}"), ext, &bytes)
+    persist(&format!("kimi-{id}"), ext, &bytes)
 }
 
 /// 按文件头认图片格式（`files/<id>` 没有扩展名）。扩展名不可信时也以文件头为准。
@@ -401,7 +416,7 @@ fn user_message_text(
         let Some(url) = image_part_url(part) else {
             continue;
         };
-        if let Some(path) = persist_image_url(wire_dir, base_id, index, url) {
+        if let Some(path) = persist_image_url(wire_dir, base_id, index, url, &persist_paste_image) {
             if !text.is_empty() {
                 text.push('\n');
             }
@@ -2180,7 +2195,9 @@ mod tests {
         assert_eq!(images.len(), 1);
         let path = images[0].split("[Image: source: ").nth(1).and_then(|rest| rest.strip_suffix(']')).map(std::path::PathBuf::from).unwrap();
         assert!(path.exists());
-        std::fs::remove_file(path).ok();
+        // 回执图进持久目录 images/tool/，不再进会被清理的 $TEMP/meowo-paste。按内容哈希去重，
+        // 别的测试可能存了同一张图，故不删。
+        assert!(path.starts_with(crate::images::images_root().unwrap().join("tool")));
     }
 
 
@@ -3121,7 +3138,7 @@ mod tests {
         assert_eq!(std::fs::read(&path2).unwrap(), jpg);
 
         // 带路径分隔符的 id 是脏数据，不拼路径。
-        assert!(persist_kimi_file(&wire_dir, "../../files/x").is_none());
+        assert!(persist_kimi_file(&wire_dir, "../../files/x", &persist_paste_image).is_none());
 
         let _ = std::fs::remove_file(&path1);
         let _ = std::fs::remove_file(&path2);

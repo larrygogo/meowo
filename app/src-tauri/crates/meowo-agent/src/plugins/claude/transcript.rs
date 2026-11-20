@@ -434,17 +434,31 @@ fn inline_image_ref(base_id: &str, index: usize, block: &serde_json::Value) -> O
 /// image-cache，历史图必坏（实测本机两处 image-cache 目录均已不存在，终端贴图在对话里
 /// 看不到的根因）。图片改由同 promptId 主行的内嵌 base64 落盘提供（实测 412 条伴随行
 /// 全部配对到带 image 块的主行），伴随行整条丢弃，否则同一张图出两次。
-/// MCP browser_screenshot 的 tool_result.content 同时带 text 与 image。沿用用户图片的
-/// 引用格式，ToolActivity 拆成截图缩略图；base64 不进聊天 DTO。
-fn tool_result_image_refs(base_id: &str, block: &serde_json::Value) -> Vec<String> {
+/// tool_result.content 里的图：MCP browser_screenshot（text + image）、Read 读图片（只有 image）。
+/// 沿用用户图片的引用格式，前端拆成缩略图；base64 不进聊天 DTO。
+/// 落进持久目录 `images/tool/`（按内容哈希）：不随临时目录清理而裂图，重解析时按同内容
+/// 得到同一路径。声明的 media_type 不可信，按文件头判断。
+fn tool_result_image_refs(block: &serde_json::Value) -> Vec<String> {
     block
         .get("content")
         .and_then(|content| content.as_array())
         .into_iter()
         .flatten()
-        .enumerate()
-        .filter_map(|(index, part)| inline_image_ref(base_id, index, part))
+        .filter_map(tool_image_ref)
         .collect()
+}
+
+fn tool_image_ref(block: &serde_json::Value) -> Option<String> {
+    if block.get("type").and_then(|x| x.as_str()) != Some("image") {
+        return None;
+    }
+    let source = block.get("source")?;
+    if source.get("type").and_then(|x| x.as_str()) != Some("base64") {
+        return None;
+    }
+    let data = source.get("data").and_then(|x| x.as_str())?;
+    let path = crate::images::store_tool_base64(data)?;
+    Some(crate::images::image_ref_line(&path))
 }
 
 fn is_image_companion(v: &serde_json::Value, content: Option<&serde_json::Value>) -> bool {
@@ -775,7 +789,7 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                                 && !unfinished_receipt(&text);
                             let facts = tool_facts(&v, &text, is_error);
                             let mut result_text = compact_json(Some(&serde_json::Value::String(text)), 4000);
-                            for image_ref in tool_result_image_refs(&format!("{base_id}:{i}"), block) {
+                            for image_ref in tool_result_image_refs(block) {
                                 if !result_text.is_empty() { result_text.push('\n'); }
                                 result_text.push_str(&image_ref);
                             }
@@ -3251,7 +3265,27 @@ mod tests {
         assert!(text.starts_with("面板浏览器截图\n[Image: source: "), "{text}");
         let path = text.split("[Image: source: ").nth(1).and_then(|rest| rest.strip_suffix(']')).map(PathBuf::from).unwrap();
         assert!(path.exists());
-        std::fs::remove_file(path).ok();
+        // 回执图进持久目录 images/tool/（按内容哈希去重，别的测试可能存了同一张，故不删）。
+        assert!(path.starts_with(crate::images::images_root().unwrap().join("tool")), "{text}");
+    }
+
+    /// Read 读 png 的真实形态（本机 CC 2.1.319 transcript，2026-11-09，base64 换成 1×1 PNG）：
+    /// tool_result.content 只有一个 image 块，没有文字。回执里要有指向持久目录的引用行，
+    /// 不再只剩模型看到的本地路径；重解析得到同一路径（按内容哈希）。
+    #[test]
+    fn read_image_tool_result_references_persistent_copy() {
+        let line = r#"{"parentUuid":"c91b5f03","isSidechain":false,"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_01VcPkrq8wg6CEQ2rKUg7Vf8","type":"tool_result","content":[{"type":"image","source":{"type":"base64","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==","media_type":"image/png"}}]}]},"uuid":"8d0933f4-9989-4b66-ad99-e7f386af8f9f","timestamp":"2026-11-09T13:28:13.215Z","toolUseResult":{"type":"image","file":{"base64":"iVBORw0KGgo=","type":"image/png","originalSize":1027819,"dimensions":{"originalWidth":1206,"originalHeight":2622,"displayWidth":920,"displayHeight":2000}}},"version":"2.1.319"}"#;
+        let items = parse_chat_items(line);
+        let ChatItem::ToolResult { text, .. } = &items[0] else { panic!("expected ToolResult") };
+        let path = text.strip_prefix("[Image: source: ").and_then(|rest| rest.strip_suffix(']')).map(PathBuf::from).unwrap();
+        assert!(path.starts_with(crate::images::images_root().unwrap().join("tool")), "{text}");
+        assert_eq!(path.extension().unwrap(), "png");
+        assert!(path.exists());
+        assert_eq!(parse_chat_items(line), items, "重解析结果一致");
+        // 声明是 png、实际是文本：不落盘、不出引用行。
+        let fake = line.replace("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==", "aGVsbG8gd29ybGQ=");
+        let ChatItem::ToolResult { text, .. } = &parse_chat_items(&fake)[0] else { panic!() };
+        assert!(!text.contains("[Image: source:"), "{text}");
     }
 
     /// 终端 Ctrl-V 贴图的实拍形态：主行「text + 内嵌 base64 image 块」，紧跟一条 isMeta
