@@ -723,14 +723,18 @@ fn wait_wakes_on_answer_and_dedupes_waiters() {
     });
     assert_eq!(fast(&data).exit, 0, "被接管后退出");
     h.join().unwrap();
-    // 偶发读失败不退出（做空审查 M5）：短暂删掉 gate.json 再放回，仍能收到答复
+    // 偶发读失败不退出（做空审查 M5）：删掉 gate.json 再放回、或写成半截再补全，仍能收到答复。
+    // 空窗 300ms 远超「5 次 × 20ms 轮询」：只数次数的旧判据在这里必然退出（Windows CI 上
+    // 30ms 空窗被调度拉长就这么挂过），按「次数 + 持续时长」判的必须挺住。
     write_gate(&t, "g6", "A", "pending");
     let t6 = t.clone();
     let h = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(50));
         let body = fs::read_to_string(t6.join("gate.json")).unwrap();
         fs::remove_file(t6.join("gate.json")).unwrap();
-        std::thread::sleep(Duration::from_millis(30));
+        std::thread::sleep(Duration::from_millis(300));
+        fs::write(t6.join("gate.json"), "").unwrap(); // 写工具先截断再写入：读到半截
+        std::thread::sleep(Duration::from_millis(300));
         fs::write(t6.join("gate.json"), body).unwrap();
         std::thread::sleep(Duration::from_millis(50));
         answer_gate(&t6, "g6", &ans("confirm", "")).unwrap();
