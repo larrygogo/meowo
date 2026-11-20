@@ -169,7 +169,6 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 ; 色值与 icons/nsis-oneclick-bg.bmp 的分区底色一一对应（scripts/generate-nsis-bitmaps.py
 ; 有同名注释）：原生控件文字背景只能靠 SetCtlColors 配纯色，控件落在哪个分区就配哪个色。
 !define MEOWO_COL_BASE "17171a"
-!define MEOWO_COL_BAND "101012"
 !define MEOWO_COL_TEXT "f5f5f7"
 !define MEOWO_COL_SUB  "a0a0a8"
 !define MEOWO_COL_LINK "d4f64c"
@@ -436,7 +435,7 @@ Function MeowoApplyReinstall
   reinst_done:
 FunctionEnd
 
-; ===== 自绘主页：品牌区 + 大按钮 + 底带「自定义安装」展开区 =====
+; ===== 自绘主页：品牌区 + 大按钮 + 底部「自定义安装」展开区 =====
 Page custom MeowoMainPage MeowoMainLeave
 
 Function MeowoMainPage
@@ -508,11 +507,11 @@ Function MeowoMainPage
   SendMessage $7 ${WM_SETFONT} $MeowoBtnFont 1
   ${NSD_OnClick} $7 MeowoOnInstallClick
 
-  ; ---- 底带（背景图 75% 以下的深色区）----
+  ; ---- 底部展开区（75% 以下；与主区同一底色，不再单独压深色带——收起时只剩一个链接，空带像没画完，2026-11-20 实拍）----
   IntOp $8 $MeowoH * 75
   IntOp $8 $8 / 100
 
-  ; 「自定义安装 ▾」链接：底带右下角。
+  ; 「自定义安装 ▾」链接：右下角。
   ${MeowoScale} $4 150
   ${MeowoScale} $5 24
   IntOp $2 $MeowoW - $4
@@ -523,12 +522,12 @@ Function MeowoMainPage
   IntOp $3 $3 - $5
   nsDialogs::CreateControl STATIC "${__NSD_Label_STYLE}|${SS_NOTIFY}" "${__NSD_Label_EXSTYLE}" $2 $3 $4 $6 "$(meowoCustomOpen)"
   Pop $MeowoCustomLink
-  SetCtlColors $MeowoCustomLink "${MEOWO_COL_LINK}" "${MEOWO_COL_BAND}"
+  SetCtlColors $MeowoCustomLink "${MEOWO_COL_LINK}" "${MEOWO_COL_BASE}"
   SendMessage $MeowoCustomLink ${WM_SETFONT} $MeowoLinkFont 1
   ${NSD_OnClick} $MeowoCustomLink MeowoOnToggleCustom
 
   ; ---- 自定义安装区（默认隐藏；隐藏控件的勾选值照常生效 = 产品默认）----
-  ; 安装位置行：y = 底带 + 14。
+  ; 安装位置行：y = 展开区顶 + 14。
   ${MeowoScale} $5 14
   IntOp $3 $8 + $5
   ${MeowoScale} $2 24
@@ -536,7 +535,7 @@ Function MeowoMainPage
   ${MeowoScale} $6 18
   ${NSD_CreateLabel} $2 $3 $4 $6 "$(meowoInstallPath)"
   Pop $MeowoDirLabel
-  SetCtlColors $MeowoDirLabel "${MEOWO_COL_SUB}" "${MEOWO_COL_BAND}"
+  SetCtlColors $MeowoDirLabel "${MEOWO_COL_SUB}" "${MEOWO_COL_BASE}"
   SendMessage $MeowoDirLabel ${WM_SETFONT} $MeowoSmallFont 1
 
   ${MeowoScale} $2 116
@@ -559,7 +558,7 @@ Function MeowoMainPage
   SendMessage $MeowoBrowseBtn ${WM_SETFONT} $MeowoSmallFont 1
   ${NSD_OnClick} $MeowoBrowseBtn MeowoOnBrowse
 
-  ; 「对话窗口功能」勾选（默认勾；取消 = 轻量模式，应用只保留贴纸生态）。
+  ; 「对话窗口功能」勾选（默认勾；取消 = 轻量模式：只留灵动岛，会话在外部终端进行）。
   ; themed 复选框（Button 类）的文字颜色不吃 SetCtlColors（Win32 已知行为，实拍
   ; 黑字糊在暗带上）——框与文字拆开：框只留方块，文字用可点 Label 代理切换勾选。
   ${MeowoScale} $2 24
@@ -575,7 +574,7 @@ Function MeowoMainPage
   IntOp $4 $MeowoW - $4
   nsDialogs::CreateControl STATIC "${__NSD_Label_STYLE}|${SS_NOTIFY}" "${__NSD_Label_EXSTYLE}" $2 $3 $4 $6 "$(meowoChatFeature)"
   Pop $MeowoChatLabel
-  SetCtlColors $MeowoChatLabel "${MEOWO_COL_TEXT}" "${MEOWO_COL_BAND}"
+  SetCtlColors $MeowoChatLabel "${MEOWO_COL_TEXT}" "${MEOWO_COL_BASE}"
   SendMessage $MeowoChatLabel ${WM_SETFONT} $MeowoSmallFont 1
   ${NSD_OnClick} $MeowoChatLabel MeowoOnChatLabel
 
@@ -584,7 +583,7 @@ Function MeowoMainPage
   IntOp $3 $8 + $5
   ${NSD_CreateLabel} $2 $3 $4 $6 "$(meowoChatHint)"
   Pop $MeowoChatHint
-  SetCtlColors $MeowoChatHint "${MEOWO_COL_SUB}" "${MEOWO_COL_BAND}"
+  SetCtlColors $MeowoChatHint "${MEOWO_COL_SUB}" "${MEOWO_COL_BASE}"
   SendMessage $MeowoChatHint ${WM_SETFONT} $MeowoSmallFont 1
 
   ; 「创建桌面快捷方式」勾选（语义 = 上游 FINISH 页那颗，建档时机挪进 Section）。
@@ -600,7 +599,7 @@ Function MeowoMainPage
   IntOp $4 $MeowoW - $4
   nsDialogs::CreateControl STATIC "${__NSD_Label_STYLE}|${SS_NOTIFY}" "${__NSD_Label_EXSTYLE}" $2 $3 $4 $6 "$(meowoDesktopLnk)"
   Pop $MeowoDesktopLabel
-  SetCtlColors $MeowoDesktopLabel "${MEOWO_COL_TEXT}" "${MEOWO_COL_BAND}"
+  SetCtlColors $MeowoDesktopLabel "${MEOWO_COL_TEXT}" "${MEOWO_COL_BASE}"
   SendMessage $MeowoDesktopLabel ${WM_SETFONT} $MeowoSmallFont 1
   ${NSD_OnClick} $MeowoDesktopLabel MeowoOnDesktopLabel
 
@@ -735,6 +734,16 @@ Var AppStartMenuFolder
 Function MeowoInstFilesShow
   Call MeowoEnsureBg
   FindWindow $1 "#32770" "" $HWNDPARENT
+  ; 页面对话框本身铺满 client 区：MUI 按原始尺寸建内页，不铺满的话下面按整窗比例摆的
+  ; 进度条/状态行落在小对话框外被裁掉，背景只画出左上一块、其余露系统灰底（实拍）。
+  System::Call "user32::MoveWindow(p r1, i 0, i 0, i $MeowoW, i $MeowoH, i 1)"
+  ; NSIS 换页时按页面能力重新显示导航按钮（实拍进度页冒出「上一步」），每页 SHOW 再藏一次。
+  GetDlgItem $0 $HWNDPARENT 1
+  ShowWindow $0 ${SW_HIDE}
+  GetDlgItem $0 $HWNDPARENT 2
+  ShowWindow $0 ${SW_HIDE}
+  GetDlgItem $0 $HWNDPARENT 3
+  ShowWindow $0 ${SW_HIDE}
   GetDlgItem $0 $1 1016    ; 细节列表
   ShowWindow $0 ${SW_HIDE}
   GetDlgItem $0 $1 1027    ; 「显示细节」按钮
@@ -822,7 +831,7 @@ Function MeowoDonePage
   SendMessage $7 ${WM_SETFONT} $MeowoBtnFont 1
   ${NSD_OnClick} $7 MeowoOnLaunchClick
 
-  ; 「关闭」链接：底带右下角（与主页「自定义安装」同位）。
+  ; 「关闭」链接：右下角（与主页「自定义安装」同位）。
   ${MeowoScale} $4 150
   ${MeowoScale} $5 24
   IntOp $2 $MeowoW - $4
@@ -834,7 +843,7 @@ Function MeowoDonePage
   ; 同主页链接：不能用 NSD_CreateLink（首次获焦误触发点击——在这页等于装完瞬间关窗）。
   nsDialogs::CreateControl STATIC "${__NSD_Label_STYLE}|${SS_NOTIFY}" "${__NSD_Label_EXSTYLE}" $2 $3 $4 $6 "$(meowoFinish)"
   Pop $8
-  SetCtlColors $8 "${MEOWO_COL_SUB}" "${MEOWO_COL_BAND}"
+  SetCtlColors $8 "${MEOWO_COL_SUB}" "${MEOWO_COL_BASE}"
   SendMessage $8 ${WM_SETFONT} $MeowoLinkFont 1
   ${NSD_OnClick} $8 MeowoOnFinishClick
 
@@ -915,8 +924,8 @@ FunctionEnd
 ; MEOWO-BEGIN oneclick-langstrings
 ; 自绘页文案。项目语言固定为 SimpChinese + English（tauri.conf.json 的
 ; bundle.windows.nsis.languages）；增删语言时必须同步这里，否则编译期报未定义 LANG_*。
-LangString meowoTagline ${LANG_SIMPCHINESE} "AI 会话贴纸看板"
-LangString meowoTagline ${LANG_ENGLISH} "Your AI session sticker board"
+LangString meowoTagline ${LANG_SIMPCHINESE} "在一个地方运行你所有的 AI 编程会话"
+LangString meowoTagline ${LANG_ENGLISH} "Run all your AI coding sessions in one place"
 LangString meowoOneClick ${LANG_SIMPCHINESE} "立即安装"
 LangString meowoOneClick ${LANG_ENGLISH} "Install Now"
 LangString meowoCustomOpen ${LANG_SIMPCHINESE} "自定义安装 ▾"
@@ -929,8 +938,8 @@ LangString meowoBrowse ${LANG_SIMPCHINESE} "浏览…"
 LangString meowoBrowse ${LANG_ENGLISH} "Browse…"
 LangString meowoChatFeature ${LANG_SIMPCHINESE} "对话窗口功能（完整模式）"
 LangString meowoChatFeature ${LANG_ENGLISH} "Chat window (full mode)"
-LangString meowoChatHint ${LANG_SIMPCHINESE} "取消勾选则仅保留贴纸功能，之后可在设置中随时开启"
-LangString meowoChatHint ${LANG_ENGLISH} "Uncheck for sticker-only lite mode; enable it later in Settings anytime"
+LangString meowoChatHint ${LANG_SIMPCHINESE} "取消进入轻量模式：只留灵动岛，会话在外部终端进行；可在设置中开启"
+LangString meowoChatHint ${LANG_ENGLISH} "Off = lite mode: island + external terminal"
 LangString meowoDesktopLnk ${LANG_SIMPCHINESE} "创建桌面快捷方式"
 LangString meowoDesktopLnk ${LANG_ENGLISH} "Create desktop shortcut"
 LangString meowoNoteSame ${LANG_SIMPCHINESE} "检测到相同版本已安装，将原地重新安装"

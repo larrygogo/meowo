@@ -17,7 +17,6 @@ SUBTEXT_COLOR = "#a0a0a8"
 # 一键安装背景的分区底色。改这两个值必须同步 installer.nsi 里 SetCtlColors 的
 # 对应色值（MEOWO 标记块内有同名注释），否则控件文字会带色块。
 BG_BASE = "#17171a"
-BG_BAND = "#101012"
 BG_GLOW = "#19191c"  # 与底色只差一档：实拍中硬边圆对比稍大就显廉价
 
 
@@ -120,8 +119,9 @@ def make_oneclick_bg():
     文字（多语言的 tagline / 勾选项）一律不烙图，由安装器用系统字体渲染；
     这里只烙语言无关的品牌视觉（图标 + "Meowo" 字标）。
     分区（与 installer.nsi 的控件布局按同一比例对齐）：
-      0%..75%   主区   BG_BASE   —— 品牌区 + 安装按钮 + 进度条都在这里
-      75%..100% 底带   BG_BAND   —— 「自定义安装」展开区的控件落位
+      0%..75%   主区     —— 品牌区 + 安装按钮 + 进度条都在这里
+      75%..100% 展开区   —— 「自定义安装」展开区的控件落位
+    两区同为 BG_BASE（原来的更深底带收起时只承载一个链接，像没画完，2026-11-20 去掉）。
     """
     w, h = 1560, 960
     img = Image.new("RGB", (w, h), BG_BASE)
@@ -135,11 +135,6 @@ def make_oneclick_bg():
     glow = parse(BG_GLOW)
     draw.ellipse([-320, -420, 520, 340], fill=glow)
     draw.ellipse([w - 520, -420, w + 320, 340], fill=glow)
-
-    # 底带（展开区）+ 顶边一条极细分隔线。
-    band_top = int(h * 0.75)
-    draw.rectangle([0, band_top, w, h], fill=BG_BAND)
-    draw.rectangle([0, band_top - 2, w, band_top], fill=ICON_STROKE)
 
     # 品牌图标：直接合成应用的真实 icon（手绘双点母题被用户否掉——安装器上要的是
     # 和桌面/托盘一致的那个 logo）。256px 源图缩到 160，带 alpha 贴上。
