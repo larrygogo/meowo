@@ -1661,7 +1661,7 @@
           "needle": "shift+tab to accept edits",
           "note": "0.65.0 bundle 里是整句；0.68.0 里 0 处（按键提示改成运行时格式化）",
           "rule": "literal:shift+tab to accept edits",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:411"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:422"
         },
         {
           "legacy": false,
@@ -1673,7 +1673,7 @@
             "app.cycleApprovalMode"
           ],
           "rule": "literal:shift+tab to accept edits",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:411"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:422"
         },
         {
           "legacy": false,
@@ -1685,21 +1685,21 @@
             "app.cycleApprovalMode"
           ],
           "rule": "literal:shift+tab to accept edits",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:411"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:422"
         },
         {
           "legacy": false,
           "needle": "auto-accept edits",
           "note": "",
           "rule": "literal:auto-accept edits",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:415"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:426"
         },
         {
           "legacy": true,
           "needle": "yolo ctrl+y",
           "note": "0.65.0 bundle 里是整句；0.68.0 里 0 处（按键提示改成运行时格式化）",
           "rule": "literal:yolo ctrl+y",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:419"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:430"
         },
         {
           "legacy": false,
@@ -1711,7 +1711,7 @@
             "app.toggleYolo"
           ],
           "rule": "literal:yolo ctrl+y",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:419"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:430"
         },
         {
           "legacy": false,
@@ -1723,14 +1723,14 @@
             "app.toggleYolo"
           ],
           "rule": "literal:yolo ctrl+y",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:419"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:430"
         },
         {
           "legacy": true,
           "needle": "shift+tab to manual",
           "note": "0.65.0 bundle 里 `shift+tab to manual` 是整句；0.68.0 里 0 处（按键提示改成运行时格式化）",
           "rule": "literal:plan shift+tab to manual",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:423"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:434"
         },
         {
           "legacy": false,
@@ -1742,7 +1742,7 @@
             " to manual"
           ],
           "rule": "literal:plan shift+tab to manual",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:423"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:434"
         },
         {
           "legacy": false,
@@ -1754,7 +1754,7 @@
             "app.cycleApprovalMode"
           ],
           "rule": "literal:plan shift+tab to manual",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:423"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:434"
         },
         {
           "legacy": false,
@@ -1852,49 +1852,49 @@
           "needle": "Allow once",
           "note": "0.68.0 bundle ToolConfirmationMessage 2026-11-14；0.61 真机屏幕",
           "rule": "option:gemini:command-approval#0",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:509"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:520"
         },
         {
           "legacy": false,
           "needle": "Allow for this session",
           "note": "0.68.0 bundle 2026-11-14（另有 Allow tool for this session、Allow all server tools for this session）；0.61 真机屏幕",
           "rule": "option:gemini:command-approval#1",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:515"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:526"
         },
         {
           "legacy": false,
           "needle": "Allow for all future sessions",
           "note": "0.68.0 bundle 2026-11-14（另有 Allow this command for all future sessions、Allow for this file in all future sessions）；没有真机屏幕",
           "rule": "option:gemini:command-approval#2",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:521"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:532"
         },
         {
           "legacy": false,
           "needle": "No, suggest changes (esc)",
           "note": "0.68.0 bundle 2026-11-14：值是 cancel，与 Esc 相同；0.61 真机屏幕",
           "rule": "option:gemini:command-approval#3",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:527"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:538"
         },
         {
           "legacy": false,
           "needle": "allow execution of",
           "note": "0.65.0 bundle：`Allow execution of` 在工具确认框里；同规则还认 Apply this change? / Do you want to proceed? / 沙箱扩权 To run [Shell] …",
           "rule": "attention:gemini:command-approval",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:483"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:494"
         },
         {
           "legacy": false,
           "needle": "usage limit reached",
           "note": "0.65.0 bundle：`Usage limit reached`；高负载框 `We are currently experiencing high demand for ${model}.` 同规则",
           "rule": "attention:gemini:usage-limit",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:544"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:555"
         },
         {
           "legacy": false,
           "needle": "answer questions",
           "note": "0.65.0 bundle：ask_user 提问表单表头 `Answer Questions`",
           "rule": "attention:gemini:question",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:561"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:572"
         },
         {
           "legacy": false,
@@ -1922,7 +1922,7 @@
           "needle": "Request cancelled.",
           "note": "0.6x 会话日志实样（用户按 Esc 后的 info 记录，对话页据此画中断分隔条）；0.68.0 bundle 里 18 处",
           "rule": "record:Request cancelled.",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/transcript.rs:1076"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/transcript.rs:1113"
         }
       ],
       "id": "gemini",
