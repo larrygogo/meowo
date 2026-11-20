@@ -1117,6 +1117,8 @@ fn config_file(agent: &str, reporter: &str, browser: bool) -> Option<String> {
 /// 这份文件 agent 的桌面版和外部终端里的 CLI 也会读——服务器在那些地方拿不到 Meowo 的
 /// 会话令牌，工具列表是空的（见 meowo-reporter 的 mcp.rs），不会添乱。
 /// 只在自动接线开着时调（dev 构建默认不碰全局配置，同 hooks）。
+use meowo_agent::mcp_config::{sync_mcp_file, sync_permission_rule, sync_policy_file, McpFileSync};
+
 pub(crate) fn sync_mcp_files() {
     let settings = crate::settings::load_settings();
     let reporter = crate::setup::sibling_reporter();
@@ -1142,8 +1144,20 @@ pub(crate) fn sync_mcp_files() {
         let entry = reporter
             .as_deref()
             .map(|reporter| server_entry(reporter, settings.browser_agent, expand_env));
+        let mut unreadable = None;
         for home in homes.into_iter().filter(|dir| dir.is_dir()) {
-            sync_mcp_file(&home.join(rel), entry.clone());
+            let file = home.join(rel);
+            if sync_mcp_file(&file, entry.clone()) == McpFileSync::Unparsable {
+                // 用户的配置文件 Meowo 读不懂（gemini 的 settings.json 允许注释，serde_json 不认）：
+                // 不动它，记一行运行日志，并在 Agent 描述符里给前端一个标记（设置页提示
+                // 「没能接上发图工具」）。
+                eprintln!(
+                    "[images] {agent} 的配置文件解析失败，没有登记 Meowo 发图工具：{}",
+                    file.display()
+                );
+                unreadable.get_or_insert_with(|| file.to_string_lossy().into_owned());
+                continue;
+            }
             match approval {
                 Some(meowo_agent::McpApproval::PermissionRules { rel, prefix }) => {
                     sync_permission_rule(&home.join(rel), prefix, entry.is_some());
@@ -1154,154 +1168,8 @@ pub(crate) fn sync_mcp_files() {
                 None => {}
             }
         }
+        meowo_agent::mcp_config::set_unreadable(agent, unreadable);
     }
-}
-
-/// `entry` 为 None（没有 reporter）时摘掉 meowo 一项。
-fn sync_mcp_file(path: &std::path::Path, entry: Option<Value>) {
-    let path = path.to_path_buf();
-    let mut root: Value = match std::fs::read(&path) {
-        Ok(bytes) => match serde_json::from_slice(&bytes) {
-            Ok(value) => value,
-            // 用户手写坏了的文件不动，免得把他的配置冲掉。
-            Err(_) => return,
-        },
-        // 只有「确实不存在」才当空文件新建。拒绝访问、被占用、路径是目录之类的读取错误
-        // 若也当空文件，下面会写出只剩 meowo 一项的 mcpServers，把用户的配置冲掉。
-        Err(e) if entry.is_some() && e.kind() == std::io::ErrorKind::NotFound => json!({}),
-        Err(_) => return,
-    };
-    if !root.is_object() {
-        return;
-    }
-    let servers = root.as_object_mut().and_then(|obj| {
-        obj.entry("mcpServers").or_insert_with(|| json!({}));
-        obj.get_mut("mcpServers").and_then(Value::as_object_mut)
-    });
-    let Some(servers) = servers else { return };
-    let changed = match entry {
-        Some(entry) => {
-            if servers.get(SERVER_NAME) == Some(&entry) {
-                false
-            } else {
-                servers.insert(SERVER_NAME.into(), entry);
-                true
-            }
-        }
-        None => servers.remove(SERVER_NAME).is_some(),
-    };
-    if !changed {
-        return;
-    }
-    let Ok(body) = serde_json::to_string_pretty(&root) else {
-        return;
-    };
-    write_user_config(&path, &body);
-}
-
-/// 同 wiring 的「写前必备份、一律原子写」：这是用户自己的配置文件，覆盖前留一份原件；
-/// 备份失败就不写，宁可这次不接线也不冒丢配置的险。
-fn write_user_config(path: &std::path::Path, body: &str) {
-    if path.exists() && meowo_agent::wiring::backup_once(path).is_err() {
-        return;
-    }
-    let _ = meowo_agent::fsutil::write_atomic(path, body);
-}
-
-/// 本条规则的标记（`reason` 字段），增删时按它认自己的那条，不碰用户与 Lead 的规则。
-const RULE_REASON: &str = "由 Meowo 管理：send_image 只把图片显示给用户，免逐次审批";
-
-/// kimi `config.toml` 的 `[[permission.rules]]`：开着时确保有一条放行发图工具的规则，
-/// 关着时摘掉。文件不存在时不凭空新建（还没用过 kimi，审批模式由它自己定），
-/// 解析失败（用户手写坏了）不碰。
-fn sync_permission_rule(path: &std::path::Path, prefix: &str, enabled: bool) {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return;
-    };
-    let Ok(mut doc) = text.parse::<toml_edit::DocumentMut>() else {
-        return;
-    };
-    let pattern = format!("{prefix}{SERVER_NAME}__{SEND_IMAGE}");
-    let ours =
-        |t: &toml_edit::Table| t.get("reason").and_then(|v| v.as_str()) == Some(RULE_REASON);
-    let has = doc
-        .get("permission")
-        .and_then(|p| p.get("rules"))
-        .and_then(|r| r.as_array_of_tables())
-        .is_some_and(|rules| {
-            rules.iter().any(|t| {
-                ours(t) && t.get("pattern").and_then(|v| v.as_str()) == Some(pattern.as_str())
-            })
-        });
-    if enabled == has {
-        return;
-    }
-    if enabled {
-        if !doc.contains_key("permission") {
-            let mut table = toml_edit::Table::new();
-            table.set_implicit(true);
-            doc.insert("permission", toml_edit::Item::Table(table));
-        }
-        let Some(permission) = doc["permission"].as_table_mut() else {
-            return;
-        };
-        if !permission.contains_key("rules") {
-            permission.insert(
-                "rules",
-                toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new()),
-            );
-        }
-        let Some(rules) = permission
-            .get_mut("rules")
-            .and_then(|r| r.as_array_of_tables_mut())
-        else {
-            return;
-        };
-        // 旧版本留下的同标记规则（pattern 变了）先清掉。
-        rules.retain(|t| !ours(t));
-        let mut rule = toml_edit::Table::new();
-        rule.insert("decision", toml_edit::value("allow"));
-        rule.insert("scope", toml_edit::value("user"));
-        rule.insert("pattern", toml_edit::value(pattern));
-        rule.insert("reason", toml_edit::value(RULE_REASON));
-        rules.push(rule);
-    } else if let Some(rules) = doc
-        .get_mut("permission")
-        .and_then(|p| p.get_mut("rules"))
-        .and_then(|r| r.as_array_of_tables_mut())
-    {
-        rules.retain(|t| !ours(t));
-    }
-    write_user_config(path, &doc.to_string());
-}
-
-/// gemini 用户级策略文件（整个文件归 Meowo 管）：开着时写一条只放行 `meowo` 服务器
-/// `send_image` 工具的规则，关着时删掉文件。
-fn sync_policy_file(path: &std::path::Path, enabled: bool) {
-    if !enabled {
-        let _ = std::fs::remove_file(path);
-        return;
-    }
-    let body = policy_body();
-    if std::fs::read_to_string(path).is_ok_and(|old| old == body) {
-        return;
-    }
-    let _ = meowo_agent::fsutil::write_atomic(path, &body);
-}
-
-fn policy_body() -> String {
-    let mut doc = toml_edit::DocumentMut::new();
-    let mut rule = toml_edit::Table::new();
-    rule.insert("mcpName", toml_edit::value(SERVER_NAME));
-    rule.insert("toolName", toml_edit::value(SEND_IMAGE));
-    rule.insert("decision", toml_edit::value("allow"));
-    rule.insert("priority", toml_edit::value(900));
-    let mut rules = toml_edit::ArrayOfTables::new();
-    rules.push(rule);
-    doc.insert("rule", toml_edit::Item::ArrayOfTables(rules));
-    format!(
-        "# 由 Meowo 管理：Meowo 的发图工具 send_image 只把图片显示给用户，免逐次确认。\n{doc}"
-    )
 }
 
 /// 页面里的辅助对象。每次 eval 都带上，已有就跳过。
@@ -1607,7 +1475,7 @@ mod tests {
         assert_eq!(entry["env"]["MEOWO_PTY_TOKEN"], "${MEOWO_PTY_TOKEN:-}");
         assert_eq!(entry["args"], json!(["mcp"]));
         assert!(server_entry("r", true, false).get("env").is_none());
-        let body = policy_body();
+        let body = meowo_agent::mcp_config::policy_body();
         let doc: toml_edit::DocumentMut = body.parse().unwrap();
         let rule = &doc["rule"].as_array_of_tables().unwrap().get(0).unwrap();
         assert_eq!(rule["mcpName"].as_str(), Some("meowo"));

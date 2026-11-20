@@ -6,10 +6,22 @@ use std::time::{SystemTime, UNIX_EPOCH};
 mod attach;
 mod mcp;
 
+/// 卸载清理子命令名（nsis-hooks.nsh 按这个名字调，两边有测试对齐）。
+const UNINSTALL_CLEANUP: &str = "uninstall-cleanup";
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().is_some_and(|arg| arg == "lead-mcp") {
         meowo_reporter::lead_mcp::run();
+        return;
+    }
+    // 卸载器（nsis-hooks.nsh 的 PREUNINSTALL）调：撤掉 Meowo 写进各家 CLI 配置文件的 MCP 登记与
+    // 发图免审批规则（meowo_agent::mcp_config）。只动 Meowo 自己的项；做了什么逐行打到 stdout，
+    // 进安装日志。绝不读 stdin。
+    if args.first().is_some_and(|arg| arg == UNINSTALL_CLEANUP) {
+        for line in meowo_agent::mcp_config::uninstall_cleanup() {
+            println!("{line}");
+        }
         return;
     }
     // agent 拉起的 MCP 服务器（面板浏览器工具）。长驻读 stdin，必须在 run() 一次性读完
@@ -382,6 +394,17 @@ fn pretooluse_outcome(
 mod tests {
     use super::{approval_outcome, pretooluse_outcome};
     use meowo_protocol::broker::ApprovalDecision;
+
+    /// 卸载器确实在删文件之前调了这个子命令，且升级（/UPDATE 重装）时不调：升级后 Meowo 启动会
+    /// 重新登记，中间撤掉只会让正在用的 CLI 白丢一次配置。名字两边对齐。
+    #[test]
+    fn uninstaller_calls_cleanup_subcommand_except_on_update() {
+        let nsh = include_str!("../../../nsis-hooks.nsh");
+        let start = nsh.find("!macro NSIS_HOOK_PREUNINSTALL").expect("卸载器缺 PREUNINSTALL 钩子");
+        let body = &nsh[start..start + nsh[start..].find("!macroend").unwrap()];
+        assert!(body.contains(&format!("meowo-reporter.exe\" {}", super::UNINSTALL_CLEANUP)), "{body}");
+        assert!(body.contains("$UpdateMode <> 1"), "{body}");
+    }
 
     /// Allow/Deny = 决策落地：输出 hook 决策并报告 settled；实际清理由 app 按 broker 所有权执行。
     #[test]

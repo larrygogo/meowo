@@ -41,6 +41,7 @@ pub mod images;
 pub mod install;
 pub mod launch;
 pub mod launch_options;
+pub mod mcp_config;
 pub mod lead_install;
 pub mod plugins;
 pub mod ports;
