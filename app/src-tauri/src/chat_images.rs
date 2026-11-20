@@ -49,6 +49,10 @@ impl ureq::Resolver for PublicOnly {
 
 /// 公网单播地址才算数：回环、私网、链路本地、运营商级 NAT（100.64/10，含 Tailscale）、
 /// 保留与文档网段、组播一律不算。
+///
+/// 198.18.0.0/15（基准测试保留段）**算放行**：Clash / Mihomo / sing-box 的 TUN 模式用 fake-ip
+/// 做 DNS，所有域名都解析到这一段，真实连接由代理内核接管（2026-11-21 本机实测 example.com →
+/// 198.18.29.110）。拦它等于开了 TUN 的用户一张网络图都下不了；这一段不是谁的内网，没有 SSRF 面。
 fn is_public(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
@@ -62,7 +66,6 @@ fn is_public(ip: IpAddr) -> bool {
                 || v4.is_multicast()
                 || a == 0
                 || (a == 100 && (64..128).contains(&b))
-                || (a == 198 && (b == 18 || b == 19))
                 || a >= 240)
         }
         IpAddr::V6(v6) => {
@@ -100,56 +103,133 @@ fn download_failed(message: impl Into<String>) -> ImageError {
 
 /// 下载一张网络图片：只认 http(s)、只连公网地址、不带任何 cookie 或凭据、连接 10 秒 / 整体
 /// 30 秒超时、正文不超 [`IMAGE_MAX_BYTES`]、响应类型得是图片，最后仍按文件头判定。
-pub(crate) fn download(url: &str) -> Result<Vec<u8>, ImageError> {
-    fetch(url, PublicOnly, true)
+///
+/// `proxy` 是 Meowo 设置里解析出的代理串（`ports::resolve_proxy`，与用量查询、装 CLI 同一套：
+/// 某 agent 单独设置 → 全局 → 系统环境变量；None = 直连）。
+///
+/// 内网拦截在两种路线下的做法不同（取舍）：
+/// - 直连：挂在 DNS 解析器上（[`PublicOnly`]），真正要连的地址一个个查，DNS rebinding 也拦得住。
+/// - 走代理：TCP 连的是代理（多半就在 127.0.0.1），解析器那层拦不了；目标主机名由代理解析，
+///   Meowo 看不到它最终连哪。于是每一跳（含重定向）在发请求前按目标主机名在本机解析一次：
+///   解析出任何非公网地址就拒。本机解析不了的名字（国内 DNS 污染、只有代理能解析的域名，
+///   这正是用户开代理的原因）放行交给代理，但单段名（`intranet`）、`localhost` 与
+///   `.local` / `.lan` / `.internal` / `.home.arpa` / `.corp` 这类内网后缀一律拒。
+///   残余风险：代理侧解析结果与本机不同（split-horizon DNS）时拦不住——代理本身能通内网
+///   是用户自己的网络配置，Meowo 不越过代理再做一层。
+pub(crate) fn download(url: &str, proxy: Option<&str>) -> Result<Vec<u8>, ImageError> {
+    match proxy {
+        Some(proxy) => {
+            let agent = agent_builder()
+                .proxy(
+                    ureq::Proxy::new(crate::proxy::ureq_compatible_url(proxy).as_ref())
+                        .map_err(|e| download_failed(format!("代理地址无效：{e}")))?,
+                )
+                .build();
+            fetch_with(url, &agent, &|target| check_target(target, true))
+        }
+        None => {
+            let agent = agent_builder().resolver(PublicOnly).build();
+            fetch_with(url, &agent, &|target| check_target(target, false))
+        }
+    }
 }
 
-/// 下载本体。解析器与「网址里写死的 IP 先查一遍」作为参数，只为测试能换成放行 127.0.0.1
-/// 的解析器、走同一份响应处理代码。
-fn fetch(
-    url: &str,
-    resolver: impl ureq::Resolver + 'static,
-    check_literal_ip: bool,
-) -> Result<Vec<u8>, ImageError> {
-    let parsed = url::Url::parse(url).map_err(|_| download_failed(format!("网址无效：{url}")))?;
-    if !matches!(parsed.scheme(), "http" | "https") {
+/// 每次新建 agent：没有 cookie 存储、不读系统代理环境变量（代理只认 Meowo 设置解析出来的那个），
+/// 不自动跟随重定向（每一跳都要过 [`check_target`]）。
+fn agent_builder() -> ureq::AgentBuilder {
+    ureq::AgentBuilder::new()
+        .timeout_connect(CONNECT_TIMEOUT)
+        .timeout(DOWNLOAD_TIMEOUT)
+        .redirects(0)
+        .user_agent(concat!("Meowo/", env!("CARGO_PKG_VERSION")))
+}
+
+/// 一跳请求前的检查：方案、网址里写死的 IP；走代理时再按主机名在本机解析（见 [`download`]）。
+fn check_target(target: &url::Url, proxied: bool) -> Result<(), ImageError> {
+    if !matches!(target.scheme(), "http" | "https") {
         return Err(ImageError::new(
             ImageErrorCode::Forbidden,
             "只支持 http(s) 网址",
         ));
     }
-    // 网址里直接写了 IP：不等解析器，先拦。
-    let literal = match parsed.host() {
-        Some(url::Host::Ipv4(ip)) => Some(IpAddr::V4(ip)),
-        Some(url::Host::Ipv6(ip)) => Some(IpAddr::V6(ip)),
-        _ => None,
-    };
-    if check_literal_ip && literal.is_some_and(|ip| !is_public(ip)) {
+    match target.host() {
+        Some(url::Host::Ipv4(ip)) if !is_public(IpAddr::V4(ip)) => Err(private_address()),
+        Some(url::Host::Ipv6(ip)) if !is_public(IpAddr::V6(ip)) => Err(private_address()),
+        Some(url::Host::Domain(name)) if proxied => check_name_for_proxy(name, target.port_or_known_default().unwrap_or(80)),
+        None => Err(download_failed(format!("网址没有主机名：{target}"))),
+        _ => Ok(()),
+    }
+}
+
+/// 走代理时的主机名检查（见 [`download`] 的取舍说明）。
+fn check_name_for_proxy(name: &str, port: u16) -> Result<(), ImageError> {
+    let lower = name.trim_end_matches('.').to_ascii_lowercase();
+    const LOCAL_SUFFIXES: [&str; 7] = [
+        ".localhost",
+        ".local",
+        ".lan",
+        ".internal",
+        ".home.arpa",
+        ".corp",
+        ".intranet",
+    ];
+    if lower == "localhost"
+        || !lower.contains('.')
+        || LOCAL_SUFFIXES.iter().any(|suffix| lower.ends_with(suffix))
+    {
         return Err(private_address());
     }
-    // 每次新建 agent：没有 cookie 存储、不读系统代理环境变量，请求里只有下面这几个头。
-    let agent = ureq::AgentBuilder::new()
-        .resolver(resolver)
-        .timeout_connect(CONNECT_TIMEOUT)
-        .timeout(DOWNLOAD_TIMEOUT)
-        .redirects(MAX_REDIRECTS)
-        .user_agent(concat!("Meowo/", env!("CARGO_PKG_VERSION")))
-        .build();
-    let response = match agent
-        .get(parsed.as_str())
-        .set("Accept", "image/*")
-        .call()
-    {
-        Ok(response) => response,
-        Err(ureq::Error::Status(code, _)) => {
-            return Err(download_failed(format!("网址返回 HTTP {code}")));
-        }
-        Err(ureq::Error::Transport(transport)) => {
-            if transport.to_string().contains(PRIVATE_ADDRESS_MARKER) {
-                return Err(private_address());
+    match (lower.as_str(), port).to_socket_addrs() {
+        Ok(addrs) => {
+            let addrs: Vec<SocketAddr> = addrs.collect();
+            if addrs.iter().any(|addr| !is_public(addr.ip())) {
+                Err(private_address())
+            } else {
+                Ok(())
             }
-            return Err(download_failed(format!("下载失败：{transport}")));
         }
+        // 本机解析不了：交给代理。
+        Err(_) => Ok(()),
+    }
+}
+
+/// 下载本体：手动跟随重定向（每跳先过 `check`），再按状态码、类型、大小、文件头收图。
+/// agent 与检查作为参数，测试能换成放行 127.0.0.1 的解析器、走同一份代码。
+fn fetch_with(
+    url: &str,
+    agent: &ureq::Agent,
+    check: &dyn Fn(&url::Url) -> Result<(), ImageError>,
+) -> Result<Vec<u8>, ImageError> {
+    let mut target =
+        url::Url::parse(url).map_err(|_| download_failed(format!("网址无效：{url}")))?;
+    let mut hops = 0;
+    let response = loop {
+        check(&target)?;
+        let response = match agent.get(target.as_str()).set("Accept", "image/*").call() {
+            Ok(response) => response,
+            Err(ureq::Error::Status(code, _)) => {
+                return Err(download_failed(format!("网址返回 HTTP {code}")));
+            }
+            Err(ureq::Error::Transport(transport)) => {
+                if transport.to_string().contains(PRIVATE_ADDRESS_MARKER) {
+                    return Err(private_address());
+                }
+                return Err(download_failed(format!("下载失败：{transport}")));
+            }
+        };
+        if !(300..400).contains(&response.status()) {
+            break response;
+        }
+        hops += 1;
+        if hops > MAX_REDIRECTS {
+            return Err(download_failed("重定向次数太多"));
+        }
+        let location = response
+            .header("Location")
+            .ok_or_else(|| download_failed(format!("网址返回 HTTP {} 但没有跳转地址", response.status())))?;
+        target = target
+            .join(location)
+            .map_err(|_| download_failed(format!("跳转地址无效：{location}")))?;
     };
     let content_type = response.content_type().to_ascii_lowercase();
     // 有的图床回 application/octet-stream 或不给类型，放行交给文件头判定；明确是别的类型
@@ -202,9 +282,12 @@ fn images_root() -> Result<PathBuf, ImageError> {
 /// broker 收到 `send_image` 后调这里（pty.rs handle_browser）。`source` 是本地绝对路径
 /// （相对路径已由 meowo-reporter 按 agent 的工作目录补全）或 http(s) 网址。
 /// 成功回执给模型的只有一句话加引用行，不含图片数据——图片是给用户看的，回灌给模型白花 token。
-pub(crate) fn send_image(args: &Value) -> Result<Value, String> {
+/// `agent` 是发起调用的会话所属 agent：网址下载按它的代理设置走（各 agent 单独设置 → 全局 → 系统），
+/// 与这个 agent 自己联网时同一条路；查不到会话时按全局规则。
+pub(crate) fn send_image(args: &Value, agent: Option<&str>) -> Result<Value, String> {
     let root = images_root().map_err(|e| e.receipt())?;
-    send_into(&root, args)
+    let proxy = crate::ports::resolve_proxy(agent);
+    send_into(&root, args, proxy.as_deref())
         .map(|path| json!({ "text": send_receipt(&path) }))
         .map_err(|e| e.receipt())
 }
@@ -216,7 +299,7 @@ fn send_receipt(path: &Path) -> String {
     )
 }
 
-fn send_into(root: &Path, args: &Value) -> Result<PathBuf, ImageError> {
+fn send_into(root: &Path, args: &Value, proxy: Option<&str>) -> Result<PathBuf, ImageError> {
     let source = args
         .get("source")
         .and_then(Value::as_str)
@@ -229,7 +312,7 @@ fn send_into(root: &Path, args: &Value) -> Result<PathBuf, ImageError> {
             )
         })?;
     if is_http_url(source) {
-        let bytes = download(source)?;
+        let bytes = download(source, proxy)?;
         return images::store_bytes_in(root, ImageKind::Sent, &bytes);
     }
     let path = match url_scheme(source) {
@@ -268,8 +351,16 @@ pub(crate) async fn resolve_chat_image(
     cwd: Option<String>,
 ) -> Result<ResolvedChatImage, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        // 页面渲染时 Meowo 自己发起的下载，不属于哪个 agent：按全局代理规则（同自更新）。
+        let proxy = crate::ports::resolve_proxy(None);
         ResolvedChatImage::from(images_root().and_then(|root| {
-            resolve_into(&root, &images::readable_roots(), &src, cwd.as_deref())
+            resolve_into(
+                &root,
+                &images::readable_roots(),
+                &src,
+                cwd.as_deref(),
+                proxy.as_deref(),
+            )
         }))
     })
     .await
@@ -281,13 +372,14 @@ fn resolve_into(
     readable: &[PathBuf],
     src: &str,
     cwd: Option<&str>,
+    proxy: Option<&str>,
 ) -> Result<PathBuf, ImageError> {
     let src = src.trim();
     if is_http_url(src) {
         if let Some(hit) = images::cached_keyed_in(root, ImageKind::Web, src) {
             return Ok(hit);
         }
-        let bytes = download(src)?;
+        let bytes = download(src, proxy)?;
         return images::store_keyed_in(root, ImageKind::Web, src, &bytes);
     }
     let path = match url_scheme(src) {
@@ -438,7 +530,7 @@ mod tests {
         let src = dir.join("chart.png");
         std::fs::write(&src, PNG_1X1).unwrap();
         let root = dir.join("images");
-        let path = send_into(&root, &json!({ "source": src.to_string_lossy(), "caption": "图表" }))
+        let path = send_into(&root, &json!({ "source": src.to_string_lossy(), "caption": "图表" }), None)
             .unwrap();
         assert!(path.starts_with(root.join("sent")));
         let receipt = send_receipt(&path);
@@ -456,7 +548,7 @@ mod tests {
     fn send_reports_each_failure_with_its_code() {
         let dir = temp("send-fail");
         let root = dir.join("images");
-        let code = |args: Value| send_into(&root, &args).unwrap_err().code;
+        let code = |args: Value| send_into(&root, &args, None).unwrap_err().code;
         assert_eq!(code(json!({})), ImageErrorCode::NotFound);
         assert_eq!(
             code(json!({ "source": dir.join("missing.png").to_string_lossy() })),
@@ -477,7 +569,7 @@ mod tests {
         assert_eq!(code(json!({ "source": "http://[::1]/a.png" })), ImageErrorCode::Forbidden);
         // 域名解析到本机（localhost）同样在解析器那层拦下。
         assert_eq!(code(json!({ "source": "http://localhost:9/a.png" })), ImageErrorCode::Forbidden);
-        let receipt = send_into(&root, &json!({ "source": "relative.png" })).unwrap_err().receipt();
+        let receipt = send_into(&root, &json!({ "source": "relative.png" }), None).unwrap_err().receipt();
         assert!(receipt.starts_with("[Image error: not_found] "), "{receipt}");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -487,6 +579,8 @@ mod tests {
         let public = |s: &str| is_public(s.parse().unwrap());
         assert!(public("93.184.216.34"));
         assert!(public("2606:2800:220:1:248:1893:25c8:1946"));
+        // TUN 代理的 fake-ip 段放行（否则开了 Clash TUN 的用户下不了任何网络图）。
+        assert!(public("198.18.29.110"));
         for private in [
             "127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.169.254", "100.100.1.1",
             "0.0.0.0", "255.255.255.255", "224.0.0.1", "::1", "fe80::1", "fd00::1", "::ffff:127.0.0.1",
@@ -495,15 +589,100 @@ mod tests {
         }
     }
 
-    /// 下载的响应处理：测试里换成放行 127.0.0.1 的解析器，走的仍是 `fetch` 同一份代码。
+    /// 下载的响应处理：测试里换成放行 127.0.0.1 的 agent 与只查方案的检查，走的仍是
+    /// `fetch_with` 同一份代码。
     fn download_with(url: &str) -> Result<Vec<u8>, ImageError> {
-        struct Loopback;
-        impl ureq::Resolver for Loopback {
-            fn resolve(&self, netloc: &str) -> std::io::Result<Vec<SocketAddr>> {
-                netloc.to_socket_addrs().map(|a| a.collect())
+        let agent = agent_builder().timeout(Duration::from_secs(5)).build();
+        fetch_with(url, &agent, &|target| {
+            if matches!(target.scheme(), "http" | "https") {
+                Ok(())
+            } else {
+                Err(ImageError::new(ImageErrorCode::Forbidden, "scheme"))
             }
+        })
+    }
+
+    /// 假 HTTP 代理：记下收到的每个请求行，按次回固定响应。返回（代理地址, 请求行记录）。
+    fn fake_proxy(responses: Vec<Vec<u8>>) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for response in responses {
+                let Ok((mut stream, _)) = listener.accept() else { return };
+                use std::io::Write;
+                let mut buf = [0u8; 4096];
+                let n = std::io::Read::read(&mut stream, &mut buf).unwrap_or(0);
+                let head = String::from_utf8_lossy(&buf[..n]);
+                log.lock().unwrap().push(head.lines().next().unwrap_or("").to_string());
+                let _ = stream.write_all(&response);
+            }
+        });
+        (format!("http://{addr}"), seen)
+    }
+
+    /// 走 Meowo 设置里的代理：请求确实经代理发出（代理收到绝对网址形式的请求行），图照常收下。
+    /// 目标用 `.invalid` 域名：本机解析不了，按取舍放行交给代理（离线也能跑）。
+    #[test]
+    fn download_goes_through_configured_proxy() {
+        let (proxy, seen) = fake_proxy(vec![http("200 OK", "image/png", PNG_1X1)]);
+        let bytes = download("http://img.meowo-probe.invalid/a.png", Some(&proxy)).unwrap();
+        assert_eq!(bytes, PNG_1X1);
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            ["GET http://img.meowo-probe.invalid/a.png HTTP/1.1".to_string()]
+        );
+    }
+
+    /// 走代理时内网拦截仍成立：写死的内网 IP、localhost、单段名、内网后缀都不发给代理；
+    /// 代理回来的重定向指向内网时，第二跳也拦下。
+    #[test]
+    fn proxy_route_still_blocks_private_targets_and_redirects() {
+        let (proxy, seen) = fake_proxy(vec![
+            b"HTTP/1.1 302 Found\r\nLocation: http://10.0.0.1/secret.png\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
+        ]);
+        for url in [
+            "http://127.0.0.1/a.png",
+            "http://192.168.1.1/a.png",
+            "http://[::1]/a.png",
+            "http://localhost/a.png",
+            "http://intranet/a.png",
+            "http://nas.local/a.png",
+            "http://wiki.corp/a.png",
+        ] {
+            assert_eq!(download(url, Some(&proxy)).unwrap_err().code, ImageErrorCode::Forbidden, "{url}");
         }
-        fetch(url, Loopback, false)
+        assert!(seen.lock().unwrap().is_empty(), "内网目标不该发给代理");
+        let redirected = download("http://cdn.meowo-probe.invalid/a.png", Some(&proxy)).unwrap_err();
+        assert_eq!(redirected.code, ImageErrorCode::Forbidden);
+        assert_eq!(seen.lock().unwrap().len(), 1, "只发出第一跳");
+    }
+
+    /// 直连时重定向改为手动跟随：跳到内网同样拦下（此前交给 ureq 自动跟随，靠解析器兜底）。
+    #[test]
+    fn direct_redirect_to_private_is_blocked_per_hop() {
+        let agent = agent_builder().timeout(Duration::from_secs(5)).build();
+        let first = serve_once(
+            b"HTTP/1.1 302 Found\r\nLocation: http://192.168.0.1/x.png\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
+        );
+        // 第一跳是测试服务器（127.0.0.1），只查方案；第二跳起按正式规则查。
+        let hops = std::cell::Cell::new(0);
+        let err = fetch_with(&first, &agent, &|target| {
+            hops.set(hops.get() + 1);
+            if hops.get() == 1 { Ok(()) } else { check_target(target, false) }
+        })
+        .unwrap_err();
+        assert_eq!(err.code, ImageErrorCode::Forbidden);
+        assert_eq!(hops.get(), 2);
+    }
+
+    #[test]
+    fn invalid_proxy_url_is_a_download_failure() {
+        assert_eq!(
+            download("http://img.meowo-probe.invalid/a.png", Some("::not a proxy::")).unwrap_err().code,
+            ImageErrorCode::DownloadFailed
+        );
     }
 
     fn http(status: &str, ct: &str, body: &[u8]) -> Vec<u8> {
@@ -530,12 +709,7 @@ mod tests {
         assert_eq!(liar.code, ImageErrorCode::NotImage);
         // Content-Length 超过上限：不读正文。
         let mut big = format!(
-            "HTTP/1.1 200 OK
-Content-Type: image/png
-Content-Length: {}
-Connection: close
-
-",
+            "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             IMAGE_MAX_BYTES + 1
         )
         .into_bytes();
@@ -557,26 +731,26 @@ Connection: close
         std::fs::write(project.join("docs").join("my shot.png"), PNG_1X1).unwrap();
         let cwd = project.to_string_lossy().into_owned();
         // 相对会话目录 + %20 编码。
-        let copied = resolve_into(&root, &readable, "docs/my%20shot.png", Some(&cwd)).unwrap();
+        let copied = resolve_into(&root, &readable, "docs/my%20shot.png", Some(&cwd), None).unwrap();
         assert!(copied.starts_with(root.join("local")));
         // 已在图片目录里的：原样返回，不再复制。
-        let again = resolve_into(&root, &readable, &copied.to_string_lossy(), None).unwrap();
+        let again = resolve_into(&root, &readable, &copied.to_string_lossy(), None, None).unwrap();
         assert_eq!(again, copied);
         // 相对路径但没有会话目录、文件不存在、奇怪方案。
         assert_eq!(
-            resolve_into(&root, &readable, "docs/a.png", None).unwrap_err().code,
+            resolve_into(&root, &readable, "docs/a.png", None, None).unwrap_err().code,
             ImageErrorCode::NotFound
         );
         assert_eq!(
-            resolve_into(&root, &readable, "missing.png", Some(&cwd)).unwrap_err().code,
+            resolve_into(&root, &readable, "missing.png", Some(&cwd), None).unwrap_err().code,
             ImageErrorCode::NotFound
         );
         assert_eq!(
-            resolve_into(&root, &readable, "javascript:alert(1)", Some(&cwd)).unwrap_err().code,
+            resolve_into(&root, &readable, "javascript:alert(1)", Some(&cwd), None).unwrap_err().code,
             ImageErrorCode::Forbidden
         );
         assert_eq!(
-            resolve_into(&root, &readable, "http://10.0.0.1/x.png", None).unwrap_err().code,
+            resolve_into(&root, &readable, "http://10.0.0.1/x.png", None, None).unwrap_err().code,
             ImageErrorCode::Forbidden
         );
         let _ = std::fs::remove_dir_all(&dir);

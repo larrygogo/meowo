@@ -3695,7 +3695,13 @@ impl PtyBroker {
         stream.set_read_timeout(None).ok();
         // 发图不是浏览器操作：不受「允许 agent 操作面板浏览器」开关约束，也不碰面板。
         let outcome = if tool == "send_image" {
-            crate::chat_images::send_image(args)
+            // 网址下载按这个会话所属 agent 的代理设置走（与它自己联网同一条路）。
+            let provider = self
+                .lookup(session_id)
+                .ok()
+                .flatten()
+                .map(|managed| managed.probe.provider.clone());
+            crate::chat_images::send_image(args, provider.as_deref())
         } else {
             crate::browser_agent::handle(session_id, tool, args)
         };
