@@ -1516,9 +1516,7 @@ impl ExitJoin {
                     });
                 }
                 // MCP 等非命令工具：等旁路结果里的图片（只在回执自己没有引用行时补）。
-                ChatItem::ToolUse { id, timestamp, name, kind, .. }
-                    if matches!(kind, ToolKind::Image | ToolKind::Other) =>
-                {
+                ChatItem::ToolUse { id, timestamp, name, kind: ToolKind::Image | ToolKind::Other, .. } => {
                     self.open.retain(|run| line.start - run.at <= Self::SPAN);
                     self.open.push(OpenRun {
                         id: id.clone(),
