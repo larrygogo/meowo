@@ -985,6 +985,84 @@ fn receipt_replay_does_not_clear_a_later_request() {
     let _ = std::fs::remove_dir(dir.parent().unwrap());
 }
 
+/// 2026-11-20 实拍：AskUserQuestion 的 hook 挂了 10 小时，手机却只剩「没认出选项」的兜底卡。
+/// broker 一直持有请求，可前端一次「收卡」（推测性信号）就让后端把题面表删了，轮询从此
+/// 拿不到题，终端里又没有表单——两边都答不了。持有中的提问必须拒绝收卡。
+#[test]
+fn dismiss_keeps_a_question_the_broker_still_holds() {
+    use meowo_protocol::runtime_request::RuntimeRequestStatus;
+    let broker = PtyBroker::default();
+    let mut question = approval_request(41, "AskUserQuestion");
+    question.request_id = "held-question".into();
+    question.pre_tool_use = true;
+    question.input = r#"{"questions":[{"question":"先做哪个？","options":[{"label":"A"},{"label":"B"}]}]}"#.into();
+    broker.attach.interactive_questions.lock().unwrap().insert(
+        41,
+        (question.clone(), crate::now_ms()),
+    );
+    let (tx, _rx) = mpsc::channel();
+    broker.attach.approvals.lock().unwrap().insert(
+        question.request_id.clone(),
+        PendingApproval { request: question.clone(), response: tx },
+    );
+
+    assert!(!broker.dismiss_settled_interactive_question(41), "持有中不得撤下");
+    assert_eq!(broker.interactive_question(41).as_ref(), Some(&question));
+    assert!(broker.runtime_question(41).is_some_and(|request| request.status == RuntimeRequestStatus::Pending));
+
+    // hook 结束（作答 / 交还终端 / 取消）后 approvals 出表，收卡才真正撤下。
+    broker.attach.approvals.lock().unwrap().remove(&question.request_id);
+    assert!(broker.dismiss_settled_interactive_question(41));
+    assert_eq!(broker.interactive_question(41), None);
+    // 已经撤下后再收卡无害，返回 false。
+    assert!(!broker.dismiss_settled_interactive_question(41));
+}
+
+/// 独立审查复现（2026-11-20）：手机侧栏徽标每 3 秒扫一次 interactive_question_session_ids，
+/// 它自带的 TTL 不豁免挂起中的提问——提问挂过 150s 后手机一打开就把题面删了，正是实拍里
+/// 「该提问已在别处处理或已结束」+ 兜底卡的来源。扫描后题面必须还在、徽标照亮。
+#[test]
+fn remote_badge_sweep_keeps_a_held_question_past_ttl() {
+    use meowo_protocol::runtime_request::RuntimeRequestStatus;
+    let broker = PtyBroker::default();
+    let mut held = approval_request(42, "AskUserQuestion");
+    held.request_id = "held-long".into();
+    held.pre_tool_use = true;
+    held.input = r#"{"questions":[{"question":"挂了很久的提问？","options":[{"label":"是"}]}]}"#.into();
+    let mut stale = approval_request(43, "AskUserQuestion");
+    stale.request_id = "stale-display".into();
+    let long_ago = crate::now_ms() - INTERACTIVE_QUESTION_TTL_MS * 10;
+    {
+        let mut questions = broker.attach.interactive_questions.lock().unwrap();
+        questions.insert(42, (held.clone(), long_ago));
+        questions.insert(43, (stale, long_ago));
+    }
+    let (tx, _rx) = mpsc::channel();
+    broker.attach.approvals.lock().unwrap().insert(
+        held.request_id.clone(),
+        PendingApproval { request: held.clone(), response: tx },
+    );
+
+    let ids = broker.interactive_question_session_ids();
+    assert!(ids.contains(&42), "挂起中的提问要点亮徽标");
+    assert!(!ids.contains(&43), "没人持有的过期题面照旧清掉");
+    assert_eq!(broker.interactive_question(42).as_ref(), Some(&held));
+    assert!(broker.runtime_question(42).is_some_and(|request| request.status == RuntimeRequestStatus::Pending));
+}
+
+/// 桌面与手机的「收卡」都走 dismiss_interactive_question 命令；命令要用持有感知的版本，
+/// 改回无条件的 clear_interactive_question 就又能删掉挂起中的题面（独立审查指出命令层无守护）。
+#[test]
+fn dismiss_command_uses_the_hold_aware_path() {
+    let source = include_str!("../managed_terminal.rs");
+    let start = source
+        .find("fn dismiss_interactive_question(")
+        .expect("命令还在");
+    let body = &source[start..start + source[start..].find("\n}").unwrap()];
+    assert!(body.contains("dismiss_settled_interactive_question(session_id)"));
+    assert!(!body.contains("clear_interactive_question"));
+}
+
 #[test]
 fn runtime_requests_keep_simultaneous_approval_and_question_independent() {
     let broker = PtyBroker::default();

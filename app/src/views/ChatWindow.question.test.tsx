@@ -125,6 +125,68 @@ describe("ChatWindow", () => {
     }
   });
 
+  /** 2026-11-20 实拍：hook 挂着等作答 10 小时，手机却只剩「没认出选项」的兜底卡。broker 还持有
+   *  的提问（answerable），终端里没有表单，transcript 变长、回合离开 running 都不代表它了结；
+   *  收卡（并让后端撤题）只能等后端终态。展示卡（answerable=false）仍按推测收卡。 */
+  for (const answerable of [true, false]) {
+    it(`transcript 变长、回合离开 running 时${answerable ? "作答卡留着" : "展示卡照旧收掉"}`, async () => {
+      window.history.replaceState({}, "", "/?sessionId=35");
+      const question = {
+        sessionId: 35, requestId: "request-held", provider: "claude", toolName: "AskUserQuestion",
+        description: null, answerable,
+        input: JSON.stringify({ questions: [
+          { header: "先后", question: "先做哪一个？", multiSelect: false, options: [{ label: "前端" }, { label: "后端" }] },
+        ] }),
+        permissionSuggestions: [],
+      };
+      let status = "running";
+      let tail: Array<{ type: string; id: string; timestamp: null; text: string }> = [];
+      let firstRead = true;
+      invoke.mockImplementation((command: string) => {
+        if (command === "get_chat_history") {
+          const base = {
+            sessionId: 35, title: "挂起提问会话", status, provider: "claude", cwd: "C:/repo",
+            supported: true, offset: 10, reset: false, pendingReview: "question", connected: true, ptyManaged: true,
+          };
+          if (firstRead) {
+            firstRead = false;
+            return Promise.resolve({ ...base, items: [{ type: "user_text", id: "u1", timestamp: null, text: "开始" }] });
+          }
+          const items = tail;
+          tail = [];
+          return Promise.resolve({ ...base, items });
+        }
+        if (command === "pending_interaction") return Promise.resolve({ approval: null, question });
+        if (command === "managed_terminal_binding") return Promise.resolve(null);
+        if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 35, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+        return Promise.resolve();
+      });
+      render(<ChatWindow />);
+      await screen.findByText("开始");
+      act(() => { eventListeners.get("interactive-question")?.({ payload: question }); });
+      expect(await screen.findByText(/先做哪一个/)).toBeTruthy();
+      const realNow = Date.now();
+      const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => realNow + 5_000);
+      try {
+        // 后台任务之类往 transcript 尾部追加了内容，随后回合状态也变了。
+        tail = [{ type: "user_text", id: "u2", timestamp: null, text: "后台任务的输出" }];
+        await screen.findByText("后台任务的输出", { selector: ".chat-text" });
+        status = "waiting";
+        if (answerable) {
+          // 多等几轮轮询：卡始终在，也没让后端撤题。
+          await new Promise((resolve) => setTimeout(resolve, 1_500));
+          expect(screen.getByText(/先做哪一个/)).toBeTruthy();
+          expect(screen.getByRole("button", { name: "提交选择" })).toBeTruthy();
+          expect(invoke).not.toHaveBeenCalledWith("dismiss_interactive_question", expect.anything());
+        } else {
+          await waitFor(() => expect(invoke).toHaveBeenCalledWith("dismiss_interactive_question", { sessionId: 35 }));
+        }
+      } finally {
+        nowSpy.mockRestore();
+      }
+    });
+  }
+
   /** 题面卡的「仅收起」留一条可再展开的折叠条（7C-2 尾）；但挂起在别处了结后，折叠条
    *  必须自己撤掉——否则它永远挂着，点开是一张已死的卡，去 resolve 一个不存在的请求
    *  （复核实测）。存活以轮询 pending_interaction 回的 question 为准。 */
