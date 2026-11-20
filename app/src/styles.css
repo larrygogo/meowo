@@ -3270,6 +3270,15 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 }
 .agent-path-gap-btn:hover:not(:disabled, [aria-disabled="true"]) { color: var(--cc-text); }
 .agent-path-gap-btn:is(:disabled, [aria-disabled="true"]) { cursor: default; opacity: 0.6; }
+/* 发图工具没接上（后端 mcp_config_unreadable）：一句结论 + 原因与那份文件 + 在文件夹中显示。
+   沿用卡片里安装日志行的小字与文字链接按钮；只有图标用提醒色，不整条标红（agent 本身照常能用）。 */
+.agent-mcp-unreadable-head { display: flex; align-items: flex-start; gap: var(--sp-6); color: var(--cc-text); }
+/* 图标对齐首行（结论折成两行时不居中到两行中间）：1.5 行高下首行中线约在 0.75em。 */
+.agent-mcp-unreadable-head svg { flex: none; margin-top: calc(0.75em - 7px); color: var(--cc-warn-text); }
+/* 安装日志行按字符断行是为了长路径；这里说明文字按词断，只让路径在任意处断。 */
+.agent-mcp-unreadable .agent-install-log { word-break: normal; }
+.agent-mcp-unreadable-path { display: block; margin: var(--sp-2) 0; overflow-wrap: anywhere; font-family: var(--cc-mono); color: var(--cc-text-dim); }
+.agent-mcp-unreadable-err { display: block; margin-top: var(--sp-2); color: var(--cc-fail-text); }
 .agent-path-msg {
   color: var(--cc-text-dim);
 }

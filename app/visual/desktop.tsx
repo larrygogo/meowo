@@ -451,6 +451,10 @@ async function boot(): Promise<React.ReactNode> {
     const relayAgents = relayParam
       ? AGENTS_WITH_OPTIONS.map((a) => a.id === "claude" ? { ...a, relay: { protocols: [], auth_modes: [{ value: "bearer", label: "Bearer Token" }, { value: "api_key", label: "API Key (x-api-key)" }], default_protocol: "", default_auth: "bearer", suggestions: [{ protocol: "", models: ["claude-sonnet-5"] }], env_options: [] } } : a)
       : AGENTS_WITH_OPTIONS;
+    // ?mcp=unreadable：Gemini 装着，但它的 settings.json 带注释、Meowo 读不懂，发图工具没接上（mcp_config_unreadable）。
+    const agentList = q.get("mcp") === "unreadable"
+      ? relayAgents.map((a) => a.id === "gemini" ? { ...a, installed: true, mcp_config_unreadable: "C:\\Users\\demo\\.gemini\\settings.json" } : a)
+      : relayAgents;
     // ?upd=checking|error|available|downloading|ready：关于页的更新状态（设置窗开着 10 秒后自动查一次）。
     // ?fail=1：保存设置失败（各分区的错误提示）；远程分区另报一条端口之外的启动错误。
     const upd = q.get("upd");
@@ -472,7 +476,7 @@ async function boot(): Promise<React.ReactNode> {
       }
       if (fail && cmd === "set_settings") throw new Error("settings/write_failed: C:\Users\demo\.meowo\settings.json is read-only");
       if (cmd === "installed_agent_versions" || cmd === "check_agent_updates") return [];
-      if (cmd === "list_agents") return relayAgents;
+      if (cmd === "list_agents") return agentList;
       if (relayParam && cmd === "get_relay_secret_status") return { claude: true };
       if (relayParam && cmd === "get_relay_secrets") return { claude: "sk-demo-relay-token" };
       if (cmd === "list_agent_extensions") return EXTENSIONS;

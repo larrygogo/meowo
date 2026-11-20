@@ -2407,6 +2407,10 @@ export const zh = {
     // 提示条要低调：它对多数人是背景噪音（装完就在 PATH 上），只有少数人需要点它。
     // 完整路径挪进 tooltip（pathGapDetail），正文只留一句「为什么该点」。
     pathGap: "终端里敲不出命令？",
+    // 后端 mcp_config_unreadable：发图工具要登记进这家 CLI 的配置文件，文件读不懂（如带注释）就没登记上。
+    mcpConfigUnreadable: "发图工具没接上，这个 Agent 暂时发不了图片给你",
+    mcpConfigUnreadableReason: "这份配置文件 Meowo 读不懂（可能带注释），为免改坏没有写入。去掉注释后，Meowo 下次启动时会自动接上：",
+    mcpConfigReveal: "在文件夹中显示",
     pathGapDetail: (dir: string) => `${dir} 不在 PATH 中，终端里敲命令会找不到`,
     addToPath: "加入 PATH",
     addingToPath: "写入中…",

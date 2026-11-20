@@ -2101,6 +2101,9 @@ export const en: Dict = {
         ? "Updating will interrupt 1 running session of this Agent. Conversations are kept. Continue?"
         : `Updating will interrupt ${n} running sessions of this Agent. Conversations are kept. Continue?`,
     pathGap: "Not found in your terminal?",
+    mcpConfigUnreadable: "The image tool isn't connected, so this agent can't send you images yet",
+    mcpConfigUnreadableReason: "Meowo can't parse this config file (it may contain comments), so it left it untouched. Once the comments are removed, Meowo connects it the next time it starts: ",
+    mcpConfigReveal: "Show in folder",
     pathGapDetail: (dir: string) => `${dir} is not on your PATH — the command won't be found in a terminal`,
     addToPath: "Add to PATH",
     addingToPath: "Adding…",

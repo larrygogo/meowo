@@ -280,6 +280,8 @@ export const QA_SHOTS = [
   { name: "qa-title-gitee", scene: "panel-changes", params: "forge=gitee", size: [2560, 1440], sel: ".tb-pr" },
   { name: "qa-set-forge-add-gitee", scene: "settingswin-github", size: SETTINGS, sel: "[data-testid=forge-add]", steps: [["eval", FORGE_SCROLL], ["click", "[data-testid=forge-empty] button"], ["click", "[data-testid=forge-add] [role=radio] >> nth=4"], ["eval", FORGE_ADD_SCROLL]] },
   // 查看非 active 账号只换用量视图：账号名、按下态和非 active 用量都要入镜。
+  // Agent 页：发图工具没接上（配置文件读不懂），切到 Gemini CLI 那张卡。
+  { name: "qa-set-mcp-unreadable", scene: "settingswin-account", params: "mcp=unreadable", size: [620, 640], sel: "[data-testid=agent-mcp-unreadable-gemini]", langs: ["zh", "en"], steps: [["click", ".account-agent-switch .dd-btn"], ["click", "[role=option]:has-text('Gemini CLI')"], ["tick", 300], ["eval", "document.querySelector('[data-testid=agent-mcp-unreadable-gemini]').scrollIntoView({ block: 'center' })"]] },
   { name: "qa-set-profile-usage", scene: "settingswin-account", size: SETTINGS, sel: ".usage-card-title", steps: [["click", '[data-testid="profile-usage-claude-work"]']], langs: ["zh", "en"] },
   { name: "qa-set-dropdown-sessions", scene: "settingswin-sessions", size: SETTINGS, sel: ".dd-menu", steps: [["click", ".dd > .dd-btn >> nth=1"]] },
   { name: "qa-set-focus", scene: "settingswin-general", params: "proxy=custom", size: SETTINGS, sel: ".settings", steps: [["click", ".main-body input[type=text], .main-body input:not([type])"]] },
