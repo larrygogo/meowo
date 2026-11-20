@@ -262,22 +262,58 @@ fn check_svg_size(bytes: &[u8]) -> Result<(), ImageError> {
     let Some(start) = svg_root_offset(bytes) else {
         return Ok(());
     };
-    // 根元素开标签：到第一个 `>` 为止，最多看 64KB（属性再长也不是正常的 SVG）。
+    // 根元素开标签：到引号外的第一个 `>` 为止（做空第二轮：`data-x="a>b"` 会让只找第一个 `>`
+    // 的旧实现读不到后面的尺寸），最多看 64KB（属性再长也不是正常的 SVG）。
     let tail = &bytes[start..bytes.len().min(start + 64 * 1024)];
-    let end = tail.iter().position(|b| *b == b'>').unwrap_or(tail.len());
+    let mut quote = None;
+    let end = tail
+        .iter()
+        .position(|&b| match quote {
+            Some(q) if b == q => {
+                quote = None;
+                false
+            }
+            Some(_) => false,
+            None if b == b'"' || b == b'\'' => {
+                quote = Some(b);
+                false
+            }
+            None => b == b'>',
+        })
+        .unwrap_or(tail.len());
     let tag = String::from_utf8_lossy(&tail[4..end]);
     let attrs = svg_attrs(&tag);
     let attr = |name: &str| attrs.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str());
-    let view_box = attr("viewBox").and_then(|v| {
-        let nums = v
-            .split(|c: char| c.is_whitespace() || c == ',')
-            .filter(|s| !s.is_empty())
-            .map(|s| s.parse::<f64>().ok())
-            .collect::<Option<Vec<f64>>>()?;
-        (nums.len() == 4).then(|| (nums[2], nums[3]))
-    });
-    let width = attr("width").and_then(svg_length).or(view_box.map(|v| v.0));
-    let height = attr("height").and_then(svg_length).or(view_box.map(|v| v.1));
+    // 写了就必须读得懂：字符引用（`&#49;00000`）、`auto` 之类我们算不出大小，浏览器却可能算得出。
+    let unreadable = |what: &str, raw: &str| {
+        ImageError::new(
+            ImageErrorCode::NotImage,
+            format!("SVG 的 {what} 写法认不出（{}），没法判断尺寸", raw.chars().take(40).collect::<String>()),
+        )
+    };
+    let view_box = match attr("viewBox") {
+        None => None,
+        Some(v) => {
+            let nums = v
+                .split(|c: char| c.is_whitespace() || c == ',')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.parse::<f64>().ok())
+                .collect::<Option<Vec<f64>>>()
+                .filter(|nums| nums.len() == 4)
+                .ok_or_else(|| unreadable("viewBox", v))?;
+            Some((nums[2], nums[3]))
+        }
+    };
+    let length = |name: &str| -> Result<Option<f64>, ImageError> {
+        match attr(name) {
+            None => Ok(None),
+            // 百分比：相对容器，没有固有尺寸，放行。
+            Some(raw) if raw.trim().ends_with('%') && raw.trim().trim_end_matches('%').trim().parse::<f64>().is_ok() => Ok(None),
+            Some(raw) => svg_length(raw).map(Some).ok_or_else(|| unreadable(name, raw)),
+        }
+    };
+    let width = length("width")?.or(view_box.map(|v| v.0));
+    let height = length("height")?.or(view_box.map(|v| v.1));
     let too_big = |v: Option<f64>| v.is_some_and(|v| !v.is_finite() || v.abs() > SVG_MAX_SIDE);
     let area_too_big = matches!((width, height), (Some(w), Some(h)) if w.abs() * h.abs() > IMAGE_MAX_PIXELS as f64);
     if too_big(width) || too_big(height) || area_too_big {
@@ -452,6 +488,7 @@ pub fn validate(bytes: &[u8]) -> Result<&'static str, ImageError> {
     };
     if ext == "svg" {
         check_svg_size(bytes)?;
+        check_svg_elements(bytes)?;
         return Ok(ext);
     }
     // 位图读不出尺寸一律拒：读不出就判断不了是不是解码炸弹，宁可不收（做空第一轮：旧实现放行）。
@@ -467,7 +504,82 @@ pub fn validate(bytes: &[u8]) -> Result<&'static str, ImageError> {
             format!("图片尺寸太大（{w}×{h}），超过 1 亿像素的上限"),
         ));
     }
+    // GIF 每一帧都有自己的图像描述符，解码器按帧的尺寸分配；逻辑屏幕写 1×1、帧写 20000×20000
+    // 能绕过上面那道（做空第二轮）。
+    if ext == "gif" {
+        if let Some((fw, fh)) = gif_frames(bytes).into_iter().find(|(fw, fh)| *fw as u64 * *fh as u64 > IMAGE_MAX_PIXELS) {
+            return Err(ImageError::new(
+                ImageErrorCode::TooLarge,
+                format!("动图里有一帧尺寸太大（{fw}×{fh}），超过 1 亿像素的上限"),
+            ));
+        }
+    }
     Ok(ext)
+}
+
+/// GIF 各帧图像描述符里的宽高（按出现顺序）。结构读到一半坏了就停，返回已经读到的帧——
+/// 截断的动图浏览器也只解得出前面几帧。
+fn gif_frames(bytes: &[u8]) -> Vec<(u32, u32)> {
+    let mut frames = Vec::new();
+    let le16 = |at: usize| -> Option<u32> { Some(u16::from_le_bytes([*bytes.get(at)?, *bytes.get(at + 1)?]) as u32) };
+    let color_table = |packed: u8| if packed & 0x80 != 0 { 3usize << ((packed & 0x07) + 1) } else { 0 };
+    // 跳过一串数据子块（每块首字节是长度，0 结束），返回结束后的位置。
+    let skip_blocks = |mut at: usize| -> Option<usize> {
+        loop {
+            let n = *bytes.get(at)? as usize;
+            at += 1;
+            if n == 0 {
+                return Some(at);
+            }
+            at += n;
+        }
+    };
+    let Some(&packed) = bytes.get(10) else {
+        return frames;
+    };
+    let mut at = 13 + color_table(packed);
+    loop {
+        match bytes.get(at) {
+            // 扩展块：引入符、标签，然后是数据子块。
+            Some(0x21) => match skip_blocks(at + 2) {
+                Some(next) => at = next,
+                None => return frames,
+            },
+            // 图像描述符：左、上、宽、高、打包字节，可选局部色表，LZW 最小码长，数据子块。
+            Some(0x2C) => {
+                let (Some(w), Some(h), Some(&packed)) = (le16(at + 5), le16(at + 7), bytes.get(at + 9)) else {
+                    return frames;
+                };
+                frames.push((w, h));
+                match skip_blocks(at + 10 + color_table(packed) + 1) {
+                    Some(next) => at = next,
+                    None => return frames,
+                }
+            }
+            _ => return frames,
+        }
+    }
+}
+
+/// SVG 里引用位图或外来内容的元素一律拒：`<image>`、`<feImage>` 能用 data: 内嵌任意位图（绕过
+/// 我们对位图的尺寸检查），`<foreignObject>` 能嵌 HTML。`<img>` 方式显示时外部网址不会加载，
+/// 但 data: 会；逐个校验内嵌位图要解析 href、base64、各种 CSS 写法，不如整类不收——agent
+/// 画的图表、图标用不到它们（取舍：简单、安全优先）。带命名空间前缀（`<svg:image`）同样认。
+fn check_svg_elements(bytes: &[u8]) -> Result<(), ImageError> {
+    static RE: std::sync::OnceLock<regex::bytes::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::bytes::Regex::new(r"(?i)<\s*(?:[a-z0-9_.-]+:)?(image|feimage|foreignobject)[\s/>]").unwrap()
+    });
+    if let Some(found) = re.captures(bytes) {
+        return Err(ImageError::new(
+            ImageErrorCode::NotImage,
+            format!(
+                "SVG 里有 <{}> 元素（引用位图或外部内容），为安全起见不显示这类 SVG",
+                String::from_utf8_lossy(&found[1])
+            ),
+        ));
+    }
+    Ok(())
 }
 
 pub fn too_large(len: u64) -> ImageError {
@@ -1281,6 +1393,61 @@ mod tests {
         // 没写 width/height 时按 viewBox 定固有尺寸。
         assert_eq!(code(r#"<svg viewBox="0 0 90000 90000"/>"#), Err(ImageErrorCode::TooLarge));
         assert_eq!(code("\u{feff}<?xml version=\"1.0\"?>\n<svg\n  width='12000'\n  height='12000'>"), Err(ImageErrorCode::TooLarge));
+    }
+
+    /// 做空第二轮：GIF 逻辑屏幕写 1×1、帧的图像描述符写 20000×20000，旧实现只看逻辑屏幕。
+    #[test]
+    fn gif_frame_descriptors_are_checked_not_just_logical_screen() {
+        let gif = |w: u16, h: u16| {
+            let mut g = b"GIF89a".to_vec();
+            g.extend_from_slice(&[1, 0, 1, 0, 0x00, 0, 0]); // 逻辑屏幕 1×1，无全局色表
+            g.extend_from_slice(&[0x21, 0xF9, 4, 0, 0, 0, 0, 0]); // 图形控制扩展
+            g.push(0x2C);
+            g.extend_from_slice(&[0, 0, 0, 0]);
+            g.extend_from_slice(&w.to_le_bytes());
+            g.extend_from_slice(&h.to_le_bytes());
+            g.push(0x00);
+            g.extend_from_slice(&[2, 2, 0x4C, 0x01, 0]); // LZW 最小码长 + 一个数据子块 + 结束
+            g.push(0x3B);
+            g
+        };
+        assert_eq!(validate(&gif(1, 1)).unwrap(), "gif");
+        assert_eq!(validate(&gif(20000, 20000)).unwrap_err().code, ImageErrorCode::TooLarge);
+        // 第一帧正常、第二帧超大同样拒。
+        let mut two = gif(1, 1);
+        two.pop();
+        let big = gif(20000, 20000);
+        two.extend_from_slice(&big[21..]);
+        assert_eq!(validate(&two).unwrap_err().code, ImageErrorCode::TooLarge);
+    }
+
+    /// 做空第二轮：SVG 开标签里引号内的 `>`、写成字符引用或读不出数字的尺寸、引用位图或外部
+    /// 资源的 `<image>` / `<feImage>` / `<foreignObject>`。
+    #[test]
+    fn svg_tricks_are_rejected() {
+        let code = |s: &str| validate(s.as_bytes()).map(|_| ()).map_err(|e| e.code);
+        // 引号内的 `>` 不结束开标签：后面的尺寸照样读到。
+        assert_eq!(code(r#"<svg data-x="a>b" width="100000" height="100000"/>"#), Err(ImageErrorCode::TooLarge));
+        assert_eq!(code(r#"<svg title='>' viewBox="0 0 90000 90000"/>"#), Err(ImageErrorCode::TooLarge));
+        // 尺寸写法认不出（字符引用、非数字）一律拒。
+        assert_eq!(code(r#"<svg width="&#49;00000" height="10"/>"#), Err(ImageErrorCode::NotImage));
+        assert_eq!(code(r#"<svg width="auto" height="10"/>"#), Err(ImageErrorCode::NotImage));
+        assert_eq!(code(r#"<svg viewBox="0 0 &#57;0000 10"/>"#), Err(ImageErrorCode::NotImage));
+        // 百分比仍收。
+        assert_eq!(code(r#"<svg width="100%" height="100%"/>"#), Ok(()));
+        // 内嵌位图、滤镜引图、外来 HTML：拒。
+        for body in [
+            r#"<image href="data:image/png;base64,iVBORw0KGgo="/>"#,
+            r#"<IMAGE xlink:href="https://x.example/a.png"/>"#,
+            r#"<svg:image href="a.png"/>"#,
+            r#"<filter><feImage href="data:image/png;base64,AAAA"/></filter>"#,
+            r#"<foreignObject><div/></foreignObject>"#,
+        ] {
+            let svg = format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">{body}</svg>"#);
+            assert_eq!(code(&svg), Err(ImageErrorCode::NotImage), "{body}");
+        }
+        // 普通图形照收（`<imageX>` 之类不是那几个元素）。
+        assert_eq!(code(r#"<svg width="10" height="10"><rect width="10" height="10"/><imageset/></svg>"#), Ok(()));
     }
 
     /// UNC 与设备路径在任何文件系统访问之前拒绝（Windows 上访问 `\\host\share` 会发起 SMB
