@@ -621,6 +621,7 @@ export const en: Dict = {
       web: (count: number) => `Visited the web ${count} ${count === 1 ? "time" : "times"}`,
       todo: (count: number) => `Updated the to-do list ${count} ${count === 1 ? "time" : "times"}`,
       agent: (count: number) => `Launched ${count} ${count === 1 ? "subtask" : "subtasks"}`,
+      image: (count: number) => `Sent ${count} ${count === 1 ? "image" : "images"}`,
       other: (count: number) => `${count} tool ${count === 1 ? "call" : "calls"}`,
     },
     turnChangedFiles: (count: number) => `${count} ${count === 1 ? "file" : "files"} changed`,

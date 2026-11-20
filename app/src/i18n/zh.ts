@@ -736,6 +736,7 @@ export const zh = {
       web: (count: number) => `访问了 ${count} 次网页`,
       todo: (count: number) => `已更新 ${count} 次清单`,
       agent: (count: number) => `已派出 ${count} 个子任务`,
+      image: (count: number) => `发来了 ${count} 张图片`,
       other: (count: number) => `执行了 ${count} 次工具调用`,
     },
     turnChangedFiles: (count: number) => `${count} 个文件已修改`,
