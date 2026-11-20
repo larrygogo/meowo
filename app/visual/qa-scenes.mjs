@@ -179,6 +179,13 @@ export const QA_SHOTS = [
   { name: "qa-m-images-bottom", page: "mobile", scene: "mobile-images-main", size: PHONE, sel: ".chat-sent", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 1e6"], ["tick", 300]] },
   { name: "qa-m-images-states", page: "mobile", scene: "mobile-images-states", size: PHONE, sel: ".chat-sent-failed", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 1e6"], ["tick", 300]] },
   { name: "qa-m-images-lightbox", page: "mobile", scene: "mobile-images-main", size: PHONE, sel: ".chat-lightbox", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300], ["click", ".chat-sent-open >> nth=0"]] },
+  // 五家真机发图样本（后端真实解析的条目，imageScenes.ts 的 real-<家>）：桌面深浅、手机浅色各一张，外加灯箱打开态。
+  ...["claude", "codex", "kimi", "gemini", "opencode"].flatMap((agent) => [
+    { name: `qa-images-real-${agent}`, scene: `flow-images-real-${agent}`, size: [1100, 760], sel: ".chat-sent img", steps: [["tick", 400], OPEN_FOLDS, ["tick", 300]] },
+    { name: `qa-m-images-real-${agent}`, page: "mobile", scene: `mobile-images-real-${agent}`, size: PHONE, themes: ["light"], sel: ".chat-sent img", steps: [["tick", 400], OPEN_FOLDS, ["tick", 300]] },
+  ]),
+  { name: "qa-images-real-lightbox", scene: "flow-images-real-gemini", size: [1100, 760], sel: ".chat-lightbox", steps: [["tick", 400], ["click", ".chat-sent-open >> nth=0"], ["tick", 300]] },
+  { name: "qa-m-images-real-lightbox", page: "mobile", scene: "mobile-images-real-gemini", size: PHONE, themes: ["light"], sel: ".chat-lightbox", steps: [["tick", 400], ["click", ".chat-sent-open >> nth=0"], ["tick", 300]] },
   { name: "qa-lightbox", scene: "flow-image", sel: ".chat-lightbox", steps: [["click", ".chat-image-thumb-btn"]] },
   { name: "qa-drop", scene: "flow-drop", sel: ".chat-drop-overlay" },
   { name: "qa-search", scene: "flow-states", sel: ".chat-search-host", steps: [["key", "Control+f"], ["type", ".chat-search-input", "schema"]] },

@@ -141,6 +141,6 @@ pub(super) static DEPS: &[D] = &[
         "record:attachments",
         "attachments",
         r#"{"kind":"part","part":{"type":"tool","tool":"meowo_browser_screenshot","state":{"status":"completed","output":"面板浏览器截图","attachments":[{"type":"file","mime":"image/png","url":"data:image/png;base64,iVBORw0KGgo="}]}}}"#,
-        "1.19.5 opencode.exe 内嵌源码（MCP 图片块转 state.attachments 的 file part，回执里的截图据此显示）；2026-11-21 探针真机实样（fixtures/screenshot.json）",
+        "1.19.5 opencode.exe 内嵌源码（MCP 图片块转 state.attachments 的 file part，回执里的截图据此显示）；2026-11-21 探针真机实样（tests/fixtures/chat-replay/opencode.probe-screenshot.jsonl）",
     ),
 ];

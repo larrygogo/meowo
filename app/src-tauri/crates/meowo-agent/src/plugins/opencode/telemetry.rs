@@ -336,7 +336,7 @@ fn tool_events(key: &str, part: &Value, timestamp: Option<String>) -> Vec<Transc
         kind: tool_kind(&name),
         summary,
         detail,
-        name,
+        name: crate::images::canonical_meowo_tool(&name, OPENCODE_MEOWO_PREFIX),
         subagent: None,
         plan: None,
     };
@@ -416,6 +416,9 @@ fn tool_kind(name: &str) -> ToolKind {
 
 /// Meowo 发图工具在 opencode 里的全名（1.19.5：MCP 工具 = `<服务器>_<工具>`）。
 const OPENCODE_SEND_IMAGE: &str = "meowo_send_image";
+/// Meowo 的 MCP 工具在 opencode 里的前缀；对话页上换成统一的 `mcp__meowo__<工具>`
+/// （[`crate::images::canonical_meowo_tool`]）。
+const OPENCODE_MEOWO_PREFIX: &str = "meowo_";
 
 /// 回执附件里的图 → 引用行。导出行里是 slim 后的 `{image: <路径>}`（store::slim_attachments）；
 /// 直接读未瘦身的 part 时是 `{url: "data:…"}`，同样落进持久目录。
@@ -454,7 +457,12 @@ fn tool_summary(name: &str, input: Option<&Value>, title: Option<&str>) -> Strin
         .map(str::to_string);
     let text = picked
         .or_else(|| title.map(str::to_string))
-        .or_else(|| input.filter(|v| !v.is_null()).map(Value::to_string))
+        // 没有参数的调用（浏览器截图）摘要留空，不显示成 `{}`。
+        .or_else(|| {
+            input
+                .filter(|v| !v.is_null() && v.as_object().is_none_or(|map| !map.is_empty()))
+                .map(Value::to_string)
+        })
         .unwrap_or_default();
     let mut s: String = text.chars().take(800).collect();
     if text.chars().count() > 800 {
@@ -632,22 +640,36 @@ mod tests {
     /// tool part 原样）：attachments 每项还带 id / sessionID / messageID，图是 data URL。
     #[test]
     fn real_screenshot_attachment_sample_becomes_reference() {
-        let part: Value = serde_json::from_str(include_str!("fixtures/screenshot.json").trim()).unwrap();
+        let part: Value = serde_json::from_str(include_str!("../../../tests/fixtures/chat-replay/opencode.probe-screenshot.jsonl").trim()).unwrap();
         assert!(part.pointer("/state/attachments/0/url").and_then(Value::as_str).is_some_and(|u| u.starts_with("data:image/png;base64,")));
         let slim = crate::plugins::opencode::store::slim_part_for_test(part);
         let line = json!({"kind": "part", "msg": "m", "key": "p", "time": 1, "part": slim}).to_string();
         let items = parse_chat_items(&line);
+        // 对话页上工具名是统一的 `mcp__meowo__<工具>`（前端给译名），没参数不出 `{}`。
+        let Some(ChatItem::ToolUse { name, summary, .. }) = items.first() else { panic!("{items:?}") };
+        assert_eq!((name.as_str(), summary.as_str()), ("mcp__meowo__browser_screenshot", ""));
         let Some(ChatItem::ToolResult { text, .. }) = items.get(1) else { panic!("{items:?}") };
         let line = text.lines().find(|l| l.starts_with("[Image: source: ")).unwrap_or_else(|| panic!("{text}"));
         let path = std::path::PathBuf::from(line.trim_start_matches("[Image: source: ").trim_end_matches(']'));
         assert!(path.starts_with(crate::images::images_root().unwrap().join("tool")) && path.exists());
     }
 
+    /// 别人的 MCP 工具（服务器名不是 meowo）名字原样；有参数的照旧显示参数。
+    #[test]
+    fn other_mcp_tools_keep_their_names() {
+        let line = json!({"kind": "part", "msg": "m", "key": "p", "time": 1, "part": {"type": "tool", "tool": "github_list_issues",
+            "callID": "c", "state": {"status": "completed", "input": {"repo": "a/b"}, "output": "ok", "time": {"start": 1, "end": 2}}}})
+        .to_string();
+        let items = parse_chat_items(&line);
+        let Some(ChatItem::ToolUse { name, summary, .. }) = items.first() else { panic!("{items:?}") };
+        assert_eq!((name.as_str(), summary.as_str()), ("github_list_issues", r#"{"repo":"a/b"}"#));
+    }
+
     /// 真机样本（2026-11-21，opencode 1.19.5 `opencode run`，OPENCODE_CONFIG_CONTENT 挂 MCP；库里的
     /// tool part 原样，探针目录前缀换成 C:\probe），经导出瘦身再解析。
     #[test]
     fn real_send_image_sample_parses_to_image_message() {
-        let part: Value = serde_json::from_str(include_str!("fixtures/send_image.json").trim()).unwrap();
+        let part: Value = serde_json::from_str(include_str!("../../../tests/fixtures/chat-replay/opencode.probe-send-image.jsonl").trim()).unwrap();
         let slim = crate::plugins::opencode::store::slim_part_for_test(part);
         let line = json!({"kind": "part", "msg": "m", "key": "p", "time": 1, "part": slim}).to_string();
         let items = parse_chat_items(&line);

@@ -1,0 +1,18 @@
+[
+  {
+    "type": "tool_use",
+    "id": "chatcmpl-tool-80a43ea2bc1de2a5",
+    "timestamp": "2026-11-20T16:00:24.658Z",
+    "name": "mcp__meowo__browser_screenshot",
+    "kind": "other",
+    "summary": ""
+  },
+  {
+    "type": "tool_result",
+    "id": "chatcmpl-tool-80a43ea2bc1de2a5:result",
+    "timestamp": "2026-11-20T16:00:24.689Z",
+    "tool_use_id": "chatcmpl-tool-80a43ea2bc1de2a5",
+    "text": "面板浏览器截图（探针）\n[Image: source: C:\\Users\\user\\.meowo\\images\\tool\\0c6eebdca4b84ccf186723b705349400.png]",
+    "is_error": false
+  }
+]

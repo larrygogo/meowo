@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { reduceChatEvents } from "../../chat/reducer";
 import { ChatCwdContext } from "./ToolActivity";
@@ -21,6 +21,13 @@ import { REPLAY_AGENTS, replaySamples, type ReplayAgent } from "../../test/repla
 
 const CWD = "C:\\Users\\user\\Desktop\\workspace\\meowo";
 
+// 发图与截图样本里的图片路径在这台机器上不存在；显示走 convertFileSrc，换成固定前缀即可（映射到真图、逐条断言见
+// replayImages.test.tsx）。
+vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tauri-apps/api/core")>()),
+  convertFileSrc: (path: string) => `asset://local/${path}`,
+}));
+
 
 const flat = (text: string | null | undefined, max = 72) => {
   const one = (text ?? "").replace(/\s+/g, " ").trim();
@@ -30,11 +37,12 @@ const flat = (text: string | null | undefined, max = 72) => {
 /// 把渲染出来的时间线摘成一行一块的大纲：用户看得见的类型、动作词、对象、状态与数字。
 function outline(root: HTMLElement): string[] {
   const selector = [
-    ".chat-message.is-user", ".chat-message.is-assistant", ".chat-message.is-turn-error", "details.chat-reasoning",
+    ".chat-message.is-user", ".chat-message.is-assistant", ".chat-message.is-turn-error", ".chat-sent", "details.chat-reasoning",
     "details.chat-tool", "details.chat-subagent", ".chat-meta", ".turn-fold-head", ".chat-turn-changes",
   ].join(", ");
   return [...root.querySelectorAll<HTMLElement>(selector)].map((el) => {
     const text = (query: string) => flat(el.querySelector(query)?.textContent);
+    if (el.matches(".chat-sent")) return `图片消息｜${el.querySelectorAll("img").length} 张｜${text(".chat-sent-caption")}`;
     if (el.matches(".chat-message.is-user")) return `用户｜${flat(el.querySelector(".chat-text")?.textContent ?? el.textContent)}`;
     if (el.matches(".chat-message.is-assistant")) return `助手｜${flat(el.textContent)}`;
     if (el.matches(".chat-message.is-turn-error")) return `出错卡｜${text(".chat-turn-error-label")}｜${text(".chat-text")}`;
@@ -53,6 +61,9 @@ function outline(root: HTMLElement): string[] {
       [text(".chat-tool-count"), text(".chat-tool-delta")].filter(Boolean).join(" "),
       text(".chat-tool-out"),
     ];
+    // 工具行下直接露出的缩略图（截图、读图），不用展开。
+    const strip = el.nextElementSibling?.matches(".chat-tool-media") ? el.nextElementSibling.querySelectorAll("img").length : 0;
+    if (strip > 0) parts.push(`缩略图 ${strip}`);
     return parts.join("｜");
   });
 }

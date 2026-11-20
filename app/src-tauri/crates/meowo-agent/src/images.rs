@@ -134,6 +134,18 @@ impl From<Result<PathBuf, ImageError>> for ResolvedChatImage {
 pub const MCP_SERVER: &str = "meowo";
 pub const SEND_IMAGE: &str = "send_image";
 
+/// Meowo 自己的 MCP 工具（发图、浏览器）在对话页上统一叫 `mcp__meowo__<工具>`：claude、kimi
+/// 原样就是这个形态，codex 的命名空间形态由插件拼成它。gemini（`mcp_meowo_<工具>`）与 opencode
+/// （`meowo_<工具>`）把服务器名与工具名用单下划线拼在一起，前端拆不开，按原名显示出
+/// `mcp_meowo_browser_screenshot` 这种乱码（2026-11-21 五家回放截图）。插件传入自己的前缀，
+/// 认出来就换成统一名字，前端只认一种形态；不是 Meowo 的工具原样返回。
+pub fn canonical_meowo_tool(name: &str, prefix: &str) -> String {
+    match name.strip_prefix(prefix) {
+        Some(tool) if !tool.is_empty() => format!("mcp__{MCP_SERVER}__{tool}"),
+        _ => name.to_string(),
+    }
+}
+
 /// 发图调用 → (类别, 摘要, 详情)：五家插件共用。摘要优先用说明，没有说明给来源。
 pub fn send_image_call(
     args: &serde_json::Value,

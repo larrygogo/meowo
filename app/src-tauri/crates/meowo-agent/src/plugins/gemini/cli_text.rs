@@ -217,4 +217,16 @@ pub(super) static DEPS: &[D] = &[
         r#"{"toolCalls":[{"id":"c9","name":"mcp_meowo_browser_screenshot","result":[{"functionResponse":{"name":"mcp_meowo_browser_screenshot","response":{"output":"面板浏览器截图"},"parts":[{"inlineData":{"mimeType":"image/png","data":"iVBORw0KGgo="}}]}}]}]}"#,
         "0.68.0 bundle mcp-tool.js transformImageAudioBlock（MCP 图片块转 inlineData，回执里的截图据此显示）；2026-11-21 探针真机实样（gemini-3-flash-preview，functionResponse.parts）",
     ),
+    D::record(
+        "record:untrusted_context",
+        "</untrusted_context>",
+        r#"{"toolCalls":[{"id":"c8","name":"mcp_meowo_send_image","result":[{"functionResponse":{"name":"mcp_meowo_send_image","response":{"output":"<untrusted_context>\n图片已发给用户。\n</untrusted_context>"}}}]}]}"#,
+        "0.68.0 bundle mcp-tool.js wrapUntrusted（MCP 文字块包进 <untrusted_context>，标签各占一行；对话页去掉整行标签）；2026-11-21 探针真机实样（gemini.probe-send-image）",
+    ),
+    D::record(
+        "record:mcp_image_note",
+        "' provided the following ",
+        r#"{"toolCalls":[{"id":"c9","name":"mcp_meowo_browser_screenshot","result":[{"functionResponse":{"name":"mcp_meowo_browser_screenshot","response":{"output":"[Tool 'browser_screenshot' provided the following image data with mime-type: image/png]"}}}]}]}"#,
+        "0.68.0 bundle mcp-tool.js transformImageAudioBlock（图片块前给模型的一句说明，模板 `[Tool '${toolName}' provided the following ${block.type} data with mime-type: …]`；图换成引用行后对话页去掉这一行）；2026-11-21 探针真机实样（gemini.probe-screenshot）",
+    ),
 ];

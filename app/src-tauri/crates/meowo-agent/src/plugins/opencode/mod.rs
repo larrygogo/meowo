@@ -29,6 +29,12 @@ mod screen;
 mod store;
 mod telemetry;
 
+/// 回放测试用：库里一条 part 走导出器的瘦身（附件里的图落进图片目录、只留路径），与对话页读的导出行同一份。
+#[cfg(test)]
+pub(crate) fn export_part_for_test(part: serde_json::Value) -> serde_json::Value {
+    store::slim_part_for_test(part)
+}
+
 use crate::{
     auth::{AuthScheme, CredentialSource},
     config::{CommandSpec, ConfigFormat, HookEvent, HookSpec, MissingConfig},

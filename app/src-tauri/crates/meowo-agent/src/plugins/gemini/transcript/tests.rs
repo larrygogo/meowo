@@ -614,11 +614,50 @@ fn mcp_image_in_function_response_parts_or_sibling_part_is_kept() {
 /// `<untrusted_context>`。图要落进持久目录、回执里出现引用行（此前整张丢掉）。
 #[test]
 fn real_screenshot_inline_data_sample_is_kept() {
-    let line = include_str!("fixtures/screenshot.jsonl").lines().next().unwrap();
-    let refs = image_ref_of(&parse_line(line));
+    let line = include_str!("../../../../tests/fixtures/chat-replay/gemini.probe-screenshot.jsonl").lines().next().unwrap();
+    let events = parse_line(line);
+    let refs = image_ref_of(&events);
     assert_eq!(refs.len(), 1, "{line}");
     assert!(refs[0].starts_with(crate::images::images_root().unwrap().join("tool")));
     assert!(refs[0].exists());
+    // 对话页上：工具名是统一的 `mcp__meowo__<工具>`（前端认得、给译名），没参数不出 `{}`，
+    // 回执去掉 `<untrusted_context>` 标签与 CLI 给模型写的图片说明，只剩工具自己的那句话和引用行。
+    let Some(TranscriptEvent::ToolCall { name, summary, .. }) = events.first() else { panic!("{events:?}") };
+    assert_eq!((name.as_str(), summary.as_str()), ("mcp__meowo__browser_screenshot", ""));
+    let text = events
+        .iter()
+        .find_map(|e| match e {
+            TranscriptEvent::ToolResult { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 2, "{text}");
+    assert_eq!(lines[0], "面板浏览器截图（探针）");
+    assert!(lines[1].starts_with("[Image: source: "), "{text}");
+}
+
+/// `<untrusted_context>` 只去整行的标签，转义的闭标签还原；带 source 属性的开标签同样认。
+/// 不是图片的说明行（音频、内嵌资源）留着；没有内嵌图时图片说明也留着，别人的 MCP 工具名不改。
+#[test]
+fn untrusted_wrapper_and_image_note_are_cleaned_line_by_line() {
+    assert_eq!(
+        super::unwrap_untrusted("<untrusted_context source=\"meowo\">\n说 &lt;/untrusted_context&gt; 了\n</untrusted_context>"),
+        "说 </untrusted_context> 了"
+    );
+    assert_eq!(super::unwrap_untrusted("正文里提到 <untrusted_context> 标签"), "正文里提到 <untrusted_context> 标签");
+    assert_eq!(
+        super::drop_image_notes(
+            "[Tool 'shot' provided the following image data with mime-type: image/png]\n[Tool 'rec' provided the following audio data with mime-type: audio/wav]\n好了"
+        ),
+        "[Tool 'rec' provided the following audio data with mime-type: audio/wav]\n好了"
+    );
+    let line = r#"{"id":"a9","timestamp":"t","type":"gemini","content":"","toolCalls":[{"id":"c9","name":"mcp_other_shot","args":{},"status":"success","result":[{"functionResponse":{"id":"c9","name":"mcp_other_shot","response":{"output":"[Tool 'shot' provided the following image data with mime-type: image/png]"}}}]}]}"#;
+    let events = parse_line(line);
+    let Some(TranscriptEvent::ToolCall { name, .. }) = events.first() else { panic!("{events:?}") };
+    assert_eq!(name, "mcp_other_shot");
+    let TranscriptEvent::ToolResult { text, .. } = &events[1] else { panic!() };
+    assert!(text.contains("provided the following image data"), "{text}");
 }
 
 /// 发图工具在 gemini 里叫 `mcp_meowo_send_image`（0.68.0 generateValidName）→ Image 类。
@@ -640,12 +679,12 @@ fn send_image_maps_to_image_kind() {
 /// 同一次运行里 browser_snapshot 没有策略放行，非交互模式下直接报「找不到工具」——审批语义未被绕过。
 #[test]
 fn real_send_image_sample_parses_to_image_message() {
-    let line = include_str!("fixtures/send_image.jsonl").lines().next().unwrap();
+    let line = include_str!("../../../../tests/fixtures/chat-replay/gemini.probe-send-image.jsonl").lines().next().unwrap();
     let events = parse_line(line);
     let call = events
         .iter()
         .find_map(|e| match e {
-            TranscriptEvent::ToolCall { name, kind, summary, .. } if name == "mcp_meowo_send_image" => Some((*kind, summary.clone())),
+            TranscriptEvent::ToolCall { name, kind, summary, .. } if name == "mcp__meowo__send_image" => Some((*kind, summary.clone())),
             _ => None,
         })
         .expect("应有发图调用");
@@ -661,4 +700,5 @@ fn real_send_image_sample_parses_to_image_message() {
         text.lines().any(|l| l == r"[Image: source: C:\probe\images\sent\0c6eebdca4b84ccf186723b705349400.png]"),
         "{text}"
     );
+    assert!(!text.contains("untrusted_context"), "{text}");
 }

@@ -1936,7 +1936,7 @@
           "needle": "Request cancelled.",
           "note": "0.6x 会话日志实样（用户按 Esc 后的 info 记录，对话页据此画中断分隔条）；0.68.0 bundle 里 18 处",
           "rule": "record:Request cancelled.",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/transcript.rs:1153"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/transcript.rs:1191"
         },
         {
           "legacy": false,
@@ -1944,6 +1944,20 @@
           "note": "0.68.0 bundle mcp-tool.js transformImageAudioBlock（MCP 图片块转 inlineData，回执里的截图据此显示）；2026-11-21 探针真机实样（gemini-3-flash-preview，functionResponse.parts）",
           "rule": "record:inlineData",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/transcript.rs:618"
+        },
+        {
+          "legacy": false,
+          "needle": "</untrusted_context>",
+          "note": "0.68.0 bundle mcp-tool.js wrapUntrusted（MCP 文字块包进 <untrusted_context>，标签各占一行；对话页去掉整行标签）；2026-11-21 探针真机实样（gemini.probe-send-image）",
+          "rule": "record:untrusted_context",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/transcript.rs:871"
+        },
+        {
+          "legacy": false,
+          "needle": "' provided the following ",
+          "note": "0.68.0 bundle mcp-tool.js transformImageAudioBlock（图片块前给模型的一句说明，模板 `[Tool '${toolName}' provided the following ${block.type} data with mime-type: …]`；图换成引用行后对话页去掉这一行）；2026-11-21 探针真机实样（gemini.probe-screenshot）",
+          "rule": "record:mcp_image_note",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/transcript.rs:893"
         }
       ],
       "id": "gemini",
@@ -1972,21 +1986,21 @@
           "needle": "",
           "note": "运行时拼接：模式名与模型名在底栏分别渲染，中间点由模板插入；`build`、`plan` 在程序文件里是通用词，搜它们证明不了什么",
           "rule": "literal:build · ",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:495"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:501"
         },
         {
           "legacy": false,
           "needle": "",
           "note": "运行时拼接：同 build · ",
           "rule": "literal:plan · ",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:499"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:505"
         },
         {
           "legacy": false,
           "needle": "permission required",
           "note": "1.19.3 opencode.exe：三角符号 `\\u25b3` 与 `permission required` 分开渲染，后者 4 处",
           "rule": "literal:△ permission required",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:349"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:355"
         },
         {
           "legacy": false,
@@ -2105,63 +2119,63 @@
           "needle": "Ask anything",
           "note": "1.19.5 真机 2026-11-14（probe_tui_script cells）：空输入框的灰色占位，引号里的示例会轮换",
           "rule": "composer.empty",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:436"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:442"
         },
         {
           "legacy": false,
           "needle": "[Pasted ~",
           "note": "1.19.5 真机 2026-11-14（tests/probe_draft_fidelity.rs）：3 行的小粘贴就折成这个占位；opencode.exe 含模板 `[Pasted ~${n} lines]`",
           "rule": "composer.paste",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:452"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:458"
         },
         {
           "legacy": false,
           "needle": "[image ",
           "note": "1.19.3 opencode.exe 内嵌 JS：`[image ${n+1}]`（与 `[pdf ${n+1}]` 并列的附件占位）",
           "rule": "clipboard_image",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:520"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:526"
         },
         {
           "legacy": false,
           "needle": "Allow once",
           "note": "1.19.5 opencode.exe `options:{once:\"Allow once\",always:\"Allow always\",reject:\"Reject\"}` 与真机屏幕 2026-11-14",
           "rule": "option:opencode:command-approval#0",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:365"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:371"
         },
         {
           "legacy": false,
           "needle": "Allow always",
           "note": "1.19.5 opencode.exe 同上",
           "rule": "option:opencode:command-approval#1",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:371"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:377"
         },
         {
           "legacy": false,
           "needle": "",
           "note": "1.19.5 真机屏幕 2026-11-14。选项只有一个通用词，搜程序文件证明不了什么；这一项在不在由同屏的问句规则盯着",
           "rule": "option:opencode:command-approval#2",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:377"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:383"
         },
         {
           "legacy": false,
           "needle": "permission required",
           "note": "1.19.3 opencode.exe：`c(x,k(\"\\u25b3\")),c(j,k(\"permission required\"))`，三角符号与文字分开渲染",
           "rule": "attention:opencode:command-approval",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:348"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:354"
         },
         {
           "legacy": false,
           "needle": "always allow",
           "note": "1.19.5 opencode.exe：权限框第二段 `title:\"Always allow\"`，三角符号与文字分开渲染；真机屏幕见 probe_tui_script 2026-11-14",
           "rule": "attention:opencode:always-allow-confirm",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:394"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:400"
         },
         {
           "legacy": false,
           "needle": "MessageAbortedError",
           "note": "1.19.x 库内实样经导出（用户中断，画中断分隔条而不是错误卡；本机 3 次）；opencode.exe 15 处",
           "rule": "record:MessageAbortedError",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/telemetry.rs:541"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/telemetry.rs:549"
         },
         {
           "legacy": false,
@@ -2173,7 +2187,7 @@
         {
           "legacy": false,
           "needle": "attachments",
-          "note": "1.19.5 opencode.exe 内嵌源码（MCP 图片块转 state.attachments 的 file part，回执里的截图据此显示）；2026-11-21 探针真机实样（fixtures/screenshot.json）",
+          "note": "1.19.5 opencode.exe 内嵌源码（MCP 图片块转 state.attachments 的 file part，回执里的截图据此显示）；2026-11-21 探针真机实样（tests/fixtures/chat-replay/opencode.probe-screenshot.jsonl）",
           "rule": "record:attachments",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/store.rs:524"
         }

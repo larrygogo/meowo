@@ -1,0 +1,23 @@
+[
+  {
+    "type": "tool_use",
+    "id": "call_74ff7bb5d5d1457991b788a1d6c641cf",
+    "timestamp": "2026-11-20T15:51:36.740Z",
+    "name": "mcp__meowo__send_image",
+    "kind": "image",
+    "summary": "kimi 手动模式探针",
+    "detail": {
+      "kind": "image",
+      "source": "C:\\probe\\work\\chart.png",
+      "caption": "kimi 手动模式探针"
+    }
+  },
+  {
+    "type": "tool_result",
+    "id": "kimi-result-call_74ff7bb5d5d1457991b788a1d6c641cf",
+    "timestamp": "2026-11-20T15:51:36.751Z",
+    "tool_use_id": "call_74ff7bb5d5d1457991b788a1d6c641cf",
+    "text": "图片已发给用户，对话里会直接显示这张图；不用再描述图片内容，也不要重复发送。\n[Image: source: C:\\probe\\images\\sent\\0c6eebdca4b84ccf186723b705349400.png]",
+    "is_error": false
+  }
+]

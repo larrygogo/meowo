@@ -1406,7 +1406,7 @@ mod tests {
     /// 审批策略 never 下靠 `tools.send_image.approval_mode='approve'` 放行；探针目录前缀换成 C:\probe）。
     #[test]
     fn real_send_image_sample_in_exec_script() {
-        let lines: Vec<&str> = include_str!("fixtures/send_image.jsonl").lines().collect();
+        let lines: Vec<&str> = include_str!("../../../tests/fixtures/chat-replay/codex.probe-send-image.jsonl").lines().collect();
         let calls = parse_transcript_events(lines[0]);
         let TranscriptEvent::ToolCall { id, kind, summary, .. } = &calls[0] else { panic!("{calls:?}") };
         assert_eq!((id.as_str(), *kind, summary.as_str()), ("call_418109bc24f5498bbe36ffaff9335194#0", ToolKind::Image, "codex 探针"));
@@ -1856,7 +1856,7 @@ mod tests {
         let markers = CODEX_TRANSCRIPT.command_exit_markers();
         assert!(!markers.is_empty());
         let mut relevant = 0;
-        for name in ["codex.01a1cea4.jsonl", "codex.01a13ed0.jsonl", "codex-exit-join.jsonl", "codex-mcp-images.jsonl"] {
+        for name in ["codex.01a1cea4.jsonl", "codex.01a13ed0.jsonl", "codex-exit-join.jsonl", "codex.01a1f9bf.jsonl"] {
             for line in replay_fixture(name).lines() {
                 let matters = command_exit(line).is_some()
                     || mcp_side_images(line).is_some()

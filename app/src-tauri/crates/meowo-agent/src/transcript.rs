@@ -3849,13 +3849,13 @@ mod tests {
     }
 
     /// 真机样本（2026-11-21，codex-cli 0.169.0 `codex exec`，tests/fixtures/chat-replay/
-    /// codex-mcp-images.jsonl，探针目录前缀换成 C:\probe）：exec 脚本只 `await` 发图、不输出结果，
+    /// codex.01a1f9bf.jsonl，探针目录前缀换成 C:\probe）：exec 脚本只 `await` 发图、不输出结果，
     /// 回执里只有状态头。图片引用行要从 `item_completed/McpToolCall` 旁路记录补到 `<call_id>#0`
     /// 的回执上；整读与分段增量读结果一致。
     #[test]
     fn mcp_side_record_fills_image_ref_when_script_prints_nothing() {
         let spec = spec_of("codex");
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/chat-replay/codex-mcp-images.jsonl");
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/chat-replay/codex.01a1f9bf.jsonl");
         let content = std::fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
         let copy = write_tmp("mcp_side_images", &content);
         let items = read_chat_delta(spec, &copy, 0, None).items;
@@ -3889,7 +3889,7 @@ mod tests {
     #[test]
     fn mcp_side_record_does_not_duplicate_or_misattach() {
         let spec = spec_of("codex");
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/chat-replay/codex-mcp-images.jsonl");
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/chat-replay/codex.01a1f9bf.jsonl");
         let content = std::fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
         let printed = content.replace(
             r#""output":"Script completed\nWall time 0.0 seconds\nOutput:\n""#,

@@ -3296,7 +3296,7 @@ mod tests {
     /// C:\probe）：调用是 Image 类、说明进摘要；回执里的引用行原样留给前端显示图片。
     #[test]
     fn real_send_image_sample_parses_to_image_message() {
-        let lines: Vec<&str> = include_str!("fixtures/send_image.jsonl").lines().collect();
+        let lines: Vec<&str> = include_str!("../../../tests/fixtures/chat-replay/claude.83386c1d.jsonl").lines().collect();
         let call = parse_chat_items(lines[0]);
         let ChatItem::ToolUse { kind, summary, detail, .. } = &call[0] else { panic!("{call:?}") };
         assert_eq!((*kind, summary.as_str()), (ToolKind::Image, "探针测试图"));

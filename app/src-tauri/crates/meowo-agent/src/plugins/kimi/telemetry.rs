@@ -2237,7 +2237,7 @@ mod tests {
     /// 的 `[[permission.rules]]` 放行；探针目录前缀换成 C:\probe）。
     #[test]
     fn real_send_image_sample_parses_to_image_message() {
-        let lines: Vec<&str> = include_str!("fixtures/send_image.jsonl").lines().collect();
+        let lines: Vec<&str> = include_str!("../../../tests/fixtures/chat-replay/kimi.probe-send-image.jsonl").lines().collect();
         let call = super::parse_events(lines[0], None);
         let Some(crate::transcript::TranscriptEvent::ToolCall { kind, summary, .. }) = call.first() else { panic!("{call:?}") };
         assert_eq!((*kind, summary.as_str()), (super::ToolKind::Image, "kimi 手动模式探针"));

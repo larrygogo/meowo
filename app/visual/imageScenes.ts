@@ -6,8 +6,17 @@
 // 图片本身是现画的 PNG（canvas），按路径末段映射：截图、图表、照片类参考图、超高长图、48px 图标。
 //   main：单张带说明、多张相册、长图、小图标、正在发送
 //   states：四种失败、工具行缩略图（截图、读图、写出图片）、正文 Markdown 图片（成功、失败、加载中）
+//   real-<家>：五家真机发图（与截图）样本经后端真实解析的产物，见下方 REAL_SAMPLES。
 import type { ChatItem } from "../src/api";
 import { FIXED_NOW } from "./fixtures";
+import claudeSend from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/claude.83386c1d.items.json";
+import codexSilent from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/codex.01a1f9bf.items.json";
+import codexSend from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/codex.probe-send-image.items.json";
+import geminiShot from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/gemini.probe-screenshot.items.json";
+import geminiSend from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/gemini.probe-send-image.items.json";
+import kimiSend from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/kimi.probe-send-image.items.json";
+import opencodeShot from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/opencode.probe-screenshot.items.json";
+import opencodeSend from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/opencode.probe-send-image.items.json";
 
 type Lang = "zh" | "en";
 type Internals = { convertFileSrc?: (path: string) => string };
@@ -85,7 +94,31 @@ let images: Record<string, string> | null = null;
 function imageFor(path: string): string {
   images ??= { "login.png": loginShot(), "chart.png": chart(), "palette.png": photo(), "pricing-long.png": longShot(), "icon-48.png": icon(), "ref.png": photo() };
   const name = path.split(/[\\/]/).pop() ?? "";
-  return images[name] ?? path;
+  // 真机样本的图在探针时的持久目录里（sent/ 是发来的图表，tool/ 是浏览器截图），这台机器上没有：换成同类的现画图。
+  return images[name] ?? (/[\\/]sent[\\/]/.test(path) ? images["chart.png"] : /[\\/]tool[\\/]/.test(path) ? images["login.png"] : path);
+}
+
+/// 五家真机样本（后端回放测试的快照，与 replayImages.test.tsx 同一份）：每家的发图会话在前、截图会话在后。
+/// 不改内容，只把时间整体平移到冻结时刻附近（每份样本内部的间隔不变，份与份之间隔一分钟），免得拍出「几天前」。
+const REAL_SAMPLES: Record<string, unknown[]> = {
+  claude: [claudeSend],
+  codex: [codexSend, codexSilent],
+  kimi: [kimiSend],
+  gemini: [geminiSend, geminiShot],
+  opencode: [opencodeSend, opencodeShot],
+};
+const REAL_CWD = "C:\\probe\\work";
+
+function realItems(provider: string): ChatItem[] {
+  const samples = (REAL_SAMPLES[provider] ?? []) as ChatItem[][];
+  return samples.flatMap((sample, index) => {
+    const stamps = sample.map((item) => Date.parse(item.timestamp ?? "")).filter(Number.isFinite);
+    const shift = FIXED_NOW - 30_000 - (samples.length - 1 - index) * 60_000 - Math.max(...stamps);
+    return sample.map((item) => {
+      const at = Date.parse(item.timestamp ?? "");
+      return { ...item, timestamp: Number.isFinite(at) ? new Date(at + shift).toISOString() : item.timestamp } as ChatItem;
+    });
+  });
 }
 
 /// 挂载前：图片路径映射到现画的 PNG。
@@ -104,6 +137,7 @@ const receipt = (id: string, ts: string, text: string, isError = false) => ({
 const ref = (sub: string, name: string) => `[Image: source: ${ROOT}\\${sub}\\${name}]`;
 
 export function imageSceneItems(part: string, lang: Lang): { items: ChatItem[]; running: boolean } {
+  if (part.startsWith("real-")) return { items: realItems(part.slice("real-".length)), running: false };
   const zh = lang === "zh";
   const at = (s: number) => new Date(FIXED_NOW - s * 1000).toISOString();
   const say = (id: string, s: number, text: string) => ({ type: "assistant_text", id, timestamp: at(s), text }) as unknown as ChatItem;
@@ -157,7 +191,8 @@ export function imageSceneMock(part: string, lang: Lang, chat: (cmd: string) => 
   return (cmd, args) => {
     if (cmd === "get_chat_history") {
       const base = chat(cmd) as Record<string, unknown>;
-      return { ...base, cwd: "C:\\dev\\web-app", items, todos: [], pendingReview: null, status: running ? "running" : "waiting" };
+      const real = part.startsWith("real-") ? part.slice("real-".length) : null;
+      return { ...base, ...(real ? { provider: real } : {}), cwd: real ? REAL_CWD : "C:\\dev\\web-app", items, todos: [], pendingReview: null, status: running ? "running" : "waiting" };
     }
     if (cmd === "pending_interaction") return { approval: null, question: null };
     if (cmd === "resolve_chat_image") {
