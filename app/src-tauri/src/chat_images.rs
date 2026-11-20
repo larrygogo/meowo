@@ -384,8 +384,43 @@ fn resolve_into(
     cwd: Option<&str>,
     proxy: Option<&str>,
 ) -> Result<PathBuf, ImageError> {
+    resolve_scoped(root, readable, src, cwd, proxy, None)
+}
+
+/// 手机桥版（remote.rs）：本地路径只在会话目录 `session_cwd` 内或 Meowo 图片目录内解析。
+/// 桌面版不受限——桌面上显示的是用户自己机器上的文件；手机是另一台设备，经桥能读到的
+/// 必须收口，否则一行 `![](C:/Users/…/某图.png)` 就能把桌面上任意图片拿到手机上、
+/// 还能按「不存在 / 太大 / 成功」的不同回答探测桌面上有哪些文件（做空第一轮）。
+fn resolve_bridged(
+    root: &Path,
+    readable: &[PathBuf],
+    src: &str,
+    session_cwd: Option<&Path>,
+    proxy: Option<&str>,
+) -> Result<PathBuf, ImageError> {
+    let cwd = session_cwd.map(|p| p.to_string_lossy().into_owned());
+    resolve_scoped(root, readable, src, cwd.as_deref(), proxy, Some(session_cwd))
+}
+
+/// 手机端越界的统一回答：不管路径存不存在、多大，都是这一句。
+fn out_of_scope() -> ImageError {
+    ImageError::new(
+        ImageErrorCode::Forbidden,
+        "手机上只能显示这个会话目录或 Meowo 图片目录里的本地图片",
+    )
+}
+
+/// `bound`：None = 桌面版不限；Some(会话目录) = 手机桥版（会话目录可能查不到，那就只认图片目录）。
+fn resolve_scoped(
+    root: &Path,
+    readable: &[PathBuf],
+    src: &str,
+    cwd: Option<&str>,
+    proxy: Option<&str>,
+    bound: Option<Option<&Path>>,
+) -> Result<PathBuf, ImageError> {
     let src = src.trim();
-    // UNC 在任何文件系统访问之前拒（含 `%5C%5Chost` 这类编码过的，见 local_path）。
+    // UNC 在任何文件系统访问之前拒（含 `%5C%5Chost` 这类编码过的，见 local_candidates）。
     if images::is_remote_path(src) {
         return Err(images::remote_forbidden());
     }
@@ -396,36 +431,98 @@ fn resolve_into(
         let bytes = download(src, proxy)?;
         return images::store_keyed_in(root, ImageKind::Web, src, &bytes);
     }
-    let path = match url_scheme(src) {
-        Some(scheme) if scheme.eq_ignore_ascii_case("file") => file_url_path(src)?,
+    let candidates = match url_scheme(src) {
+        Some(scheme) if scheme.eq_ignore_ascii_case("file") => vec![file_url_path(src)?],
         Some(_) => {
             return Err(ImageError::new(
                 ImageErrorCode::Forbidden,
                 "只显示本地图片和 http(s) 网络图片",
             ));
         }
-        None => local_path(src, cwd)?,
+        None => match local_candidates(src, cwd) {
+            Ok(candidates) => candidates,
+            // 手机端：连路径都拼不出来（相对路径但没有会话目录）同样按越界回答。
+            Err(_) if bound.is_some() => return Err(out_of_scope()),
+            Err(e) => return Err(e),
+        },
     };
-    // 已经是我们自己的持久副本（发图回执、回执图）：原样用，不再复制一份。
-    if let Some(real) = images::resolve_within(readable, &path) {
-        if real.is_file() {
-            return Ok(path);
+    let in_scope = |path: &Path| match bound {
+        None => true,
+        Some(session) => {
+            images::resolve_within(readable, path).is_some()
+                || session.is_some_and(|session| images::resolve_within(&[session.to_path_buf()], path).is_some())
+        }
+    };
+    if let Some(path) = candidates.iter().find(|path| path.is_file()) {
+        // 手机端先判边界再读：越界的不读大小、不读内容，回答与不存在时一样。
+        if !in_scope(path) {
+            return Err(out_of_scope());
+        }
+        // 已经是我们自己的持久副本（发图回执、回执图）：原样用，不再复制一份。查看即「用到」，
+        // 刷新修改时间，回收按它排先后（见 images::prune_in）。
+        if images::resolve_within(readable, path).is_some() {
+            images::mark_used(path);
+            return Ok(path.clone());
+        }
+        return images::store_local_copy_in(root, &path.to_string_lossy(), path);
+    }
+    // 原文件不在了：找上次显示时留下的副本。手机端按字面路径判边界（文件已不在，没法解析
+    // 真实路径）；会话目录外的一律按越界回答，不透露「这里曾经有过」。
+    let lexical_scope = |path: &Path| match bound {
+        None => true,
+        Some(session) => {
+            let path = lexical_normalize(path);
+            readable.iter().any(|root| path.starts_with(lexical_normalize(root)))
+                || session.is_some_and(|session| path.starts_with(lexical_normalize(session)))
+        }
+    };
+    let mut any_in_scope = false;
+    for path in &candidates {
+        if !lexical_scope(path) {
+            continue;
+        }
+        any_in_scope = true;
+        if let Some(hit) = images::cached_local_copy_in(root, &path.to_string_lossy()) {
+            return Ok(hit);
         }
     }
-    images::store_file_in(root, ImageKind::Local, &path)
+    if bound.is_some() && !any_in_scope {
+        return Err(out_of_scope());
+    }
+    Err(ImageError::new(
+        ImageErrorCode::NotFound,
+        format!("找不到图片：{}", candidates.first().map_or(src.into(), |p| p.to_string_lossy())),
+    ))
 }
 
-/// 本地路径：`~/` 展开、相对路径按会话目录补全；Markdown 里常见的 `%20` 编码在原样找不到时解码再试。
-fn local_path(src: &str, cwd: Option<&str>) -> Result<PathBuf, ImageError> {
-    let candidates = std::iter::once(src.to_string()).chain(
+/// 去掉 `.`、按字面消解 `..`（不碰文件系统）。只用于「文件已经不在」时的边界判断。
+fn lexical_normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// 本地路径的候选：`~/` 展开、相对路径按会话目录补全；Markdown 里常见的 `%20` 编码再给一份
+/// 解码后的。调用方取第一个存在的。任何一份是 UNC 都直接拒（解码前后都查）。
+fn local_candidates(src: &str, cwd: Option<&str>) -> Result<Vec<PathBuf>, ImageError> {
+    let raws = std::iter::once(src.to_string()).chain(
         percent_encoding::percent_decode_str(src)
             .decode_utf8()
             .ok()
             .map(|s| s.into_owned())
             .filter(|s| s != src),
     );
-    let mut first = None;
-    for raw in candidates {
+    let mut out = Vec::new();
+    for raw in raws {
         if images::is_remote_path(&raw) {
             return Err(images::remote_forbidden());
         }
@@ -439,18 +536,47 @@ fn local_path(src: &str, cwd: Option<&str>) -> Result<PathBuf, ImageError> {
                 cwd.filter(|c| !c.is_empty()).map(|c| Path::new(c).join(&p))
             }
         };
-        let Some(path) = path else { continue };
-        if path.exists() {
-            return Ok(path);
-        }
-        first.get_or_insert(path);
+        out.extend(path);
     }
-    first.ok_or_else(|| {
-        ImageError::new(
+    if out.is_empty() {
+        return Err(ImageError::new(
             ImageErrorCode::NotFound,
             format!("找不到图片（相对路径但不知道会话目录）：{src}"),
-        )
+        ));
+    }
+    Ok(out)
+}
+
+/// 手机桥入口（remote.rs dispatch）：按会话 id 查会话目录（不信手机传来的 cwd），再按
+/// [`resolve_bridged`] 收口。
+pub(crate) async fn resolve_chat_image_bridged(
+    db_path: PathBuf,
+    src: String,
+    session_id: Option<i64>,
+) -> Result<ResolvedChatImage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let session_cwd = session_id.and_then(|id| {
+            crate::open_store(&db_path)
+                .ok()?
+                .session_cwd(id)
+                .ok()
+                .flatten()
+                .filter(|cwd| !cwd.is_empty())
+                .map(PathBuf::from)
+        });
+        let proxy = crate::ports::resolve_proxy(None);
+        ResolvedChatImage::from(images_root().and_then(|root| {
+            resolve_bridged(
+                &root,
+                &images::readable_roots(),
+                &src,
+                session_cwd.as_deref(),
+                proxy.as_deref(),
+            )
+        }))
     })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 // ── 灯箱「保存」────────────────────────────────
@@ -832,6 +958,117 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// 做空第一轮：正文本地图按原路径现读，原文件删了就显示不了。现在 `local/` 记着「原路径 →
+    /// 副本」，原文件删除后照样返回上次的副本；原文件改了内容，得到新副本（网址随内容变，
+    /// webview 不会拿缓存里的旧图），同一来源的旧副本收掉。
+    #[test]
+    fn local_copy_survives_original_deletion_and_follows_edits() {
+        let dir = temp("local-map");
+        let root = dir.join("images");
+        let readable = vec![root.clone()];
+        let project = dir.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let source = project.join("chart.png");
+        std::fs::write(&source, PNG_1X1).unwrap();
+        let cwd = project.to_string_lossy().into_owned();
+        let first = resolve_into(&root, &readable, "chart.png", Some(&cwd), None).unwrap();
+        assert!(first.starts_with(root.join("local")));
+
+        // 改内容（换成 2×1）：新副本，旧副本被收掉。
+        let mut wide = PNG_1X1.to_vec();
+        wide[16..20].copy_from_slice(&2u32.to_be_bytes());
+        std::fs::write(&source, &wide).unwrap();
+        let second = resolve_into(&root, &readable, "chart.png", Some(&cwd), None).unwrap();
+        assert_ne!(first, second, "内容变了，副本路径也要变");
+        assert!(!first.exists(), "同一来源的旧副本应收掉");
+        assert_eq!(std::fs::read(&second).unwrap(), wide);
+
+        // 原文件删掉：相对路径、绝对路径都还能拿到上次的副本。
+        std::fs::remove_file(&source).unwrap();
+        assert_eq!(resolve_into(&root, &readable, "chart.png", Some(&cwd), None).unwrap(), second);
+        assert_eq!(resolve_into(&root, &readable, &source.to_string_lossy(), None, None).unwrap(), second);
+        // 从没显示过的文件仍是 not_found。
+        assert_eq!(
+            resolve_into(&root, &readable, "never.png", Some(&cwd), None).unwrap_err().code,
+            ImageErrorCode::NotFound
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 手机桥版：本地路径只在该会话的工作目录或 Meowo 图片目录里解析；越界（`../`、绝对路径、
+    /// 指向外面的符号链接 / junction）一律 forbidden，且不存在、太大、存在三种情况的回答完全
+    /// 一样，手机端没法拿它探测桌面上有哪些文件。
+    #[test]
+    fn bridged_resolve_is_confined_to_session_dir_and_images_dir() {
+        let dir = temp("bridge");
+        let root = dir.join("images");
+        std::fs::create_dir_all(root.join("sent")).unwrap();
+        let readable = vec![root.clone()];
+        let ours = root.join("sent").join("a.png");
+        std::fs::write(&ours, PNG_1X1).unwrap();
+        let project = dir.join("project");
+        std::fs::create_dir_all(project.join("docs")).unwrap();
+        std::fs::write(project.join("docs").join("ok.png"), PNG_1X1).unwrap();
+        let outside = dir.join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.png"), PNG_1X1).unwrap();
+        let big = outside.join("big.png");
+        std::fs::File::create(&big).unwrap().set_len(IMAGE_MAX_BYTES + 1).unwrap();
+        let session = project.as_path();
+        let bridged = |src: &str| resolve_bridged(&root, &readable, src, Some(session), None);
+
+        // 会话目录内：相对、绝对都行；图片目录里的原样返回。
+        assert!(bridged("docs/ok.png").unwrap().starts_with(root.join("local")));
+        assert!(bridged(&project.join("docs").join("ok.png").to_string_lossy()).is_ok());
+        assert_eq!(bridged(&ours.to_string_lossy()).unwrap(), ours);
+
+        // 越界：存在、不存在、太大，回答一字不差。
+        let answers: Vec<ImageError> = [
+            "../outside/secret.png".to_string(),
+            "docs/../../outside/secret.png".to_string(),
+            outside.join("secret.png").to_string_lossy().into_owned(),
+            outside.join("missing.png").to_string_lossy().into_owned(),
+            big.to_string_lossy().into_owned(),
+            "~/meowo-bridge-probe.png".to_string(),
+        ]
+        .iter()
+        .map(|src| bridged(src).unwrap_err())
+        .collect();
+        for answer in &answers {
+            assert_eq!(answer, &answers[0]);
+        }
+        assert_eq!(answers[0].code, ImageErrorCode::Forbidden);
+
+        // 目录里指向外面的 junction（Windows 普通用户能建）与文件符号链接（有权限时）。
+        #[cfg(windows)]
+        {
+            let junction = project.join("jn");
+            let ok = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(&junction)
+                .arg(&outside)
+                .output()
+                .is_ok_and(|o| o.status.success());
+            assert!(ok, "mklink /J 应能建成");
+            assert_eq!(bridged("jn/secret.png").unwrap_err(), answers[0]);
+            let _ = std::fs::remove_dir(&junction);
+        }
+        let link = project.join("link.png");
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(outside.join("secret.png"), &link).is_ok();
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_file(outside.join("secret.png"), &link).is_ok();
+        if made {
+            assert_eq!(bridged("link.png").unwrap_err(), answers[0]);
+        }
+
+        // 没有会话（或查不到会话目录）：只认图片目录。
+        let no_session = |src: &str| resolve_bridged(&root, &readable, src, None, None);
+        assert_eq!(no_session("docs/ok.png").unwrap_err(), answers[0]);
+        assert_eq!(no_session(&ours.to_string_lossy()).unwrap(), ours);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn export_only_from_image_dirs() {
         let dir = temp("export");
@@ -853,3 +1090,4 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+

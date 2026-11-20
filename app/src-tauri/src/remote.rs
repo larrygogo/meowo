@@ -182,7 +182,8 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     // 附件（落盘到 %TEMP%/meowo-paste，路径由后端生成）
     "save_pasted_attachment",
     // 正文 Markdown 图片：本地路径复制进 ~/.meowo/images/local、网络图由桌面端下载进 web/，
-    // 回的是图片目录里的路径，手机再经 /file 读。只收真图（按文件头判定），给不出别的文件内容。
+    // 回的是图片目录里的路径，手机再经 /file 读。只收真图（按文件头判定）；本地路径只在
+    // sessionId 那个会话的目录或图片目录内解析，越界一律 forbidden（chat_images::resolve_bridged）。
     "resolve_chat_image",
     // 尚未交给 CLI 的持久队列；领取是原子的，桌面与手机不能同时投递同一条。
     "prompt_queue_list",
@@ -1567,7 +1568,10 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
         }
         "resolve_chat_image" => {
             let a = args!(ResolveChatImageArgs);
-            reply(crate::chat_images::resolve_chat_image(a.src, a.cwd).await)
+            reply(
+                crate::chat_images::resolve_chat_image_bridged(state.db_path.clone(), a.src, a.session_id)
+                    .await,
+            )
         }
         "prompt_queue_list" => {
             let a = args!(SessionArg);
@@ -2894,9 +2898,13 @@ mod tests {
             }
             // api.ts resolveChatImage：cwd 没有时发 null。
             "resolve_chat_image" => parse::<ResolveChatImageArgs>(
-                br#"{"src":"docs/a.png","cwd":null}"#,
+                br#"{"src":"docs/a.png","cwd":null,"sessionId":42}"#,
             )
-            .map(|_| ()),
+            .and_then(|a| {
+                (a.session_id == Some(42)).then_some(()).ok_or_else(|| "sessionId 没认出来".to_string())
+            })
+            .and_then(|()| parse::<ResolveChatImageArgs>(br#"{"src":"a.png","cwd":null,"sessionId":null}"#).map(|_| ()))
+            .and_then(|()| parse::<ResolveChatImageArgs>(br#"{"src":"a.png"}"#).map(|_| ())),
             "prompt_queue_orphans" => Ok(()),
             "prompt_queue_restore_orphan" => parse::<PromptQueueEntryArgs>(br#"{"sessionId":-1,"id":1}"#).map(|_| ()),
             "prompt_queue_list" => parse::<SessionArg>(br#"{"sessionId":42}"#).map(|_| ()),

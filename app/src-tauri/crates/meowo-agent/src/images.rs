@@ -493,7 +493,7 @@ fn hex_digest(data: &[u8]) -> String {
 pub fn store_bytes_in(root: &Path, kind: ImageKind, bytes: &[u8]) -> Result<PathBuf, ImageError> {
     let ext = validate(bytes)?;
     let name = format!("{}.{ext}", hex_digest(bytes));
-    write_named(&root.join(kind.dir_name()), &name, bytes)
+    write_named(&root.join(kind.dir_name()), &name, bytes).map(|(path, _)| path)
 }
 
 /// 同 [`store_bytes_in`]，落在默认根目录。
@@ -510,7 +510,55 @@ pub fn store_keyed_in(
 ) -> Result<PathBuf, ImageError> {
     let ext = validate(bytes)?;
     let name = format!("{}.{ext}", hex_digest(key.as_bytes()));
-    write_named(&root.join(kind.dir_name()), &name, bytes)
+    write_named(&root.join(kind.dir_name()), &name, bytes).map(|(path, _)| path)
+}
+
+/// 正文本地图的副本：`local/<来源哈希>-<内容哈希>.<扩展名>`。
+///
+/// - 文件名带来源（原路径）：原文件删掉后，[`cached_local_copy_in`] 按原路径还能找到上次的副本
+///   （做空第一轮：此前只按内容命名，原文件一删就查不到）。
+/// - 文件名也带内容：原文件改了内容就是新文件名、新网址，webview 不会拿缓存里的旧图。
+///   写出新版本时把同一来源的旧版本删掉，`local/` 不随编辑次数增长。
+pub fn store_local_copy_in(root: &Path, source_key: &str, path: &Path) -> Result<PathBuf, ImageError> {
+    let bytes = read_image_file(path)?;
+    let ext = validate(&bytes)?;
+    let prefix = format!("{}-", hex_digest(source_key.as_bytes()));
+    let name = format!("{prefix}{}.{ext}", hex_digest(&bytes));
+    let dir = root.join(ImageKind::Local.dir_name());
+    let (stored, fresh) = write_named(&dir, &name, &bytes)?;
+    if fresh {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let file = entry.file_name();
+                let file = file.to_string_lossy();
+                if file.starts_with(&prefix) && file != name && !file.contains(".tmp.") {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
+    Ok(stored)
+}
+
+/// 按原路径找 [`store_local_copy_in`] 存过的副本（原文件已经不在时用），取最新的一份。
+pub fn cached_local_copy_in(root: &Path, source_key: &str) -> Option<PathBuf> {
+    let prefix = format!("{}-", hex_digest(source_key.as_bytes()));
+    let entries = std::fs::read_dir(root.join(ImageKind::Local.dir_name())).ok()?;
+    let hit = entries
+        .flatten()
+        .filter(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with(&prefix) && !name.contains(".tmp.")
+        })
+        .filter_map(|entry| {
+            let meta = entry.metadata().ok()?;
+            (meta.is_file() && meta.len() > 0).then(|| (meta.modified().ok(), entry.path()))
+        })
+        .max_by_key(|(mtime, _)| *mtime)
+        .map(|(_, path)| path)?;
+    touch(&hit);
+    Some(hit)
 }
 
 /// 按键找已缓存的图（任意扩展名）。
@@ -660,11 +708,12 @@ fn io_error(e: std::io::Error) -> ImageError {
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// 原子落盘：临时文件 + rename，读端不会看到半张图；目标已存在且大小一致就直接复用。
-fn write_named(dir: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf, ImageError> {
+/// 第二个返回值：这次是否真写了新文件（复用已有的为 false）。
+fn write_named(dir: &Path, name: &str, bytes: &[u8]) -> Result<(PathBuf, bool), ImageError> {
     let path = dir.join(name);
     if std::fs::metadata(&path).is_ok_and(|m| m.is_file() && m.len() == bytes.len() as u64) {
         touch(&path);
-        return Ok(path);
+        return Ok((path, false));
     }
     std::fs::create_dir_all(dir).map_err(io_error)?;
     let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
@@ -682,11 +731,16 @@ fn write_named(dir: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf, ImageErr
         let _ = std::fs::remove_file(&tmp);
         // 并发写同一内容：别人先 rename 成功了，结果一样。
         if std::fs::metadata(&path).is_ok_and(|m| m.len() == bytes.len() as u64) {
-            return Ok(path);
+            return Ok((path, false));
         }
         return Err(io_error(e));
     }
-    Ok(path)
+    Ok((path, true))
+}
+
+/// 一张图被查看了：刷新修改时间，回收按它从旧到新删（见 [`prune_in`]）。
+pub fn mark_used(path: &Path) {
+    touch(path);
 }
 
 fn touch(path: &Path) {
