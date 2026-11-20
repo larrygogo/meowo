@@ -70,12 +70,23 @@ fn respond(message: &Value, channel: Option<&(String, String)>, options: Options
     let method = message.get("method").and_then(Value::as_str).unwrap_or("");
     let params = message.get("params").cloned().unwrap_or(Value::Null);
     let result = match method {
-        "initialize" => json!({
-            "protocolVersion": params.get("protocolVersion").and_then(Value::as_str).unwrap_or("2025-06-18"),
-            "capabilities": { "tools": {} },
-            "serverInfo": { "name": "meowo", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": if options.browser { INSTRUCTIONS_WITH_BROWSER } else { INSTRUCTIONS_IMAGES_ONLY },
-        }),
+        "initialize" => {
+            let mut result = json!({
+                "protocolVersion": params.get("protocolVersion").and_then(Value::as_str).unwrap_or("2025-06-18"),
+                "capabilities": { "tools": {} },
+                "serverInfo": { "name": "meowo", "version": env!("CARGO_PKG_VERSION") },
+            });
+            // 没有 Meowo 会话令牌（外部终端、Kimi 桌面版、用户自己起的 gemini 读到同一份配置）时
+            // 工具列表是空的，也不给说明：否则这段话会进那边模型的系统提示，教它用一组根本不存在的工具。
+            if channel.is_some() {
+                result["instructions"] = json!(if options.browser {
+                    INSTRUCTIONS_WITH_BROWSER
+                } else {
+                    INSTRUCTIONS_IMAGES_ONLY
+                });
+            }
+            result
+        }
         "ping" => json!({}),
         "tools/list" => json!({ "tools": if channel.is_some() { tools(options) } else { Vec::new() } }),
         "tools/call" => {
@@ -111,7 +122,7 @@ fn respond(message: &Value, channel: Option<&(String, String)>, options: Options
     Some(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
 }
 
-const SEND_IMAGE_HINT: &str = "想让用户看到一张图（你截的图、画的图表、改过的图标、找到的参考图）时，用 send_image 把它发给用户：给本地图片路径或 http(s) 网址，可带一句说明。图片会直接显示在用户的对话里；只在路径里提到图片，用户是看不到的。";
+const SEND_IMAGE_HINT: &str = "想让用户看到一张图（你截的图、画的图表、改过的图标、找到的参考图）时，用 send_image 把它发给用户：给本地图片文件的路径，可带一句说明。网络上的图先用你自己的下载工具存到本地再发。图片会直接显示在用户的对话里；只在路径里提到图片，用户是看不到的。";
 
 const INSTRUCTIONS_IMAGES_ONLY: &str = SEND_IMAGE_HINT;
 
@@ -120,7 +131,7 @@ const INSTRUCTIONS_WITH_BROWSER: &str = concat!(
     "
 
 ",
-    "想让用户看到一张图（你截的图、画的图表、改过的图标、找到的参考图）时，用 send_image 把它发给用户：给本地图片路径或 http(s) 网址，可带一句说明。图片会直接显示在用户的对话里；只在路径里提到图片，用户是看不到的。",
+    "想让用户看到一张图（你截的图、画的图表、改过的图标、找到的参考图）时，用 send_image 把它发给用户：给本地图片文件的路径，可带一句说明。网络上的图先用你自己的下载工具存到本地再发。图片会直接显示在用户的对话里；只在路径里提到图片，用户是看不到的。",
 );
 
 /// 发图失败的回执固定以 `[Image error: <code>] ` 开头（contract.md）：app 侧的失败已带前缀，
@@ -240,9 +251,9 @@ fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> 
 fn send_image_tool() -> Value {
     tool(
         SEND_IMAGE,
-        "把一张图片发给用户看：图片会直接显示在用户的 Meowo 对话里（手机上也能看），用户可以点开看大图、保存。想让用户看到一张图时就用它——你截的图、画的图表、生成或改过的图标/图片文件、找到的网络参考图。只在回复里写图片路径，用户是看不到图的。支持 PNG、JPEG、GIF、WebP、SVG，单张不超过 20MB；网址只能是公网的 http(s) 地址。调用后你只会收到一句确认，图片不会回传给你。",
+        "把一张本地图片发给用户看：图片会直接显示在用户的 Meowo 对话里（手机上也能看），用户可以点开看大图、保存。想让用户看到一张图时就用它——你截的图、画的图表、生成或改过的图标/图片文件。只在回复里写图片路径，用户是看不到图的。只接受本地文件，不接受网址：网络上的图先用你自己的下载工具保存到本地，再把本地路径发过来。支持 PNG、JPEG、GIF、WebP、SVG，单张不超过 20MB。调用后你只会收到一句确认，图片不会回传给你。",
         json!({
-            "source": { "type": "string", "description": "图片的本地路径（绝对路径，或相对当前工作目录）或 http(s) 网址" },
+            "source": { "type": "string", "description": "图片文件的本地路径（绝对路径，或相对当前工作目录）。不接受网址" },
             "caption": { "type": "string", "description": "可选。随图显示给用户的一句说明" }
         }),
         &["source"],
@@ -360,6 +371,10 @@ mod tests {
         let init = respond(&json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "protocolVersion": "2025-03-26" } }), None, ALL).unwrap();
         assert_eq!(init["result"]["protocolVersion"], "2025-03-26");
         assert_eq!(init["result"]["serverInfo"]["name"], "meowo");
+        // 没有令牌（不在 Meowo 托管的会话里）：不给说明，免得教别处的模型用不存在的工具。
+        assert!(init["result"].get("instructions").is_none(), "{init}");
+        let channel = ("127.0.0.1:1".to_string(), "t".to_string());
+        let init = respond(&json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }), Some(&channel), ALL).unwrap();
         assert!(init["result"]["instructions"].as_str().unwrap().contains("send_image"));
         // 通知不回。
         assert!(respond(
@@ -408,7 +423,7 @@ mod tests {
         assert_eq!(names(&list), vec!["send_image".to_string()]);
         let reply = respond(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "browser_snapshot" } }), Some(&channel), IMAGES_ONLY).unwrap();
         assert_eq!(reply["result"]["isError"], true);
-        let init = respond(&json!({ "jsonrpc": "2.0", "id": 3, "method": "initialize", "params": {} }), None, IMAGES_ONLY).unwrap();
+        let init = respond(&json!({ "jsonrpc": "2.0", "id": 3, "method": "initialize", "params": {} }), Some(&channel), IMAGES_ONLY).unwrap();
         assert!(!init["result"]["instructions"].as_str().unwrap().contains("browser_open"));
     }
 
@@ -418,6 +433,21 @@ mod tests {
         assert_eq!(tool["inputSchema"]["required"], json!(["source"]));
         assert!(tool["inputSchema"]["properties"]["caption"].is_object());
         assert!(tool["description"].as_str().unwrap().contains("想让用户看到一张图"));
+    }
+
+    /// 发图只收本地文件（做空第一轮）：工具描述、参数说明、服务器说明都不再说「可以给网址」，
+    /// 并告诉 agent 网络图先下载到本地。
+    #[test]
+    fn send_image_is_described_as_local_only() {
+        let tool = send_image_tool();
+        let description = tool["description"].as_str().unwrap();
+        let source = tool["inputSchema"]["properties"]["source"]["description"].as_str().unwrap();
+        for text in [description, source, INSTRUCTIONS_IMAGES_ONLY, INSTRUCTIONS_WITH_BROWSER] {
+            assert!(!text.contains("http(s)"), "{text}");
+        }
+        assert!(description.contains("不接受网址") && description.contains("保存到本地"));
+        assert!(source.contains("不接受网址"));
+        assert!(INSTRUCTIONS_IMAGES_ONLY.contains("存到本地"));
     }
 
     #[test]

@@ -1356,7 +1356,7 @@ mod tests {
     #[test]
     fn browser_mcp_image_becomes_receipt_reference() {
         use serde_json::json;
-        let output = json!({"content":[{"type":"text","text":"面板浏览器截图"},{"type":"image","mimeType":"image/jpeg","data":"/9j/4A=="}]});
+        let output = json!({"content":[{"type":"text","text":"面板浏览器截图"},{"type":"image","mimeType":"image/jpeg","data":"/9j/wAARCAABAAEDASIAAhEBAxEB/9k="}]});
         let (text, images) = super::browser_mcp_media(&output, "codex-browser-test").unwrap();
         assert_eq!(text, "面板浏览器截图");
         let path = images[0].split("[Image: source: ").nth(1).and_then(|rest| rest.strip_suffix(']')).map(std::path::PathBuf::from).unwrap();

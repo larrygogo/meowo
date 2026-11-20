@@ -2,6 +2,9 @@
 //! 灯箱「保存」。落盘规则（真图判定、大小上限、内容哈希、回收）全在
 //! `meowo_agent::images`，这里只做宿主才有的事：联网下载、Tauri 命令、broker 通道。
 //!
+//! 发图（send_image）只收本地文件，不联网（见 [`send_into`]）；联网下载只用于正文里的网络图片，
+//! 且由用户在页面上点了「加载」才发起（contract.md 2026-11-21 修订）。
+//!
 //! 网络图片由这里下载后再给页面显示，而不是让页面直连第三方：直连会把用户 IP 和打开时间
 //! 泄露给图片所在的站点（可被拿来追踪），而且得放宽 CSP 的 img-src（relay.rs 注明它有意收紧）。
 
@@ -105,7 +108,7 @@ fn download_failed(message: impl Into<String>) -> ImageError {
 /// 30 秒超时、正文不超 [`IMAGE_MAX_BYTES`]、响应类型得是图片，最后仍按文件头判定。
 ///
 /// `proxy` 是 Meowo 设置里解析出的代理串（`ports::resolve_proxy`，与用量查询、装 CLI 同一套：
-/// 某 agent 单独设置 → 全局 → 系统环境变量；None = 直连）。
+/// 全局 → 系统环境变量；None = 直连）。
 ///
 /// 内网拦截在两种路线下的做法不同（取舍）：
 /// - 直连：挂在 DNS 解析器上（[`PublicOnly`]），真正要连的地址一个个查，DNS rebinding 也拦得住。
@@ -280,14 +283,11 @@ fn images_root() -> Result<PathBuf, ImageError> {
 // ── agent 主动发图（MCP 工具 send_image）─────────────────
 
 /// broker 收到 `send_image` 后调这里（pty.rs handle_browser）。`source` 是本地绝对路径
-/// （相对路径已由 meowo-reporter 按 agent 的工作目录补全）或 http(s) 网址。
+/// （相对路径已由 meowo-reporter 按 agent 的工作目录补全）。
 /// 成功回执给模型的只有一句话加引用行，不含图片数据——图片是给用户看的，回灌给模型白花 token。
-/// `agent` 是发起调用的会话所属 agent：网址下载按它的代理设置走（各 agent 单独设置 → 全局 → 系统），
-/// 与这个 agent 自己联网时同一条路；查不到会话时按全局规则。
-pub(crate) fn send_image(args: &Value, agent: Option<&str>) -> Result<Value, String> {
+pub(crate) fn send_image(args: &Value) -> Result<Value, String> {
     let root = images_root().map_err(|e| e.receipt())?;
-    let proxy = crate::ports::resolve_proxy(agent);
-    send_into(&root, args, proxy.as_deref())
+    send_into(&root, args)
         .map(|path| json!({ "text": send_receipt(&path) }))
         .map_err(|e| e.receipt())
 }
@@ -299,7 +299,11 @@ fn send_receipt(path: &Path) -> String {
     )
 }
 
-fn send_into(root: &Path, args: &Value, proxy: Option<&str>) -> Result<PathBuf, ImageError> {
+/// 发图只接受本地文件。为什么不收网址（做空第一轮）：send_image 在五家都免逐次审批，
+/// 若它能访问网址，网页里藏的一句提示注入就能让 agent 把读到的密钥拼进网址「发图」——
+/// 请求不弹确认地发出去，等于开了一条外泄通道。要发网络上的图，agent 用它自己的
+/// 下载 / 取网页工具（那些各家都要审批）先存到本地，再发本地路径。
+fn send_into(root: &Path, args: &Value) -> Result<PathBuf, ImageError> {
     let source = args
         .get("source")
         .and_then(Value::as_str)
@@ -308,19 +312,25 @@ fn send_into(root: &Path, args: &Value, proxy: Option<&str>) -> Result<PathBuf, 
         .ok_or_else(|| {
             ImageError::new(
                 ImageErrorCode::NotFound,
-                "缺少 source 参数：给一个本地图片路径或 http(s) 网址",
+                "缺少 source 参数：给一个本地图片文件的路径",
             )
         })?;
+    // UNC 在任何文件系统访问之前拒（见 images::is_remote_path）。
+    if images::is_remote_path(source) {
+        return Err(images::remote_forbidden());
+    }
     if is_http_url(source) {
-        let bytes = download(source, proxy)?;
-        return images::store_bytes_in(root, ImageKind::Sent, &bytes);
+        return Err(ImageError::new(
+            ImageErrorCode::Forbidden,
+            "send_image 只接受本地图片文件，不下载网址。要发网络上的图，先用你自己的下载或取网页工具把它下载到本地，再把本地路径发过来",
+        ));
     }
     let path = match url_scheme(source) {
         Some(scheme) if scheme.eq_ignore_ascii_case("file") => file_url_path(source)?,
         Some(_) => {
             return Err(ImageError::new(
                 ImageErrorCode::Forbidden,
-                "只支持本地文件路径或 http(s) 网址",
+                "只支持本地图片文件路径",
             ));
         }
         None => PathBuf::from(source),
@@ -375,6 +385,10 @@ fn resolve_into(
     proxy: Option<&str>,
 ) -> Result<PathBuf, ImageError> {
     let src = src.trim();
+    // UNC 在任何文件系统访问之前拒（含 `%5C%5Chost` 这类编码过的，见 local_path）。
+    if images::is_remote_path(src) {
+        return Err(images::remote_forbidden());
+    }
     if is_http_url(src) {
         if let Some(hit) = images::cached_keyed_in(root, ImageKind::Web, src) {
             return Ok(hit);
@@ -412,6 +426,9 @@ fn local_path(src: &str, cwd: Option<&str>) -> Result<PathBuf, ImageError> {
     );
     let mut first = None;
     for raw in candidates {
+        if images::is_remote_path(&raw) {
+            return Err(images::remote_forbidden());
+        }
         let path = if let Some(rest) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
             meowo_agent::home_dir().map(|home| home.join(rest))
         } else {
@@ -450,6 +467,11 @@ pub(crate) async fn export_chat_image(path: String, dest: String) -> Result<(), 
 }
 
 fn export_within(readable: &[PathBuf], path: &Path, dest: &Path) -> Result<(), String> {
+    // 源路径是 UNC 时在碰文件系统之前拒（resolve_within 里也拦，这里写明意图）。目标路径来自
+    // 系统「另存为」对话框，是用户自己选的，存到网络盘是正常用法，不拦。
+    if images::is_remote(path) {
+        return Err("chat_image/forbidden".into());
+    }
     let real = images::resolve_within(readable, path).ok_or("chat_image/forbidden")?;
     if !real.is_file() {
         return Err("chat_image/not_found".into());
@@ -530,8 +552,7 @@ mod tests {
         let src = dir.join("chart.png");
         std::fs::write(&src, PNG_1X1).unwrap();
         let root = dir.join("images");
-        let path = send_into(&root, &json!({ "source": src.to_string_lossy(), "caption": "图表" }), None)
-            .unwrap();
+        let path = send_into(&root, &json!({ "source": src.to_string_lossy(), "caption": "图表" })).unwrap();
         assert!(path.starts_with(root.join("sent")));
         let receipt = send_receipt(&path);
         // 回执只有一句话 + 一行引用，不含图片数据。
@@ -548,7 +569,7 @@ mod tests {
     fn send_reports_each_failure_with_its_code() {
         let dir = temp("send-fail");
         let root = dir.join("images");
-        let code = |args: Value| send_into(&root, &args, None).unwrap_err().code;
+        let code = |args: Value| send_into(&root, &args).unwrap_err().code;
         assert_eq!(code(json!({})), ImageErrorCode::NotFound);
         assert_eq!(
             code(json!({ "source": dir.join("missing.png").to_string_lossy() })),
@@ -563,14 +584,69 @@ mod tests {
         assert_eq!(code(json!({ "source": "relative.png" })), ImageErrorCode::NotFound);
         assert_eq!(code(json!({ "source": "ftp://example.com/a.png" })), ImageErrorCode::Forbidden);
         assert_eq!(code(json!({ "source": "data:image/png;base64,AAAA" })), ImageErrorCode::Forbidden);
-        // 内网 / 本机网址：不发请求，直接拒。
-        assert_eq!(code(json!({ "source": "http://127.0.0.1:9/a.png" })), ImageErrorCode::Forbidden);
+        // 网址一律不收（见 send_image_rejects_urls_without_any_request）。
         assert_eq!(code(json!({ "source": "http://192.168.1.1/a.png" })), ImageErrorCode::Forbidden);
-        assert_eq!(code(json!({ "source": "http://[::1]/a.png" })), ImageErrorCode::Forbidden);
-        // 域名解析到本机（localhost）同样在解析器那层拦下。
-        assert_eq!(code(json!({ "source": "http://localhost:9/a.png" })), ImageErrorCode::Forbidden);
-        let receipt = send_into(&root, &json!({ "source": "relative.png" }), None).unwrap_err().receipt();
+        let receipt = send_into(&root, &json!({ "source": "relative.png" })).unwrap_err().receipt();
         assert!(receipt.starts_with("[Image error: not_found] "), "{receipt}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 做空第一轮：send_image 免审批，若能访问网址，提示注入就能让 agent 把数据拼进网址发出去
+    /// （发图不弹确认）。现在网址一律 forbidden，不发任何请求，说明里叫 agent 先下载到本地。
+    #[test]
+    fn send_image_rejects_urls_without_any_request() {
+        let dir = temp("send-url");
+        let root = dir.join("images");
+        // 假服务器：只要有人连上来就记一次。
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+        for url in [
+            "https://example.com/a.png?leak=secret".to_string(),
+            "HTTP://93.184.216.34/a.png".to_string(),
+            format!("http://127.0.0.1:{port}/a.png"),
+        ] {
+            let err = send_into(&root, &json!({ "source": url })).unwrap_err();
+            assert_eq!(err.code, ImageErrorCode::Forbidden, "{url}");
+            assert!(err.message.contains("先") && err.message.contains("下载到本地"), "{}", err.message);
+        }
+        assert!(listener.accept().is_err(), "不应发出任何请求");
+        assert!(!root.exists(), "网址不该落盘任何东西");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// UNC 路径在所有入口（发图、正文解析、另存为）都在碰文件系统之前拒掉：192.0.2.1 是文档
+    /// 保留地址，真去连 SMB 要卡到网络超时（数秒以上）。
+    #[test]
+    fn unc_sources_are_forbidden_at_every_entry_without_touching_the_network() {
+        let dir = temp("unc");
+        let root = dir.join("images");
+        let readable = vec![root.clone()];
+        let fast = |started: std::time::Instant, what: &str| {
+            assert!(started.elapsed() < Duration::from_millis(500), "{what} 碰了文件系统（{:?}）", started.elapsed());
+        };
+        for src in [
+            r"\\192.0.2.1\share\a.png",
+            "//192.0.2.1/share/a.png",
+            "file://192.0.2.1/share/a.png",
+            r"\\?\UNC\192.0.2.1\share\a.png",
+            r"\\.\pipe\meowo",
+            "%5C%5C192.0.2.1%5Cshare%5Ca.png",
+        ] {
+            let started = std::time::Instant::now();
+            let err = send_into(&root, &json!({ "source": src })).unwrap_err();
+            // send_image 不做百分号解码：编码过的那条只是个（不存在的）相对文件名，按「需要绝对路径」拒。
+            let want = if src.starts_with('%') { ImageErrorCode::NotFound } else { ImageErrorCode::Forbidden };
+            assert_eq!(err.code, want, "send {src}");
+            fast(started, src);
+            let started = std::time::Instant::now();
+            let err = resolve_into(&root, &readable, src, Some(dir.to_str().unwrap()), None).unwrap_err();
+            assert_eq!(err.code, ImageErrorCode::Forbidden, "resolve {src}");
+            fast(started, src);
+            let started = std::time::Instant::now();
+            assert_eq!(export_within(&readable, Path::new(src), &dir.join("out.png")).unwrap_err(), "chat_image/forbidden");
+            fast(started, src);
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

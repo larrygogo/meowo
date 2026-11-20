@@ -1825,8 +1825,12 @@ async fn file_handler(State(ctx): State<Ctx>, Query(q): Query<FileQuery>) -> Res
 }
 
 /// 图片按内容嗅探而非扩展名：附件落盘名来自用户文件名，改错扩展名不该导致渲染失败。
-/// 只认前端会渲染的几种位图/矢量，其余按二进制流。
+/// 只认前端会渲染的几种位图/矢量，其余按二进制流。先走图片目录同一套嗅探（认带 BOM、
+/// XML 声明、注释开头的 SVG），认不出再按老规则（首字节 `<` 当 SVG，兼容旧附件）。
 fn sniff_image_ext(bytes: &[u8]) -> &'static str {
+    if let Some(ext) = meowo_agent::images::sniff_image(bytes) {
+        return ext;
+    }
     match bytes {
         [0x89, b'P', b'N', b'G', ..] => "png",
         [0xFF, 0xD8, ..] => "jpg",
@@ -1855,6 +1859,10 @@ fn read_scoped_file(raw: &str) -> Result<Vec<u8>, StatusCode> {
 /// 逃逸与 Windows `\\?\` 前缀不一致。root 不存在（canonicalize 失败）按不放行。
 /// 纯函数便于单测。
 fn path_within_roots(raw: &str, roots: &[PathBuf]) -> Option<PathBuf> {
+    // UNC / 设备路径：canonicalize 本身就会发起 SMB 连接（可能带出 NTLM 凭据），必须在它之前拒。
+    if meowo_agent::images::is_remote_path(raw) {
+        return None;
+    }
     let requested = FsPath::new(raw).canonicalize().ok()?;
     if !requested.is_file() {
         return None;
@@ -2329,6 +2337,27 @@ mod tests {
 
         let _ = std::fs::remove_file(&outside);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 带 BOM（或前导空白、XML 声明）的 SVG 也按 image/svg+xml 回：此前只认首字节 `<`，
+    /// 带 BOM 的 SVG 落成 application/octet-stream，手机上显示成裂图。
+    #[test]
+    fn file_sniff_accepts_svg_with_bom() {
+        assert_eq!(sniff_image_ext(b"\xEF\xBB\xBF<svg xmlns='http://www.w3.org/2000/svg'/>"), "svg");
+        assert_eq!(sniff_image_ext(b"\xEF\xBB\xBF<?xml version=\"1.0\"?>\n<svg/>"), "svg");
+        assert_eq!(sniff_image_ext(b"<svg/>"), "svg");
+        assert_eq!(sniff_image_ext(b"\x89PNG\r\n\x1a\n"), "png");
+    }
+
+    /// /file 的 UNC 路径在 canonicalize（会发起 SMB 连接）之前拒掉。
+    #[test]
+    fn file_scope_rejects_unc_before_touching_network() {
+        let roots = vec![std::env::temp_dir()];
+        for raw in [r"\\192.0.2.1\share\a.png", "//192.0.2.1/share/a.png", r"\\?\UNC\192.0.2.1\share\a.png"] {
+            let started = std::time::Instant::now();
+            assert!(path_within_roots(raw, &roots).is_none());
+            assert!(started.elapsed() < std::time::Duration::from_millis(500), "{raw} 碰了网络（{:?}）", started.elapsed());
+        }
     }
 
     /// 验收 #8：手机 /file 能读 Meowo 图片目录，目录里指向外面的符号链接 / junction 被拒。

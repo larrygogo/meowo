@@ -2271,7 +2271,7 @@ mod tests {
     #[test]
     fn browser_mcp_image_becomes_text_and_receipt_reference() {
         use serde_json::json;
-        let value = json!({"content":[{"type":"text","text":"面板浏览器截图"},{"type":"image","mimeType":"image/jpeg","data":"/9j/4A=="}]});
+        let value = json!({"content":[{"type":"text","text":"面板浏览器截图"},{"type":"image","mimeType":"image/jpeg","data":"/9j/wAARCAABAAEDASIAAhEBAxEB/9k="}]});
         let (plain, images) = super::tool_result_media(Some(&value), None, "kimi-browser-test");
         assert_eq!(plain.as_deref(), Some("面板浏览器截图"));
         assert_eq!(images.len(), 1);

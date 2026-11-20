@@ -3282,7 +3282,7 @@ mod tests {
 
     #[test]
     fn browser_tool_result_image_becomes_receipt_reference() {
-        let line = r#"{"type":"user","uuid":"browser-shot","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_browser","content":[{"type":"text","text":"面板浏览器截图"},{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"/9j/4A=="}}]}]}}"#;
+        let line = r#"{"type":"user","uuid":"browser-shot","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_browser","content":[{"type":"text","text":"面板浏览器截图"},{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"/9j/wAARCAABAAEDASIAAhEBAxEB/9k="}}]}]}}"#;
         let items = parse_chat_items(line);
         let ChatItem::ToolResult { text, .. } = &items[0] else { panic!("expected ToolResult") };
         assert!(text.starts_with("面板浏览器截图\n[Image: source: "), "{text}");
