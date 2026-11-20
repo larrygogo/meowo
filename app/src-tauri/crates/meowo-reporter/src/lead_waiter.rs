@@ -42,6 +42,8 @@ const POLL: Duration = Duration::from_secs(1);
 const MAX: Duration = Duration::from_secs(7 * 24 * 3600);
 /// 先启动、后写关卡时，最多等关卡出现这么久（模型被拦下后通常几秒内重写 gate.json）。
 const AWAIT_GATE: Duration = Duration::from_secs(10 * 60);
+/// 关卡文件连续读不出时，至少要持续这么久才认定它坏了（见 wait_guarded 的读取段）。
+const READ_ERROR_GRACE: Duration = Duration::from_secs(2);
 
 pub fn waiter_path(task: &Path) -> PathBuf {
     task.join(WAITER_FILE)
@@ -594,6 +596,7 @@ pub fn wait_guarded(
     let start = std::time::Instant::now();
     let mut misses = 0;
     let mut read_errors = 0;
+    let mut first_read_error: Option<std::time::Instant> = None;
     let out = loop {
         std::thread::sleep(poll);
         if !read_record(&task).as_ref().is_some_and(mine) {
@@ -613,15 +616,19 @@ pub fn wait_guarded(
             break say("[lead] 等待关卡答复超时，已退出。");
         }
         // 关卡文件可能正被改写（写工具先截断再写入、作答时的 rename），读到半截会解析失败。
-        // 连续多次读不出才退出；读到一次就退出会让 leader 的答复没人接（CI 实测偶发）。
+        // 连续多次读不出、且持续超过 READ_ERROR_GRACE 才退出；读到一次就退出会让 leader 的答复
+        // 没人接（CI 实测偶发）。只数次数不看时长也不行：轮询间隔很短时（测试 20ms）5 次只有
+        // 100ms，机器一卡，正常的改写窗口就被当成坏文件（macOS CI 实测）。
         let gate = match lead::read_gate_checked(&task) {
             Ok(gate) => {
                 read_errors = 0;
+                first_read_error = None;
                 gate
             }
             Err(reason) => {
                 read_errors += 1;
-                if read_errors >= 5 {
+                let since = *first_read_error.get_or_insert_with(std::time::Instant::now);
+                if read_errors >= 5 && since.elapsed() >= READ_ERROR_GRACE {
                     break say(format!("[lead] 无法读取关卡，等待器已退出：{reason}"));
                 }
                 continue;
@@ -933,7 +940,9 @@ mod tests {
         let handle = std::thread::spawn(move || wait("kimi", "session_abc", &registry, P, M, || None));
         wait_for_record(&fx.task, |record| record.gate == "Q-1");
         std::fs::write(fx.task.join("gate.json"), "").unwrap();
-        std::thread::sleep(P * 3);
+        // 半截文件停留 10 个轮询周期：超过「连续 5 次」，但远短于 READ_ERROR_GRACE。只数次数的
+        // 旧判据在这里必然退出（macOS CI 上 sleep 拉长时就这么挂过），按时长判的必须挺住。
+        std::thread::sleep(P * 10);
         std::fs::write(
             fx.task.join("gate.json"),
             json!({"id":"Q-2","type":"Q","title":"t","status":"pending"}).to_string(),
@@ -941,6 +950,23 @@ mod tests {
         .unwrap();
         let out = handle.join().unwrap().stdout.unwrap();
         assert!(out.contains("已更换"), "{out}");
+    }
+
+    /// 真坏了（一直读不出）仍然要退出，不能永远挂着。
+    #[test]
+    fn gate_that_stays_unreadable_still_ends_the_waiter() {
+        let fx = Fx::new("pending");
+        let registry = fx.registry.clone();
+        let handle =
+            std::thread::spawn(move || wait("kimi", "session_abc", &registry, P, M, || None));
+        wait_for_record(&fx.task, |record| record.gate == "Q-1");
+        let started = std::time::Instant::now();
+        std::fs::write(fx.task.join("gate.json"), "").unwrap();
+        let out = handle.join().unwrap().stdout.unwrap();
+        assert!(out.contains("无法读取关卡"), "{out}");
+        let elapsed = started.elapsed();
+        assert!(elapsed >= READ_ERROR_GRACE, "{elapsed:?}");
+        assert!(elapsed < M, "{elapsed:?}");
     }
 
     /// 做空 N3：关卡挂起、答复未送达时拦住重启；送达后、别的会话不拦。
