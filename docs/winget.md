@@ -41,7 +41,7 @@
 ## 注意
 
 - winget 的升级卸载走 NSIS 静默路径（`/S`、卸载器 `/S`），与 updater 的 `/P /UPDATE`
-  语义互不相干；`ChatEnabled` 种子在静默路径不写，winget 装出来恒为默认全功能。
+  语义互不相干。winget 装出来与手动安装是同一个包、同一种形态（应用已没有轻量模式）。
 - 若某版 workflow 失败（PAT 过期、winget-pkgs 校验红），手动补一次
   `wingetcreate update larrygogo.Meowo --version X.Y.Z --urls <asset url> --submit` 即可，
   不影响已发布的 release 与自动更新。
