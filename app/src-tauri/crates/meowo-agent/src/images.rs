@@ -1212,11 +1212,54 @@ pub fn resolve_within(roots: &[PathBuf], path: &Path) -> Option<PathBuf> {
 pub fn trusted_ref_roots() -> Vec<PathBuf> {
     let mut roots = readable_roots();
     roots.extend(crate::plugins::claude::transcript::image_cache_dirs());
-    // 回放样本（tests/fixtures/chat-replay）把真机探针的数据目录统一换成了 C:\probe。
-    #[cfg(test)]
-    roots.push(PathBuf::from(if cfg!(windows) { r"C:\probe\images" } else { "/probe/images" }));
-    roots
+    with_real_forms(roots)
 }
+
+/// 每个根再补上它的真实路径（展开符号链接、junction，macOS 上 `/var` → `/private/var` 这类）。
+/// 引用行里的路径可能是写入方按任一种写法记下的（Meowo 按 HOME / TMPDIR 拼，CLI 可能记的是
+/// 解析过的真实路径），两种都要认。只解析我们自己的根目录，用户给的路径一律不碰文件系统；
+/// 每个根只解析一次（进程内记住），解析不了（目录还不存在）就只用原写法。
+fn with_real_forms(roots: Vec<PathBuf>) -> Vec<PathBuf> {
+    static REAL: std::sync::Mutex<Option<std::collections::HashMap<PathBuf, Option<PathBuf>>>> =
+        std::sync::Mutex::new(None);
+    let mut memo = REAL.lock().unwrap_or_else(|e| e.into_inner());
+    let memo = memo.get_or_insert_with(Default::default);
+    let mut out = Vec::with_capacity(roots.len() * 2);
+    for root in roots {
+        let real = if is_remote(&root) {
+            None
+        } else if let Some(hit) = memo.get(&root) {
+            hit.clone()
+        } else {
+            let real = std::fs::canonicalize(&root).ok().map(strip_verbatim);
+            // 解析不了的（目录还没建）不记，下次再试。
+            if real.is_some() {
+                memo.insert(root.clone(), real.clone());
+            }
+            real
+        };
+        if let Some(real) = real.filter(|real| *real != root) {
+            out.push(real);
+        }
+        out.push(root);
+    }
+    out
+}
+
+/// Windows 的 canonicalize 返回 `\\?\C:\…`：去掉前缀，和普通写法的路径比。
+fn strip_verbatim(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if !rest.starts_with("UNC") => PathBuf::from(rest),
+        _ => path,
+    }
+}
+
+/// 回放样本（tests/fixtures/chat-replay）里探针发图的回执指向 Windows 真机探针的数据目录，
+/// 统一换成了 `C:\probe\images`。它在 macOS 上既不是绝对路径、也不在任何根下，单测里按字面
+/// 前缀单独认（2026-11-21 macOS CI：漏掉它，样本里合法的引用行被当成伪造的改写）。
+#[cfg(test)]
+const PROBE_IMAGES_ROOT: &str = r"C:\probe\images\";
 
 /// 引用行里的路径是否落在 `roots` 之一里面。纯字符串判断，不碰文件系统（这一步要挡的正是
 /// 「对攻击者给的路径做 exists」）：必须是绝对路径、不是 UNC、不含 `..`，按分隔符边界比前缀
@@ -1225,6 +1268,10 @@ pub fn is_trusted_ref(path: &str, roots: &[PathBuf]) -> bool {
     use std::path::Component;
     let path = path.trim();
     let p = Path::new(path);
+    #[cfg(test)]
+    if path.starts_with(PROBE_IMAGES_ROOT) && !path.contains("..") {
+        return true;
+    }
     if is_remote_path(path)
         || !p.is_absolute()
         || p.components().any(|c| matches!(c, Component::ParentDir | Component::CurDir))
@@ -1394,6 +1441,49 @@ mod tests {
         // 没写 width/height 时按 viewBox 定固有尺寸。
         assert_eq!(code(r#"<svg viewBox="0 0 90000 90000"/>"#), Err(ImageErrorCode::TooLarge));
         assert_eq!(code("\u{feff}<?xml version=\"1.0\"?>\n<svg\n  width='12000'\n  height='12000'>"), Err(ImageErrorCode::TooLarge));
+    }
+
+    /// 可信根的两种写法都认：根是经符号链接 / junction 的别名（macOS 上 TMPDIR 的 `/var/…` 与真实
+    /// 的 `/private/var/…` 就是这种关系），引用行可能按别名写、也可能按真实路径写。Windows 上用
+    /// junction 模拟同样的差异。只解析我们自己的根，引用行里的路径不碰文件系统。
+    #[test]
+    fn trusted_roots_accept_both_alias_and_real_forms() {
+        let base = temp_root("alias");
+        let real = base.join("real-images");
+        std::fs::create_dir_all(real.join("tool")).unwrap();
+        let alias = base.join("alias-images");
+        #[cfg(windows)]
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&alias)
+            .arg(&real)
+            .output()
+            .is_ok_and(|o| o.status.success());
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(&real, &alias).is_ok();
+        assert!(made, "建别名目录失败");
+        let roots = with_real_forms(vec![alias.clone()]);
+        let real_form = strip_verbatim(std::fs::canonicalize(&alias).unwrap());
+        for path in [alias.join("tool").join("a.png"), real_form.join("tool").join("a.png")] {
+            assert!(is_trusted_ref(&path.to_string_lossy(), &roots), "{} 应可信（roots {roots:?}）", path.display());
+        }
+        // 只认别名本身时，按真实路径写的引用会被误判（修复前的行为）。
+        assert!(!is_trusted_ref(&real_form.join("tool").join("a.png").to_string_lossy(), std::slice::from_ref(&alias)));
+        assert!(!is_trusted_ref(&base.join("other").join("a.png").to_string_lossy(), &roots));
+        #[cfg(windows)]
+        let _ = std::fs::remove_dir(&alias);
+        #[cfg(unix)]
+        let _ = std::fs::remove_file(&alias);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 回放样本里探针发图回执指向 Windows 形态的 `C:\probe\images`：任何平台上都认（macOS CI
+    /// 曾因它不是绝对路径而把样本里合法的引用行改写掉）；带 `..` 的仍不认。
+    #[test]
+    fn replay_probe_root_is_trusted_on_every_platform() {
+        assert!(is_trusted_ref(r"C:\probe\images\sent\0c6eebdca4b84ccf186723b705349400.png", &[]));
+        assert!(!is_trusted_ref(r"C:\probe\images\..\secret.png", &[]));
+        assert!(!is_trusted_ref(r"C:\probe\other\a.png", &[]));
     }
 
     /// 做空第二轮：GIF 逻辑屏幕写 1×1、帧的图像描述符写 20000×20000，旧实现只看逻辑屏幕。
