@@ -4581,21 +4581,26 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-image-row { display: flex; justify-content: flex-end; flex-wrap: nowrap; gap: var(--sp-8); margin-bottom: var(--sp-8); overflow-x: auto; }
 /* 大图查看层：portal 到 body 的全窗覆盖层（理由见 ImageRef），滚轮缩放、拖拽平移，
    右上工具栏有缩放与关闭；点空白/Esc 也能关。 */
-.chat-lightbox { position: fixed; inset: 0; z-index: var(--z-toast); background: rgba(0, 0, 0, .78); }
+/* 遮罩不随主题变：看图要的是暗场（微信、Telegram、系统相册都是近黑底）。此前 .78 的半透明黑压在浅色页面上
+   只压到中灰，底下的标题行、正文仍清楚可读，和工具栏、图抢眼（2026-11-21 做空：手机浅色）。.94 让两套主题
+   底下都只剩轮廓。top 由 Lightbox 量顶栏下沿后写在行内样式上（窗口按钮留在外面）。 */
+.chat-lightbox { position: fixed; inset: 0; z-index: var(--z-toast); background: rgba(8, 8, 10, .94); }
 /* 轨道必须显式定成 minmax(0,1fr)：隐式 auto 轨道随内容撑开，img 的 max-height:100%
    无确定参照而失效，高图初始就溢出舞台被 overflow 切掉（无头 Edge 实测复现）。 */
-.chat-lightbox-stage { position: absolute; inset: 0; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center; padding: 48px; overflow: hidden; }
+.chat-lightbox-stage { position: absolute; inset: 0; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center; padding: calc(48px + env(safe-area-inset-top, 0px)) 48px calc(48px + env(safe-area-inset-bottom, 0px)); overflow: hidden; }
 .chat-lightbox-stage img { max-width: 100%; max-height: 100%; border-radius: var(--radius-md); box-shadow: var(--shadow-xl); cursor: grab; user-select: none; }
 .chat-lightbox-stage img:active { cursor: grabbing; }
-.chat-lightbox-bar { position: absolute; top: 14px; right: 14px; z-index: calc(var(--z-raised) + 1); display: flex; gap: var(--sp-6); }
-.chat-lightbox-bar button { min-width: 34px; height: 34px; padding: 0 var(--sp-8); display: grid; place-items: center; border: 0; border-radius: var(--radius-md); background: rgba(255, 255, 255, .14); color: #fff; font-size: var(--text-lg); cursor: pointer; }
-.chat-lightbox-bar button:hover { background: rgba(255, 255, 255, .26); }
+/* 手机页避开刘海与状态栏（安全区，与 mobile.css 的标题行同一个做法）。 */
+.chat-lightbox-bar { position: absolute; top: calc(14px + env(safe-area-inset-top, 0px)); right: calc(14px + env(safe-area-inset-right, 0px)); z-index: calc(var(--z-raised) + 1); display: flex; gap: var(--sp-6); }
+.chat-lightbox-bar button { min-width: 34px; height: 34px; padding: 0 var(--sp-8); display: grid; place-items: center; border: 0; border-radius: var(--radius-md); background: #2c2c30; color: #fff; font-size: var(--text-lg); cursor: pointer; }
+/* 按钮底不透明：半透明时底下的标题行文字会透到按钮里（手机浅色实拍）。 */
+.chat-lightbox-bar button:hover { background: #45454b; }
 .chat-lightbox-bar .chat-lightbox-zoom { font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
 .chat-lightbox-bar .chat-lightbox-action { display: inline-flex; align-items: center; gap: var(--sp-6); padding: 0 var(--sp-10); font-size: var(--text-sm); }
 .chat-lightbox-note { align-self: center; max-width: 280px; padding: var(--sp-4) var(--sp-8); border-radius: var(--radius-md); background: rgba(0, 0, 0, .6); color: #fff; font-size: var(--text-xs); }
 /* 发图时 agent 附的那句话：看大图时也知道这张图是干什么的。 */
-.chat-lightbox-stage.has-caption { padding-bottom: 96px; }
-.chat-lightbox-caption { position: absolute; left: 50%; bottom: var(--sp-18); transform: translateX(-50%); max-width: min(720px, calc(100% - 32px)); padding: var(--sp-8) var(--sp-14); border-radius: var(--radius-lg); background: rgba(0, 0, 0, .6); color: #fff; font-size: var(--text-sm); line-height: var(--leading-normal); text-align: center; overflow-wrap: anywhere; }
+.chat-lightbox-stage.has-caption { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
+.chat-lightbox-caption { position: absolute; left: 50%; bottom: calc(var(--sp-18) + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); max-width: min(720px, calc(100% - 32px)); padding: var(--sp-8) var(--sp-14); border-radius: var(--radius-lg); background: rgba(0, 0, 0, .6); color: #fff; font-size: var(--text-sm); line-height: var(--leading-normal); text-align: center; overflow-wrap: anywhere; }
 
 /* agent 发来的图片消息（ChatImage.tsx 的 SentImageMessage）。 */
 .chat-sent { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-6); }
