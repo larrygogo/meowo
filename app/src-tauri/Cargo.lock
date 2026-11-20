@@ -2584,6 +2584,7 @@ name = "meowo-agent"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "foldhash 0.2.0",
  "memchr",
  "meowo-protocol",
  "regex",

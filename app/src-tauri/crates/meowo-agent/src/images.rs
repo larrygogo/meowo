@@ -493,7 +493,7 @@ fn hex_digest(data: &[u8]) -> String {
 pub fn store_bytes_in(root: &Path, kind: ImageKind, bytes: &[u8]) -> Result<PathBuf, ImageError> {
     let ext = validate(bytes)?;
     let name = format!("{}.{ext}", hex_digest(bytes));
-    write_named(&root.join(kind.dir_name()), &name, bytes).map(|(path, _)| path)
+    write_named(&root.join(kind.dir_name()), &name, bytes, kind == ImageKind::Sent).map(|(path, _)| path)
 }
 
 /// 同 [`store_bytes_in`]，落在默认根目录。
@@ -510,7 +510,7 @@ pub fn store_keyed_in(
 ) -> Result<PathBuf, ImageError> {
     let ext = validate(bytes)?;
     let name = format!("{}.{ext}", hex_digest(key.as_bytes()));
-    write_named(&root.join(kind.dir_name()), &name, bytes).map(|(path, _)| path)
+    write_named(&root.join(kind.dir_name()), &name, bytes, kind == ImageKind::Sent).map(|(path, _)| path)
 }
 
 /// 正文本地图的副本：`local/<来源哈希>-<内容哈希>.<扩展名>`。
@@ -525,7 +525,7 @@ pub fn store_local_copy_in(root: &Path, source_key: &str, path: &Path) -> Result
     let prefix = format!("{}-", hex_digest(source_key.as_bytes()));
     let name = format!("{prefix}{}.{ext}", hex_digest(&bytes));
     let dir = root.join(ImageKind::Local.dir_name());
-    let (stored, fresh) = write_named(&dir, &name, &bytes)?;
+    let (stored, fresh) = write_named(&dir, &name, &bytes, false)?;
     if fresh {
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for entry in entries.flatten() {
@@ -572,7 +572,9 @@ pub fn cached_keyed_in(root: &Path, kind: ImageKind, key: &str) -> Option<PathBu
         .iter()
         .map(|ext| dir.join(format!("{stem}.{ext}")))
         .find(|path| std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() > 0))
-        .inspect(|path| touch_unlocked(path))
+        .inspect(|path| {
+            touch_unlocked(path);
+        })
 }
 
 /// 读一个本地文件存进图片目录。先看元数据再读：不存在、是目录、超过上限都不读盘。
@@ -678,11 +680,79 @@ pub fn store_tool_base64(data: &str) -> Option<PathBuf> {
     if data.len() as u64 > IMAGE_MAX_BYTES / 3 * 4 + 4 {
         return None;
     }
+    let key = tool_memo_key(data);
+    if let Some(hit) = tool_memo_get(key) {
+        return hit;
+    }
     use base64::Engine;
-    let bytes = base64::engine::general_purpose::STANDARD
+    let stored = base64::engine::general_purpose::STANDARD
         .decode(data.trim().as_bytes())
-        .ok()?;
-    store_bytes(ImageKind::Tool, &bytes).ok()
+        .ok()
+        .and_then(|bytes| store_bytes(ImageKind::Tool, &bytes).ok());
+    tool_memo_put(key, stored.clone());
+    stored
+}
+
+/// 回执内嵌图的进程内备忘：同一段 base64 上次落成了哪个文件（或者不是图）。
+///
+/// 为什么要它：长会话每次整读（打开对话、窗口重载、撤回后重灌）都会把几百张回执图重新
+/// base64 解码、算 SHA-256、查文件、刷修改时间；2026-11-21 用 33MB / 104 张图的真实会话实测
+/// 比改动前慢 7.8%（SPEC 要求 ≤ 5%）。备忘按 base64 原文的指纹认：foldhash 每进程随机种子，
+/// 外人造不出碰撞；再带上长度做第二道校验。命中时不解码、不碰文件系统，只是每隔
+/// [`TOUCH_EVERY`] 刷一次修改时间（顺带确认文件还在，不在就作废重存）。
+/// 回收删过文件后整表清空（见 [`prune_in_with`]）。
+struct ToolMemo {
+    state: foldhash::quality::RandomState,
+    entries: std::collections::HashMap<(u64, usize), (Option<PathBuf>, std::time::Instant)>,
+}
+
+static TOOL_MEMO: std::sync::Mutex<Option<ToolMemo>> = std::sync::Mutex::new(None);
+/// 备忘的条目上限：每条几十字节，上万张图也只是几百 KB；超了整表清掉重来。
+const TOOL_MEMO_MAX: usize = 16_384;
+
+fn tool_memo_key(data: &str) -> (u64, usize) {
+    use std::hash::BuildHasher;
+    let mut memo = TOOL_MEMO.lock().unwrap_or_else(|e| e.into_inner());
+    let memo = memo.get_or_insert_with(|| ToolMemo {
+        state: foldhash::quality::RandomState::default(),
+        entries: Default::default(),
+    });
+    (memo.state.hash_one(data.as_bytes()), data.len())
+}
+
+/// 命中返回 Some(上次的结果)；没见过、或那个文件已经不在了返回 None。
+fn tool_memo_get(key: (u64, usize)) -> Option<Option<PathBuf>> {
+    let mut memo = TOOL_MEMO.lock().unwrap_or_else(|e| e.into_inner());
+    let entries = &mut memo.as_mut()?.entries;
+    let (path, touched) = entries.get_mut(&key)?;
+    if let Some(path) = path {
+        if touched.elapsed() > TOUCH_EVERY {
+            let _guard = STORE_LOCK.read().unwrap_or_else(|e| e.into_inner());
+            if !touch_unlocked(path) {
+                entries.remove(&key);
+                return None;
+            }
+            *touched = std::time::Instant::now();
+        }
+    }
+    Some(path.clone())
+}
+
+fn tool_memo_put(key: (u64, usize), stored: Option<PathBuf>) {
+    let mut memo = TOOL_MEMO.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(memo) = memo.as_mut() {
+        if memo.entries.len() >= TOOL_MEMO_MAX {
+            memo.entries.clear();
+        }
+        memo.entries.insert(key, (stored, std::time::Instant::now()));
+    }
+}
+
+/// 回收删了文件：备忘里的路径可能已失效，整表作废（下次解析按原流程重存）。
+fn clear_tool_memo() {
+    if let Some(memo) = TOOL_MEMO.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        memo.entries.clear();
+    }
 }
 
 // ── 写出 / 修改的图片：按调用留快照 ─────────────────────
@@ -785,12 +855,21 @@ static STORE_LOCK: std::sync::RwLock<()> = std::sync::RwLock::new(());
 
 /// 原子落盘：临时文件 + rename，读端不会看到半张图；目标已存在且大小一致就直接复用。
 /// 第二个返回值：这次是否真写了新文件（复用已有的为 false）。
-fn write_named(dir: &Path, name: &str, bytes: &[u8]) -> Result<(PathBuf, bool), ImageError> {
+///
+/// `durable`：落盘前 fsync。只给 `sent/`（agent 发的图，删了就没了）；`tool/` 等可再生的
+/// 不 fsync——一次整读要落上百张回执图时 fsync 让首次解析慢一倍（2026-11-21 实测
+/// 150 → 307ms），而断电留下的半截文件大小对不上，下次解析会按上面的检查重写。
+fn write_named(dir: &Path, name: &str, bytes: &[u8], durable: bool) -> Result<(PathBuf, bool), ImageError> {
     let _guard = STORE_LOCK.read().unwrap_or_else(|e| e.into_inner());
     let path = dir.join(name);
-    if std::fs::metadata(&path).is_ok_and(|m| m.is_file() && m.len() == bytes.len() as u64) {
-        touch_unlocked(&path);
-        return Ok((path, false));
+    if let Ok(meta) = std::fs::metadata(&path) {
+        if meta.is_file() && meta.len() == bytes.len() as u64 {
+            // 修改时间只给回收排先后，精度到小时足够：最近刷过就不再开文件刷一遍（解析热路径）。
+            if meta.modified().map_or(true, |m| m.elapsed().map_or(true, |age| age > TOUCH_EVERY)) {
+                touch_unlocked(&path);
+            }
+            return Ok((path, false));
+        }
     }
     std::fs::create_dir_all(dir).map_err(io_error)?;
     let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
@@ -799,7 +878,13 @@ fn write_named(dir: &Path, name: &str, bytes: &[u8]) -> Result<(PathBuf, bool), 
         .write(true)
         .create_new(true)
         .open(&tmp)
-        .and_then(|mut file| file.write_all(bytes).and_then(|()| file.sync_all()));
+        .and_then(|mut file| {
+            file.write_all(bytes)?;
+            if durable {
+                file.sync_all()?;
+            }
+            Ok(())
+        });
     if let Err(e) = written {
         let _ = std::fs::remove_file(&tmp);
         return Err(io_error(e));
@@ -825,11 +910,19 @@ fn touch(path: &Path) {
     touch_unlocked(path);
 }
 
-fn touch_unlocked(path: &Path) {
-    if let Ok(file) = std::fs::OpenOptions::new().write(true).open(path) {
-        let _ = file.set_modified(std::time::SystemTime::now());
+/// 刷新修改时间；文件已不在返回 false。
+fn touch_unlocked(path: &Path) -> bool {
+    match std::fs::OpenOptions::new().write(true).open(path) {
+        Ok(file) => {
+            let _ = file.set_modified(std::time::SystemTime::now());
+            true
+        }
+        Err(_) => false,
     }
 }
+
+/// 解析热路径上「复用已有图片」时，最多隔多久刷新一次修改时间（见 [`write_named`]、[`store_tool_base64`]）。
+const TOUCH_EVERY: std::time::Duration = std::time::Duration::from_secs(3600);
 
 /// 回收结果（测试与日志用）。
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -898,6 +991,9 @@ fn prune_in_with(root: &Path, cap: u64, after_scan: impl FnOnce()) -> PruneRepor
                 total -= len;
                 removed += 1;
             }
+        }
+        if removed > 0 {
+            clear_tool_memo();
         }
     }
     PruneReport {
@@ -1220,6 +1316,29 @@ mod tests {
         assert_eq!(report.after, 0);
         assert!(!sent_old.exists() && !web_new.exists());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 回执内嵌图的进程内备忘：同一段 base64 第二次起不再解码、不碰文件系统，直接给上次的路径；
+    /// 不是图的也记住（不再反复解码）；回收删过文件后整表作废，按原流程重存。
+    #[test]
+    fn tool_base64_memo_reuses_result_until_prune() {
+        use base64::Engine;
+        let mut png = PNG_1X1.to_vec();
+        png[16..20].copy_from_slice(&7u32.to_be_bytes()); // 本测试独有的内容，不和别的测试共享文件
+        png[20..24].copy_from_slice(&3u32.to_be_bytes());
+        let data = base64::engine::general_purpose::STANDARD.encode(&png);
+        let first = store_tool_base64(&data).unwrap();
+        assert!(first.exists());
+        std::fs::remove_file(&first).unwrap();
+        // 备忘命中：不查文件，路径照旧（每隔 TOUCH_EVERY 才回头确认一次文件还在）。
+        assert_eq!(store_tool_base64(&data), Some(first.clone()));
+        assert!(!first.exists());
+        clear_tool_memo();
+        assert_eq!(store_tool_base64(&data), Some(first.clone()));
+        assert!(first.exists(), "备忘作废后按原流程重存");
+        assert_eq!(store_tool_base64("aGVsbG8="), None);
+        assert_eq!(store_tool_base64("aGVsbG8="), None);
+        std::fs::remove_file(&first).ok();
     }
 
     /// 回收与写入 / 解析共用一把锁：扫描之后、真删之前有人复用了某张图（解析时同内容重写会

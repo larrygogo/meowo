@@ -1085,7 +1085,7 @@ mod tests {
         std::fs::write(&shot, PNG_1X1).unwrap();
         let long_ago = SystemTime::now() - Duration::from_secs(30 * 86400);
         std::fs::OpenOptions::new().write(true).open(&shot).unwrap().set_modified(long_ago).unwrap();
-        let got = resolve_into(&root, &[root.clone()], &shot.to_string_lossy(), None, None).unwrap();
+        let got = resolve_into(&root, std::slice::from_ref(&root), &shot.to_string_lossy(), None, None).unwrap();
         assert_eq!(got, shot);
         let mtime = std::fs::metadata(&shot).unwrap().modified().unwrap();
         assert!(mtime > SystemTime::now() - Duration::from_secs(60), "命中后修改时间应刷新");
