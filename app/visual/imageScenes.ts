@@ -179,8 +179,8 @@ export function imageSceneItems(part: string, lang: Lang): { items: ChatItem[]; 
       { type: "tool_use", id: "t3", timestamp: at(180), name: "Write", kind: "write", summary: "public/icon-48.png", detail: { kind: "write", path: "C:\\dev\\web-app\\public\\icon-48.png", content: "", lines: 0, truncated: false } } as unknown as ChatItem,
       receipt("t3", at(179), "File created successfully"),
       say("a2", 170, zh
-        ? "上面几张没能发出去。设计稿里的图：\n\n![架构图](docs/chart.png)\n\n参考站的横幅：![](https://example.com/hero.png) 这张还在下载。旧图 ![旧版首页](C:\\dev\\web-app\\old\\home.png) 已经删了。"
-        : "Those didn't go through. From the design doc:\n\n![Architecture](docs/chart.png)\n\nThe reference banner ![](https://example.com/hero.png) is still downloading. The old one ![Old home](C:\\dev\\web-app\\old\\home.png) was deleted."),
+        ? "上面几张没能发出去。设计稿里的图：\n\n![架构图](docs/chart.png)\n\n参考站的横幅（网络图，点了才下载）：![](https://example.com/hero.png)。旧图 ![旧版首页](C:\\dev\\web-app\\old\\home.png) 已经删了。"
+        : "Those didn't go through. From the design doc:\n\n![Architecture](docs/chart.png)\n\nThe reference banner (a web image, downloads only when clicked): ![](https://example.com/hero.png). The old one ![Old home](C:\\dev\\web-app\\old\\home.png) was deleted."),
     ],
   };
 }

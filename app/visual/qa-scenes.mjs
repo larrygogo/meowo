@@ -171,6 +171,10 @@ export const QA_SHOTS = [
   { name: "qa-images-bottom", scene: "flow-images-main", size: [1100, 900], sel: ".chat-sent", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 1e6"], ["tick", 300]] },
   { name: "qa-images-states", scene: "flow-images-states", size: [1100, 1000], sel: ".chat-sent-failed", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300]] },
   // 过程块展开：截图、读图、写图片三行的动作名都是人话（不露 mcp__meowo__browser_screenshot）。
+  // 网络图片的占位：悬停看说明；点了之后同域名放行、进入加载中（演示页里 hero.png 一直不返回）。
+  { name: "qa-images-gate-hover", scene: "flow-images-states", size: [1100, 1000], sel: "button.is-gated", steps: [["tick", 400], ["eval", "document.querySelector('button.is-gated').scrollIntoView({ block: 'center' })"], ["tick", 200], ["hover", "button.is-gated"], ["tick", 900]] },
+  { name: "qa-images-gate-clicked", scene: "flow-images-states", size: [1100, 1000], sel: ".chat-md-image", steps: [["tick", 400], ["eval", "document.querySelector('button.is-gated').scrollIntoView({ block: 'center' })"], ["tick", 200], ["click", "button.is-gated"], ["tick", 400]] },
+  { name: "qa-m-images-gate", page: "mobile", scene: "mobile-images-states", size: PHONE, sel: "button.is-gated", steps: [["tick", 400], ["eval", "document.querySelector('button.is-gated').scrollIntoView({ block: 'center' })"], ["tick", 300]] },
   { name: "qa-images-states-open", scene: "flow-images-states", size: [1100, 1000], sel: ".chat-sent-failed", steps: [["tick", 400], OPEN_FOLDS, ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300]] },
   { name: "qa-m-images-states-open", page: "mobile", scene: "mobile-images-states", size: PHONE, sel: ".chat-sent-failed", steps: [["tick", 400], OPEN_FOLDS, ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300]] },
   { name: "qa-images-hover", scene: "flow-images-main", size: [1100, 900], sel: ".chat-sent", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300], ["hover", ".chat-sent-tile >> nth=0"]] },
