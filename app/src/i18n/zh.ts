@@ -736,7 +736,7 @@ export const zh = {
       web: (count: number) => `访问了 ${count} 次网页`,
       todo: (count: number) => `已更新 ${count} 次清单`,
       agent: (count: number) => `已派出 ${count} 个子任务`,
-      image: (count: number) => `发来了 ${count} 张图片`,
+      image: (count: number) => `发来 ${count} 张图片`,
       other: (count: number) => `执行了 ${count} 次工具调用`,
     },
     turnChangedFiles: (count: number) => `${count} 个文件已修改`,
@@ -771,6 +771,8 @@ export const zh = {
       write: (subject: string) => `正在写入 ${subject}`,
       search: (subject: string) => `正在搜索 ${subject}`,
       web: (subject: string) => `正在访问 ${subject}`,
+      // agent 用 Meowo 的发图工具发图（ToolKind::Image）：运行条与过程块里不露工具原名。
+      image: "正在发图片",
       other: "正在执行…",
     },
     turnToolFailed: (count: number) => `（${count} 失败）`,
@@ -1617,7 +1619,26 @@ export const zh = {
     toolExitCode: (code: number, first: string) => (first ? `退出码 ${code}：${first}` : `退出码 ${code}`),
     // 一次调用带了几个地址或查询时，摘要只列第一个。
     toolMoreTargets: (count: number) => `另有 ${count} 个`,
-    toolBrowserShots: (count: number) => `${count} 张截图`,
+    toolReadImage: "图片",
+    // agent 主动发来的图（Meowo 发图工具，ToolKind::Image）。
+    sentImageSending: "正在发送图片…",
+    sentImageFailed: "图片没能发过来",
+    sentImageOpen: "查看大图",
+    imageLoading: "图片加载中",
+    imageLong: "长图",
+    imageSave: "保存",
+    imageSaved: "已保存",
+    imageReveal: "在文件夹中显示",
+    // 失败原因：后端原因码（contract.md）与前端自己读图失败。写人话，说清是哪一种。
+    imageErrors: {
+      not_found: "文件不存在",
+      not_image: "这个文件不是图片",
+      too_large: "图片太大，超过了上限",
+      download_failed: "网络图片下载失败",
+      forbidden: "这个位置不允许读取",
+      unreadable: "图片文件读不到了",
+      unknown: "图片没能显示",
+    } as Record<string, string>,
     model: "模型",
     switchModel: "切换模型",
     mode: "模式",
@@ -1789,6 +1810,7 @@ export const zh = {
       web: "网页",
       todo: "待办",
       agent: vocab.concept.subagent,
+      image: "发图片",
     } as Record<string, string>,
     // 归不进上面几类的工具按原名精确对照。只收本机实测高频的 claude 工具（11-04 统计近两周
     // 43 个会话：TaskStop 71 次、Skill 54、SendMessage 38、AskUserQuestion 31…），此前原样
@@ -1834,6 +1856,24 @@ export const zh = {
       WaitFor: "等待",
       // OpenCode
       list: "列出目录",
+      // Meowo 自己的 MCP 工具（crates/meowo-reporter/src/mcp.rs）：五家各自的 MCP 命名形态不同，
+      // toolShortName 拆出工具段后查这张表（Claude 的 mcp__meowo__browser_open 与 Kimi 的 browser_open 同一个键）。
+      send_image: "发图片",
+      browser_open: "打开网页",
+      browser_navigate: "跳转网页",
+      browser_snapshot: "读取网页",
+      browser_screenshot: "网页截图",
+      browser_click: "点击",
+      browser_type: "输入",
+      browser_press: "按键",
+      browser_scroll: "滚动网页",
+      browser_select: "选择选项",
+      browser_back: "后退",
+      browser_forward: "前进",
+      browser_reload: "刷新网页",
+      browser_evaluate: "运行脚本",
+      browser_wait_for: "等待网页",
+      browser_emulate: "模拟设备",
     } as Record<string, string>,
     modelDesc: {
       fable: "能力高于 Opus 的旗舰档",

@@ -1,4 +1,5 @@
 import { memo, useContext, useEffect, useRef, type ReactNode } from "react";
+import { FoldImageStrip } from "./ChatImage";
 import { useT } from "../../i18n";
 import type { Dict } from "../../i18n/zh";
 import { fmtSpan, type ToolResultItem, type ToolUseItem } from "./shared";
@@ -37,6 +38,7 @@ function currentClause(items: ProcessItem[], results: Map<string, ToolResultItem
     const kind = item.kind;
     const doing = t.chat.turnToolDoing;
     if (kind === "run") return { text: doing.run, toolId: item.id };
+    if (kind === "image") return { text: doing.image, toolId: item.id };
     const subject = clip(toolSummary(item, cwd).replace(/\/ /g, "/"));
     const verb = kind === "read" || kind === "edit" || kind === "write" || kind === "search" || kind === "web" ? doing[kind] : null;
     return { text: verb && subject ? verb(subject) : doing.other, toolId: item.id };
@@ -145,7 +147,7 @@ export const TurnFold = memo(function TurnFold({ id, items, results, durationMs,
         </span>
         <span className="chat-tool-chevron">›</span>
       </button>
-      {open && <div className="turn-fold-body">{children}</div>}
+      {open ? <div className="turn-fold-body">{children}</div> : <FoldImageStrip tools={tools} results={results} />}
     </div>
   );
 });

@@ -163,7 +163,22 @@ export const QA_SHOTS = [
   { name: "qa-tools-codex-agents-running", scene: "flow-tools-codex-agents-running", size: W620, sel: ".chat-subagent-status.is-running" },
   { name: "qa-m-tools-codex-agents-running", page: "mobile", scene: "mobile-tools-codex-agents-running", size: PHONE, sel: ".chat-subagent-status.is-running" },
   { name: "qa-image", scene: "flow-image", sel: ".chat-image-thumb-btn" },
-  { name: "qa-browser-receipt", scene: "flow-browser-receipt", sel: ".chat-tool-browser-images img", steps: [["click", ".chat-tool > summary"]] },
+  // 工具回执里的截图：缩略图直接露在工具行下，不用展开。
+  { name: "qa-browser-receipt", scene: "flow-browser-receipt", sel: ".chat-tool-media img" },
+  // agent 发来的图片（imageScenes.ts）：单张带说明、相册、长图、小图标、正在发送；四种失败、工具行缩略图、正文图片；
+  // 悬停露出保存与在文件夹中显示；灯箱带说明与操作。手机同一份数据。
+  { name: "qa-images", scene: "flow-images-main", size: [1100, 900], sel: ".chat-sent", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300]] },
+  { name: "qa-images-bottom", scene: "flow-images-main", size: [1100, 900], sel: ".chat-sent", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 1e6"], ["tick", 300]] },
+  { name: "qa-images-states", scene: "flow-images-states", size: [1100, 1000], sel: ".chat-sent-failed", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300]] },
+  // 过程块展开：截图、读图、写图片三行的动作名都是人话（不露 mcp__meowo__browser_screenshot）。
+  { name: "qa-images-states-open", scene: "flow-images-states", size: [1100, 1000], sel: ".chat-sent-failed", steps: [["tick", 400], OPEN_FOLDS, ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300]] },
+  { name: "qa-m-images-states-open", page: "mobile", scene: "mobile-images-states", size: PHONE, sel: ".chat-sent-failed", steps: [["tick", 400], OPEN_FOLDS, ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300]] },
+  { name: "qa-images-hover", scene: "flow-images-main", size: [1100, 900], sel: ".chat-sent", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300], ["hover", ".chat-sent-tile >> nth=0"]] },
+  { name: "qa-images-lightbox", scene: "flow-images-main", size: [1100, 800], sel: ".chat-lightbox", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300], ["click", ".chat-sent-open >> nth=0"]] },
+  { name: "qa-m-images", page: "mobile", scene: "mobile-images-main", size: PHONE, sel: ".chat-sent", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300]] },
+  { name: "qa-m-images-bottom", page: "mobile", scene: "mobile-images-main", size: PHONE, sel: ".chat-sent", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 1e6"], ["tick", 300]] },
+  { name: "qa-m-images-states", page: "mobile", scene: "mobile-images-states", size: PHONE, sel: ".chat-sent-failed", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 1e6"], ["tick", 300]] },
+  { name: "qa-m-images-lightbox", page: "mobile", scene: "mobile-images-main", size: PHONE, sel: ".chat-lightbox", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300], ["click", ".chat-sent-open >> nth=0"]] },
   { name: "qa-lightbox", scene: "flow-image", sel: ".chat-lightbox", steps: [["click", ".chat-image-thumb-btn"]] },
   { name: "qa-drop", scene: "flow-drop", sel: ".chat-drop-overlay" },
   { name: "qa-search", scene: "flow-states", sel: ".chat-search-host", steps: [["key", "Control+f"], ["type", ".chat-search-input", "schema"]] },

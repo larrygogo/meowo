@@ -3,7 +3,7 @@ import type { Dict } from "../../i18n/zh";
 import type { ToolKind } from "../../generated/contracts/ToolKind";
 import { Icon } from "../../icons/Icon";
 import { icGlobe, icPencil, icSearch, icTerminal } from "../../icons/glyphs";
-import { icAgents, icFile, icList } from "../../icons/glyphs.chat";
+import { icAgents, icFile, icImage, icList } from "../../icons/glyphs.chat";
 
 /// 工具的语义类别。它由后端各家插件按自己的工具名表给出（ChatItem 的 `kind`），这里只消费：
 /// 前端不看工具名去猜类别。此前按名字子串猜，规则是照 Claude 的命名调的，Gemini 的
@@ -21,6 +21,7 @@ const KIND_GLYPH: Partial<Record<ToolKind, typeof icSearch>> = {
   // 一行「待办」顶着 >_，和上下的命令行分不开（2026-11-14 截图自验）。
   agent: icAgents,
   todo: icList,
+  image: icImage,
 };
 
 /// 按工具类别分图标：搜索 / 读文件 / 改文件 / 网络 / 子任务 / 待办，其余用终端图标。
@@ -39,8 +40,9 @@ export function ToolIcon({ kind }: { kind: ToolKind }) {
 export function toolShortName(name: string, kind: ToolKind, t: ReturnType<typeof useT>): string {
   if (kind === "other") {
     // MCP 工具原名是 `mcp__<服务>__<工具>`，双下划线读着像乱码（本机近两周出现数百次）。
+    // 收录过的工具段（Meowo 自己的浏览器工具等）给译名，不认得的拆成「服务 · 工具」。
     const mcp = /^mcp__(.+?)__(.+)$/.exec(name);
-    if (mcp) return `${mcp[1]} · ${mcp[2]}`;
+    if (mcp) return t.chat.toolOtherNames[mcp[2]] ?? `${mcp[1]} · ${mcp[2]}`;
     return t.chat.toolOtherNames[name] ?? name;
   }
   return t.chat.toolShortNames[kind] ?? name;

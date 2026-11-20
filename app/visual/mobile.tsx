@@ -18,6 +18,7 @@ import { checkpointSceneMock } from "./checkpointScene";
 import { reviewSceneMock } from "./reviewScene";
 import { cardSceneMock } from "./cardScenes";
 import { toolSceneMock } from "./toolScenes";
+import { imageSceneBoot, imageSceneMock } from "./imageScenes";
 import { tmsChatMock, tmsCommonMock, tmsProviderOf } from "./tmsFixtures";
 import { chatMock } from "../src/demo/chatData";
 import { panelMock } from "../src/demo/panelData";
@@ -52,7 +53,9 @@ const tmsNew = scene.startsWith("mobile-tms-new-");
 const cardScene = scene.startsWith("mobile-card-") ? scene.slice("mobile-card-".length) : null;
 // mobile-tools-<家>-<状态>：五家的工具行与运行状态（数据在 toolScenes.ts，与桌面 flow-tools-* 同一份）。
 const toolScene = scene.startsWith("mobile-tools-") ? scene.slice("mobile-tools-".length) : null;
-const inChat = tmsChat || cardScene !== null || toolScene !== null || scene === "mobile-chat" || scene === "mobile-dir-gone" || scene === "mobile-changes" || scene === "mobile-idle" || scene === "mobile-lead" || scene === "mobile-lead-c" || scene === "mobile-lead-rich" || scene === "mobile-question" || scene === "mobile-tasks" || scene === "mobile-queued" || scene === "mobile-checkpoints" || scene === "mobile-pr-review";
+// mobile-images-<段>：图片消息与缩略图（数据在 imageScenes.ts，与桌面 flow-images-* 同一份）。
+const imageScene = scene.startsWith("mobile-images-") ? scene.slice("mobile-images-".length) : null;
+const inChat = tmsChat || cardScene !== null || toolScene !== null || imageScene !== null || scene === "mobile-chat" || scene === "mobile-dir-gone" || scene === "mobile-changes" || scene === "mobile-idle" || scene === "mobile-lead" || scene === "mobile-lead-c" || scene === "mobile-lead-rich" || scene === "mobile-question" || scene === "mobile-tasks" || scene === "mobile-queued" || scene === "mobile-checkpoints" || scene === "mobile-pr-review";
 /// 后台任务的假数据：判据是「回执带子任务结局」（与 TasksPanel 同口径），一条调用配一条回执。
 function taskItems(zh: boolean): unknown[] {
   const at = (minutes: number) => new Date(FIXED_NOW - minutes * 60_000).toISOString();
@@ -83,7 +86,8 @@ const SCREEN = [
   "  3. No, and tell Claude what to do differently (esc)",
 ];
 const tmsMock = tmsChat ? tmsChatMock(tmsProviderOf(scene), q.get("state") ?? "idle", chat, q.get("modes")) : tmsNew ? tmsCommonMock(tmsProviderOf(scene), q.get("cfg")) : null;
-const cardMock = cardScene !== null ? cardSceneMock(cardScene, lang, chat) : toolScene !== null ? toolSceneMock(toolScene, lang, chat) : null;
+const cardMock = cardScene !== null ? cardSceneMock(cardScene, lang, chat) : toolScene !== null ? toolSceneMock(toolScene, lang, chat)
+  : imageScene !== null ? imageSceneMock(imageScene, lang, chat) : null;
 setExtraMock((cmd, args) => {
   const cardHit = cardMock?.(cmd, args);
   if (cardHit !== undefined) return cardHit;
@@ -132,6 +136,7 @@ setExtraMock((cmd, args) => {
   return checkpointSceneMock(cmd) ?? reviewSceneMock(cmd) ?? scmMock(cmd) ?? panel(cmd, args) ?? chat(cmd);
 });
 installMocks("chat");
+if (imageScene !== null) imageSceneBoot();
 store.settings.language = lang;
 store.settings.theme = theme;
 // ?on=1：设置屏的开关全拍成「开」（消息自动折叠、防休眠、手机推送）。

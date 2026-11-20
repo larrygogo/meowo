@@ -14,8 +14,7 @@ import { highlightCode, languageForFence, useHighlighter } from "./chat/highligh
 import { copyPlainText } from "./chat/clipboard";
 import { markdownTooComplex } from "./chat/markdownGuard";
 import { ErrorBoundary } from "../ErrorBoundary";
-import { Icon } from "../icons/Icon";
-import { icImage } from "../icons/glyphs.chat";
+import { ImageChip, ResolvedImage } from "./chat/ChatImage";
 
 // 网址里不会出现的字符：中日韩文字、全角标点与括号、中文引号书名号。GFM 的自动链接只在空白处收尾，中文里
 // 网址后面常常紧跟「）」或汉字、中间没有空格，整句会被吞进链接（2026-11-18 用户截图：飞书文档链接连着
@@ -437,21 +436,14 @@ export const components: Components = {
     }
     return <HighlightedCode className={className} text={text} lang={lang}>{children}</HighlightedCode>;
   },
-  // 7C-10：markdown 里的图片此前完全没管。远端大图按原始像素铺开，把 720px 的消息列
-  // 撑出横向滚动条；本地路径/相对路径在 webview 里根本加载不到，只剩一个碎图标，
-  // 用户不知道那是什么。远端图限宽自适应，非 http 源降级成与附件同款的文件名 chip。
+  // 正文里的图片：本地绝对路径、相对会话目录的路径、http(s) 网址都交给后端 resolve_chat_image——本地图校验后
+  // 复制进 Meowo 图片目录，网络图由后端下载（不带 cookie、有大小与超时上限），页面只按持久路径经 asset 协议
+  // 显示，不直连第三方，CSP 的 img-src 也就不用放宽（relay.rs 注明有意收紧）。进视口才解析；解析失败退回与
+  // 附件同款的文件名徽章并写明原因。src 被 keepUrl 清空的（javascript:/data: 之类）只给徽章。
   img: ({ src, alt }) => {
-    const url = typeof src === "string" ? src : "";
-    if (!/^https?:\/\//i.test(url)) {
-      const name = alt || url.split(/[\\/]/).pop() || url;
-      return (
-        <span className="chat-image-chip" data-tip={url || name}>
-          <Icon glyph={icImage} size={12} />
-          <span>{name}</span>
-        </span>
-      );
-    }
-    return <img src={url} alt={alt ?? ""} loading="lazy" referrerPolicy="no-referrer" />;
+    const url = typeof src === "string" ? src.trim() : "";
+    if (!url) return <ImageChip name={alt || "image"} reason={null} />;
+    return <ResolvedImage src={url} alt={alt} mode="inline" />;
   },
   // 链接绝不能让 webview 自己导航（这个窗口没有地址栏，跳走就回不来了）；
   // 交给后端在默认浏览器打开，scheme 校验也在后端。

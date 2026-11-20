@@ -14,7 +14,9 @@ import { memo, useEffect, useMemo, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { components, PLUGINS } from "../ChatMarkdown";
+import { resolveChatImageCached } from "./ChatImage";
 
 
 /** 文件预览的 sanitize 白名单：defaultSchema（GitHub 风）基础上补 README 生态
@@ -35,7 +37,8 @@ const FILE_REHYPE: import("react-markdown").Options["rehypePlugins"] = [
   [rehypeSanitize, FILE_SCHEMA],
 ];
 
-/** 预览里的图片：http(s) 直用（CSP img-src 已放行 https:）；相对路径交给调用方
+/** 预览里的图片。网络图交给后端 resolve_chat_image 下载进 Meowo 图片目录、按持久路径经 asset 协议显示：
+ *  CSP 的 img-src 不含 https:（有意收紧，页面不直连第三方），直接用网址会被拦成碎图。相对路径交给调用方
  *  解析成 data URL（仓库文件走后端读盘，webview 里没有文件系统 base 可依赖）。 */
 function PreviewImage({ src, alt, width, height, resolve }: {
   src?: string;
@@ -45,15 +48,17 @@ function PreviewImage({ src, alt, width, height, resolve }: {
   resolve: (src: string) => Promise<string | null>;
 }) {
   const remote = !!src && /^https?:/i.test(src);
-  const [url, setUrl] = useState<string | null>(remote ? src! : null);
+  const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
-    // src 变了先归位:useState 只在首挂时取初值,effect 又只在 resolve 成功时 setUrl,
-    // 二者都不覆盖旧值。react-markdown 按位置复用节点时（切文件 A→B、同位置换图),
-    // remote→remote 会一直显示第一张,relative 换到解析失败的图则残留上一张——都得先清。
-    setUrl(remote ? src! : null);
-    if (remote || !src) return;
+    // src 变了先归位:useState 只在首挂时取初值,effect 又只在解析成功时 setUrl,二者都不覆盖旧值。
+    // react-markdown 按位置复用节点时（切文件 A→B、同位置换图),不清会残留上一张。
+    setUrl(null);
+    if (!src) return;
     let alive = true;
-    resolve(src)
+    const pending = remote
+      ? resolveChatImageCached(src, null).then((outcome) => ("path" in outcome ? convertFileSrc(outcome.path) : null))
+      : resolve(src);
+    pending
       .then((resolved) => {
         if (alive && resolved) setUrl(resolved);
       })
@@ -63,7 +68,7 @@ function PreviewImage({ src, alt, width, height, resolve }: {
     };
   }, [src, remote, resolve]);
   if (!url) return alt ? <span className="chat-md-img-broken">{alt}</span> : null;
-  return <img src={url} alt={alt ?? ""} width={width} height={height} loading="lazy" />;
+  return <img src={url} alt={alt ?? ""} width={width} height={height} loading="lazy" referrerPolicy="no-referrer" />;
 }
 
 /**

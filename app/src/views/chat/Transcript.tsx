@@ -19,6 +19,7 @@ function dayLabel(date: Date, t: Dict): string {
 import { imageOnlyPaths, Message, MessageCopyButton, UserImageGroup } from "./Message";
 import { SubagentBlock } from "./SubagentBlock";
 import { ToolActivity } from "./ToolActivity";
+import { SentImageMessage } from "./ChatImage";
 import { TurnChanges } from "./TurnChanges";
 import { ReplyFold, TurnFold } from "./TurnFold";
 import { FoldScopeContext, foldScope } from "./foldMemory";
@@ -251,11 +252,15 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
       turnItems.push(entry);
       next += 1;
     }
-    const processItems = turnItems.filter((entry) =>
-      entry.type === "reasoning" || entry.type === "reasoning_delta" || entry.type === "tool_use" || entry.type === "tool_result",
+    // agent 发来的图（ToolKind::Image）是说给人看的内容，不是工作过程：和正文一样排在过程块外面，
+    // 回合折叠、过程块收起都不会把它藏起来。它的回执仍按调用配对（results），不单独成行。
+    const processItems = turnItems.filter((entry): entry is Extract<ChatItem, { type: "reasoning" | "reasoning_delta" | "tool_use" | "tool_result" }> =>
+      entry.type === "reasoning" || entry.type === "reasoning_delta" || entry.type === "tool_result"
+      || (entry.type === "tool_use" && entry.kind !== "image"),
     );
     const bodyItems = turnItems.filter((entry) =>
-      entry.type === "assistant_text" || entry.type === "assistant_delta" || entry.type === "turn_error",
+      entry.type === "assistant_text" || entry.type === "assistant_delta" || entry.type === "turn_error"
+      || (entry.type === "tool_use" && entry.kind === "image"),
     );
     const isLive = next >= items.length;
     // 这一段此刻的活动态：会话在进行，且这一段属于当前回合（在末尾，或在当前回合起点之后）。
@@ -321,7 +326,7 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
         <TurnLiveContext.Provider key={node.key} value={blockActivity}>{node}</TurnLiveContext.Provider>
       ));
     };
-    for (const entry of processItems) {
+    for (const entry of turnItems) {
       if (entry.type === "tool_use" && !results.has(entry.id)) record.unresolved.push(entry.id);
     }
 
@@ -372,6 +377,15 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
     for (const entry of bodyItems) {
       // 出错卡只有在它就是时间线末尾时才给「继续」（后面已有新内容的旧错误不必再续）。
       const latest = entry.type === "turn_error" && next >= items.length && entry === bodyItems[bodyItems.length - 1];
+      if (entry.type === "tool_use") {
+        // 发图的「正在发送」「已中断」取决于这一段的活动态，与工具行同一个来源。
+        record.nodes.push(
+          <TurnLiveContext.Provider key={entry.id} value={blockActivity}>
+            <SentImageMessage item={entry} result={results.get(entry.id)} />
+          </TurnLiveContext.Provider>,
+        );
+        continue;
+      }
       record.nodes.push(<Message key={entry.id} item={entry} latest={latest} />);
     }
     // 页脚只挂在整段回复的末尾（下一条是用户消息/meta 或到底）：一段回复被工具调用切成
