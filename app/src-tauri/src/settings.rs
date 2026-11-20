@@ -183,11 +183,9 @@ pub(crate) struct Settings {
     /// 兼容老 settings.json（缺席 → terminal）。
     #[serde(default = "default_session_open_in")]
     pub(crate) session_open_in: String,
-    /// 对话窗口功能总开关（「轻量模式」）。关闭后应用只保留贴纸生态：所有 chat 开窗
-    /// 入口隐藏/拦截，审批与交互提问回落终端 TUI 作答。缺省开启，兼容老 settings.json。
-    /// 安装器的「自定义安装」勾选会经注册表种子写入首选值（见 seed.rs，仅 Windows）。
-    #[serde(default = "default_true")]
-    pub(crate) chat_enabled: bool,
+    // 原 `chat_enabled`（对话窗口功能总开关，「轻量模式」）2026-11-20 起删除（leader 决定：
+    // 产品只有完整工作台一种形态）。老 settings.json 里的该键（含 false）靠 serde 默认的
+    // 「忽略未知字段」读入即丢，下次落盘自然消失；本结构体不得加 deny_unknown_fields。
     /// 卡片菜单触发方式：button = 卡片菜单按钮（默认），context = 右键菜单。兼容老 settings.json。
     #[serde(default = "default_card_menu_mode")]
     pub(crate) card_menu_mode: String,
@@ -347,7 +345,6 @@ impl Default for Settings {
             language: default_language(),
             terminal_open_mode: default_terminal_open_mode(),
             session_open_in: default_session_open_in(),
-            chat_enabled: true,
             card_menu_mode: default_card_menu_mode(),
             preview_enabled: true,
             click_through_enabled: false,
@@ -458,7 +455,6 @@ pub(crate) fn tr(lang: &str, key: &str) -> &'static str {
         ("en", "quit.shellBusy") => "Programs are still running in panel terminals. Quitting stops them.",
         ("en", "window.settings") => "Settings",
         ("en", "window.updater") => "Software Update",
-        ("en", "window.newSession") => "New Session",
         ("en", "window.onboarding") => "Getting started",
         ("en", "menu.about") => "About Meowo",
         ("en", "menu.settings") => "Settings…",
@@ -491,7 +487,6 @@ pub(crate) fn tr(lang: &str, key: &str) -> &'static str {
         (_, "quit.shellBusy") => "面板终端还有程序在跑，退出会一并结束。",
         (_, "window.settings") => "设置",
         (_, "window.updater") => "软件更新",
-        (_, "window.newSession") => "新建会话",
         (_, "window.onboarding") => "使用引导",
         (_, "menu.about") => "关于 Meowo",
         (_, "menu.settings") => "设置…",
@@ -601,73 +596,6 @@ pub(crate) fn update_settings<T>(
     Ok(result)
 }
 
-/// 安装器种子合并（调用方：seed.rs，仅 Windows）：settings.json 尚无显式 `chat_enabled`
-/// 字段时采纳种子并落盘；字段在场 = 用户已做过选择（serde default 让缺席文件也能反序列
-/// 化成 true，所以「在场性」只能裸读 JSON 判断，不能看反序列化结果）。落盘经
-/// `update_settings` 全量序列化，字段从此显式在场——种子只生效这一次。
-#[cfg_attr(not(windows), allow(dead_code))]
-pub(crate) fn adopt_chat_enabled_seed(enabled: bool) {
-    let _ = update_settings(|s| {
-        // 在场性判断必须在这把锁内做：此前先在锁外裸读判在场、再 update_settings 落盘是
-        // 两段式 TOCTOU——两次调用之间用户的写入会被全量落盘整体覆盖。此刻 load 已完成，
-        // 损坏文件已被隔离（见 load_settings_from），这里读不到按缺席处理，语义不变。
-        let raw = std::fs::read_to_string(settings_path()).unwrap_or_default();
-        apply_chat_enabled_seed(&raw, s, enabled);
-        Ok(())
-    });
-}
-
-/// 锁内种子合并的纯判断（拆出便于单测）：字段在场 = 用户已做过选择，种子不得覆盖；
-/// 缺席（含文件损坏被隔离后的读取失败）才采纳。
-fn apply_chat_enabled_seed(raw: &str, s: &mut Settings, enabled: bool) {
-    if !chat_enabled_field_present(raw) {
-        s.chat_enabled = enabled;
-    }
-}
-
-/// 裸 JSON 的字段在场性（拆出便于单测；解析失败按缺席算——文件损坏时 load 也会回默认）。
-fn chat_enabled_field_present(raw: &str) -> bool {
-    serde_json::from_str::<serde_json::Value>(raw)
-        .ok()
-        .is_some_and(|v| v.get("chat_enabled").is_some())
-}
-
-#[cfg(test)]
-mod seed_tests {
-    use super::{apply_chat_enabled_seed, chat_enabled_field_present, Settings};
-
-    /// 种子合并的准入判断：字段在场（无论 true/false）都算用户已选择，种子必须被忽略；
-    /// 缺席、空文件、损坏 JSON 都算未选择。
-    #[test]
-    fn field_presence_rules() {
-        assert!(chat_enabled_field_present(r#"{"chat_enabled": false}"#));
-        assert!(chat_enabled_field_present(r#"{"chat_enabled": true}"#));
-        assert!(!chat_enabled_field_present(r#"{"theme": "dark"}"#));
-        assert!(!chat_enabled_field_present(""));
-        assert!(!chat_enabled_field_present("{broken"));
-    }
-
-    /// 锁内合并语义：字段在场（用户已选择）时种子不得覆盖现值——哪怕与种子相反；
-    /// 缺席/损坏才采纳种子。
-    #[test]
-    fn seed_applies_only_when_field_absent() {
-        let mut chosen = Settings {
-            chat_enabled: false,
-            ..Settings::default()
-        };
-        apply_chat_enabled_seed(r#"{"chat_enabled": false}"#, &mut chosen, true);
-        assert!(!chosen.chat_enabled, "用户已选 false，种子 true 不得覆盖");
-
-        let mut absent = Settings::default();
-        apply_chat_enabled_seed(r#"{"theme": "dark"}"#, &mut absent, false);
-        assert!(!absent.chat_enabled, "字段缺席，种子 false 应落盘");
-
-        let mut broken = Settings::default();
-        apply_chat_enabled_seed("{broken", &mut broken, false);
-        assert!(!broken.chat_enabled, "损坏按缺席算，种子生效");
-    }
-}
-
 #[cfg(test)]
 mod load_tests {
     use super::{load_settings_from, Settings};
@@ -697,7 +625,7 @@ mod load_tests {
         let dir = temp_dir("missing");
         let path = dir.join("settings.json");
         let s = load_settings_from(&path);
-        assert!(s.chat_enabled, "缺省值");
+        assert_eq!(s.theme, "dark", "缺省值");
         assert!(corrupt_backups(&dir).is_empty(), "首启不该有备份");
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -711,7 +639,7 @@ mod load_tests {
         std::fs::write(&path, "{broken json").unwrap();
 
         let s = load_settings_from(&path);
-        assert!(s.chat_enabled, "回退默认值");
+        assert_eq!(s.theme, "dark", "回退默认值");
         assert!(!path.exists(), "原文件已被挪走，不会被默认值覆盖");
         let backups = corrupt_backups(&dir);
         assert_eq!(backups.len(), 1, "恰好一份隔离备份");
@@ -728,11 +656,40 @@ mod load_tests {
     fn valid_file_loads_in_place() {
         let dir = temp_dir("valid");
         let path = dir.join("settings.json");
-        std::fs::write(&path, r#"{"chat_enabled": false}"#).unwrap();
+        std::fs::write(&path, r#"{"theme": "light"}"#).unwrap();
         let s: Settings = load_settings_from(&path);
-        assert!(!s.chat_enabled);
+        assert_eq!(s.theme, "light");
         assert!(path.exists());
         assert!(corrupt_backups(&dir).is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 2026-11-20 去掉轻量模式后：老用户 settings.json 里残留的 `chat_enabled: false` 必须
+    /// 读入即忽略——不能让整份文件解析失败被隔离（那会把代理、远程 token 等一起丢掉），
+    /// 其余字段原样保留；再序列化时不再写出这个键。
+    #[test]
+    fn legacy_chat_enabled_false_is_ignored_without_losing_fields() {
+        let dir = temp_dir("legacy-chat-enabled");
+        let path = dir.join("settings.json");
+        std::fs::write(
+            &path,
+            r#"{"chat_enabled": false, "theme": "light", "session_open_in": "chat",
+                "remote_access_port": 23456, "language": "en", "preview_enabled": false}"#,
+        )
+        .unwrap();
+        let s: Settings = load_settings_from(&path);
+        assert_eq!(s.theme, "light");
+        assert_eq!(s.session_open_in, "chat");
+        assert_eq!(s.remote_access_port, 23456);
+        assert_eq!(s.language, "en");
+        assert!(!s.preview_enabled);
+        assert!(path.exists(), "不得被当成损坏文件隔离");
+        assert!(corrupt_backups(&dir).is_empty());
+        let out = serde_json::to_value(&s).unwrap();
+        assert!(
+            out.get("chat_enabled").is_none(),
+            "序列化不再写 chat_enabled"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
@@ -955,9 +912,8 @@ pub(crate) async fn set_settings(
     // 切语言后重建托盘菜单/窗口标题（无条件重建，菜单仅两项，幂等且廉价）。
     // 托盘/菜单对象有线程亲和（muda 在其创建线程即主线程上操作），不能在 blocking 池里碰。
     let lang = ui_lang(&settings);
-    let chat_enabled = settings.chat_enabled;
     let menu_app = app.clone();
-    app.run_on_main_thread(move || apply_language(&menu_app, lang, chat_enabled))
+    app.run_on_main_thread(move || apply_language(&menu_app, lang))
         .map_err(|e| e.to_string())?;
     // 改了外观：已开着的 Mica 窗口换成对应明暗的背板（否则深色界面垫着浅色材质）。
     crate::material::sync_theme(&app, &settings.theme);

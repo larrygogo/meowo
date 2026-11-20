@@ -1195,19 +1195,12 @@ impl PtyBroker {
     /// `pass`，提示回落到 agent 自己的审批界面——窗口起不来时 hook 不该压着 TUI
     /// 盲等满 300s。
     fn ensure_approval_window(&self, session_id: i64) -> ApprovalHold {
-        match approval_gate(
-            self.has_fresh_remote_consumer(session_id),
-            crate::settings::load_settings().chat_enabled,
-        ) {
+        match approval_gate(self.has_fresh_remote_consumer(session_id)) {
             // 手机端正看着这条会话：请求直接可领取（手机 400ms 轮询取卡），桌面窗
             // 一概不动——人在手机上，切窗/闪烁都是对空椅子表演。
             ApprovalGate::Claimable => return ApprovalHold::RemoteClaimable,
-            // 对话功能关闭（轻量模式）且手机端不在场：GUI 不是合法消费者，立即返回
-            // false 让调用方答 pass 回落 TUI——不能走下面的 10s 消费者等待，那只会把
-            // 终端审批面板的出现拖慢同样久。桌面租约检查也被跳过：关闭后即便残留已开
-            // 的对话窗，审批也统一走 TUI，语义不摇摆（chat_enabled 关的是桌面对话窗，
-            // 远程通道由 remote_access_enabled 自己管）。
-            ApprovalGate::FallbackTui => return ApprovalHold::Reject,
+            // 2026-11-20 起没有轻量模式（leader 决定），原「对话功能关闭 → 回落 TUI」分支随之删除：
+            // 对话窗恒为合法消费者，手机不在场就走桌面召唤。
             ApprovalGate::Desktop => {}
         }
         let Some(app) = self.attach.app.lock().ok().and_then(|app| app.clone()) else {
@@ -3864,12 +3857,9 @@ impl PtyBroker {
                 // 与审批同一套召唤策略（approval_summon_action）：用户正盯着别的会话时
                 // 不切窗只闪烁 + 亮徽标，题面已入表，用户过去时轮询可取；窗口不在眼前
                 // 才切会话安静唤醒。quiet 同理不抢焦点。
-                // 对话功能关闭时整段跳过：提问已放行、表单在终端里作答，弹窗与闪烁都是噪音。
-                // 手机端正看着这条会话时同样整段跳过：题面已入表（上面），手机轮询可取，
+                // 手机端正看着这条会话时整段跳过：题面已入表（上面），手机轮询可取，
                 // 桌面既不切窗也不闪烁——与审批闸门的 Claimable 分支同一条判断。
-                if !self.has_fresh_remote_consumer(request.session_id)
-                    && crate::settings::load_settings().chat_enabled
-                {
+                if !self.has_fresh_remote_consumer(request.session_id) {
                     match approval_summon_action(
                         self.has_approval_consumer(request.session_id),
                         self.has_any_approval_consumer(),
@@ -3987,20 +3977,15 @@ impl PtyBroker {
 enum ApprovalGate {
     /// 手机端正看着目标会话：请求直接可领取，桌面窗一概不动。
     Claimable,
-    /// 轻量模式（chat_enabled=false）且手机端不在场：回落 TUI。
-    FallbackTui,
     /// 走桌面的既有召唤逻辑（approval_summon_action）。
     Desktop,
 }
 
-/// 闸门纯决策（供单测矩阵）。远端优先于 chat_enabled：chat_enabled 关的是桌面
-/// 对话窗，不该一并关掉远程通道——远程有自己的开关（没开就注册不了 `remote:` 租约，
-/// 第一参恒 false，行为与改动前逐字一致）。
-fn approval_gate(remote_watching_target: bool, chat_enabled: bool) -> ApprovalGate {
+/// 闸门纯决策（供单测矩阵）。远程有自己的开关：没开就注册不了 `remote:` 租约，参数恒
+/// false，一律走桌面。原第二参（对话功能开关）随 2026-11-20 去掉轻量模式一并删除。
+fn approval_gate(remote_watching_target: bool) -> ApprovalGate {
     if remote_watching_target {
         ApprovalGate::Claimable
-    } else if !chat_enabled {
-        ApprovalGate::FallbackTui
     } else {
         ApprovalGate::Desktop
     }
@@ -4014,7 +3999,7 @@ enum ApprovalHold {
     RemoteClaimable,
     /// 桌面消费者已就位或已召唤:整个等待期(300s)保持可领取,用户可能随时切过来。
     Desktop,
-    /// 没有合法消费者(轻量模式且手机不在场 / 召唤窗起不来):立即交还 TUI。
+    /// 没有合法消费者(召唤窗起不来):立即交还 TUI。
     Reject,
 }
 

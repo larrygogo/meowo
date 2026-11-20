@@ -2063,7 +2063,7 @@ pub(crate) async fn resume_session(
             if session_agent_alive(&store, sid)? {
                 return Err("会话仍在外部终端运行，请先在终端页选择接管".into());
             }
-            // 外部终端偏好（含轻量模式）：进程直接落在用户的终端里，Meowo 不建 PTY、
+            // 外部终端偏好：进程直接落在用户的终端里，Meowo 不建 PTY、
             // 不接镜像管道——否则 Meowo 一退出 PTY 随之消失，agent 连带被杀，外部窗口
             // 只剩断流残帧。跟踪照旧走 hook，想回托管随时可从终端页接管。
             if prefers_external_terminal(&load_settings()) {
@@ -2683,11 +2683,11 @@ fn activate_resume_terminal_app(terminal: &str) {
     let _ = crate::fsutil::spawn_detached(std::process::Command::new("open").args(["-a", app]));
 }
 
-/// 外部终端是不是用户的首选视图：显式选择 `session_open_in=terminal`，或对话功能整体
-/// 关闭（轻量模式）——后者 chat 不是合法落点，外部终端是唯一去处。
+/// 外部终端是不是用户的首选视图：只看 `session_open_in=terminal`。原「对话功能关闭（轻量
+/// 模式）也强制外部终端」一条随 2026-11-20 去掉轻量模式删除（leader 决定）。
 /// reveal（已托管会话拿什么看）与 resume（恢复时进程落在谁手里）共用同一判定。
 pub(crate) fn prefers_external_terminal(settings: &crate::settings::Settings) -> bool {
-    settings.session_open_in == "terminal" || !settings.chat_enabled
+    settings.session_open_in == "terminal"
 }
 
 #[cfg(test)]
@@ -2695,16 +2695,13 @@ mod external_preference_tests {
     use super::prefers_external_terminal;
 
     #[test]
-    fn follows_setting_and_light_mode() {
-        let make = |open_in: &str, chat_enabled: bool| crate::settings::Settings {
+    fn follows_session_open_in() {
+        let make = |open_in: &str| crate::settings::Settings {
             session_open_in: open_in.into(),
-            chat_enabled,
             ..Default::default()
         };
-        assert!(!prefers_external_terminal(&make("chat", true)));
-        assert!(prefers_external_terminal(&make("terminal", true)));
-        // 轻量模式（对话关闭）下 chat 不是合法落点，无视 session_open_in。
-        assert!(prefers_external_terminal(&make("chat", false)));
+        assert!(!prefers_external_terminal(&make("chat")));
+        assert!(prefers_external_terminal(&make("terminal")));
     }
 }
 

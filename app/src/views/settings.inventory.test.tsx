@@ -8,6 +8,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 // 分区、行标题（找行用）、控件的无障碍名（开关类会真的拨一下，确认写回的还是原字段）。
 // 每一项都要：① 在指定分区里找得到；② 用行标题搜索时这一行可见（搜索结果按新分区平铺）；
 // ③ 开关拨一次，store 里的原字段跟着变。
+// REMOVED 是精简之后**有意**拿掉的项（拍板人与日期写在 why 里）：任何分区都找不到、相关词也搜不出来。
 //
 // 平台：灵动岛、任务栏、防休眠这些行只在 Windows / macOS 出现，CI 的 vitest 跑在 Linux——先把 UA
 // 钉成 Windows（模块顶层按 UA 判平台，必须在导入组件之前）。
@@ -66,7 +67,7 @@ beforeEach(() => {
   installMocks("about");
   baseSettings ??= JSON.parse(JSON.stringify(store.settings));
   store.settings = JSON.parse(JSON.stringify(baseSettings));
-  Object.assign(store.settings, { remote_access_enabled: true, notifications_enabled: true, chat_enabled: true, bark_url: "https://api.day.app/KEY/" });
+  Object.assign(store.settings, { remote_access_enabled: true, notifications_enabled: true, bark_url: "https://api.day.app/KEY/" });
   // 自定义代理 + codex 单独设了自定义地址：代理地址框、各 Agent 的模式与地址都在页面上。
   store.settings.proxy = { mode: "custom", url: "http://127.0.0.1:7890", per_agent: { codex: { mode: "custom", url: "http://10.0.0.2:8080" } } };
 });
@@ -93,7 +94,6 @@ const ITEMS: Item[] = [
   { before: "通用 · 语言", field: "language", sec: "general", label: zh.settings.language },
   { before: "通用 · 开机自启", field: "动作 set_autostart", sec: "general", label: zh.settings.autostart },
   { before: "通用 · 自动更新", field: "auto_update_enabled", sec: "general", label: zh.settings.autoUpdate, toggle: zh.settings.autoUpdate },
-  { before: "通用 · 运行 · 对话窗口功能", field: "chat_enabled", sec: "general", label: zh.settings.chatFeature, toggle: zh.settings.chatFeature },
   { before: "通用 · 运行 · 运行时防止休眠", field: "keep_awake_while_running", sec: "general", label: zh.settings.keepAwakeRunning, toggle: `${zh.settings.keepAwakeGroup} · ${zh.settings.keepAwakeRunning}` },
   { before: "通用 · 运行 · 允许 Agent 操作面板浏览器", field: "browser_agent", sec: "general", label: zh.settings.browserAgent, toggle: zh.settings.browserAgent },
   { before: "通用 · Lead 工作流 · Lead 工作流", field: "动作 set_lead_workflow", sec: "general", label: zh.settings.leadWorkflow },
@@ -158,6 +158,20 @@ const ITEMS: Item[] = [
   { before: "关于 · 诊断日志", field: "动作 export_diag_log", sec: "about", label: zh.about.diagLog },
 ];
 
+type Removed = {
+  before: string;
+  field: string;
+  /** 改前的行标题（文案已从 i18n 删除，只能写字面量）。 */
+  label: string;
+  /** 用户会拿来找它的词：搜这些词时不能出现这一行。 */
+  queries: string[];
+  why: string;
+};
+const REMOVED: Removed[] = [
+  { before: "通用 · 运行 · 对话窗口功能", field: "chat_enabled", label: "对话窗口功能", queries: ["对话窗口", "轻量"],
+    why: "2026-11-20 leader 决定去掉轻量模式，产品只有完整工作台一种形态" },
+];
+
 /** 元素自己和祖先（到 .main-body 为止）都没被搜索过滤或分区切换藏起来。 */
 const shown = (el: Element) => {
   for (let cur: HTMLElement | null = el as HTMLElement; cur && !cur.classList.contains("main-body"); cur = cur.parentElement) {
@@ -217,6 +231,28 @@ describe("不丢设置：改前每一项在新结构里都在、搜得到、写�
       });
       const title = document.querySelector<HTMLElement>(`.main-sec[data-sec="${item.sec}"] .sec-title`)!;
       expect(shown(title)).toBe(true);
+    });
+  }
+});
+
+describe("有意移除的项：哪个分区都没有，搜也搜不到", () => {
+  /** 所有分区里以 label 为行标题的行（搜索态会挂载全部分区）。 */
+  const rowsLabelled = (label: string) => Array.from(document.querySelectorAll<HTMLElement>(".main-sec .row")).filter((row) =>
+    Array.from(row.querySelectorAll(".row-label")).some((el) => el.textContent === label));
+  for (const item of REMOVED) {
+    it(`${item.before}（${item.field}）已移除：${item.why}`, async () => {
+      render(<About />);
+      const input = await screen.findByPlaceholderText(zh.settings.searchPlaceholder);
+      for (const q of item.queries) {
+        fireEvent.change(input, { target: { value: q } });
+        // 搜索态挂载全部分区：等通知矩阵进 DOM，确认不是还没渲染完就断言「没有」。
+        await waitFor(() => expect(document.querySelector(".notify-matrix")).toBeTruthy());
+        expect(rowsLabelled(item.label), `搜「${q}」仍有「${item.label}」这一行`).toHaveLength(0);
+        // 「轻量」类词：产品里已没有这个概念，任何可见行都不该带它。
+        const leaked = Array.from(document.querySelectorAll<HTMLElement>(".main-body .row")).filter((row) => shown(row) && row.textContent?.includes("轻量"));
+        expect(leaked, `搜「${q}」时仍有行提到「轻量」`).toHaveLength(0);
+      }
+      expect(Object.keys(store.settings)).not.toContain(item.field);
     });
   }
 });
@@ -292,7 +328,7 @@ describe("搜旧分区名「网络」与「代理」：只出代理这一组，�
       for (const name of ["Claude Code", "Codex"]) expect(shown(agentRow(name)!), name).toBe(true);
       expect(shown(urlRow("http://10.0.0.2:8080")!)).toBe(true);
       // 搜索词挂在「网络代理」这一行上，不挂在分区名上：通用页别的卡片不跟着出来。
-      for (const label of [zh.settings.language, zh.settings.autoUpdate, zh.settings.chatFeature, zh.settings.leadWorkflow]) {
+      for (const label of [zh.settings.language, zh.settings.autoUpdate, zh.settings.browserAgent, zh.settings.leadWorkflow]) {
         const row = rowIn("general", label)!;
         expect(shown(row), label).toBe(false);
         expect(shown(row.closest(".row-card")!), label).toBe(false);

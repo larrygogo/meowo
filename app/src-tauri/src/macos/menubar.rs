@@ -4,7 +4,7 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuild
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::AppHandle;
 
-use crate::macos::{notch, panel};
+use crate::macos::notch;
 
 /// 菜单栏空闲图标（全空闲时回落）：单色 36×36 条形图，黑+alpha 掩码、其余透明，照真实 app logo 比例复刻。
 /// macOS 按菜单栏明暗自动反色。原始 RGBA（行优先、上到下），不走 PNG 解码以免引入 image-png feature。
@@ -63,30 +63,23 @@ fn spawn_icon_animator(app: AppHandle) {
 /// 托盘右键菜单（打开对话窗口 / 使用引导 / 设置 / 官网 / 退出），按语言构建；
 /// 「找回贴纸」随贴纸一起去掉了（2026-11-05，与 Windows 同）。
 /// 切语言/改设置时由 lib.rs 的 apply_language 重建。菜单构成与 Windows
-/// （window::build_tray_menu）对齐：同一组项、同一顺序。`chat_enabled` 为 false
-/// （轻量模式）时不放「打开对话窗口」项——入口都不该出现，而不是点了被拦。
-/// 设置页切换开关会经 set_settings → apply_language 即时重建。
+/// （window::build_tray_menu）对齐：同一组项、同一顺序。「打开对话窗口」恒在（2026-11-20
+/// 起没有轻量模式，原按 chat_enabled 隐藏这一项的分支删除）。
 pub fn build_tray_menu(
     app: &AppHandle,
     lang: &str,
-    chat_enabled: bool,
 ) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
-    let chat = if chat_enabled {
-        Some(MenuItemBuilder::with_id("chat", crate::tr(lang, "tray.chat")).build(app)?)
-    } else {
-        None
-    };
+    let chat = MenuItemBuilder::with_id("chat", crate::tr(lang, "tray.chat")).build(app)?;
     let guide = MenuItemBuilder::with_id("guide", crate::tr(lang, "tray.guide")).build(app)?;
     let settings =
         MenuItemBuilder::with_id("settings", crate::tr(lang, "tray.settings")).build(app)?;
     let website =
         MenuItemBuilder::with_id("website", crate::tr(lang, "tray.website")).build(app)?;
     let quit = MenuItemBuilder::with_id("quit", crate::tr(lang, "tray.quit")).build(app)?;
-    let mut builder = MenuBuilder::new(app);
-    if let Some(chat) = &chat {
-        builder = builder.item(chat);
-    }
-    builder.items(&[&guide, &settings, &website, &quit]).build()
+    MenuBuilder::new(app)
+        .item(&chat)
+        .items(&[&guide, &settings, &website, &quit])
+        .build()
 }
 
 /// 应用主菜单自定义项的 id。与托盘菜单的 "settings" 等错开：两套菜单的事件都会
@@ -155,7 +148,7 @@ pub fn setup_app_menu(app: &AppHandle, lang: &str) -> tauri::Result<()> {
 /// 创建 macOS 状态栏托盘：左键见 [`on_left_click`]，右键弹菜单。
 pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let boot_settings = crate::load_settings();
-    let menu = build_tray_menu(app, crate::ui_lang(&boot_settings), boot_settings.chat_enabled)?;
+    let menu = build_tray_menu(app, crate::ui_lang(&boot_settings))?;
 
     // 菜单栏用单色模板图标（彩色 app 图标在菜单栏里偏花，且不随明暗反色）；Dock/设置页仍用彩色图标。
     let icon = tauri::image::Image::new(MENUBAR_ICON_RGBA, MENUBAR_ICON_SIZE, MENUBAR_ICON_SIZE);
@@ -194,19 +187,16 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 }
 
 /// 单击菜单栏图标：
-/// - 有刘海：岛就在刘海上，图标和 Windows 托盘一样打开对话窗口（轻量模式下展开岛）。
+/// - 有刘海：岛就在刘海上，图标和 Windows 托盘一样打开对话窗口。
 /// - 没刘海：点它在下方弹出 / 收起岛的面板（前端 island-tray-toggle）。
 ///
 /// 托盘事件在主线程，这里可以直接重新探测刘海。
 fn on_left_click(app: &AppHandle) {
     use tauri::Emitter;
     let (has_notch, _) = notch::refresh();
-    if has_notch.is_some() && crate::load_settings().chat_enabled {
-        crate::open_latest_chat_window(app);
-        return;
-    }
+    // 原「轻量模式下展开岛（recall_panel）」一支随 2026-11-20 去掉轻量模式删除。
     if has_notch.is_some() {
-        panel::recall_panel(app);
+        crate::open_latest_chat_window(app);
         return;
     }
     let _ = app.emit_to("main", "island-tray-toggle", ());

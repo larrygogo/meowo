@@ -5,9 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAgentListRefresh } from "../useAgents";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { availableTerminals, exportDiagLog, leadWorkflowInstalled, setLeadWorkflow, leadProviderInstallations, setLeadProviderEnabled, type LeadProviderInstallationDto, getLiveSessionsPage, listAgents, agentName, setArchived, type AgentId, type AgentDescriptor, type LiveSession, type PageCursor, type ThemeMode, type ResumeTerminal, type SessionOpenIn, type CardMenuMode, type StickerStyle, type TerminalLineHeight, type ChatContentWidth, type IslandCompactStyle } from "../api";
-import { folderName } from "../paths";
-import { fmtAgo } from "./sticker/helpers";
+import { availableTerminals, exportDiagLog, leadWorkflowInstalled, setLeadWorkflow, leadProviderInstallations, setLeadProviderEnabled, type LeadProviderInstallationDto, listAgents, agentName, type AgentId, type AgentDescriptor, type ThemeMode, type ResumeTerminal, type SessionOpenIn, type CardMenuMode, type StickerStyle, type TerminalLineHeight, type ChatContentWidth, type IslandCompactStyle } from "../api";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
 import { useShowWhenReady } from "../useShowWhenReady";
 import { languageOptions, useT } from "../i18n";
@@ -254,7 +252,6 @@ export function GeneralSection({ searching = false }: { searching?: boolean } = 
     });
   };
   const autoUpdateOn = settings?.auto_update_enabled ?? true;
-  const chatOn = settings?.chat_enabled ?? true;
   const keepAwakeOn = settings?.keep_awake_while_running ?? true;
   const browserAgentOn = settings?.browser_agent ?? true;
   const leadAwakeOn = settings?.keep_awake_for_lead_gate ?? true;
@@ -307,15 +304,7 @@ export function GeneralSection({ searching = false }: { searching?: boolean } = 
 
       <div className="sec-caption">{t.settings.runGroup}</div>
       <div className="row-card">
-        {/* 对话窗口功能总开关（轻量模式）。放 General：轻量模式下点任何 chat 入口都会
-            落到设置窗，这里是用户找回完整功能的地方，必须在首屏分区就看得见。 */}
-        <div className="row">
-          <div className="row-text">
-            <div className="row-label">{t.settings.chatFeature}</div>
-            <div className="row-desc">{t.settings.chatFeatureDesc}</div>
-          </div>
-          <Switch checked={chatOn} onChange={() => patch({ chat_enabled: !chatOn })} label={t.settings.chatFeature} />
-        </div>
+        {/* 原「对话窗口功能」总开关（轻量模式）2026-11-20 删除：leader 决定产品只有完整工作台一种形态。 */}
         <div className="row">
           <div className="row-text">
             <div className="row-label">{t.settings.browserAgent}</div>
@@ -443,7 +432,6 @@ export function SessionsSection() {
   };
   useEffect(reloadAgents, []);
   useAgentListRefresh(reloadAgents); // 装完新 agent 立刻反映
-  const chatOn = settings?.chat_enabled ?? true;
   // 终端选项按平台给，再用后端探测到的「本机实际可用」列表过滤（未装的不列出）。
   const platformOpts = IS_MAC ? RESUME_TERM_OPTIONS_MAC : resumeTermOptionsWin(t);
   const termOptions = platformOpts.filter((o) => (availTerms ?? []).includes(o.value));
@@ -480,16 +468,13 @@ export function SessionsSection() {
           const descriptor = agents.find((agent) => agent.id === defaultAgent);
           return descriptor ? <LaunchDefaultRows agent={descriptor} /> : null;
         })()}
-        {/* 轻量模式（chat_enabled=off）下后端强制走外部终端：行保留但置灰、原因写进
-            row-desc——整行隐藏会让用户以为设置项消失了。 */}
         <div className="row">
           <div className="row-text">
             <div className="row-label">{t.settings.sessionOpenIn}</div>
-            <div className="row-desc">{chatOn ? t.settings.sessionOpenInDesc : t.settings.sessionOpenInLite}</div>
+            <div className="row-desc">{t.settings.sessionOpenInDesc}</div>
           </div>
           <Dropdown
-            value={chatOn ? (settings?.session_open_in ?? "terminal") : ("terminal" as SessionOpenIn)}
-            disabled={!chatOn}
+            value={settings?.session_open_in ?? "terminal"}
             options={[
               { value: "chat" as const, label: t.settings.sessionOpenInChat },
               { value: "terminal" as const, label: t.settings.sessionOpenInTerminal },
@@ -549,8 +534,8 @@ export function SessionsSection() {
 
       {/* 「列表」组：原「会话列表」（只剩会话菜单一行）和「已完成会话」（只有去会话管理一行）两个单行分组合并。
           「对话预览」「打开方式」只有已下线的贴纸在读（UI 调研 shell #2），关卡 A 定案删掉，字段留在 settings.json 照常读写。
-          已完成会话：开着对话功能时只给一个入口，去会话管理页（预选「已完成」）——那里能按工作区、时间筛，
-          批量恢复；轻量模式没有对话窗可去，留着原来的列表（自带分组标题），否则没处把会话恢复成进行中。 */}
+          已完成会话只给一个入口，去会话管理页（预选「已完成」）——那里能按工作区、时间筛，批量恢复。
+          轻量模式下的设置页内列表（ArchivedSessions）随 2026-11-20 去掉轻量模式删除。 */}
       <div className="sec-caption">{t.settings.listGroup}</div>
       <div className="row-card">
         <div className="row">
@@ -567,120 +552,20 @@ export function SessionsSection() {
             onChange={(v: CardMenuMode) => patch({ card_menu_mode: v })}
           />
         </div>
-        {chatOn && (
-          <div className="row">
-            <div className="row-text">
-              <div className="row-label">{t.settings.archivedSessions}</div>
-              <div className="row-desc">{t.settings.archivedInAdminDesc}</div>
-            </div>
-            <button type="button" className="sbtn" onClick={() => void invoke("open_session_admin").catch(() => {})}>
-              {t.settings.archivedOpenAdmin}
-            </button>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.archivedSessions}</div>
+            <div className="row-desc">{t.settings.archivedInAdminDesc}</div>
           </div>
-        )}
+          <button type="button" className="sbtn" onClick={() => void invoke("open_session_admin").catch(() => {})}>
+            {t.settings.archivedOpenAdmin}
+          </button>
+        </div>
       </div>
-      {!chatOn && <ArchivedSessions />}
       <SettingsError preformatted error={patchError} onDismiss={clearPatchError} />
     </>
   );
 }
-
-/** 已归档会话每页条数。设置页是普通滚动列，用「加载更多」按钮翻页而不是滚动加载——
- *  归档区只是设置页的一段，滚动到底不代表用户想看更多归档。 */
-const ARCHIVED_PAGE = 30;
-
-/** 已归档会话管理。看板不再有「已归档」tab（归档 = 从看板彻底收纳走），这里是唯一入口：
- *  游标分页动态加载，唯一操作是放回看板。 */
-export function ArchivedSessions() {
-  const t = useT();
-  // null = 尚未加载完成，与「真空」区分。
-  const [items, setItems] = useState<LiveSession[] | null>(null);
-  const [cursor, setCursor] = useState<PageCursor | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
-  // 首载失败标记：此前 catch 里 setItems(prev ?? []) 把失败伪装成空态，
-  // 用户分不清「没有归档」和「没加载出来」。
-  const [loadFailed, setLoadFailed] = useState(false);
-  // 放回看板失败标记：乐观移除后重取首页会把该项拉回，但失败本身也要有一行提示。
-  // 值是给用户看的原因（formatBackendError 映射过的后端错误；映射不出时用通用句）。
-  const [actionFailed, setActionFailed] = useState<string | null>(null);
-  const loadPage = useCallback((after: PageCursor | null) => {
-    setLoadingMore(true);
-    getLiveSessionsPage("archived", null, after, ARCHIVED_PAGE)
-      .then((page) => {
-        setCursor(page.next_cursor);
-        if (after === null) setLoadFailed(false);
-        setItems((prev) => {
-          // 首页替换、翻页按 id 去重追加（翻页间归档集可能被并发改动）。
-          if (after === null || prev === null) return page.items;
-          const seen = new Set(prev.map((s) => s.session.id));
-          return [...prev, ...page.items.filter((s) => !seen.has(s.session.id))];
-        });
-      })
-      .catch(() => {
-        if (after === null) setLoadFailed(true);
-        setItems((prev) => prev ?? []);
-      })
-      .finally(() => setLoadingMore(false));
-  }, []);
-  useEffect(() => loadPage(null), [loadPage]);
-  const unarchive = (id: number) => {
-    // 乐观移除；失败重取首页拉回（与看板同款语义）。看板经 board-changed 自行刷新。
-    setActionFailed(null);
-    setItems((prev) => prev?.filter((s) => s.session.id !== id) ?? prev);
-    void setArchived(id, false).catch((error) => {
-      setActionFailed(formatBackendError(error, t.locale) || t.settings.unarchiveFailed);
-      loadPage(null);
-    });
-  };
-  return (
-    <>
-      {/* 标题在卡片外——放卡片里像一个可交互的设置项（用户实拍反馈），这里是列表的分组标题。 */}
-      <div className="sec-caption">{t.settings.archivedSessions}</div>
-      <div className="row-card">
-        {loadFailed && (
-          <div className="archived-empty" role="alert">
-            {t.settings.archivedLoadFailed}
-            <button type="button" className="sbtn" style={{ marginLeft: 8 }} onClick={() => loadPage(null)}>
-              {t.sticker.retry}
-            </button>
-          </div>
-        )}
-        {!loadFailed && items !== null && items.length === 0 && (
-          <div className="archived-empty">{t.settings.archivedEmpty}</div>
-        )}
-        {/* 限高内滚：归档可能积上百条，撑满整个设置页会把后面的设置项挤没。 */}
-        <div className="archived-scroll">
-          {(items ?? []).map((item) => (
-            <div className="row archived-row" key={item.session.id}>
-              <div className="row-text">
-                <div className="row-label archived-title">{item.task_title || t.sticker.waitingFirstInput}</div>
-                <div className="row-desc">
-                  {[folderName(item.cwd), fmtAgo(item.session.last_event_at, t)].filter(Boolean).join(" · ")}
-                </div>
-                {/* 目录已删：放回进行中也续不上（后端同样会拒绝），按钮置灰，原因写在行里——不发注定失败的请求。 */}
-                {item.cwd_missing && <div className="row-desc" data-testid="archived-dir-gone">{t.chat.dirGoneNoReopen}</div>}
-              </div>
-              <div className="archived-actions">
-                <button type="button" className="sbtn" disabled={item.cwd_missing === true} title={item.cwd_missing ? t.chat.dirGoneNoReopen : undefined} onClick={() => unarchive(item.session.id)}>
-                  {t.sticker.unarchive}
-                </button>
-              </div>
-            </div>
-          ))}
-          {cursor !== null && (
-            <div className="row archived-more-row">
-              <button type="button" className="sbtn" {...busyProps(loadingMore, () => loadPage(cursor))}>
-                {loadingMore ? t.chat.sidebarLoading : t.settings.archivedLoadMore}
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-      {actionFailed && <div className="sec-hint proxy-err" role="alert">{actionFailed}</div>}
-    </>
-  );
-}
-
 
 const themeOptions = (t: Dict): { value: ThemeMode; label: string }[] => [
   { value: "dark", label: t.settings.themeDark },

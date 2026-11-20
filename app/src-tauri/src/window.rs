@@ -3,8 +3,8 @@
 use crate::settings::{load_settings, tr, ui_lang};
 use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 use tauri::Manager;
-// Emitter：仅非 macOS 的 recall_sticker 用 w.emit("recall-sticker")；open_new_session 的 ns-prefill
-// emit 在其块内另有本地 use（macOS 也走那条），故模块级 Emitter 在 macOS 上无用、按平台门控。
+// Emitter：仅非 macOS 的 recall_sticker 用 w.emit("recall-sticker")；open_chat_window_target
+// 的 emit 在其块内另有本地 use（macOS 也走那条），故模块级 Emitter 在 macOS 上无用、按平台门控。
 #[cfg(not(target_os = "macos"))]
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 #[cfg(not(target_os = "macos"))]
@@ -360,8 +360,8 @@ pub(crate) fn open_update_window_impl(app: &tauri::AppHandle) {
 
 /// 前端调用：新建会话（贴纸底栏 + 按钮 / 空状态 CTA / 会话卡片菜单）。
 /// 传入 cwd/provider 时，新建表单会预填该路径并选中该模型。
-/// 对话功能开着时不再弹独立小窗：打开对话窗、主区切到新建会话页（对照 Kimi，用户要求
-/// 「新建会话的时候不要再弹新的窗口」）；关掉对话功能（轻量模式）时没有对话窗可去，仍走小窗。
+/// 不再弹独立小窗：打开对话窗、主区切到新建会话页（对照 Kimi，用户要求
+/// 「新建会话的时候不要再弹新的窗口」）。轻量模式专用的独立小窗随 2026-11-20 去掉轻量模式删除。
 /// 与 open_settings 同理由走子线程创建：同步 command 在主线程 build 会阻塞消息泵致白屏。
 #[tauri::command]
 pub(crate) fn open_new_session_window(
@@ -373,8 +373,7 @@ pub(crate) fn open_new_session_window(
 }
 
 /// 前端调用（设置页「会话 · 已完成会话」）：打开对话窗的会话管理页、预选「已完成」。
-/// 与 open_new_session_window 同理由走子线程。对话功能关闭（轻量模式）时 open_chat_window_target
-/// 自己回落设置窗——设置页里点这个入口就是原地不动，入口本身由前端在轻量模式下隐藏。
+/// 与 open_new_session_window 同理由走子线程。
 #[tauri::command]
 pub(crate) fn open_session_admin(app: tauri::AppHandle) {
     std::thread::spawn(move || {
@@ -384,99 +383,15 @@ pub(crate) fn open_session_admin(app: tauri::AppHandle) {
     });
 }
 
-/// 打开（或聚焦）新建会话窗口。label 为 "new-session"（main.tsx 按此 label 路由到面板页）。
+/// 打开对话窗并把主区切到新建会话页（带 cwd/provider 预填）。
 pub(crate) fn open_new_session_window_impl(
     app: &tauri::AppHandle,
     cwd: Option<String>,
     provider: Option<String>,
 ) {
-    if crate::settings::load_settings().chat_enabled {
-        let target = ChatTarget::NewSession { cwd, provider };
-        if let Err(error) = open_chat_window_target(app, target, true) {
-            eprintln!("打开新建会话页失败: {error}");
-        }
-        return;
-    }
-    // macOS：纯托盘 App 的窗口需临时切 Regular 激活策略才能获焦（同设置窗口）。
-    #[cfg(target_os = "macos")]
-    crate::macos::menubar::settings_window_will_open(app, "new-session");
-
-    if let Some(w) = app.get_webview_window("new-session") {
-        // 窗口已开：若从另一张卡片带了 cwd/provider 预填，通知面板更新表单（不重开窗口），再聚焦。
-        if cwd.is_some() || provider.is_some() {
-            use tauri::Emitter;
-            let _ = app.emit(
-                "ns-prefill",
-                serde_json::json!({ "cwd": cwd, "provider": provider }),
-            );
-        }
-        let _ = w.set_focus();
-        return;
-    }
-    let url = match (&cwd, &provider) {
-        (None, None) => "index.html".to_string(),
-        _ => {
-            let mut params = Vec::new();
-            if let Some(c) = &cwd {
-                params.push(format!(
-                    "cwd={}",
-                    percent_encode(c.as_bytes(), NON_ALPHANUMERIC)
-                ));
-            }
-            if let Some(p) = &provider {
-                params.push(format!(
-                    "provider={}",
-                    percent_encode(p.as_bytes(), NON_ALPHANUMERIC)
-                ));
-            }
-            format!("index.html?{}", params.join("&"))
-        }
-    };
-    let builder =
-        tauri::WebviewWindowBuilder::new(app, "new-session", tauri::WebviewUrl::App(url.into()))
-            .title(tr(ui_lang(&load_settings()), "window.newSession"))
-            .inner_size(460.0, 520.0)
-            .min_inner_size(460.0, 520.0)
-            .resizable(false)
-            // 隐藏创建，前端首帧后自行显示（见 show_after_grace 注释），消除白框闪烁。
-            .visible(false)
-            .center();
-    // 平台分支的理由见 open_settings_window 的同款注释。
-    #[cfg(not(target_os = "macos"))]
-    let builder = crate::material::dress(builder.decorations(false), app, "new-session");
-    #[cfg(target_os = "macos")]
-    let builder = crate::material::dress(
-        builder
-            .title_bar_style(tauri::TitleBarStyle::Overlay)
-            .hidden_title(true),
-        app,
-        "new-session",
-    );
-    match builder.build() {
-        Ok(_win) => {
-            round_window_corners(&_win);
-            show_after_grace(&_win, true);
-            #[cfg(target_os = "macos")]
-            {
-                let app_handle = app.clone();
-                _win.on_window_event(move |e| {
-                    if matches!(
-                        e,
-                        tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
-                    ) {
-                        crate::macos::menubar::settings_window_did_close(
-                            &app_handle,
-                            "new-session",
-                        );
-                    }
-                });
-            }
-        }
-        Err(e) => {
-            eprintln!("创建新建会话窗口失败: {e}");
-            #[cfg(target_os = "macos")]
-            crate::macos::menubar::settings_window_did_close(app, "new-session");
-        }
+    let target = ChatTarget::NewSession { cwd, provider };
+    if let Err(error) = open_chat_window_target(app, target, true) {
+        eprintln!("打开新建会话页失败: {error}");
     }
 }
 
@@ -716,16 +631,6 @@ pub(crate) fn open_chat_window_target(
     target: ChatTarget,
     activate: bool,
 ) -> Result<(), String> {
-    // 对话功能关闭（轻量模式）时的唯一闸门：四个开窗变体（command/detached/quiet/latest）
-    // 全部汇于此，一处拦截全覆盖。用户主动点击（activate）回落设置窗——那里有重新打开
-    // 的开关，点了不能毫无反应；审批/提问的安静唤醒则无声吞掉，调用方已各自回落 TUI。
-    if !crate::settings::load_settings().chat_enabled {
-        if activate {
-            open_settings_window(app);
-        }
-        return Ok(());
-    }
-
     #[cfg(target_os = "macos")]
     crate::macos::menubar::settings_window_will_open(app, "chat");
 
@@ -909,19 +814,14 @@ pub(crate) fn recall_sticker(app: &tauri::AppHandle) {
 }
 
 /// 托盘右键菜单（打开对话窗口 / 找回贴纸 / 设置 / 官网 / 退出），按语言构建；切语言时由 rebuild_tray_menu 重建。
-/// 菜单构成与 macOS（menubar::build_tray_menu）对齐：同一组项、同一顺序，`chat_enabled`
-/// 为 false（轻量模式）时不放「打开对话窗口」项——入口都不该出现，而不是点了被拦。
+/// 菜单构成与 macOS（menubar::build_tray_menu）对齐：同一组项、同一顺序。「打开对话窗口」
+/// 恒在（2026-11-20 起没有轻量模式，原按 chat_enabled 隐藏这一项的分支删除）。
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn build_tray_menu(
     app: &tauri::AppHandle,
     lang: &str,
-    chat_enabled: bool,
 ) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
-    let chat = if chat_enabled {
-        Some(MenuItemBuilder::with_id("chat", tr(lang, "tray.chat")).build(app)?)
-    } else {
-        None
-    };
+    let chat = MenuItemBuilder::with_id("chat", tr(lang, "tray.chat")).build(app)?;
     // Windows 的贴纸已删、只剩灵动岛（2026-11-05 用户定案），岛恒在屏幕顶上谈不上「找回」，
     // 菜单里不放这一项（用户实拍定案）。
     let recall = if cfg!(target_os = "windows") {
@@ -933,10 +833,7 @@ pub(crate) fn build_tray_menu(
     let settings = MenuItemBuilder::with_id("settings", tr(lang, "tray.settings")).build(app)?;
     let website = MenuItemBuilder::with_id("website", tr(lang, "tray.website")).build(app)?;
     let quit = MenuItemBuilder::with_id("quit", tr(lang, "tray.quit")).build(app)?;
-    let mut builder = MenuBuilder::new(app);
-    if let Some(chat) = &chat {
-        builder = builder.item(chat);
-    }
+    let mut builder = MenuBuilder::new(app).item(&chat);
     if let Some(recall) = &recall {
         builder = builder.item(recall);
     }
@@ -944,16 +841,14 @@ pub(crate) fn build_tray_menu(
 }
 
 /// 切语言/改设置后让已存在的系统 UI 跟上：重建托盘菜单、改已开设置窗口的标题。
-/// `chat_enabled` 决定两平台托盘菜单是否包含「打开对话窗口」项（主线程不读设置文件，
-/// 由调用方从已持有的 Settings 传入——线程纪律）。
-pub(crate) fn apply_language(app: &tauri::AppHandle, lang: &str, chat_enabled: bool) {
+pub(crate) fn apply_language(app: &tauri::AppHandle, lang: &str) {
     if let Some(tray) = app.tray_by_id("meowo-tray") {
         #[cfg(not(target_os = "macos"))]
-        if let Ok(menu) = build_tray_menu(app, lang, chat_enabled) {
+        if let Ok(menu) = build_tray_menu(app, lang) {
             let _ = tray.set_menu(Some(menu));
         }
         #[cfg(target_os = "macos")]
-        if let Ok(menu) = crate::macos::menubar::build_tray_menu(app, lang, chat_enabled) {
+        if let Ok(menu) = crate::macos::menubar::build_tray_menu(app, lang) {
             let _ = tray.set_menu(Some(menu));
         }
     }
@@ -1059,11 +954,7 @@ fn tray_click_debounce() -> std::time::Duration {
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let boot_settings = load_settings();
-    let menu = build_tray_menu(
-        app.handle(),
-        ui_lang(&boot_settings),
-        boot_settings.chat_enabled,
-    )?;
+    let menu = build_tray_menu(app.handle(), ui_lang(&boot_settings))?;
 
     let mut builder = TrayIconBuilder::with_id("meowo-tray");
     // 图标恒由打包提供，但缺失时不该 unwrap panic 把启动打挂——没图标就建无图标托盘。
@@ -1128,9 +1019,8 @@ pub(crate) fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                         }
                     });
                 }
-                // 双击 = 打开对话窗（老用户肌肉记忆，W-11 前的左键语义）；对话功能关闭
-                // （轻量模式）时找回贴纸——轻量用户的主界面就是贴纸。load_settings 是文件
-                // IO，托盘回调在主线程，放子线程读（线程纪律）。
+                // 双击 = 打开对话窗（老用户肌肉记忆，W-11 前的左键语义）。
+                // open_latest_chat_window 内部自带子线程查库，主线程直调不阻塞泵。
                 TrayIconEvent::DoubleClick {
                     button: MouseButton::Left,
                     ..
@@ -1139,14 +1029,7 @@ pub(crate) fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                     if let Ok(mut last) = TRAY_LAST_DOUBLE.lock() {
                         *last = Some(std::time::Instant::now());
                     }
-                    let app = tray.app_handle().clone();
-                    std::thread::spawn(move || {
-                        if crate::settings::load_settings().chat_enabled {
-                            open_latest_chat_window(&app);
-                        } else {
-                            recall_sticker(&app);
-                        }
-                    });
+                    open_latest_chat_window(tray.app_handle());
                 }
                 _ => {}
             }
@@ -1158,17 +1041,11 @@ pub(crate) fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 /// 托盘左键开合主界面（贴纸窗）：可见且聚焦 → 隐藏；可见未聚焦 → 聚焦（用户在找它）；
 /// 隐藏/最小化 → 显示并聚焦。贴纸 skipTaskbar，藏起来后任务栏没有入口，左键必须可逆，
 /// 不能像旧行为（左键只开对话窗）那样把「找回贴纸」只留在右键菜单深处。
-/// Windows 例外：贴纸已删，只剩灵动岛（2026-11-05 用户定案），单击改为打开对话窗口；
-/// 对话功能关闭（轻量模式）时没有对话窗，退而把岛显示出来并展开面板。
+/// Windows 例外：贴纸已删，只剩灵动岛（2026-11-05 用户定案），单击改为打开对话窗口。
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn toggle_main_window(app: &tauri::AppHandle) {
     if cfg!(target_os = "windows") {
-        // 调用点已在托盘单击消抖子线程，读设置文件不堵消息泵。
-        if crate::settings::load_settings().chat_enabled {
-            open_latest_chat_window(app);
-        } else {
-            recall_sticker(app);
-        }
+        open_latest_chat_window(app);
         return;
     }
     let Some(w) = app.get_webview_window("main") else {

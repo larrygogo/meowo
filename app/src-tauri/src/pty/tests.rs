@@ -2441,15 +2441,12 @@ fn remote_lease_reregistration_refreshes_ttl() {
     assert!(broker.has_fresh_remote_consumer(7), "续约后重新起算");
 }
 
-/// 闸门矩阵：远端在场恒可领取（含轻量模式——chat_enabled 关的是桌面窗，不关远程
-/// 通道）；远端缺席时轻量模式回落 TUI、常规模式走桌面召唤。远程未开时注册不出
-/// remote: 租约，第一参恒 false，桌面语义与改动前逐字一致。
+/// 闸门矩阵：远端在场可领取；远端缺席走桌面召唤（2026-11-20 起没有轻量模式，
+/// 不再有回落 TUI 的一格）。远程未开时注册不出 remote: 租约，参数恒 false。
 #[test]
 fn approval_gate_matrix() {
-    assert_eq!(approval_gate(true, true), ApprovalGate::Claimable);
-    assert_eq!(approval_gate(true, false), ApprovalGate::Claimable);
-    assert_eq!(approval_gate(false, false), ApprovalGate::FallbackTui);
-    assert_eq!(approval_gate(false, true), ApprovalGate::Desktop);
+    assert_eq!(approval_gate(true), ApprovalGate::Claimable);
+    assert_eq!(approval_gate(false), ApprovalGate::Desktop);
 }
 
 #[test]

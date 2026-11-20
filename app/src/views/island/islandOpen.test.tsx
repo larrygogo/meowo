@@ -1,4 +1,5 @@
-// 灵动岛「打开」失败的去处（I-1/I-2）、面板键盘（I-3）、额度陈旧标注与登录后重读（backlog 仍存在 #1）。
+// 灵动岛「打开」失败的去处（I-1）、面板键盘（I-3）、额度陈旧标注与登录后重读（backlog 仍存在 #1）。
+// 原 I-2（轻量模式下改跳外部终端 / 「打开设置」）的用例随 2026-11-20 去掉轻量模式删除。
 // 出处：scratchpad/ux2/research-walkthrough.md I-1～I-3、research-backlog.md「仍存在」第 1 条（2026-11-12）。
 // 兄弟场景：提醒上的「打开」与面板会话行同一个出口（openIslandSession），两处都验；收起胶囊的额度环
 // 与面板额度页同一份新鲜度（meta），两处都验。
@@ -47,32 +48,18 @@ const mk = (over: Record<string, unknown> = {}): Item => {
 };
 const noop = () => {};
 
-describe("I-1/I-2 openIslandSession", () => {
+describe("I-1 openIslandSession", () => {
   it("对话窗没开成：返回失败与映射后的原因，不再只打日志", async () => {
     vi.spyOn(console, "error").mockImplementation(noop);
     invoke.mockImplementation((cmd: string) => (cmd === "open_chat_window" ? Promise.reject("会话不存在") : Promise.resolve(null)));
-    const result = await openIslandSession({ sessionId: 7, chatEnabled: true, item: undefined, locale: "zh-CN" });
+    const result = await openIslandSession({ sessionId: 7, locale: "zh-CN" });
     expect(result).toEqual({ sessionId: 7, kind: "failed", reason: "会话不存在" });
   });
   it("开成了返回 null", async () => {
-    expect(await openIslandSession({ sessionId: 7, chatEnabled: true, item: undefined, locale: "zh-CN" })).toBeNull();
+    expect(await openIslandSession({ sessionId: 7, locale: "zh-CN" })).toBeNull();
     expect(invoke).toHaveBeenCalledWith("open_chat_window", { sessionId: 7 });
-  });
-  it("轻量模式：不开对话窗（后端会改开设置窗），改为把外部终端拉到前台", async () => {
-    const item = mk();
-    invoke.mockImplementation((cmd: string) => Promise.resolve(cmd === "focus_session" ? "focused" : null));
-    expect(await openIslandSession({ sessionId: item.session.id, chatEnabled: false, item, locale: "zh-CN" })).toBeNull();
-    expect(invoke.mock.calls.map(([cmd]) => cmd)).toEqual(["focus_session"]);
-    expect(invoke.mock.calls[0][1]).toMatchObject({ pid: 4242, sessionId: item.session.cc_session_id, provider: "claude", cwd: "C:/work/proj" });
-  });
-  it("轻量模式跳不过去（进程已结束 / 没有 pid）：说明轻量模式没有对话窗", async () => {
-    const item = mk();
-    invoke.mockImplementation(() => Promise.resolve("process_ended"));
-    expect(await openIslandSession({ sessionId: item.session.id, chatEnabled: false, item, locale: "zh-CN" })).toEqual({ sessionId: item.session.id, kind: "lite" });
-    invoke.mockClear();
-    const noPid = mk({ pid: null });
-    expect(await openIslandSession({ sessionId: noPid.session.id, chatEnabled: false, item: noPid, locale: "zh-CN" })).toEqual({ sessionId: noPid.session.id, kind: "lite" });
-    expect(invoke).not.toHaveBeenCalled();
+    // 只走对话窗一条路：不再有轻量模式下的 focus_session 分支。
+    expect(invoke.mock.calls.map(([cmd]) => cmd)).toEqual(["open_chat_window"]);
   });
 });
 
@@ -80,7 +67,7 @@ const alertOf = (sessionId: number) => ({ sessionId, kind: "approval", title: "�
 const renderAlert = (props: Partial<Parameters<typeof Island>[0]>) =>
   render(<Island sessions={[]} compactStyle="counts" alert={alertOf(5)} usages={[]} onMeasure={noop} onActivate={noop} onOpenSession={noop} onPointerDownDrag={noop} {...props} />);
 
-describe("I-1/I-2 提醒上的失败提示", () => {
+describe("I-1 提醒上的失败提示", () => {
   it("开窗失败：提醒换成出错样式写明原因，主按钮变「重试」并再次打开同一条", () => {
     const onOpenSession = vi.fn();
     renderAlert({ onOpenSession, openError: { sessionId: 5, kind: "failed", reason: "会话不存在" } });
@@ -90,24 +77,17 @@ describe("I-1/I-2 提醒上的失败提示", () => {
     fireEvent.click(screen.getByRole("button", { name: zh.island.retry }));
     expect(onOpenSession).toHaveBeenCalledWith(5);
   });
-  it("轻量模式跳不过去：说明原因，主按钮是「打开设置」", () => {
-    const onOpenSettingsFromError = vi.fn();
-    renderAlert({ openError: { sessionId: 5, kind: "lite" }, onOpenSettingsFromError });
-    expect(document.querySelector(".isl-alert-sub.is-error")?.textContent).toBe(zh.island.liteNoChat);
-    fireEvent.click(screen.getByRole("button", { name: zh.island.openSettings }));
-    expect(onOpenSettingsFromError).toHaveBeenCalled();
-  });
   it("别的会话的失败不串到这条提醒上", () => {
-    renderAlert({ openError: { sessionId: 99, kind: "lite" } });
+    renderAlert({ openError: { sessionId: 99, kind: "failed", reason: "会话不存在" } });
     expect(document.querySelector(".isl-alert-sub.is-error")).toBeNull();
     expect(screen.getByRole("button", { name: zh.island.open })).toBeTruthy();
   });
 });
 
 const renderPanel = (sessions: Item[], props: Partial<Parameters<typeof IslandPanel>[0]> = {}) =>
-  render(<IslandPanel sessions={sessions} usage={{}} quotaProviders={[]} onOpenSession={noop} onMeasure={noop} onPointerDownDrag={noop} {...props} />);
+  render(<IslandPanel sessions={sessions} usage={{}} quotaProviders={[]} onOpenSession={noop} onOpenChat={noop} onMeasure={noop} onPointerDownDrag={noop} {...props} />);
 
-describe("I-1/I-2 面板里的失败提示", () => {
+describe("I-1 面板里的失败提示", () => {
   it("点会话失败：面板留着，顶上有原因、「重试」和关闭", () => {
     const onRetryOpen = vi.fn();
     const onDismissOpenError = vi.fn();
@@ -119,13 +99,6 @@ describe("I-1/I-2 面板里的失败提示", () => {
     expect(onRetryOpen).toHaveBeenCalledWith(3);
     fireEvent.click(screen.getByRole("button", { name: zh.island.dismissError }));
     expect(onDismissOpenError).toHaveBeenCalled();
-  });
-  it("轻量模式：给「打开设置」", () => {
-    const onOpenSettingsFromError = vi.fn();
-    renderPanel([mk()], { openError: { sessionId: 3, kind: "lite" }, onOpenSettingsFromError });
-    expect(screen.getByRole("alert").textContent).toContain(zh.island.liteNoChat);
-    fireEvent.click(screen.getByRole("button", { name: zh.island.openSettings }));
-    expect(onOpenSettingsFromError).toHaveBeenCalled();
   });
 });
 

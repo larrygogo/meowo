@@ -10,7 +10,6 @@ import { WorktreeRemoveButton } from "./worktreeCleanup";
 import { CardContextMenu } from "./views/sticker/CardContextMenu";
 import { ChatSidebar } from "./views/ChatSidebar";
 import { SessionAdmin } from "./views/chat/SessionAdmin";
-import { ArchivedSessions } from "./views/About";
 import { formatBackendError } from "./i18n/errors";
 import { zh } from "./i18n/zh";
 import type { LiveSession, WorktreeStatusDto } from "./api";
@@ -363,18 +362,6 @@ describe("目录已删的已完成会话不能放回进行中（设置页、会�
     expect(await screen.findByText(new RegExp(zh.admin.batchSkippedGone(1)))).toBeTruthy();
   });
 
-  it("设置页「已完成会话」：目录已删的行按钮置灰写原因；恢复失败显示后端的真实原因", async () => {
-    invoke.mockImplementation((command: string) => {
-      if (command === "get_live_sessions_page") return Promise.resolve({ items: [row(1, "已删目录的会话", true), row(2, "目录还在的会话")], next_cursor: null });
-      if (command === "set_archived") return Promise.reject("session/dir_missing");
-      return Promise.resolve();
-    });
-    render(<ArchivedSessions />);
-    expect(await screen.findByTestId("archived-dir-gone")).toBeTruthy();
-    const buttons = screen.getAllByRole("button", { name: zh.sticker.unarchive }) as HTMLButtonElement[];
-    expect(buttons[0].disabled).toBe(true);
-    fireEvent.click(buttons[1]);
-    expect(await screen.findByRole("alert")).toHaveProperty("textContent", formatBackendError("session/dir_missing", "zh-CN"));
-    expect(screen.queryByText(zh.settings.unarchiveFailed)).toBeNull();
-  });
+  // 原「设置页已完成会话列表（ArchivedSessions）」用例随 2026-11-20 去掉轻量模式删除：该列表只在
+  // 轻量模式下渲染，组件已一并删除。
 });
