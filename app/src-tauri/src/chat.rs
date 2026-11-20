@@ -1234,7 +1234,12 @@ mod tests {
     /// 预览放行不对网络共享路径做任何文件系统操作（192.0.2.1 是文档保留地址，真去连要卡到超时）。
     #[test]
     fn preview_candidate_rejects_unc_without_touching_network() {
-        for raw in [r"\\192.0.2.1\s\a.png", "//192.0.2.1/s/a.png"] {
+        for raw in [
+            r"\\192.0.2.1\s\a.png",
+            "//192.0.2.1/s/a.png",
+            r"\??\UNC\192.0.2.1\s\a.png",
+            r"\??/GLOBALROOT/Device/Mup/192.0.2.1/s/a.png",
+        ] {
             let started = std::time::Instant::now();
             assert!(!preview_candidate(std::path::Path::new(raw)));
             assert!(started.elapsed() < std::time::Duration::from_millis(500), "{raw}");

@@ -1864,7 +1864,7 @@ fn read_scoped_file(raw: &str) -> Result<Vec<u8>, StatusCode> {
 /// 纯函数便于单测。
 fn path_within_roots(raw: &str, roots: &[PathBuf]) -> Option<PathBuf> {
     // UNC / 设备路径：canonicalize 本身就会发起 SMB 连接（可能带出 NTLM 凭据），必须在它之前拒。
-    if meowo_agent::images::is_remote_path(raw) {
+    if !meowo_agent::images::is_local_absolute(raw) {
         return None;
     }
     let requested = FsPath::new(raw).canonicalize().ok()?;
@@ -2357,7 +2357,13 @@ mod tests {
     #[test]
     fn file_scope_rejects_unc_before_touching_network() {
         let roots = vec![std::env::temp_dir()];
-        for raw in [r"\\192.0.2.1\share\a.png", "//192.0.2.1/share/a.png", r"\\?\UNC\192.0.2.1\share\a.png"] {
+        for raw in [
+            r"\\192.0.2.1\share\a.png",
+            "//192.0.2.1/share/a.png",
+            r"\\?\UNC\192.0.2.1\share\a.png",
+            r"\??\UNC\192.0.2.1\share\a.png",
+            r"\??/GLOBALROOT/Device/Mup/192.0.2.1/share/a.png",
+        ] {
             let started = std::time::Instant::now();
             assert!(path_within_roots(raw, &roots).is_none());
             assert!(started.elapsed() < std::time::Duration::from_millis(500), "{raw} 碰了网络（{:?}）", started.elapsed());

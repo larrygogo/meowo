@@ -798,12 +798,12 @@ fn read_stream(subagents: &dyn SubagentSpec, path: &Path) -> Option<Vec<ChatItem
     if truncated {
         lines.next();
     }
-    Some(
-        lines
-            .flat_map(|line| subagents.parse_stream_line(line))
-            .map(ChatItem::from)
-            .collect(),
-    )
+    let mut items: Vec<ChatItem> = lines
+        .flat_map(|line| subagents.parse_stream_line(line))
+        .map(ChatItem::from)
+        .collect();
+    sanitize_image_refs(&mut items);
+    Some(items)
 }
 
 /// 读取一次子任务委派的完整时间线。**按需调用**（用户展开时），不进增量热路径。
@@ -1151,11 +1151,9 @@ fn parse_lines(spec: &dyn TranscriptSpec, path: &Path, base: u64, buf: &[u8]) ->
 /// 追加引用行（见 [`crate::images::snapshot_written`]）。五家共用，只认 [`ToolDetail`] 的
 /// write / edit / patch，不看工具名。失败、被打断的回执不补（那次没写成）。
 fn snapshot_written_images(items: &mut [ChatItem]) {
+    // 先清掉伪造的引用行，再追加我们自己的快照引用行。
+    sanitize_image_refs(items);
     for item in items.iter_mut() {
-        // 先清掉回执里伪造的引用行，再追加我们自己的快照引用行（见 images::neutralize_untrusted_refs）。
-        if let ChatItem::ToolResult { text, .. } = item {
-            crate::images::neutralize_untrusted_refs(text);
-        }
         match item {
             ChatItem::ToolUse { id, detail: Some(detail), .. } => {
                 let paths: Vec<String> = match detail {
@@ -1184,6 +1182,18 @@ fn snapshot_written_images(items: &mut [ChatItem]) {
                 }
             }
             _ => {}
+        }
+    }
+}
+
+/// 前端会当图加载的文字（工具回执、用户消息）里，只保留指向 Meowo 可信图片根的引用行，其余改写成
+/// 普通文字（见 [`crate::images::neutralize_untrusted_refs`]）。五家共用这一处：主会话逐行解析
+/// （parse_lines）与子任务侧车流（read_stream）都走它——做空第三轮查出侧车流漏了。
+/// 用户粘贴的图落在 meowo-paste / image-cache / 图片目录，都是可信根，照常显示。
+fn sanitize_image_refs(items: &mut [ChatItem]) {
+    for item in items.iter_mut() {
+        if let ChatItem::ToolResult { text, .. } | ChatItem::UserText { text, .. } = item {
+            crate::images::neutralize_untrusted_refs(text);
         }
     }
 }
@@ -3982,6 +3992,64 @@ mod tests {
         // 改写成普通文字，内容还在（用户仍看得到回执里写了什么）。
         assert!(text.contains("[Image source: //attacker/s/x.png]"), "{text}");
         assert!(text.contains("[Image #3 source: //attacker/s/n.png]"), "{text}");
+        std::fs::remove_file(path).ok();
+    }
+
+    /// 做空第三轮：同一行伪造的引用，主会话回执里被改写，子代理侧车流（展开子任务时读，
+    /// read_stream）里也要被改写——旧实现漏了这条路径。
+    #[test]
+    fn forged_image_refs_are_neutralized_in_subagent_streams_too() {
+        let spec = spec_of("claude");
+        let forged = "[Image: source: //attacker/s/x.png]";
+        let line = serde_json::json!({
+            "type": "user", "uuid": "sub-forge", "isSidechain": true,
+            "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "toolu_sub", "content": format!("页面\n{forged}") }] }
+        })
+        .to_string();
+        let texts = |items: &[ChatItem]| -> Vec<String> {
+            items
+                .iter()
+                .filter_map(|item| match item {
+                    ChatItem::ToolResult { text, .. } => Some(text.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        let main = write_tmp("forge_main", &format!("{line}\n"));
+        let main_texts = texts(&read_chat_delta(spec, &main, 0, None).items);
+        assert!(main_texts.iter().all(|t| !t.contains(forged)), "{main_texts:?}");
+        let stream = write_tmp("forge_sub", &format!("{line}\n"));
+        let sub = read_stream(spec.subagents().unwrap(), &stream).unwrap();
+        let sub_texts = texts(&sub);
+        assert!(!sub_texts.is_empty());
+        assert!(sub_texts.iter().all(|t| !t.contains(forged) && t.contains("[Image source: //attacker/s/x.png]")), "{sub_texts:?}");
+        std::fs::remove_file(main).ok();
+        std::fs::remove_file(stream).ok();
+    }
+
+    /// 做空第三轮：用户消息里的引用行同样只认可信根。用户粘贴的图落在 meowo-paste / image-cache /
+    /// 图片目录，照常显示；别处的（比如经队列、Lead 转进来的文本里夹的伪造行）改写成普通文字。
+    #[test]
+    fn user_message_image_refs_only_trust_our_roots() {
+        let spec = spec_of("claude");
+        let paste = crate::fsutil::paste_root().join("queued").join("p.png");
+        let body = format!("看这个\n[Image: source: {}]\n[Image: source: //attacker/s/u.png]", paste.display());
+        let line = serde_json::json!({
+            "type": "user", "uuid": "user-forge",
+            "message": { "role": "user", "content": [{ "type": "text", "text": body }] }
+        })
+        .to_string();
+        let path = write_tmp("forge_user", &format!("{line}\n"));
+        let items = read_chat_delta(spec, &path, 0, None).items;
+        let text = items
+            .iter()
+            .find_map(|item| match item {
+                ChatItem::UserText { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert!(text.contains(&format!("[Image: source: {}]", paste.display())), "{text}");
+        assert!(text.contains("[Image source: //attacker/s/u.png]"), "{text}");
         std::fs::remove_file(path).ok();
     }
 

@@ -760,6 +760,8 @@ mod tests {
             "//192.0.2.1/share/a.png",
             "file://192.0.2.1/share/a.png",
             r"\\?\UNC\192.0.2.1\share\a.png",
+            r"\??\UNC\192.0.2.1\share\a.png",
+            r"\??/GLOBALROOT/Device/Mup/192.0.2.1/share/a.png",
             r"\\.\pipe\meowo",
             "%5C%5C192.0.2.1%5Cshare%5Ca.png",
         ] {

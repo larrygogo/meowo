@@ -312,7 +312,8 @@ describe("正文 Markdown 图片", () => {
 });
 
 describe("网络图片点了才加载", () => {
-  const WEB = "C:\Users\me\.meowo\images\web\ab12.png";
+  // String.raw：普通字符串里的 `\U`、`\m` 会被吃成字母，路径变成 `C:Usersme…`（不是绝对路径，白名单不认）。
+  const WEB = String.raw`C:\Users\me\.meowo\images\web\ab12.png`;
   const md = (text: string, session: number | null = 7) => (
     <ChatSessionContext.Provider value={session}><div className="chat-md"><ChatMarkdown text={text} /></div></ChatSessionContext.Provider>
   );
@@ -368,7 +369,7 @@ describe("网络图片点了才加载", () => {
   });
 
   it("本地路径不受影响，照常自动显示", async () => {
-    vi.mocked(resolveChatImage).mockResolvedValue({ path: "C:\i\a.png" });
+    vi.mocked(resolveChatImage).mockResolvedValue({ path: String.raw`C:\i\a.png` });
     render(md("![](C:\a.png)"));
     await act(async () => {});
     expect(document.querySelector("button.is-gated")).toBeNull();
@@ -386,6 +387,7 @@ describe("网络图片点了才加载", () => {
     expect(gate.textContent).toContain("img.shields.io");
     await act(async () => { fireEvent.click(gate); });
     expect(resolveChatImage).toHaveBeenCalledWith("https://img.shields.io/b.svg", null, null);
-    expect(document.querySelector(`img[src='asset://local/${WEB}']`)).toBeTruthy();
+    // 路径里有反斜杠，不能拼进 CSS 选择器（会被当转义），逐个比 src。
+    expect([...document.querySelectorAll("img")].some((img) => img.getAttribute("src") === `asset://local/${WEB}`)).toBe(true);
   });
 });

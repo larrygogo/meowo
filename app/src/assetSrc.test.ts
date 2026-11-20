@@ -9,38 +9,44 @@ vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
   convertFileSrc: convert,
 }));
 
-import { isRemotePath, safeFileSrc } from "./assetSrc";
+import { isLocalAbsolute, isRemotePath, safeFileSrc } from "./assetSrc";
 
 const SRC = dirname(fileURLToPath(import.meta.url));
 
-describe("网络共享路径在 convertFileSrc 之前拒掉", () => {
+/** 前后端共用的用例表（后端 images::tests::local_absolute_whitelist_matches_shared_fixture 跑同一份）。 */
+const TABLE = JSON.parse(readFileSync(join(SRC, "test", "fixtures", "local-paths.json"), "utf8")) as {
+  cases: { path: string; windows: boolean; unix: boolean }[];
+};
+
+describe("不是本地绝对路径就在 convertFileSrc 之前拒掉", () => {
   // 做空第二轮：Tauri 2.12.5 的 asset 协议在判白名单之前就对路径 is_symlink/exists，
   // 一张 `//attacker/s/x.png` 的缩略图就会让 Windows 发起 SMB、可能带出 NTLM 凭据。
-  it("与后端 images::is_remote_path 同一套规则", () => {
+  // 做空第三轮：`\??\UNC\host\…` 绕过了枚举坏写法的旧规则，改成只认好写法的白名单。
+  it("白名单与后端同一张用例表", () => {
+    for (const { path, windows, unix } of TABLE.cases) {
+      expect(isLocalAbsolute(path, "windows"), `windows ${JSON.stringify(path)}`).toBe(windows);
+      expect(isLocalAbsolute(path, "unix"), `unix ${JSON.stringify(path)}`).toBe(unix);
+      // 平台未知（手机页、平台还没探测到）：只会更严，Windows 规则认的都认，NT 前缀一律不认。
+      if (!windows && !unix) expect(isLocalAbsolute(path, "unknown"), `unknown ${JSON.stringify(path)}`).toBe(false);
+      if (windows) expect(isLocalAbsolute(path, "unknown")).toBe(true);
+    }
+    for (const nt of ["/??/UNC/host/s/a.png", "/./pipe/x", "/a\\b.png"]) {
+      expect(isLocalAbsolute(nt, "unknown"), nt).toBe(false);
+    }
+    expect(isLocalAbsolute("/home/me/a.png", "unknown")).toBe(true);
+  });
+
+  it("做空第三轮的 NT 前缀写法在任何平台都当远程", () => {
     for (const remote of [
-      "\\\\attacker\\s\\x.png",
-      "//attacker/s/x.png",
-      "\\/attacker/s/x.png",
+      "\\??\\UNC\\attacker\\s\\x.png",
+      "\\??\\GLOBALROOT\\Device\\Mup\\attacker\\s\\x.png",
+      "\\??/UNC/attacker/s/x.png",
       "\\\\?\\UNC\\attacker\\s\\x.png",
-      "\\\\.\\pipe\\meowo",
-      "\\\\?\\GLOBALROOT\\Device\\Mup\\attacker\\s\\x.png",
+      "//attacker/s/x.png",
       "file://attacker/s/x.png",
-      "FILE://attacker/s/x.png",
-      "file:////attacker/s/x.png",
-      "  //attacker/s/x.png",
+      "relative/a.png",
     ]) {
       expect(isRemotePath(remote), remote).toBe(true);
-    }
-    for (const local of [
-      "C:\\Users\\me\\.meowo\\images\\tool\\a.png",
-      "C:/Users/me/a.png",
-      "/home/me/a.png",
-      "\\\\?\\C:\\Users\\me\\a.png",
-      "file:///C:/Users/me/a.png",
-      "relative/a.png",
-      "\\single\\a.png",
-    ]) {
-      expect(isRemotePath(local), local).toBe(false);
     }
   });
 
