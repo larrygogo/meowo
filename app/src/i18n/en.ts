@@ -1402,6 +1402,7 @@ export const en: Dict = {
     toolReadImage: "Image",
     sentImageSending: "Sending image…",
     sentImageFailed: "The image didn't come through",
+    sentImageUrlRejected: "Only local image files can be sent; the agent needs to download the URL first",
     sentImageOpen: "View full size",
     imageLoading: "Loading image",
     remoteImageLoad: "Click to load image",

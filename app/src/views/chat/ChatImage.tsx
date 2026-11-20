@@ -277,7 +277,9 @@ export const SentImageMessage = memo(function SentImageMessage({ item, result }:
   } else if (state === "interrupted") {
     content = <ImageFailure title={t.chat.sentImageFailed} reason={t.chat.interrupted} name={sourceName} />;
   } else if (error) {
-    content = <ImageFailure title={t.chat.sentImageFailed} reason={imageErrorText(t, error)} name={sourceName} />;
+    // 发图只收本地文件（网址一律 forbidden）：给了网址时说清该怎么办，而不是笼统的「位置不允许读取」。
+    const reason = error.code === "forbidden" && source && /^https?:\/\//i.test(source) ? t.chat.sentImageUrlRejected : imageErrorText(t, error);
+    content = <ImageFailure title={t.chat.sentImageFailed} reason={reason} name={sourceName} />;
   } else {
     content = (
       <div className="chat-sent-media" data-count={Math.min(images.length, 4)}>

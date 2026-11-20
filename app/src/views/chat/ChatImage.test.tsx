@@ -107,6 +107,14 @@ describe("agent 发来的图片消息", () => {
     expect(document.querySelector(".chat-sent img")).toBeNull();
   });
 
+  it("发图给了网址（现在一律拒）：说清只能发本地图片、要先下载到本地，不说成「位置不允许读取」", () => {
+    render(<SentImageMessage item={send("s4", { source: "https://example.com/banner.png" })} result={result("s4", "[Image error: forbidden] send_image 只接受本地图片文件，不下载网址。", true)} />);
+    const card = document.querySelector(".chat-sent-failed")?.textContent ?? "";
+    expect(card).toContain("只能发本地图片");
+    expect(card).toContain("banner.png");
+    expect(card).not.toContain("这个位置不允许读取");
+  });
+
   it("没回执：回合在跑是「正在发送」，回合停了是「已中断」", () => {
     const item = send("s4", { source: "a.png" });
     const { rerender } = render(<TurnLiveContext.Provider value="running"><SentImageMessage item={item} /></TurnLiveContext.Provider>);

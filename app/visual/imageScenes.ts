@@ -170,8 +170,11 @@ export function imageSceneItems(part: string, lang: Lang): { items: ChatItem[]; 
       receipt("f2", at(284), "[Image error: not_image] README.md", true),
       sendCall("f3", at(280), "C:\\dev\\web-app\\raw\\scan.tiff", null),
       receipt("f3", at(279), "[Image error: too_large] 32 MB", true),
+      // 发图只收本地文件：agent 直接给网址会被拒（说明里叫它先下载到本地）。
       sendCall("f4", at(275), "https://example.com/banner.png", null),
-      receipt("f4", at(274), "[Image error: download_failed] HTTP 404", true),
+      receipt("f4", at(274), zh
+        ? "[Image error: forbidden] send_image 只接受本地图片文件，不下载网址。要发网络上的图，先用你自己的下载或取网页工具把它下载到本地，再把本地路径发过来"
+        : "[Image error: forbidden] send_image only accepts local image files and does not download URLs. Download it locally first, then send the local path", true),
       { type: "tool_use", id: "t1", timestamp: at(200), name: "mcp__meowo__browser_screenshot", kind: "other", summary: "" } as unknown as ChatItem,
       receipt("t1", at(199), (zh ? "面板浏览器截图（182 KB）" : "Panel browser screenshot (182 KB)") + "\n" + ref("tool", "login.png")),
       { type: "tool_use", id: "t2", timestamp: at(190), name: "Read", kind: "read", summary: "docs/design/ref.png", detail: { kind: "read", path: "C:\\dev\\web-app\\docs\\design\\ref.png", offset: null, limit: null } } as unknown as ChatItem,

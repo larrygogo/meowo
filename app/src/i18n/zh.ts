@@ -1623,6 +1623,7 @@ export const zh = {
     // agent 主动发来的图（Meowo 发图工具，ToolKind::Image）。
     sentImageSending: "正在发送图片…",
     sentImageFailed: "图片没能发过来",
+    sentImageUrlRejected: "只能发本地图片，网址要 agent 先下载到本地再发",
     sentImageOpen: "查看大图",
     imageLoading: "图片加载中",
     // 网络图片默认不下载（防追踪），点了才由 Meowo 下载；同一会话里这个域名之后的图自动加载。
