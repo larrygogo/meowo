@@ -17,8 +17,6 @@ SUBTEXT_COLOR = "#a0a0a8"
 # 一键安装背景的分区底色。改这两个值必须同步 installer.nsi 里 SetCtlColors 的
 # 对应色值（MEOWO 标记块内有同名注释），否则控件文字会带色块。
 BG_BASE = "#17171a"
-BG_BAND = "#101012"
-BG_GLOW = "#19191c"  # 与底色只差一档：实拍中硬边圆对比稍大就显廉价
 
 
 def interpolate(c1, c2, t):
@@ -112,64 +110,108 @@ def make_sidebar():
     img.save(OUT_DIR / "nsis-sidebar.bmp", "BMP")
 
 
-def make_oneclick_bg():
-    """一键安装器的全屏背景（逻辑 780x480 的 2x，安装器端 LoadImage 缩小采样）。
+# 一键安装器的几何（逻辑 px，96dpi）。**必须与 installer.nsi 的 MEOWO_* 布局 define 一致**：
+# 安装器把这些位图按 client 区等比缩小采样，原生控件按同一组坐标摆在烙好的形状上。
+ONECLICK_W, ONECLICK_H = 640, 400        # 收起态 client 区
+ONECLICK_EXPAND = 92                      # 展开「自定义安装选项」时窗口向下长出的高度
+ICON_TOP, ICON_SIZE = 56, 72
+BTN_X, BTN_Y, BTN_W, BTN_H = 188, 240, 264, 44
+CARD_X, CARD_Y, CARD_W, CARD_H = 32, 340, 576, 128
+FIELD_X, FIELD_Y, FIELD_W, FIELD_H = 52, 378, 536, 34
+TOGGLE_SIZE = 18          # 勾选框边长（逻辑 px）；位置由 installer.nsi 摆
+# 勾选框按常见显示缩放各出一套，安装器按 DPI 取对应那张原尺寸贴上，不拉伸（拉伸缩小会糊边）。
+TOGGLE_DPIS = (96, 120, 144, 168, 192, 240, 288)
+TOGGLE_ON_INK = "#1c2600"  # 同步 installer.nsi MEOWO_COL_ONLINK
+CARD_FILL = "#1d1d21"      # 同步 installer.nsi MEOWO_COL_CARD
+CARD_LINE = "#28282d"
+FIELD_FILL = "#141416"     # 同步 installer.nsi MEOWO_COL_FIELD
+FIELD_LINE = "#2e2e34"
+SCALE = 2
 
-    刻意用**纯平色分区**而非渐变：NSIS 原生控件（Label/CheckBox）的文字背景只能靠
-    SetCtlColors 配一个纯色，控件落在哪个区，就配哪个区的底色，才能做到无缝。
-    文字（多语言的 tagline / 勾选项）一律不烙图，由安装器用系统字体渲染；
-    这里只烙语言无关的品牌视觉（图标 + "Meowo" 字标）。
-    分区（与 installer.nsi 的控件布局按同一比例对齐）：
-      0%..75%   主区   BG_BASE   —— 品牌区 + 安装按钮 + 进度条都在这里
-      75%..100% 底带   BG_BAND   —— 「自定义安装」展开区的控件落位
-    """
-    w, h = 1560, 960
-    img = Image.new("RGB", (w, h), BG_BASE)
+
+def _px(v):
+    return int(round(v * SCALE))
+
+
+def _brand(img):
+    """图标。字标「Meowo」不烙图，由安装器用 Segoe UI 实时渲染：底图按显示缩放缩小采样时
+    细字边缘会出锯齿（150% 实拍），字体渲染在任何缩放下都清晰。"""
+    size = _px(ICON_SIZE)
+    icon = Image.open(OUT_DIR / "icon.png").convert("RGBA").resize((size, size), Image.LANCZOS)
+    cx = img.width // 2
+    img.paste(icon, (cx - size // 2, _px(ICON_TOP)), icon)
+
+
+def _button(img):
+    """主按钮：整条胶囊（圆角 = 半高）。安装器在胶囊直边区叠一条同色可点文字带。"""
     draw = ImageDraw.Draw(img)
+    x, y, w, h = _px(BTN_X), _px(BTN_Y), _px(BTN_W), _px(BTN_H)
+    draw.rounded_rectangle([x, y, x + w - 1, y + h - 1], radius=h // 2, fill=DOT_GREEN)
 
-    # 顶部两角的暗色大圆，给纯色底一点纵深。**只允许出现在 y<36% 的品牌区**：
-    # 36%..75% 是 tagline/升级提示/安装按钮/进度条的控件落位带，SetCtlColors 配的是
-    # BG_BASE 纯色，装饰圆伸进来会在控件矩形边缘露出色差接缝。
-    def parse(c):
-        return tuple(int(c[i:i + 2], 16) for i in (1, 3, 5))
-    glow = parse(BG_GLOW)
-    draw.ellipse([-320, -420, 520, 340], fill=glow)
-    draw.ellipse([w - 520, -420, w + 320, 340], fill=glow)
 
-    # 底带（展开区）+ 顶边一条极细分隔线。
-    band_top = int(h * 0.75)
-    draw.rectangle([0, band_top, w, h], fill=BG_BAND)
-    draw.rectangle([0, band_top - 2, w, band_top], fill=ICON_STROKE)
+def _rounded(draw, x, y, w, h, r, fill, line):
+    draw.rounded_rectangle([_px(x), _px(y), _px(x + w) - 1, _px(y + h) - 1], radius=_px(r), fill=fill, outline=line, width=SCALE)
 
-    # 品牌图标：直接合成应用的真实 icon（手绘双点母题被用户否掉——安装器上要的是
-    # 和桌面/托盘一致的那个 logo）。256px 源图缩到 160，带 alpha 贴上。
-    icon_size = 160
-    cx = w // 2
-    icon = (
-        Image.open(OUT_DIR / "128x128@2x.png")
-        .convert("RGBA")
-        .resize((icon_size, icon_size), Image.LANCZOS)
-    )
-    img.paste(icon, (cx - icon_size // 2, int(h * 0.20) - icon_size // 2), icon)
 
-    # 字标（语言无关，可烙图）。中心 y=33%。
-    font = load_font("segoeuib.ttf", 84)
-    draw.text((cx, int(h * 0.33)), "Meowo", fill=TEXT_COLOR, font=font, anchor="mm")
+def make_oneclick_bg():
+    """一键安装器底图（2x，安装器 LoadImage 缩小采样）。三张：
 
-    # 两个变体：主页/完成页用带胶囊按钮的（原生按钮白底在暗色下扎眼，NSIS 裸环境
-    # 又做不了 owner-draw，圆角胶囊烙图、安装器叠一条同色可点文字带）；
-    # 进度页用不带胶囊的（那页没有按钮，青柠胶囊悬在进度条后面很怪）。
-    # 胶囊几何必须与 installer.nsi 的按钮文字带对齐：320x52 逻辑 @2x = 640x104，
-    # 圆角 24（=逻辑 12，文字带全宽落在直边区内，不会探出圆角）。
-    img.save(OUT_DIR / "nsis-oneclick-bg.bmp", "BMP")
-    bw, bh = 640, 104
-    bx, by = (w - bw) // 2, int(h * 0.56)
-    draw.rounded_rectangle([bx, by, bx + bw, by + bh], radius=24, fill=DOT_GREEN)
-    img.save(OUT_DIR / "nsis-oneclick-bg-btn.bmp", "BMP")
+    - nsis-oneclick-bg.bmp           进度页：品牌区，无按钮
+    - nsis-oneclick-bg-btn.bmp       主页收起态 / 完成页：品牌区 + 主按钮
+    - nsis-oneclick-bg-expanded.bmp  主页展开态（窗口加高 ONECLICK_EXPAND）：再加选项卡片、
+                                     路径输入框外框、两个勾选框外框
+
+    纯平底色、不画装饰：NSIS 原生控件的文字底色只能 SetCtlColors 配一个纯色，控件落在哪块
+    （主底 / 卡片 / 输入框）就配哪块的色，才不会露接缝。文字（多语言）一律不烙图。
+    2026-11-20 重做：原 780x512 窗口内容挤在上半、角落圆弧像脏块、展开区是系统白底控件（leader：「还是很丑」）。
+    """
+    base = Image.new("RGB", (_px(ONECLICK_W), _px(ONECLICK_H)), BG_BASE)
+    _brand(base)
+    base.save(OUT_DIR / "nsis-oneclick-bg.bmp", "BMP")
+    _button(base)
+    base.save(OUT_DIR / "nsis-oneclick-bg-btn.bmp", "BMP")
+
+    tall = Image.new("RGB", (_px(ONECLICK_W), _px(ONECLICK_H + ONECLICK_EXPAND)), BG_BASE)
+    _brand(tall)
+    _button(tall)
+    draw = ImageDraw.Draw(tall)
+    _rounded(draw, CARD_X, CARD_Y, CARD_W, CARD_H, 12, CARD_FILL, CARD_LINE)
+    _rounded(draw, FIELD_X, FIELD_Y, FIELD_W, FIELD_H, 8, FIELD_FILL, FIELD_LINE)
+    tall.save(OUT_DIR / "nsis-oneclick-bg-expanded.bmp", "BMP")
+
+
+def make_toggles():
+    """勾选框两态（未选 = 深色圆角框；选中 = 青柠圆角块 + 深色对勾），底色是卡片色。
+
+    选中态必须整块带圆角：此前选中是一块直角色块叠在圆角外框里（leader 2026-11-20：「勾选了之后
+    没有圆角」）。4 倍超采样画好再 LANCZOS 缩到目标尺寸，圆角与对勾边缘是平滑的。
+    """
+    out = OUT_DIR / "nsis-ui"
+    out.mkdir(exist_ok=True)
+    for dpi in TOGGLE_DPIS:
+        size = round(TOGGLE_SIZE * dpi / 96)
+        k = 4
+        big = size * k
+        for state in ("on", "off"):
+            img = Image.new("RGB", (big, big), CARD_FILL)
+            d = ImageDraw.Draw(img)
+            radius = round(5 * dpi / 96 * k)
+            if state == "on":
+                d.rounded_rectangle([0, 0, big - 1, big - 1], radius=radius, fill=DOT_GREEN)
+                w = max(k * 2, round(2 * dpi / 96 * k))
+                pts = [(big * 0.26, big * 0.52), (big * 0.43, big * 0.69), (big * 0.75, big * 0.33)]
+                d.line(pts, fill=TOGGLE_ON_INK, width=w, joint="curve")
+                for x, y in (pts[0], pts[-1]):
+                    d.ellipse([x - w / 2, y - w / 2, x + w / 2, y + w / 2], fill=TOGGLE_ON_INK)
+            else:
+                line = max(k, round(dpi / 96 * k))
+                d.rounded_rectangle([0, 0, big - 1, big - 1], radius=radius, fill=FIELD_FILL, outline=FIELD_LINE, width=line)
+            img.resize((size, size), Image.LANCZOS).save(out / f"toggle-{state}-{dpi}.bmp", "BMP")
 
 
 if __name__ == "__main__":
     make_header()
     make_sidebar()
     make_oneclick_bg()
+    make_toggles()
     print("NSIS bitmaps updated.")

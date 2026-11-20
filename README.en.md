@@ -20,7 +20,7 @@ Download it from **[meowo.io](https://meowo.io/en)**, which offers the installer
 
 | Platform | Installer | Notes |
 |----------|-----------|-------|
-| **Windows 10 / 11** | `Meowo_x.y.z_x64-installer.exe` | Double-click to install; falls back to the classic installer when WebView2 isn't available |
+| **Windows 10 / 11** | `Meowo_x.y.z_x64-setup.exe` | Double-click to install |
 | **macOS 14+** | `_aarch64.dmg` for Apple silicon, `_x64.dmg` for Intel | Signed and notarized. Not sure which chip? Apple menu → About This Mac |
 
 You can install the AI coding CLIs after Meowo, from its Settings, and sign in there. Meowo sets up the hooks it needs. New versions can be checked for and installed inside the app.

@@ -1,9 +1,9 @@
 //! 安装器写下的功能开关种子（Windows only）。
 //!
-//! NSIS 一键安装器的「自定义安装」里有一颗「对话窗口功能」勾选（默认勾），结果写在
-//! `HKCU\Software\larrygogo\Meowo` 的 `ChatEnabled` (REG_DWORD 0/1)。**只有 GUI 交互
-//! 安装会写**——updater 静默升级（/P /UPDATE）与 /S 静默装都不写，存量用户的偏好
-//! 不会被安装器动到（见 nsis/installer.nsi 的 chat-enabled-seed 块）。
+//! 旧版 NSIS 一键安装器的「自定义安装」里有一颗「对话窗口功能」勾选（默认勾），结果写在
+//! `HKCU\Software\larrygogo\Meowo` 的 `ChatEnabled` (REG_DWORD 0/1)，只有 GUI 交互安装会写。
+//! 2026-11-20 起安装器不再提供这个开关（一律完整模式），也不再写种子（见 nsis/installer.nsi 的
+//! chat-enabled-seed 块）；这里保留，用来消化旧版安装器装过、尚未首启时留下的种子。
 //!
 //! 合并规则：settings.json 里 `chat_enabled` 字段**在场**即代表用户已做过显式选择
 //! （设置页开关落盘，或上一次种子已合并），种子被忽略；缺席才采纳并落盘。无论采纳

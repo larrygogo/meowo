@@ -20,7 +20,7 @@
 
 | 平台 | 安装包 | 说明 |
 |------|--------|------|
-| **Windows 10 / 11** | `Meowo_x.y.z_x64-installer.exe` | 双击安装；没有 WebView2 的环境会自动换成经典安装界面 |
+| **Windows 10 / 11** | `Meowo_x.y.z_x64-setup.exe` | 双击安装 |
 | **macOS 14+** | Apple 芯片选 `_aarch64.dmg`，Intel 选 `_x64.dmg` | 已签名公证。不确定芯片：苹果菜单 → 关于本机 |
 
 AI 编程 CLI 可以等装好 Meowo 之后，在设置里安装和登录，所需的 hooks 由 Meowo 配置。新版本可以在应用内检查和安装。

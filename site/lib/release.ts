@@ -49,12 +49,11 @@ export type ReleaseNote = {
 const pick = (assets: Asset[], ext: string) =>
   assets.find((a) => a.name.toLowerCase().endsWith(ext)) ?? null;
 
-// Windows 资产两级匹配：`-installer.exe` 是 WebView2 壳（人类下载入口，现代 UI），
-// `-setup.exe` 是 NSIS 芯（updater 的 latest.json 指向它，同时兼作老 release 的回退
-// ——壳是后加的，旧版本 release 里没有）。**不能**笼统按 ".exe" 取第一个：release
-// 里两个 exe 并存后，命中哪个取决于 GitHub API 返回的资产顺序。
-const pickWindows = (assets: Asset[]) =>
-  pick(assets, "-installer.exe") ?? pick(assets, "-setup.exe") ?? pick(assets, ".exe");
+// Windows 只给 `-setup.exe`（NSIS 安装器，updater 的 latest.json 与 winget 也指向它）。
+// 0.8.x 一度另发 `-installer.exe`（WebView2 壳），2026-11-20 取消；那几个老 release 里两个 exe
+// 并存，**不能**笼统按 ".exe" 取第一个——命中哪个取决于 GitHub API 返回的资产顺序。
+// ".exe" 只兜底更早、文件名不带 -setup 的 release。
+const pickWindows = (assets: Asset[]) => pick(assets, "-setup.exe") ?? pick(assets, ".exe");
 
 // macOS 资产按芯片分两个 dmg（`_aarch64.dmg` / `_x64.dmg`，0.6.7 起）。更早的 release 只有
 // 一个 `_universal.dmg`，两个入口都指向它——老版本页面/回退场景下不能变成空按钮。
