@@ -736,6 +736,7 @@ export const zh = {
       web: (count: number) => `访问了 ${count} 次网页`,
       todo: (count: number) => `已更新 ${count} 次清单`,
       agent: (count: number) => `已派出 ${count} 个子任务`,
+      image: (count: number) => `发来 ${count} 张图片`,
       other: (count: number) => `执行了 ${count} 次工具调用`,
     },
     turnChangedFiles: (count: number) => `${count} 个文件已修改`,
@@ -1616,7 +1617,26 @@ export const zh = {
     toolExitCode: (code: number, first: string) => (first ? `退出码 ${code}：${first}` : `退出码 ${code}`),
     // 一次调用带了几个地址或查询时，摘要只列第一个。
     toolMoreTargets: (count: number) => `另有 ${count} 个`,
-    toolBrowserShots: (count: number) => `${count} 张截图`,
+    toolReadImage: "图片",
+    // agent 主动发来的图（Meowo 发图工具，ToolKind::Image）。
+    sentImageSending: "正在发送图片…",
+    sentImageFailed: "图片没能发过来",
+    sentImageOpen: "查看大图",
+    imageLoading: "图片加载中",
+    imageLong: "长图",
+    imageSave: "保存",
+    imageSaved: "已保存",
+    imageReveal: "在文件夹中显示",
+    // 失败原因：后端原因码（contract.md）与前端自己读图失败。写人话，说清是哪一种。
+    imageErrors: {
+      not_found: "文件不存在",
+      not_image: "这个文件不是图片",
+      too_large: "图片太大，超过了上限",
+      download_failed: "网络图片下载失败",
+      forbidden: "这个位置不允许读取",
+      unreadable: "图片文件读不到了",
+      unknown: "图片没能显示",
+    } as Record<string, string>,
     model: "模型",
     switchModel: "切换模型",
     mode: "模式",
@@ -1788,6 +1808,7 @@ export const zh = {
       web: "网页",
       todo: "待办",
       agent: vocab.concept.subagent,
+      image: "发图",
     } as Record<string, string>,
     // 归不进上面几类的工具按原名精确对照。只收本机实测高频的 claude 工具（11-04 统计近两周
     // 43 个会话：TaskStop 71 次、Skill 54、SendMessage 38、AskUserQuestion 31…），此前原样

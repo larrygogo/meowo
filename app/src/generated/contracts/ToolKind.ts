@@ -6,4 +6,4 @@
  * 全落进「其他」，Codex 的 wait_agent 因为名字含 agent 被当成子任务）。
  * 插件不认识的工具一律 `Other`，界面显示原始工具名。
  */
-export type ToolKind = "read" | "write" | "edit" | "run" | "search" | "web" | "agent" | "todo" | "other";
+export type ToolKind = "read" | "write" | "edit" | "run" | "search" | "web" | "agent" | "todo" | "image" | "other";

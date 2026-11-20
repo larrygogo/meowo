@@ -4,6 +4,7 @@
 import { CHAT_SESSION_ID, DIR_GONE_HISTORY, FIXED_NOW, goneSessions, leadTask, MENTION_CANDIDATES, MODE_MARKERS } from "./fixtures";
 import { cardSceneMock } from "./cardScenes";
 import { toolSceneMock } from "./toolScenes";
+import { imageSceneBoot, imageSceneMock } from "./imageScenes";
 import { demoChatUi } from "../src/demo/mock";
 import { panelMock } from "../src/demo/panelData";
 import { makeSession } from "../src/demo/data";
@@ -78,6 +79,7 @@ export function qaFlowBoot(scene: string, lang: Lang): void {
   const it = internals();
   // mockIPC 不提供 convertFileSrc：用户消息里的图片引用会抛错。假截图映射到一张内嵌 SVG。
   if (it) it.convertFileSrc = (path) => (path.endsWith("shot.png") ? SHOT : path);
+  if (scene.startsWith("flow-images-")) imageSceneBoot();
   // 输入框里带一张图片附件（草稿恢复）：缩略图上的铅笔进截图标注。
   if (scene === "flow-annotate") {
     localStorage.setItem(`meowo-chat-draft:${CHAT_SESSION_ID}`, JSON.stringify({ prompt: "", attachments: [{ path: "C:/tmp/shot.png", name: "shot.png", image: true }], at: 0 }));
@@ -137,7 +139,9 @@ export function qaFlowMock(scene: string, lang: Lang, chat: (cmd: string) => unk
   // 卡片场景（flow-card-<名字>）：五家的审批卡、提问卡、提示卡，数据在 cardScenes.ts，手机 harness 共用。
   // 工具行场景（flow-tools-<家>-<状态>）：五家回放样本的时间线，数据在 toolScenes.ts，手机 harness 共用。
   const card = kind.startsWith("card-") ? cardSceneMock(kind.slice("card-".length), lang, chat)
-    : kind.startsWith("tools-") ? toolSceneMock(kind.slice("tools-".length), lang, chat) : null;
+    : kind.startsWith("tools-") ? toolSceneMock(kind.slice("tools-".length), lang, chat)
+    // 图片场景（flow-images-<段>）：发图消息、工具行缩略图、正文图片，数据在 imageScenes.ts，手机 harness 共用。
+    : kind.startsWith("images-") ? imageSceneMock(kind.slice("images-".length), lang, chat) : null;
   return (cmd, args) => {
     const cardHit = card?.(cmd, args);
     if (cardHit !== undefined) return cardHit;

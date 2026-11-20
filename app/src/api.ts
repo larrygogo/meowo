@@ -86,6 +86,7 @@ import type { ResizeManagedTerminalArgs } from "./generated/contracts/bridge/Res
 import type { ResolvePendingApprovalArgs } from "./generated/contracts/bridge/ResolvePendingApprovalArgs";
 import type { RespondRuntimeRequestArgs } from "./generated/contracts/bridge/RespondRuntimeRequestArgs";
 import type { SavePastedAttachmentArgs } from "./generated/contracts/bridge/SavePastedAttachmentArgs";
+import type { ResolveChatImageArgs } from "./generated/contracts/bridge/ResolveChatImageArgs";
 import type { PromptQueueEnqueueArgs } from "./generated/contracts/bridge/PromptQueueEnqueueArgs";
 import type { PromptQueueEditArgs } from "./generated/contracts/bridge/PromptQueueEditArgs";
 import type { PromptQueueReorderArgs } from "./generated/contracts/bridge/PromptQueueReorderArgs";
@@ -370,6 +371,25 @@ export function openLink(url: string): Promise<void> {
 /// asset 白名单里，缩略图第一次加载失败时调它。桌面专用，手机走 /file 不需要。
 export function allowImagePreview(path: string): Promise<boolean> {
   return invoke("allow_image_preview", { path });
+}
+
+/** 图片显示失败的原因码（前后端约定见任务目录 research/contract.md）：发图工具回执的
+ *  `[Image error: <code>]` 前缀与 resolve_chat_image 的 error.code 同一套。 */
+export type ChatImageErrorCode = "not_found" | "not_image" | "too_large" | "download_failed" | "forbidden";
+export type ChatImageError = { code: ChatImageErrorCode | string; message: string };
+/** resolve_chat_image 的结果：成功给 Meowo 图片目录里的持久路径，失败给原因（不抛错，失败是常态）。 */
+export type ResolveChatImageResult = { path: string } | { error: ChatImageError };
+
+/// 正文 Markdown 里的图片（本地路径、相对会话目录的路径、http(s) 网址）交给后端：校验是真图片后复制或下载进
+/// ~/.meowo/images，回持久路径，页面再按路径经 asset 协议（手机经 /file）显示。页面不直连第三方，CSP 不放宽。
+/// 手机端经远程桥，参数结构体在 meowo-protocol 的 bridge.rs。
+export function resolveChatImage(src: string, cwd: string | null): Promise<ResolveChatImageResult> {
+  return invoke("resolve_chat_image", { src, cwd } satisfies ResolveChatImageArgs);
+}
+
+/// 灯箱的「保存」：把 Meowo 图片目录里的一张图复制到用户在保存框里选的位置。桌面专用，手机端用浏览器下载。
+export function exportChatImage(path: string, dest: string): Promise<void> {
+  return invoke("export_chat_image", { path, dest });
 }
 
 export function savePastedAttachment(fileName: string, dataBase64: string): Promise<string> {

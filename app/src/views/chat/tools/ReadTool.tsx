@@ -9,7 +9,9 @@ import { ToolBodyText } from "./ToolBodyText";
 import { languageForPath } from "../highlight";
 
 /// Read 工具（对照 Kimi 的 ReadTool）：摘要「读取 + 文件 + 行号范围」，展开区是文件内容。
-export const ReadTool = memo(function ReadTool({ item, result }: { item: ToolUseItem; result?: ToolResultItem }) {
+/// image：读的是图片（回执带图片引用行，或文件本身是图片）。图由 ToolActivity 露在行下，这里行尾写「图片」，
+/// 不写「读取了 0 行」，展开区也不再摊出图片的本地路径。
+export const ReadTool = memo(function ReadTool({ item, result, image = false }: { item: ToolUseItem; result?: ToolResultItem; image?: boolean }) {
   const t = useT();
   const cwd = useContext(ChatCwdContext);
   const detail = item.detail?.kind === "read" ? item.detail : null;
@@ -26,16 +28,16 @@ export const ReadTool = memo(function ReadTool({ item, result }: { item: ToolUse
           <span className="chat-tool-verb" data-kind="read">{toolShortName(item.name, "read", t)}</span>
           <span className="chat-tool-summary">{toolSummary(item, cwd)}{range}</span>
           {/* 失败时回执是错误信息，按行数算会写成「读取了 1 行」，把失败说成成功（UI 调研 chat #11）。 */}
-          {result && !result.interrupted && <span className="chat-tool-count">{result.is_error ? t.chat.toolReadFailed : t.chat.toolReadLines(lines)}</span>}
+          {result && !result.interrupted && <span className="chat-tool-count">{result.is_error ? t.chat.toolReadFailed : image ? t.chat.toolReadImage : t.chat.toolReadLines(lines)}</span>}
         </>
       }
       body={
         <>
-          <div className="chat-tool-result">
+          {!image && <div className="chat-tool-result">
             <span className="chat-tool-elbow" aria-hidden="true">⎿</span>
             <ToolResultLine item={item} result={result} kind="read" detail={detail} patch={null} />
-          </div>
-          <ToolBodyText result={result} lang={languageForPath(path)} />
+          </div>}
+          {!image && <ToolBodyText result={result} lang={languageForPath(path)} />}
         </>
       }
     />

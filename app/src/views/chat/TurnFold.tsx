@@ -1,4 +1,5 @@
 import { memo, useContext, useEffect, useRef, type ReactNode } from "react";
+import { FoldImageStrip } from "./ChatImage";
 import { useT } from "../../i18n";
 import type { Dict } from "../../i18n/zh";
 import { fmtSpan, type ToolResultItem, type ToolUseItem } from "./shared";
@@ -145,7 +146,7 @@ export const TurnFold = memo(function TurnFold({ id, items, results, durationMs,
         </span>
         <span className="chat-tool-chevron">›</span>
       </button>
-      {open && <div className="turn-fold-body">{children}</div>}
+      {open ? <div className="turn-fold-body">{children}</div> : <FoldImageStrip tools={tools} results={results} />}
     </div>
   );
 });
