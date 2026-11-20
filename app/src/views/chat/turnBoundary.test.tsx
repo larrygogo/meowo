@@ -8,6 +8,8 @@ import { collectBackgroundTasks } from "./TasksPanel";
 import { resetFoldMemory } from "./foldMemory";
 import { liveTurnStart, type TurnActivity } from "./toolState";
 import { findInSamples, REPLAY_AGENTS, replaySample, replaySamples, type ReplayAgent } from "../../test/replaySamples";
+import { zh } from "../../i18n/zh";
+import { deliveryStatusLabel } from "../../i18n/statusVocab";
 
 /// 回合边界与「没跑完的调用」只认记录里的显式信号（做空 ③、验收 14）。
 ///
@@ -197,6 +199,39 @@ describe("回合进行中又发了一条", () => {
       cleanup();
       resetFoldMemory();
     }
+  });
+
+  it("gemini 真实记录（0.68.0 插话）：回合中途的话是插入，不是新回合；在跑的调用按真实结果显示", () => {
+    // 会话 375ffadb（tests/probe_gemini_walk.rs，2026-11-20）：ping -n 45 在跑时用户发了第二句
+    // （回车 07:10:09），CLI 等 ping 跑完（07:10:54）才把它连同模板写进记录。
+    const items = reduceChatEvents([], replaySample("gemini.375ffadb"), true);
+    const ping = items.findIndex((item) => item.type === "tool_use");
+    const steer = items.findIndex((item) => item.type === "user_text" && item.interjected);
+    expect(steer).toBeGreaterThan(ping);
+    const said = items[steer] as Extract<ChatItem, { type: "user_text" }>;
+    // 气泡里是用户的原话，不是 CLI 给模型的模板和内部指令。
+    expect(said.text).toBe("Also, after the command finishes, reply with the product of 2222 and 3, as digits.");
+    // 回合边界还是 ping 那一句，插话不开新回合。
+    const opener = items.findIndex((item) => item.type === "user_text" && item.text.startsWith("Run this exact shell command"));
+    expect(liveTurnStart(items.slice(0, steer + 1))).toBe(opener);
+    // 记录落到哪一步，界面就停在哪一步：插话之前（ping 还没写盘）、插话刚落盘、回答之后，回合在跑或已结束，都没有「已中断」。
+    for (const upTo of [opener + 1, steer + 1, items.length]) {
+      for (const activity of ["running", "idle"] as const) {
+        const view = show(items.slice(0, upTo), activity);
+        expect(rows(view.container), `upTo=${upTo} ${activity}`).toEqual(upTo > ping ? ["done｜ping -n 45 127.0.0.1"] : []);
+        expect(view.container.textContent).not.toContain("已中断");
+        cleanup();
+        resetFoldMemory();
+      }
+    }
+    // 插话那条带「回合中插入」的标记。
+    const view = show(items, "idle");
+    expect(view.container.textContent).toContain(said.text);
+    expect(view.container.textContent).not.toContain("User steering update");
+    expect(view.container.textContent).not.toContain("Internal instruction");
+    const notes = [...view.container.querySelectorAll(".chat-user-note")].map((note) => note.textContent);
+    expect(notes).toEqual([deliveryStatusLabel(zh, "inserted")]);
+    expect(notes[0]).not.toBe("");
   });
 
   it.each(["gemini", "opencode"] as const)("%s：时间线里没有不带回执的调用", (agent) => {

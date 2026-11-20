@@ -384,6 +384,17 @@ impl AgentPlugin for Gemini {
         })
     }
 
+    /// 插话一按回车就画进对话区：` 💡 Steering Hint: <原话>`（0.68.0 真机，tests/probe_gemini_walk.rs，
+    /// 2026-11-20；bundle interactiveCli 的 `Steering Hint: ${text}`）。会话记录却要等当前这一步的调用
+    /// 跑完才写（插话排在调用连同结果之后），提交 hook 也没有。调用跑得比对话页的确认时限久，
+    /// 发出去的话就被报成「未确认送达」。画面上这一行就是 CLI 收下了的证据。
+    ///
+    /// 只认插话（modelSteering 开着）。关着时运行中回车进 `Queued (press ↑ to edit)` 排队区，
+    /// 那是 0.64 的取证，0.68.0 的排队区没有实拍，不声明 `queued_hint`。
+    fn user_line_marker(&self) -> Option<&'static str> {
+        Some("💡 Steering Hint: ")
+    }
+
     // 审批模式会话里改走带参重启（launch_options 的 switch: Restart）：Shift+Tab / Ctrl+Y 在有待批
     // 审批时会**自动放行**挂起的调用（G:interactiveCli 29445-29478，research-kimi-gemini §3.4 e5-06
     // 实测 gate-p2 被写入），不再作切换手段。保留维度只为屏幕回显：transcript 与 hook 都不带审批
@@ -492,8 +503,8 @@ impl AgentPlugin for Gemini {
                 details: crate::chat_ui::AttentionDetails::FramedBox,
                 kind: crate::chat_ui::AttentionKind::Approval,
                 confirms: None,
-                // 选项角色（0.68.0 npm bundle 的 ToolConfirmationMessage，2026-11-14 逐条核对；屏幕样本仍是
-                // 0.61 真机的）：`Allow once`、几种只管本会话的（`Allow for this session`、
+                // 选项角色（0.68.0 npm bundle 的 ToolConfirmationMessage，2026-11-14 逐条核对；0.68.0 真机屏
+                // 2026-11-20 tests/probe_approval.rs 实拍，文案与 0.61 相同，样本在 approval-frames.json）：`Allow once`、几种只管本会话的（`Allow for this session`、
                 // `Allow tool for this session`、`Allow all server tools for this session`）、几种写进设置的
                 // （`Allow for all future sessions`、`Allow this command for all future sessions`、
                 // `Allow for this file in all future sessions`、`Allow tool for all future sessions`）、

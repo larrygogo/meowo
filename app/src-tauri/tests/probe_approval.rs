@@ -45,6 +45,15 @@ const SHELL_PROMPT: &str =
 const READ_PROMPT: &str = "Read the file C:/Windows/win.ini and reply with its first line only.";
 const TOKEN: &str = "meowo-approval-probe-token";
 
+/// 每段等待的上限（秒）。缺省 150；`PROBE_WAIT_SECS` 可调。Gemini 0.68.0 在 2026-11-20 从提交到
+/// 第一条回应用了 2 分 23 秒（会话记录 06:50:54 → 06:53:17），150 秒等不到审批框。
+fn wait_secs() -> u64 {
+    std::env::var("PROBE_WAIT_SECS")
+        .ok()
+        .and_then(|raw| raw.trim().parse().ok())
+        .unwrap_or(150)
+}
+
 /// 这一家怎么启动、发什么、做完的证据是什么。
 struct Plan {
     args: Vec<String>,
@@ -229,7 +238,8 @@ fn walk(
     let mut rule: Option<&'static str> = None;
     // 「稳住」= 连续两次读屏都命中同一条规则。不比整屏：有的家审批框旁边一直有动画在转。
     let mut seen: Option<&'static str> = None;
-    while started.elapsed() < Duration::from_secs(150) {
+    let limit = wait_secs();
+    while started.elapsed() < Duration::from_secs(limit) {
         assert!(!done(tui), "{agent}：没有弹审批就直接做完了，这个权限档下这件事不需要批准");
         if let Ok(request) = requests.try_recv() {
             pending = Some(request);
@@ -253,9 +263,9 @@ fn walk(
     }
     let channel = if pending.is_some() { "broker" } else { "terminal" };
     if hook_decides {
-        assert!(pending.is_some(), "{agent}：150s 内 broker 没收到审批请求");
+        assert!(pending.is_some(), "{agent}：{limit}s 内 broker 没收到审批请求");
     } else {
-        assert!(rule.is_some(), "{agent}：150s 内屏幕上没认出审批框");
+        assert!(rule.is_some(), "{agent}：{limit}s 内屏幕上没认出审批框");
     }
     println!(
         "  ✓ 认出审批（{:.1}s）：通道 {channel}，屏幕规则 {}",
@@ -291,7 +301,7 @@ fn walk(
 
     // CLI 接着做完。期间同一件事再来请求（有的家会分两步问）照样允许，并记下来。
     let mut extra = 0;
-    assert!(tui.wait("允许之后 CLI 接着做完", 150, |tui| {
+    assert!(tui.wait("允许之后 CLI 接着做完", limit, |tui| {
         if let Ok((request, mut stream)) = requests.try_recv() {
             extra += 1;
             println!("  又一次请求：tool={}", request.tool_name);
@@ -299,7 +309,7 @@ fn walk(
         }
         done(tui)
     }));
-    assert!(tui.wait("回合结束，输入框回到空闲", 150, |tui| {
+    assert!(tui.wait("回合结束，输入框回到空闲", limit, |tui| {
         if let Ok((request, mut stream)) = requests.try_recv() {
             extra += 1;
             println!("  又一次请求：tool={}", request.tool_name);

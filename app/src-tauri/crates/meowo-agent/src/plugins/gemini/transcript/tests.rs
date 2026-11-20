@@ -527,3 +527,47 @@ fn old_format_sessions_survive_unsent_resume_on_disk() {
     }
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// 回合中途的插话（modelSteering）：记录里是模板包着的原话，对话页只给原话，标成回合中插入。
+/// 原文取自 2026-11-20 的真机记录（gemini.e664ee9c）。
+#[test]
+fn steering_update_shows_the_users_own_words_as_an_interjection() {
+    const REAL: &str = "User steering update:\n<user_input>\nAlso, after the command finishes, reply with the product of 2222 and 3, as digits.\n</user_input>\nInternal instruction: Re-evaluate the active plan using this user steering update. Classify it as ADD_TASK, MODIFY_TASK, CANCEL_TASK, or EXTRA_CONTEXT. Apply minimal-diff changes only to affected tasks and keep unaffected tasks active. Do not cancel/skip tasks unless the user explicitly cancels them. Acknowledge the steering briefly and state the course correction.";
+    assert_eq!(
+        steering_hint(REAL).as_deref(),
+        Some("Also, after the command finishes, reply with the product of 2222 and 3, as digits.")
+    );
+    // 用户自己打出这几个字、或模板缺了后半截：不是插话，原样显示。
+    assert_eq!(steering_hint("User steering update: please be brief"), None);
+    assert_eq!(
+        steering_hint("User steering update:\n<user_input>\nhi\n</user_input>"),
+        None
+    );
+    assert_eq!(
+        steering_hint("User steering update:\n<user_input>\n \n</user_input>\nInternal instruction: x"),
+        None
+    );
+
+    let line = serde_json::json!({
+        "id": "s1",
+        "timestamp": "2026-11-20T06:41:36.723Z",
+        "type": "user",
+        "content": [{ "text": REAL }],
+    })
+    .to_string();
+    let events = parse_line(&line);
+    assert!(
+        matches!(
+            events.as_slice(),
+            [TranscriptEvent::UserMessage { text, interjected: true, .. }]
+                if text == "Also, after the command finishes, reply with the product of 2222 and 3, as digits."
+        ),
+        "{events:?}"
+    );
+    // 普通的一句话不受影响。
+    let plain = serde_json::json!({ "id": "u1", "type": "user", "content": [{ "text": "hi" }] }).to_string();
+    assert!(matches!(
+        parse_line(&plain).as_slice(),
+        [TranscriptEvent::UserMessage { interjected: false, .. }]
+    ));
+}

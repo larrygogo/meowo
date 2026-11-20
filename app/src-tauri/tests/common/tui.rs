@@ -274,8 +274,12 @@ pub fn cli_version(agent: &str) -> String {
     if let Ok(version) = std::env::var("PROBE_VERSION") {
         return version;
     }
-    let exe = meowo_agent::by_id(agent).unwrap().launch_argv()[0].clone();
+    // 用完整的启动 argv 问版本：gemini 解析出来是 `node <bundle>/gemini.js`，只拿第一段问到的是
+    // node 自己的版本（2026-11-20 取到 26.4.0，按它找不到输入框规格）。
+    let argv = meowo_agent::by_id(agent).unwrap().launch_argv();
+    let exe = argv[0].clone();
     let output = std::process::Command::new(&exe)
+        .args(&argv[1..])
         .arg("--version")
         .output()
         .unwrap_or_else(|error| panic!("{exe} --version 失败：{error}"));
