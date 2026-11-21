@@ -118,7 +118,7 @@ export const SidePanel = memo(function SidePanel(props: Props) {
       if (event.key !== "Escape") return;
       const target = event.target instanceof Element ? event.target : null;
       if (target?.closest(".shell-term, .browser-pane-url")) return;
-      if (document.querySelector(".chat-modal-overlay")) return;
+      if (document.querySelector(".chat-modal-overlay, .chat-lightbox")) return;
       if (document.querySelector('.chat-diff-panel [role="menu"]')) return;
       event.stopPropagation();
       if (escOverrideRef.current) escOverrideRef.current();

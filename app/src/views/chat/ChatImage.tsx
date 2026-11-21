@@ -251,7 +251,7 @@ const SentImageTile = memo(function SentImageTile({ path, caption, album }: { pa
   return (
     <figure ref={ref} className="chat-sent-tile" data-shape={album ? "album" : shape ?? undefined} data-state={shape ? "ready" : "loading"}>
       <button type="button" className="chat-sent-open" aria-label={`${t.chat.sentImageOpen} ${name}`} disabled={!shape}
-        {...(shape ? galleryAttrs({ path, name, caption }) : {})}
+        {...galleryAttrs({ path, name, caption })}
         onClick={(event) => src && setGallery(collectGallery(event.currentTarget, { src, name, caption, path }))}>
         {src && <img className="chat-sent-img" src={src} alt={caption ?? name} referrerPolicy="no-referrer" draggable={false} onLoad={load.onLoad} onError={load.onError} />}
         {!shape && <span className="chat-sent-loading" role="img" aria-label={t.chat.imageLoading}><Icon glyph={icImage} size={20} /></span>}
@@ -356,7 +356,7 @@ function ToolThumb({ path }: { path: string }) {
     <>
       <button ref={ref} type="button" className="chat-tool-thumb" data-shape={shape ?? undefined} data-state={shape ? "ready" : "loading"}
         aria-label={`${t.chat.sentImageOpen} ${name}`} data-tip={name}
-        {...(shape ? galleryAttrs({ path, name }) : {})}
+        {...galleryAttrs({ path, name })}
         onClick={(event) => src && setGallery(collectGallery(event.currentTarget, { src, name, path }))}>
         {src && <img src={src} alt={name} referrerPolicy="no-referrer" draggable={false} onLoad={load.onLoad} onError={load.onError} />}
       </button>

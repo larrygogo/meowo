@@ -4599,6 +4599,12 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-lightbox-stage { position: absolute; inset: 0; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center; padding: calc(48px + env(safe-area-inset-top, 0px)) 48px calc(48px + env(safe-area-inset-bottom, 0px)); overflow: hidden; touch-action: none; }
 .chat-lightbox-stage img { max-width: 100%; max-height: 100%; border-radius: var(--radius-md); box-shadow: var(--shadow-xl); cursor: grab; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .chat-lightbox-stage img:active { cursor: grabbing; }
+/* 大图加载中、读不到（2026-11-22 做空：原先慢图只有黑底、坏图是浏览器默认裂图）。转圈晚一拍（两档 --dur-fast）才出，快图不闪。 */
+.chat-lightbox-stage img[data-status="error"] { visibility: hidden; }
+.chat-lightbox-loading { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; animation: lightbox-loading-in var(--dur-fast) var(--ease-out) calc(var(--dur-fast) * 2) both; }
+@keyframes lightbox-loading-in { from { opacity: 0; } to { opacity: 1; } }
+.chat-lightbox-failed { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: var(--sp-6); max-width: min(360px, calc(100% - 32px)); padding: var(--sp-16) var(--sp-20); border-radius: var(--radius-lg); background: rgba(255, 255, 255, .08); color: #fff; font-size: var(--text-sm); text-align: center; }
+.chat-lightbox-failed-name { color: rgba(255, 255, 255, .6); font-size: var(--text-xs); overflow-wrap: anywhere; }
 /* 沉浸式（2026-11-22）：图是主角，界面收在上下两条渐变里，不再是右上角一排同样重量的实心按钮。
    上条：左边「2 / 5」与文件名，右边复制、保存、在文件夹中显示、关闭（幽灵按钮）。下条：说明、手机圆点、缩放。
    两条都避开安全区（刘海、底部横条，与 mobile.css 的标题行同一个做法）。 */

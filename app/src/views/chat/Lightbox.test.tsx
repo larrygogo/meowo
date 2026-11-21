@@ -92,6 +92,18 @@ describe("相册：多张图左右切换", () => {
     delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
   });
 
+  it("收着的子任务块里的图不进相册", () => {
+    const root = document.createElement("main");
+    root.className = "chat-scroll";
+    root.innerHTML = '<button data-gallery-name="a.png" data-gallery-src="asset://a"></button>'
+      + '<details><summary>子任务</summary><button data-gallery-name="hidden.png" data-gallery-src="asset://h"></button></details>'
+      + '<details open><button data-gallery-name="shown.png" data-gallery-src="asset://s"></button></details>';
+    document.body.appendChild(root);
+    const opener = root.querySelector("button")!;
+    expect(collectGallery(opener, { src: "asset://a", name: "a.png" }).items.map((item) => item.name)).toEqual(["a.png", "shown.png"]);
+    root.remove();
+  });
+
   it("不在对话里打开（找不到滚动区）时只有自己一张", () => {
     const lonely = document.createElement("button");
     expect(collectGallery(lonely, one[0])).toEqual({ items: one, index: 0 });
@@ -108,6 +120,48 @@ describe("灯箱触屏手势", () => {
     fire(stage(), "pointerup", 2, 300, 100);
     fire(stage(), "pointerup", 1, 100, 100);
     expect(scaleOf()).toBe(2);
+  });
+
+  it("双指缩放以两指中点为中心：中点下的内容留在手指下", () => {
+    // jsdom 的舞台没有尺寸，centered() 退回原始坐标：舞台中心按 (0,0) 算。
+    render(<Lightbox items={one} onClose={() => {}} />);
+    fire(stage(), "pointerdown", 1, 100, 200);
+    fire(stage(), "pointerdown", 2, 140, 200);
+    fire(stage(), "pointermove", 2, 220, 200); // 距离 40 → 120，放大 3 倍；中点 (120,200) → (160,200)
+    expect(scaleOf()).toBe(3);
+    // 起手中点 (120,200) 下的内容点 = (120,200)；放大 3 倍后应落在当前中点 (160,200)：offset = 160 - 120*3, 200 - 200*3
+    expect(offsetOf()).toEqual([160 - 360, 200 - 600]);
+  });
+
+  it("捏小后抬一指，剩下那指只平移：不关闭、不翻页，松手回弹", () => {
+    const onClose = vi.fn();
+    render(<Lightbox items={three} onClose={onClose} />);
+    fire(stage(), "pointerdown", 1, 150, 400);
+    fire(stage(), "pointerdown", 2, 250, 400);
+    fire(stage(), "pointermove", 2, 200, 400);
+    expect(scaleOf()).toBe(0.5);
+    fire(stage(), "pointerup", 2, 200, 400);
+    fire(stage(), "pointermove", 1, 150, 560); // 往下拖 160
+    fire(stage(), "pointermove", 1, 0, 560); // 再往左拖 150
+    fire(stage(), "pointerup", 1, 0, 560);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(img().getAttribute("src")).toBe("asset://a.png");
+    expect(scaleOf()).toBe(1);
+  });
+
+  it("读不到的图显示失败说明，不显示复制", () => {
+    vi.stubGlobal("ClipboardItem", class {});
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { write: vi.fn() } });
+    try {
+      render(<Lightbox items={one} onClose={() => {}} />);
+      expect(screen.getByRole("status", { name: "图片加载中" })).toBeTruthy();
+      fireEvent.error(img());
+      expect(screen.getByRole("alert").textContent).toContain("a.png");
+      expect(screen.queryByRole("button", { name: "复制图片" })).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+      Reflect.deleteProperty(navigator, "clipboard");
+    }
   });
 
   it("轻点两下放大、再两下复位，且不关闭", () => {
@@ -183,6 +237,7 @@ describe("复制图片", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(new Blob(["x"], { type: "image/png" })) }));
     try {
       render(<Lightbox items={one} onClose={() => {}} />);
+      fireEvent.load(img()); // 图加载好之后才给复制
       await act(async () => { fireEvent.click(screen.getByRole("button", { name: "复制图片" })); });
       expect(write).toHaveBeenCalledTimes(1);
       expect(screen.getByText("已复制")).toBeTruthy();

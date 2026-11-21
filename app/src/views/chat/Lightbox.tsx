@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { pushEscLayer } from "../../escLayers";
 import { useT } from "../../i18n";
 import { Icon } from "../../icons/Icon";
-import { icCheck, icClose } from "../../icons/glyphs";
+import { icAlert, icCheck, icClose } from "../../icons/glyphs";
 // 右箭头用左箭头镜像（CSS），不从 glyphs.scm 引：那一档不许被拖进对话页的 chunk（icons.test）。
 import { icChevronLeft, icCopy } from "../../icons/glyphs.chat";
 import { safeFileSrc } from "../../assetSrc";
@@ -29,6 +29,8 @@ export function collectGallery(opener: HTMLElement | null, self: GalleryItem): {
   let index = -1;
   for (const el of root.querySelectorAll<HTMLElement>("[data-gallery-name]")) {
     if (el.closest(".chat-lightbox")) continue;
+    // 收着的子任务块（<details> 收起后内容仍在 DOM 里）里的图看不见，不进相册；自己除外。
+    if (el !== opener && el.closest("details:not([open])")) continue;
     const path = el.dataset.galleryPath ?? null;
     const src = el.dataset.gallerySrc ?? (path ? safeFileSrc(path) : null);
     if (!src) continue;
@@ -69,9 +71,10 @@ export function Lightbox({ items, index: startIndex = 0, onClose, renderActions 
   const [chromeHidden, setChromeHidden] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "done" | "failed">("idle");
   const [dragY, setDragY] = useState(0);
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const stageRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
-  const dragRef = useRef<{ startX: number; startY: number; baseX: number; baseY: number; moved: boolean; axis: "x" | "y" | null } | null>(null);
+  const dragRef = useRef<{ startX: number; startY: number; baseX: number; baseY: number; moved: boolean; axis: "x" | "y" | "pan" | null } | null>(null);
   const justDraggedRef = useRef(false);
   const pointersRef = useRef(new Map<number, { x: number; y: number }>());
   const pinchRef = useRef<{ dist: number; midX: number; midY: number; baseScale: number; baseX: number; baseY: number } | null>(null);
@@ -100,6 +103,7 @@ export function Lightbox({ items, index: startIndex = 0, onClose, renderActions 
     setOffset({ x: 0, y: 0 });
     setFitRatio(null);
     setCopyState("idle");
+    setStatus("loading");
   }, [items.length]);
 
   /** 适应大小时，屏幕上的宽 ÷ 原图宽。transform 不影响 clientWidth，任何缩放下量出来都是适应时的尺寸。 */
@@ -204,10 +208,16 @@ export function Lightbox({ items, index: startIndex = 0, onClose, renderActions 
   // 手机上双指缩放放大的是整个网页（leader 实拍，2026-11-22）。
   const startPinch = () => {
     const [a, b] = [...pointersRef.current.values()];
-    pinchRef.current = { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, midX: (a.x + b.x) / 2, midY: (a.y + b.y) / 2, baseScale: viewRef.current.scale, baseX: viewRef.current.offset.x, baseY: viewRef.current.offset.y };
+    const mid = centered((a.x + b.x) / 2, (a.y + b.y) / 2);
+    pinchRef.current = { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, midX: mid.x, midY: mid.y, baseScale: viewRef.current.scale, baseX: viewRef.current.offset.x, baseY: viewRef.current.offset.y };
   };
-  const startDrag = (x: number, y: number) => {
-    dragRef.current = { startX: x, startY: y, baseX: viewRef.current.offset.x, baseY: viewRef.current.offset.y, moved: false, axis: null };
+  const startDrag = (x: number, y: number, axis: "pan" | null = null) => {
+    dragRef.current = { startX: x, startY: y, baseX: viewRef.current.offset.x, baseY: viewRef.current.offset.y, moved: false, axis };
+  };
+  /** 舞台中心为原点的坐标（offset 也以舞台中心为原点）。 */
+  const centered = (x: number, y: number) => {
+    const rect = stageRef.current?.getBoundingClientRect();
+    return rect && rect.width ? { x: x - (rect.left + rect.width / 2), y: y - (rect.top + rect.height / 2) } : { x, y };
   };
   const onPointerDown = (event: ReactPointerEvent) => {
     if (event.pointerType === "mouse" && event.button !== 0) return;
@@ -232,8 +242,12 @@ export function Lightbox({ items, index: startIndex = 0, onClose, renderActions 
     if (pinch && pointersRef.current.size >= 2) {
       const [a, b] = [...pointersRef.current.values()];
       const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
-      setScale(clampScale(pinch.baseScale * (dist / pinch.dist)));
-      setOffset({ x: pinch.baseX + (a.x + b.x) / 2 - pinch.midX, y: pinch.baseY + (a.y + b.y) / 2 - pinch.midY });
+      const next = clampScale(pinch.baseScale * (dist / pinch.dist));
+      // 以两指中点为中心缩放并跟着中点平移：起手时中点下的那一点，始终留在当前中点下（iOS 照片、Telegram）。
+      const k = next / pinch.baseScale;
+      const mid = centered((a.x + b.x) / 2, (a.y + b.y) / 2);
+      setScale(next);
+      setOffset({ x: mid.x - (pinch.midX - pinch.baseX) * k, y: mid.y - (pinch.midY - pinch.baseY) * k });
       return;
     }
     const drag = dragRef.current;
@@ -242,7 +256,7 @@ export function Lightbox({ items, index: startIndex = 0, onClose, renderActions 
     const dy = event.clientY - drag.startY;
     if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
     // 适应大小时的触屏单指：横向是翻页、竖向下拉是关闭，跟手走；放大后才是平移。
-    if (event.pointerType !== "mouse" && viewRef.current.scale <= 1.01) {
+    if (event.pointerType !== "mouse" && viewRef.current.scale <= 1.01 && drag.axis !== "pan") {
       if (!drag.axis && Math.abs(dx) + Math.abs(dy) > 8) drag.axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
       if (drag.axis === "x") { setOffset({ x: multi ? dx : dx / 4, y: 0 }); return; }
       if (drag.axis === "y") { setDragY(Math.max(0, dy)); setOffset({ x: 0, y: Math.max(0, dy) }); return; }
@@ -253,10 +267,11 @@ export function Lightbox({ items, index: startIndex = 0, onClose, renderActions 
   const onPointerUp = (event: ReactPointerEvent) => {
     if (!pointersRef.current.delete(event.pointerId)) return;
     if (pointersRef.current.size === 1) {
-      // 双指松开一指：剩下那指接着平移，不跳。
+      // 双指松开一指：剩下那指只平移，从当前位置接着走、不跳；这一次手势到所有手指抬起前都不翻页、不关闭
+      // （做空：捏小后抬一指再一拖，原先会误关或误翻页）。
       pinchRef.current = null;
       const [rest] = [...pointersRef.current.values()];
-      startDrag(rest.x, rest.y);
+      startDrag(rest.x, rest.y, "pan");
       dragRef.current!.moved = true;
       return;
     }
@@ -265,6 +280,7 @@ export function Lightbox({ items, index: startIndex = 0, onClose, renderActions 
     if (viewRef.current.scale < 1) reset(); // 捏得比适应还小，松手回弹
     const drag = dragRef.current;
     dragRef.current = null;
+    if (drag?.axis === "pan") { justDraggedRef.current = true; return; }
     if (drag?.axis) {
       const dx = event.clientX - drag.startX;
       const dy = event.clientY - drag.startY;
@@ -328,15 +344,25 @@ export function Lightbox({ items, index: startIndex = 0, onClose, renderActions 
           alt={item.name}
           draggable={false}
           referrerPolicy="no-referrer"
-          onLoad={measureFit}
+          onLoad={() => { setStatus("ready"); measureFit(); }}
+          onError={() => setStatus("error")}
+          data-status={status}
           style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})` }}
         />
+        {status === "loading" && <span className="chat-lightbox-loading" role="status" aria-label={t.chat.imageLoading}><span className="chat-model-spinner" aria-hidden="true" /></span>}
+        {status === "error" && (
+          <div className="chat-lightbox-failed" role="alert">
+            <Icon glyph={icAlert} size={20} />
+            <span>{t.chat.imageErrors.unreadable}</span>
+            <span className="chat-lightbox-failed-name">{item.name}</span>
+          </div>
+        )}
       </div>
       <div className="chat-lightbox-top">
         {multi && <span className="chat-lightbox-count" aria-live="polite">{index + 1} / {items.length}</span>}
         <span className="chat-lightbox-name">{item.name}</span>
         <div className="chat-lightbox-bar">
-          {copyable && (
+          {copyable && status === "ready" && (
             <button type="button" className="chat-lightbox-action" aria-label={t.chat.imageCopy} data-tip={t.chat.imageCopy} onClick={() => void copy()} data-state={copyState}>
               <Icon glyph={copyState === "done" ? icCheck : icCopy} size={14} />
               <span>{copyLabel}</span>
