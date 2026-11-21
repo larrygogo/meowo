@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChatItem } from "../../api";
-import { parseCompareReceipt } from "./CompareCard";
+import { focusShift, parseCompareReceipt } from "./CompareCard";
 import { ToolActivity } from "./ToolActivity";
 import { TurnLiveContext } from "./toolState";
 import { Transcript } from "./Transcript";
@@ -115,6 +115,12 @@ describe("对照卡", () => {
     fireEvent.error(document.querySelector(".chat-compare-img")!);
     expect(screen.queryByRole("button", { name: "差异" })).toBeNull();
     expect(document.querySelectorAll(".chat-compare-img")).toHaveLength(2);
+  });
+
+  it("长图的变化在下半截：画布上移让红框露出来；不是长图或没有变化时不动", () => {
+    expect(focusShift(true, [20, 2340, 350, 220], 2600)).toBe("translateY(min(0px, max(calc(var(--compare-max) - 100%), calc(var(--compare-max) / 2 - 94.231%))))");
+    expect(focusShift(false, [20, 2340, 350, 220], 2600)).toBeUndefined();
+    expect(focusShift(true, null, 2600)).toBeUndefined();
   });
 
   it("整页长截图：标「长图」，舞台限高", () => {

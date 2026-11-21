@@ -198,7 +198,7 @@ export function imageSceneItems(part: string, lang: Lang): { items: ChatItem[]; 
         compareCall("c2", 120),
         receipt("c2", at(119), [
           ref("sent", "pricing-long.png"), ref("sent", "pricing-long.png"),
-          `[Image compare: ${JSON.stringify({ changed: "0%", before: [390, 2600], after: [390, 2600], bounds: null, caption: null })}]`,
+          `[Image compare: ${JSON.stringify({ changed: "2.96%", before: [390, 2600], after: [390, 2600], bounds: [20, 2340, 350, 220], caption: null })}]`,
         ].join("\n")),
       ],
     };

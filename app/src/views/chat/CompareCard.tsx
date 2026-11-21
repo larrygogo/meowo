@@ -91,6 +91,15 @@ export const CompareMessage = memo(function CompareMessage({ item, result }: { i
 /** 画布比这个高宽比还高（整页长截图）时，舞台限高、标「长图」，点开看全图。 */
 const TALL_RATIO = 1.3;
 
+/// 长图被舞台裁掉下半截时，把露出来的那一段对准变化范围的中间（做空复验：变化在被裁掉的部分时，
+/// 底栏写着有变化，卡片上却找不到红框）。只用 CSS 算：translateY 的百分比按画布自己的高度算，
+/// 舞台的可见高度是 --compare-max；画布本身不比舞台高时外层 min(0, …) 让它不动。
+export function focusShift(tall: boolean, bounds: readonly [number, number, number, number] | null, height: number): string | undefined {
+  if (!tall || !bounds || height <= 0) return undefined;
+  const center = ((bounds[1] + bounds[3] / 2) / height) * 100;
+  return `translateY(min(0px, max(calc(var(--compare-max) - 100%), calc(var(--compare-max) / 2 - ${center.toFixed(3)}%))))`;
+}
+
 function CompareCard({ before, after, diff, summary }: { before: string; after: string; diff: string | null; summary: CompareSummary | null }) {
   const t = useT();
   const [ref, inView] = useInView<HTMLElement>();
@@ -200,7 +209,7 @@ function CompareCard({ before, after, diff, summary }: { before: string; after: 
         onKeyDown={onKeyDown}
       >
         {/* 画布按两张图的真实比例；舞台限高，整页长截图只露顶部一段（点开看全图）。 */}
-        <div className="chat-compare-canvas" style={{ aspectRatio: `${width} / ${height}` }}>
+        <div className="chat-compare-canvas" style={{ aspectRatio: `${width} / ${height}`, transform: focusShift(tall, bounds, height) }}>
           {view === "swipe" ? (
             <>
               {beforeSrc && <img className="chat-compare-img" src={beforeSrc} alt={t.chat.compareBefore} style={place(beforeSize)} draggable={false} onLoad={beforeLoad.onLoad} onError={beforeLoad.onError} />}
