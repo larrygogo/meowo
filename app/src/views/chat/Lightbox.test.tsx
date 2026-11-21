@@ -61,6 +61,17 @@ describe("相册：多张图左右切换", () => {
     expect(img().getAttribute("src")).toBe("asset://c.png");
   });
 
+  it("相邻两张同一地址：翻过去重新加载，转圈会消失", () => {
+    const same: GalleryItem[] = [{ src: "asset://a.png", name: "a.png" }, { src: "asset://a.png", name: "a.png" }];
+    render(<Lightbox items={same} onClose={() => {}} />);
+    fireEvent.load(img());
+    expect(document.querySelector(".chat-lightbox-loading")).toBeNull();
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(document.querySelector(".chat-lightbox-loading")).not.toBeNull();
+    fireEvent.load(img());
+    expect(document.querySelector(".chat-lightbox-loading")).toBeNull();
+  });
+
   it("切换后缩放复位", () => {
     render(<Lightbox items={three} onClose={() => {}} />);
     fireEvent.keyDown(window, { key: "+" });

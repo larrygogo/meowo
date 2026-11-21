@@ -336,9 +336,9 @@ export function Lightbox({ items, index: startIndex = 0, onClose, renderActions 
         onPointerCancel={onPointerUp}
         onDoubleClick={(event) => toggleZoom(event.clientX, event.clientY)}
       >
-        {/* no-referrer:远程模式下 src 是带 token 的 /file URL,不许经 Referer 外泄。key 换图时重挂，不沿用上一张的尺寸。 */}
+        {/* no-referrer:远程模式下 src 是带 token 的 /file URL,不许经 Referer 外泄。key 带上序号：换图时重挂，不沿用上一张的尺寸；相邻两张同一地址也要重挂，否则 onLoad 不再触发、转圈不消失（做空复验）。 */}
         <img
-          key={item.src}
+          key={`${index}:${item.src}`}
           ref={imgRef}
           src={item.src}
           alt={item.name}
