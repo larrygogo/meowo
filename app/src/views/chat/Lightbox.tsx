@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { pushEscLayer } from "../../escLayers";
 import { useT } from "../../i18n";
 import { Icon } from "../../icons/Icon";
 import { icClose } from "../../icons/glyphs";
 
-/** 大图查看层：滚轮缩放、拖拽平移、双击复位；工具栏有缩放按钮与明显的关闭键。
+/** 大图查看层：滚轮缩放、拖拽平移、双击复位；手机上双指缩放、单指平移、双击在 1× 与 2.5× 之间切换。
+ *  工具栏有缩放按钮与明显的关闭键。
  *  点击空白处或 Esc 也能关（拖拽松手不算点击）。
  *  actions：工具栏左段的额外按钮（agent 发来的图有「保存」「在文件夹中显示」），用同一套按钮皮。
  *  caption：底部的一句说明（发图时 agent 附的话），看大图时也知道这张图是干什么的。 */
@@ -65,11 +66,58 @@ export function Lightbox({ src, name, onClose, actions, caption }: {
     return () => stage.removeEventListener("wheel", onWheel);
   }, []);
 
-  const onMouseDown = (event: ReactMouseEvent) => {
-    event.preventDefault();
-    dragRef.current = { startX: event.clientX, startY: event.clientY, baseX: offset.x, baseY: offset.y, moved: false };
+  // 指针（鼠标、手指）统一走 Pointer Events。舞台 touch-action: none，手势全归灯箱：原先只有鼠标事件，
+  // 手机上双指缩放放大的是整个网页（leader 实拍，2026-11-22）。
+  const pointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const pinchRef = useRef<{ dist: number; midX: number; midY: number; baseScale: number; baseX: number; baseY: number } | null>(null);
+  const lastTapRef = useRef(0);
+  const viewRef = useRef({ scale, offset });
+  viewRef.current = { scale, offset };
+  const startPinch = () => {
+    const [a, b] = [...pointersRef.current.values()];
+    pinchRef.current = { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, midX: (a.x + b.x) / 2, midY: (a.y + b.y) / 2, baseScale: viewRef.current.scale, baseX: viewRef.current.offset.x, baseY: viewRef.current.offset.y };
   };
-  const onMouseMove = (event: ReactMouseEvent) => {
+  const startDrag = (x: number, y: number) => {
+    dragRef.current = { startX: x, startY: y, baseX: viewRef.current.offset.x, baseY: viewRef.current.offset.y, moved: false };
+  };
+  // iOS Safari 的双指缩放另有一套私有 gesture 事件，touch-action 之外再拦一道，防整页被放大。
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const block = (event: Event) => event.preventDefault();
+    stage.addEventListener("gesturestart", block);
+    stage.addEventListener("gesturechange", block);
+    return () => {
+      stage.removeEventListener("gesturestart", block);
+      stage.removeEventListener("gesturechange", block);
+    };
+  }, []);
+  const onPointerDown = (event: ReactPointerEvent) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    if ((event.target as HTMLElement).closest?.("button")) return;
+    if (event.pointerType === "mouse") event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pointersRef.current.size === 2) {
+      dragRef.current = null;
+      justDraggedRef.current = true; // 双指之后抬手不是「点空白关闭」
+      startPinch();
+    } else if (pointersRef.current.size === 1) {
+      justDraggedRef.current = false; // 新的一次手势：上一次手势留下的「别当点击」标记作废
+      startDrag(event.clientX, event.clientY);
+    }
+  };
+  const onPointerMove = (event: ReactPointerEvent) => {
+    if (!pointersRef.current.has(event.pointerId)) return;
+    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const pinch = pinchRef.current;
+    if (pinch && pointersRef.current.size >= 2) {
+      const [a, b] = [...pointersRef.current.values()];
+      const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+      setScale(clampScale(pinch.baseScale * (dist / pinch.dist)));
+      setOffset({ x: pinch.baseX + (a.x + b.x) / 2 - pinch.midX, y: pinch.baseY + (a.y + b.y) / 2 - pinch.midY });
+      return;
+    }
     const drag = dragRef.current;
     if (!drag) return;
     const dx = event.clientX - drag.startX;
@@ -77,10 +125,32 @@ export function Lightbox({ src, name, onClose, actions, caption }: {
     if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
     setOffset({ x: drag.baseX + dx, y: drag.baseY + dy });
   };
-  const onMouseUp = () => {
-    if (!dragRef.current) return;
-    justDraggedRef.current = dragRef.current.moved;
+  const onPointerUp = (event: ReactPointerEvent) => {
+    if (!pointersRef.current.delete(event.pointerId)) return;
+    if (pointersRef.current.size === 1) {
+      // 双指松开一指：剩下那指接着平移，不跳。
+      pinchRef.current = null;
+      const [rest] = [...pointersRef.current.values()];
+      startDrag(rest.x, rest.y);
+      dragRef.current!.moved = true;
+      return;
+    }
+    if (pointersRef.current.size > 0) return;
+    pinchRef.current = null;
+    const drag = dragRef.current;
     dragRef.current = null;
+    if (drag?.moved) { justDraggedRef.current = true; return; }
+    // 触屏双击：桌面靠 dblclick；触屏上 touch-action: none 之后 dblclick 不可靠，自己数两次轻点。
+    if (event.pointerType !== "mouse") {
+      const now = event.timeStamp;
+      if (now - lastTapRef.current < 300) {
+        lastTapRef.current = 0;
+        justDraggedRef.current = true; // 第二下轻点不是「点空白关闭」
+        if (viewRef.current.scale > 1.01) reset(); else setScale(2.5);
+        return;
+      }
+      lastTapRef.current = now;
+    }
   };
   const onStageClick = (event: ReactMouseEvent) => {
     // 拖拽平移松手不是「点空白关闭」；只有真正点在空白处才关。
@@ -94,10 +164,10 @@ export function Lightbox({ src, name, onClose, actions, caption }: {
         ref={stageRef}
         className={"chat-lightbox-stage" + (caption ? " has-caption" : "")}
         onClick={onStageClick}
-        onMouseDown={onMouseDown}
-        onMouseMove={onMouseMove}
-        onMouseUp={onMouseUp}
-        onMouseLeave={onMouseUp}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
         onDoubleClick={reset}
       >
         {/* no-referrer:远程模式下 src 是带 token 的 /file URL,不许经 Referer 外泄。 */}

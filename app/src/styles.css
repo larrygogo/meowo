@@ -4596,7 +4596,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-lightbox { position: fixed; inset: 0; z-index: var(--z-toast); background: rgba(8, 8, 10, .94); }
 /* 轨道必须显式定成 minmax(0,1fr)：隐式 auto 轨道随内容撑开，img 的 max-height:100%
    无确定参照而失效，高图初始就溢出舞台被 overflow 切掉（无头 Edge 实测复现）。 */
-.chat-lightbox-stage { position: absolute; inset: 0; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center; padding: calc(48px + env(safe-area-inset-top, 0px)) 48px calc(48px + env(safe-area-inset-bottom, 0px)); overflow: hidden; }
+.chat-lightbox-stage { position: absolute; inset: 0; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center; padding: calc(48px + env(safe-area-inset-top, 0px)) 48px calc(48px + env(safe-area-inset-bottom, 0px)); overflow: hidden; touch-action: none; }
 .chat-lightbox-stage img { max-width: 100%; max-height: 100%; border-radius: var(--radius-md); box-shadow: var(--shadow-xl); cursor: grab; user-select: none; }
 .chat-lightbox-stage img:active { cursor: grabbing; }
 /* 手机页避开刘海与状态栏（安全区，与 mobile.css 的标题行同一个做法）。 */
@@ -5472,6 +5472,7 @@ button.chat-image-chip.is-gated:hover > .chat-image-chip-reason { color: var(--c
 .chat-command-out .chat-tool-summary { flex: 1 1 0%; }
 .chat-tool { position: relative; margin: var(--sp-1) var(--sp-6); border: 0; border-radius: var(--radius-md); color: var(--cc-text-dim); background: transparent; }
 .chat-tool summary { min-height: calc(38px * var(--cc-ui)); padding: 0 var(--sp-11) 0 var(--sp-14); display: flex; align-items: center; gap: var(--sp-9); cursor: pointer; font-size: var(--text-base); list-style: none; border-radius: var(--radius-md); }
+.chat-tool summary[data-static] { cursor: default; }
 .chat-tool summary::-webkit-details-marker { display: none; }
 .chat-tool-name { flex: 0 0 auto; white-space: nowrap; color: var(--cc-text-dim); font-size: var(--text-base); font-weight: var(--fw-medium); }
 .chat-tool-summary { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-dim); font-family: var(--cc-mono); font-size: var(--text-sm); }
