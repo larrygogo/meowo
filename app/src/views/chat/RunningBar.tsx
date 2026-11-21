@@ -10,6 +10,7 @@ import { fmtElapsed, type CliRetry, type CliStatus } from "./cliStatus";
 import { liveTurnStart } from "./toolState";
 import type { Dict } from "../../i18n/zh";
 import { toolShortName } from "./ToolIcon";
+import { isCompareTool } from "./imageTools";
 
 // 运行条活动文本的展示清洗：剥掉「cd <目录> && 」前缀（保留可能的 ›/> 提示符）。
 // 状态条截断成单行后，冗长的项目路径会把真正在跑的命令挤出可视区；完整原文在 title 里。
@@ -56,6 +57,7 @@ export function liveToolActivity(items: ChatItem[], t: Dict): { text: string; ti
       return runningActivityView(`› ${command}`, "", "");
     }
     if (item.kind === "image") return { text: t.chat.turnToolDoing.image, tip: undefined };
+    if (isCompareTool(item)) return { text: t.chat.turnToolDoing.compare, tip: undefined };
     const summary = item.summary.trim();
     const name = toolShortName(item.name, item.kind, t);
     // 认不得的工具摘要可能是整段参数 JSON，不上运行条。

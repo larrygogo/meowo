@@ -413,7 +413,19 @@ fn compare_into(root: &Path, args: &Value) -> Result<String, ImageError> {
         Some(diff) => Some(images::store_bytes_in(root, ImageKind::Sent, &encode_png(&diff)?)?),
         None => None,
     };
-    Ok(compare_receipt(&stats, &before_stored, &after_stored, diff_stored.as_deref()))
+    let caption = args
+        .get("caption")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.chars().take(500).collect::<String>());
+    Ok(compare_receipt(
+        &stats,
+        &before_stored,
+        &after_stored,
+        diff_stored.as_deref(),
+        caption.as_deref(),
+    ))
 }
 
 fn decode_for_compare(bytes: &[u8], path: &Path) -> Result<image::RgbaImage, ImageError> {
@@ -499,8 +511,14 @@ fn diff_images(
 }
 
 /// 对照回执：先一段给模型的话（变化多少、在哪），再是三张图的引用行，最后一行摘要给前端画对照卡
-/// （前端认 `[Image compare: …]`；旧前端只认引用行，照样显示成三张缩略图）。
-fn compare_receipt(stats: &DiffStats, before: &Path, after: &Path, diff: Option<&Path>) -> String {
+/// （前端认 `[Image compare: {JSON}]`；旧前端只认引用行，照样显示成三张缩略图）。
+fn compare_receipt(
+    stats: &DiffStats,
+    before: &Path,
+    after: &Path,
+    diff: Option<&Path>,
+    caption: Option<&str>,
+) -> String {
     let size = |(w, h): (u32, u32)| format!("{w}x{h}");
     let mut lines = vec![
         "对照已发给用户，对话里会显示改前、改后和差异图；不用再描述这几张图，也不要重复发送。"
@@ -530,16 +548,15 @@ fn compare_receipt(stats: &DiffStats, before: &Path, after: &Path, diff: Option<
     if let Some(diff) = diff {
         lines.push(images::image_ref_line(diff));
     }
-    let bounds = stats
-        .bounds
-        .map(|(x, y, w, h)| format!("; bounds={x},{y},{w},{h}"))
-        .unwrap_or_default();
-    lines.push(format!(
-        "[Image compare: changed={}; before={}; after={}{bounds}]",
-        stats.percent(),
-        size(stats.before),
-        size(stats.after),
-    ));
+    // 摘要是一行 JSON：说明是 agent 写的任意文字，JSON 转义后不会断行，也不会被里面的 `]` 截断。
+    let summary = json!({
+        "changed": stats.percent(),
+        "before": [stats.before.0, stats.before.1],
+        "after": [stats.after.0, stats.after.1],
+        "bounds": stats.bounds.map(|(x, y, w, h)| vec![x, y, w, h]),
+        "caption": caption,
+    });
+    lines.push(format!("[Image compare: {summary}]"));
     lines.join("\n")
 }
 
@@ -878,9 +895,11 @@ mod tests {
         after.put_pixel(90, 5, image::Rgba([240, 240, 240, 255]));
         let a = write_png(&dir, "before.png", &before);
         let b = write_png(&dir, "after.png", &after);
-        let text = compare_into(&root, &json!({ "before": a, "after": b })).unwrap();
+        let text = compare_into(&root, &json!({ "before": a, "after": b, "caption": "按钮换成蓝色] 第二行" })).unwrap();
         assert!(text.contains("变化范围：x 30–39，y 20–23（10×4）"), "{text}");
-        assert!(text.contains("[Image compare: changed=0.80%; before=100x50; after=100x50; bounds=30,20,10,4]"), "{text}");
+        let marker = text.lines().last().unwrap();
+        let summary: Value = serde_json::from_str(marker.trim_start_matches("[Image compare: ").trim_end_matches(']')).unwrap();
+        assert_eq!(summary, json!({ "changed": "0.80%", "before": [100, 50], "after": [100, 50], "bounds": [30, 20, 10, 4], "caption": "按钮换成蓝色] 第二行" }));
         let refs: Vec<&str> = text.lines().filter(|l| l.starts_with("[Image: source: ")).collect();
         assert_eq!(refs.len(), 3, "{text}");
         for line in refs {
@@ -898,7 +917,7 @@ mod tests {
         let b = write_png(&dir, "b.png", &page(20, 20));
         let text = compare_into(&root, &json!({ "before": a, "after": b })).unwrap();
         assert!(text.contains("没有可见变化"), "{text}");
-        assert!(text.contains("[Image compare: changed=0%; before=20x20; after=20x20]"), "{text}");
+        assert!(text.ends_with(r#"[Image compare: {"after":[20,20],"before":[20,20],"bounds":null,"caption":null,"changed":"0%"}]"#), "{text}");
         assert_eq!(text.lines().filter(|l| l.starts_with("[Image: source: ")).count(), 2);
     }
 
@@ -909,7 +928,7 @@ mod tests {
         let a = write_png(&dir, "a.png", &page(10, 10));
         let b = write_png(&dir, "b.png", &page(10, 12));
         let text = compare_into(&root, &json!({ "before": a, "after": b })).unwrap();
-        assert!(text.contains("bounds=0,10,10,2"), "{text}");
+        assert!(text.contains(r#""bounds":[0,10,10,2]"#), "{text}");
         assert!(text.contains("尺寸：改前 10x10，改后 10x12"), "{text}");
     }
 

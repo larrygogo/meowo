@@ -4698,6 +4698,34 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-sent-failed > svg { flex: 0 0 auto; margin-top: 1px; color: var(--cc-warn-text); }
 .chat-sent-failed-text { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
 .chat-sent-failed-title { color: var(--cc-text); font-size: var(--text-sm); font-weight: var(--fw-medium); }
+/* 改前改后对照卡（CompareCard.tsx）：一张图的位置放两张，拖把手左右比较；红框圈出变化范围。
+   三版方案（滑块 / 并排 / 只标变化）的截图与取舍见 .lead/20261122-image-tools/decisions.md。 */
+.chat-compare { margin: 0; width: min(560px, 100%); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-lg); overflow: hidden; background: var(--fill-selected); }
+.chat-compare-stage { position: relative; width: 100%; overflow: hidden; background: var(--cc-code-bg); cursor: ew-resize; touch-action: pan-y; user-select: none; -webkit-user-select: none; outline: none; }
+.chat-compare-stage:focus-visible { box-shadow: inset 0 0 0 2px var(--cc-accent); }
+.chat-compare[data-mode="diff"] .chat-compare-stage { cursor: zoom-in; }
+.chat-compare[data-state="loading"] .chat-compare-stage { min-height: 120px; }
+.chat-compare-img { position: absolute; top: 0; left: 0; display: block; pointer-events: none; }
+.chat-compare-after { position: absolute; inset: 0; }
+.chat-compare-handle { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #fff; box-shadow: 0 0 3px rgba(0, 0, 0, .45); pointer-events: none; }
+.chat-compare-handle > span { position: absolute; top: 50%; left: 50%; width: 24px; height: 24px; margin: -12px 0 0 -12px; border-radius: 50%; background: #fff; box-shadow: 0 1px 6px rgba(0, 0, 0, .45); }
+.chat-compare-handle > span::before,
+.chat-compare-handle > span::after { content: ""; position: absolute; top: 50%; width: 0; height: 0; margin-top: -4px; border: 4px solid transparent; }
+.chat-compare-handle > span::before { left: 3px; border-right-color: #222; }
+.chat-compare-handle > span::after { right: 3px; border-left-color: #222; }
+.chat-compare-tag { position: absolute; top: var(--sp-6); padding: 1px var(--sp-8); border-radius: var(--radius-full); background: rgba(0, 0, 0, .6); color: #fff; font-size: var(--text-2xs); pointer-events: none; }
+.chat-compare-tag.is-before { left: var(--sp-6); }
+.chat-compare-tag.is-after { right: var(--sp-6); }
+.chat-compare-box { position: absolute; box-sizing: border-box; min-width: 6px; min-height: 6px; border: 2px solid var(--cc-err-vivid); border-radius: var(--radius-xs); pointer-events: none; }
+.chat-compare-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-4) var(--sp-8); padding: var(--sp-6) var(--sp-8) var(--sp-6) var(--sp-10); font-size: var(--text-xs); color: var(--cc-text-faint); }
+.chat-compare-stat { white-space: nowrap; color: var(--cc-text-dim); font-variant-numeric: tabular-nums; }
+.chat-compare-stat[data-changed] { color: var(--cc-err-text); }
+.chat-compare-meta { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.chat-compare-seg { display: inline-flex; margin-left: auto; padding: 2px; border-radius: var(--radius-md); background: var(--cc-code-bg); }
+.chat-compare-seg button { height: 22px; padding: 0 var(--sp-10); border: 0; border-radius: var(--radius-sm); background: none; color: var(--cc-text-faint); font: inherit; font-size: var(--text-xs); white-space: nowrap; cursor: pointer; position: relative; }
+.chat-compare-seg button[aria-pressed="true"] { background: var(--cc-panel-raised); color: var(--cc-text); }
+/* 触屏：分段按钮视觉高度不变，用看不见的外扩热区凑够命中面（standards.md）。 */
+@media (pointer: coarse) { .chat-compare-seg button::after { content: ""; position: absolute; inset: -11px -2px; } }
 .chat-sent-failed-reason { color: var(--cc-text-dim); font-size: var(--text-xs); overflow-wrap: anywhere; }
 
 /* 工具行下直接露出的缩略图（截图、读图、写出的图片）：左缘对齐工具名文字（图标 20px + 间距 8px）。 */

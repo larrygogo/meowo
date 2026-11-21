@@ -5,10 +5,10 @@ import { fitEdge, isHeic, prepareUpload, UploadPrepareError } from "./prepareUpl
 let drawn: { width: number; height: number } | null = null;
 beforeEach(() => {
   drawn = null;
-  HTMLCanvasElement.prototype.getContext = function getContext() {
+  HTMLCanvasElement.prototype.getContext = function getContext(this: HTMLCanvasElement) {
     const canvas = this as HTMLCanvasElement;
     return { drawImage: () => { drawn = { width: canvas.width, height: canvas.height }; }, imageSmoothingQuality: "low" } as unknown as CanvasRenderingContext2D;
-  } as typeof HTMLCanvasElement.prototype.getContext;
+  } as unknown as typeof HTMLCanvasElement.prototype.getContext;
   HTMLCanvasElement.prototype.toBlob = function toBlob(callback: BlobCallback, type?: string) {
     callback(new Blob(["x"], { type: type ?? "image/png" }));
   };

@@ -21,6 +21,7 @@ import { ChatCwdContext } from "./chatCwd";
 import { ChatSessionContext, useRemoteImageGate } from "./remoteImageGate";
 import { useToolRunState } from "./toolState";
 import type { ToolResultItem, ToolUseItem } from "./shared";
+import { isImageMessage } from "./imageTools";
 
 /** 回执里的图片引用行（与用户消息里的同一种写法，见 Message.tsx 的 IMAGE_REF）。 */
 const IMAGE_REF = /\[Image(?: #\d+)?: source: ([^\]]+?)\]/g;
@@ -128,7 +129,7 @@ export function resetChatImageCache(): void {
 }
 
 /// 图片的加载失败与远程凭据过期：手机端 /file 凭据换代时第一次会失败，transport 重领后派发事件，这里再试一次。
-function useImageLoad(path: string | null) {
+export function useImageLoad(path: string | null) {
   const [failed, setFailed] = useState(false);
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
   useEffect(() => { setFailed(false); setNatural(null); }, [path]);
@@ -222,7 +223,7 @@ export function ImageActions({ path, variant = "lightbox" }: { path: string; var
 }
 
 /** 失败时的说明卡：图标 + 一句结论 + 原因 + 文件名。不出空白框。 */
-function ImageFailure({ title, reason, name }: { title: string; reason: string; name: string | null }) {
+export function ImageFailure({ title, reason, name }: { title: string; reason: string; name: string | null }) {
   return (
     <div className="chat-sent-failed" role="note">
       <Icon glyph={icAlert} size={16} />
@@ -235,7 +236,7 @@ function ImageFailure({ title, reason, name }: { title: string; reason: string; 
 }
 
 /** 大图里每张图的「保存」「在文件夹中显示」：有本地路径的才有。 */
-const lightboxActions = (item: GalleryItem) => (item.path ? <ImageActions path={item.path} /> : null);
+export const lightboxActions = (item: GalleryItem) => (item.path ? <ImageActions path={item.path} /> : null);
 
 /// 一张发来的图。多图时外层按相册排（data-count），单张按原比例摆。
 const SentImageTile = memo(function SentImageTile({ path, caption, album }: { path: string; caption: string | null; album: boolean }) {
@@ -317,7 +318,7 @@ export function FoldImageStrip({ tools, results }: { tools: ToolUseItem[]; resul
   const receipts: string[] = [];
   const files: string[] = [];
   for (const tool of tools) {
-    if (tool.kind === "image") continue;
+    if (isImageMessage(tool)) continue;
     const result = results.get(tool.id);
     const { images } = splitReceiptImages(result);
     if (images.length > 0) receipts.push(...images);

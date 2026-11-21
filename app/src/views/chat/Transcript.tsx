@@ -26,6 +26,8 @@ import { FoldScopeContext, foldScope } from "./foldMemory";
 import { isSubagentDelegation, type ToolResultItem } from "./shared";
 import { liveTurnStart, SessionAliveContext, TurnLiveContext, type TurnActivity } from "./toolState";
 import { markEntering, trackEntering, type EnterTrack } from "./enterMotion";
+import { isCompareTool, isImageMessage } from "./imageTools";
+import { CompareMessage } from "./CompareCard";
 
 type SubagentOutcomeInfo = NonNullable<ToolResultItem["subagent"]>;
 
@@ -256,11 +258,11 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
     // 回合折叠、过程块收起都不会把它藏起来。它的回执仍按调用配对（results），不单独成行。
     const processItems = turnItems.filter((entry): entry is Extract<ChatItem, { type: "reasoning" | "reasoning_delta" | "tool_use" | "tool_result" }> =>
       entry.type === "reasoning" || entry.type === "reasoning_delta" || entry.type === "tool_result"
-      || (entry.type === "tool_use" && entry.kind !== "image"),
+      || (entry.type === "tool_use" && !isImageMessage(entry)),
     );
     const bodyItems = turnItems.filter((entry) =>
       entry.type === "assistant_text" || entry.type === "assistant_delta" || entry.type === "turn_error"
-      || (entry.type === "tool_use" && entry.kind === "image"),
+      || (entry.type === "tool_use" && isImageMessage(entry)),
     );
     const isLive = next >= items.length;
     // 这一段此刻的活动态：会话在进行，且这一段属于当前回合（在末尾，或在当前回合起点之后）。
@@ -378,10 +380,12 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
       // 出错卡只有在它就是时间线末尾时才给「继续」（后面已有新内容的旧错误不必再续）。
       const latest = entry.type === "turn_error" && next >= items.length && entry === bodyItems[bodyItems.length - 1];
       if (entry.type === "tool_use") {
-        // 发图的「正在发送」「已中断」取决于这一段的活动态，与工具行同一个来源。
+        // 发图、对照的「正在发送」「已中断」取决于这一段的活动态，与工具行同一个来源。
         record.nodes.push(
           <TurnLiveContext.Provider key={entry.id} value={blockActivity}>
-            <SentImageMessage item={entry} result={results.get(entry.id)} />
+            {isCompareTool(entry)
+              ? <CompareMessage item={entry} result={results.get(entry.id)} />
+              : <SentImageMessage item={entry} result={results.get(entry.id)} />}
           </TurnLiveContext.Provider>,
         );
         continue;
