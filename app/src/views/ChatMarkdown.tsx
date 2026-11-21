@@ -51,8 +51,8 @@ export function trimCjkAutolinks(tree: MdNode): void {
 }
 const remarkTrimCjkAutolinks = () => (tree: MdNode) => trimCjkAutolinks(tree);
 
-/// 段尾不留孤字（U2，2026-11-18）：中文段落末行常只剩「难。」这样一个字加句号。样式表里的 text-wrap-style: pretty
-/// 在 Chromium / WebView2 上只处理「末行只有一个词」，中文的「字 + 标点」它不当孤行（progress.md 有实测），
+/// 段尾不留孤字（U2，2026-11-18）：中文段落末行常只剩「难。」这样一个字加句号。CSS 的 text-wrap-style: pretty
+/// 在 Chromium / WebView2 上不把中文「字 + 标点」当孤行，在 WebKit 上又会让每行提前折（2026-11-22 已撤），
 /// 所以在这里把段落最后 KEEP_TAIL 个字（含标点）包进一个不折行的 span：它们只能一起换行，末行至少四个字。
 /// 只改结构不加字符——复制、读屏拿到的文字不变；只动段落末尾那段纯文字，末尾是链接、代码、带空格的西文时不碰。
 const KEEP_TAIL = 4;

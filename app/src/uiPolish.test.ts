@@ -59,8 +59,8 @@ describe("U1 暗色字重降一档", () => {
 });
 
 describe("U2 断行", () => {
-  it("正文 pretty、标题 balance，只写 text-wrap-style 长属性（不用会盖掉 nowrap 的 text-wrap 简写）", () => {
-    expect(styles).toMatch(/html, body \{ text-wrap-style: pretty; \}/);
+  it("正文不用 pretty（WebKit 下中文每行提前折、气泡右边留白，leader 实拍 2026-11-22）；标题 balance 只写长属性", () => {
+    expect(styles).not.toMatch(/text-wrap-style:\s*pretty/);
     expect(styles).toMatch(/:where\(h1, h2, h3, h4, h5, h6[^)]*\) \{ text-wrap-style: balance; \}/);
     const added = [...styles.matchAll(/text-wrap:\s*(pretty|balance)/g)].length;
     expect(added).toBe(2); // 改版前就有的两处 balance，不再新增简写
@@ -70,7 +70,7 @@ describe("U2 断行", () => {
     for (const sel of ["pre", "code", "table", "textarea", "input", ".xterm", ".chat-diff-text", ".chat-tool-code"]) expect(reset).toContain(sel);
   });
   it("每条 white-space: pre / pre-wrap 的规则要么在等宽内容里退回 auto，要么登记为正文", () => {
-    // 保留换行的正文（消息气泡、思考、提问、提示），pretty 对它们有用；其余都是代码、日志、终端画面。
+    // 保留换行的正文（消息气泡、思考、提问、提示），按正文断行；其余都是代码、日志、终端画面。
     const PROSE = new Set([".app-confirm p > span", ".chat-queued-bubble", ".sa-toast > span", ".chat-sidebar-error.is-multiline span",
       ".chat-diff-text > .chat-diff-cmt", ".pr-comment p, .pr-event p", ".pr-confirm-body", ".chat-text", ".chat-reasoning div",
       ".chat-tool-out", ".chat-approval-prewrap", ".chat-side-answer-body", ".up-notes-body",

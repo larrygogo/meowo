@@ -532,15 +532,15 @@ html, body {
 }
 /* UA 默认粗体（strong/b/th/标题是 bold 或 bolder）不走 token，深色下会比周围粗出两档；统一接到 --fw-bold。 */
 :where(strong, b, th, h1, h2, h3, h4, h5, h6) { font-weight: var(--fw-bold); }
-/* 断行（U2，2026-11-18）：正文类文字整体 pretty——末行不留一两个字的孤行；
-   标题类 balance，多行时各行等长。只写 text-wrap-style 这个长属性，不写 text-wrap 简写：简写会连带把
-   text-wrap-mode 设回 wrap，盖掉各处 white-space: nowrap / pre 的单行与原样排版。
-   该属性会继承，所以在代码、终端、表格、输入框上显式退回 auto：等宽内容按字符原样折，不参与重排。
-   不支持的内核（旧 WebKit）忽略这两条，退回普通断行。 */
-html, body { text-wrap-style: pretty; }
+/* 断行（U2，2026-11-18；2026-11-22 撤掉正文 pretty）：标题类 balance，多行时各行等长。只写 text-wrap-style 长属性，
+   不写 text-wrap 简写：简写会连带把 text-wrap-mode 设回 wrap，盖掉各处 white-space: nowrap / pre 的单行与原样排版。
+   正文原先整体 pretty，但 WebKit（iPhone 远程页、macOS）的 pretty 对整段做优化，中文每行都可能提前一两个字折行，
+   右边参差留白；用户气泡是 fit-content，提前折行后气泡宽度不缩，右边空出一大块（leader 实拍 IMG_2425）。
+   Chromium 的 pretty 对中文本来不起作用，中文段尾孤字由 ChatMarkdown 的 keepCjkTail 处理，所以正文直接用普通断行。
+   下面一行退回 auto 留着：防止以后有人给祖先加 pretty/balance 时连带影响代码与终端。 */
 :where(h1, h2, h3, h4, h5, h6, .sec-title, .app-confirm strong) { text-wrap-style: balance; }
 :where(pre, code, kbd, samp, table, textarea, input, .xterm, .chat-diff-text, .chat-tool-code, .pr-patch, .lead-evidence-command, .chat-compose-gate-tail, .chat-remote-screen, .wt-setup-log, .wt-trust-script) { text-wrap-style: auto; }
-/* pretty 在 Chromium 上不把中文「字 + 句号」当孤行；对话正文的段尾四个字由 ChatMarkdown 的 keepCjkTail 包成一组不折行。 */
+/* 对话正文的段尾四个字由 ChatMarkdown 的 keepCjkTail 包成一组不折行，末行不剩孤字。 */
 .chat-md-keep { white-space: nowrap; }
 /* 即时反馈的回弹（U3，2026-11-18）：复制、导出这类按钮按下缩到 .92，成功那一刻（.fb-flash，
    由 useFlash 的 shown 挂上）用带一点过冲的 --ease-spring 弹回 1，0.26s 播完，不超过 300ms。
