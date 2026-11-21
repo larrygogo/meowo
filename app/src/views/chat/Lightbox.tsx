@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { pushEscLayer } from "../../escLayers";
 import { useT } from "../../i18n";
 import { Icon } from "../../icons/Icon";
-import { icAlert, icCheck, icClose } from "../../icons/glyphs";
+import { icAlert, icCheck, icClose, icPencil } from "../../icons/glyphs";
+import { ImageReplyContext } from "./imageReply";
 // 右箭头用左箭头镜像（CSS），不从 glyphs.scm 引：那一档不许被拖进对话页的 chunk（icons.test）。
 import { icChevronLeft, icCopy } from "../../icons/glyphs.chat";
 import { safeFileSrc } from "../../assetSrc";
@@ -62,6 +63,7 @@ export function Lightbox({ items, index: startIndex = 0, onClose, renderActions 
   renderActions?: (item: GalleryItem) => ReactNode;
 }) {
   const t = useT();
+  const reply = useContext(ImageReplyContext);
   const [index, setIndex] = useState(() => Math.min(Math.max(0, startIndex), Math.max(0, items.length - 1)));
   const item = items[index] ?? items[0];
   const multi = items.length > 1;
@@ -366,6 +368,13 @@ export function Lightbox({ items, index: startIndex = 0, onClose, renderActions 
             <button type="button" className="chat-lightbox-action" aria-label={t.chat.imageCopy} data-tip={t.chat.imageCopy} onClick={() => void copy()} data-state={copyState}>
               <Icon glyph={copyState === "done" ? icCheck : icCopy} size={14} />
               <span>{copyLabel}</span>
+            </button>
+          )}
+          {reply && item.path && status === "ready" && (
+            <button type="button" className="chat-lightbox-action is-reply" aria-label={t.chat.imageReply} data-tip={t.chat.imageReplyTip}
+              onClick={() => { const path = item.path; onClose(); if (path) reply(path); }}>
+              <Icon glyph={icPencil} size={14} />
+              <span>{t.chat.imageReply}</span>
             </button>
           )}
           {renderActions?.(item)}

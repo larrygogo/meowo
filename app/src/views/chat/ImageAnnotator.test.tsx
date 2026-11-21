@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { ImageAnnotator } from "./ImageAnnotator";
+import { ImageAnnotator, pointToImage } from "./ImageAnnotator";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -56,5 +56,13 @@ describe("ImageAnnotator", () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 404 })));
     render(<ImageAnnotator path="C:\\tmp\\gone.png" onDone={() => {}} onClose={() => {}} />);
     expect(await screen.findByText("图片读取失败，无法标注")).toBeTruthy();
+  });
+
+  it("手机上画布被缩到屏幕宽：按显示大小换算，框落在手指下；图外的点贴边", () => {
+    // 原图 1000×500，画布按 0.76 绘制成 760×380，又被 CSS 缩到 380×190 显示。
+    const rect = { left: 10, top: 20, width: 380, height: 190 };
+    const canvas = { width: 760, height: 380 };
+    expect(pointToImage(rect, canvas, 0.76, { x: 10 + 190, y: 20 + 95 }, { width: 1000, height: 500 })).toEqual({ x: 500, y: 250 });
+    expect(pointToImage(rect, canvas, 0.76, { x: 0, y: 999 }, { width: 1000, height: 500 })).toEqual({ x: 0, y: 500 });
   });
 });

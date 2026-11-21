@@ -5859,6 +5859,8 @@ button.chat-image-chip.is-gated:hover > .chat-image-chip-reason { color: var(--c
 .chat-attachment:hover button.chat-attachment-annotate, .chat-compose .chat-attachment button.chat-attachment-annotate:focus-visible { opacity: 1; }
 /* 预览不出来、退回成文件名小标签时，标注按钮会压在文件名上（2026-11-16 截图），而图读不出来也标不了：不给。 */
 .chat-compose .chat-attachment.is-image:has(.chat-image-chip) button.chat-attachment-annotate { display: none; }
+/* 触屏没有悬停：标注按钮常显。 */
+@media (pointer: coarse) { .chat-compose .chat-attachment button.chat-attachment-annotate { opacity: 1; } }
 /* 截图标注弹层（ImageAnnotator）：画布按可用区域等比缩小，框画在原图坐标上。 */
 .chat-modal.chat-annotator { width: min(800px, calc(100vw - 48px)); max-height: calc(100vh - 48px); overflow: auto; }
 .chat-annotator-hint { color: var(--cc-text-dim); font-size: var(--text-xs); }

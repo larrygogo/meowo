@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { collectGallery, galleryAttrs, Lightbox, type GalleryItem } from "./Lightbox";
+import { ImageReplyContext } from "./imageReply";
 
 afterEach(() => {
   cleanup();
@@ -256,5 +257,32 @@ describe("复制图片", () => {
       vi.unstubAllGlobals();
       Reflect.deleteProperty(navigator, "clipboard");
     }
+  });
+});
+
+describe("圈出来回复", () => {
+  it("对话窗提供了回复入口、图有本地路径且已加载：点了关掉大图，把路径交给标注", () => {
+    const reply = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <ImageReplyContext.Provider value={reply}>
+        <Lightbox items={[{ src: "asset://a.png", name: "a.png", path: "C:\img\a.png" }]} onClose={onClose} />
+      </ImageReplyContext.Provider>,
+    );
+    expect(screen.queryByRole("button", { name: "圈出来回复" })).toBeNull();
+    fireEvent.load(img());
+    fireEvent.click(screen.getByRole("button", { name: "圈出来回复" }));
+    expect(onClose).toHaveBeenCalled();
+    expect(reply).toHaveBeenCalledWith("C:\img\a.png");
+  });
+
+  it("没有输入框（无回复入口）或图没有本地路径时不出现", () => {
+    const { unmount } = render(<Lightbox items={[{ src: "asset://a.png", name: "a.png", path: "C:\a.png" }]} onClose={() => {}} />);
+    fireEvent.load(img());
+    expect(screen.queryByRole("button", { name: "圈出来回复" })).toBeNull();
+    unmount();
+    render(<ImageReplyContext.Provider value={() => {}}><Lightbox items={one} onClose={() => {}} /></ImageReplyContext.Provider>);
+    fireEvent.load(img());
+    expect(screen.queryByRole("button", { name: "圈出来回复" })).toBeNull();
   });
 });

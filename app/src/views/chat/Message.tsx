@@ -215,8 +215,8 @@ export function ImageRef({ path }: { path: string }) {
   const src = stage === "retry" ? `${base}${base.includes("?") ? "&" : "?"}preview=1` : base;
   return (
     <>
-      <button type="button" className="chat-image-thumb-btn" data-tip={name} {...galleryAttrs({ src, name })}
-        onClick={(event) => setExpanded(collectGallery(event.currentTarget, { src, name }))}>
+      <button type="button" className="chat-image-thumb-btn" data-tip={name} {...galleryAttrs({ src, name, path })}
+        onClick={(event) => setExpanded(collectGallery(event.currentTarget, { src, name, path }))}>
         <img className="chat-image-thumb" src={src} alt={name} loading="lazy" referrerPolicy="no-referrer" onError={() => {
           if (stage === "first" && !remoteUi()) {
             setStage("allowing");
