@@ -342,6 +342,12 @@ fn browser_tools() -> Vec<Value> {
         tool("browser_forward", "前进。", json!({}), &[]),
         tool("browser_reload", "刷新页面。", json!({}), &[]),
         tool(
+            "browser_close",
+            "关闭你正在用的面板浏览器页签（用户自己开的其他页签不动）。网页事情做完、页签不再需要时用；之后再 browser_open 会新开一个。",
+            json!({}),
+            &[],
+        ),
+        tool(
             "browser_evaluate",
             "在页面里执行一段 JavaScript 表达式，返回结果（会转成 JSON）。可以用 await（如 await fetch(...).then(r => r.json())），最多等 15 秒。读不到快照里的内容时用。",
             json!({ "expression": { "type": "string" } }),

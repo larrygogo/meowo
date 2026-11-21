@@ -42,6 +42,7 @@ const OTHER_GLYPH: Record<string, typeof icSearch> = {
   browser_back: icGlobe,
   browser_forward: icGlobe,
   browser_reload: icGlobe,
+  browser_close: icGlobe,
   browser_evaluate: icGlobe,
   browser_wait_for: icGlobe,
   browser_emulate: icGlobe,

@@ -1617,6 +1617,7 @@ export const en: Dict = {
       browser_back: "Go back",
       browser_forward: "Go forward",
       browser_reload: "Reload page",
+      browser_close: "Close tab",
       browser_evaluate: "Run script",
       browser_wait_for: "Wait for page",
       browser_emulate: "Emulate device",

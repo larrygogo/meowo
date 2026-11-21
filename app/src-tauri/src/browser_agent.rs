@@ -87,6 +87,9 @@ pub(crate) fn handle(session_id: i64, tool: &str, args: &Value) -> Result<Value,
     }
     let app = APP.get().ok_or("Meowo 还没启动完")?;
     let panes = app.state::<BrowserPanes>();
+    if tool == "browser_close" {
+        return close_agent_pane(app, &panes, session_id).map(|text| json!({ "text": text }));
+    }
     let id = pane_for(app, &panes, session_id, tool == "browser_open")?;
     // 同一页签一次只跑一个动作：两个工具并行时，旧动作不能在用户接管后越过新动作继续写页面。
     let (operation, generation) = panes
@@ -338,6 +341,63 @@ fn pane_for(
     remember(session_id, info.id);
     announce(app, &info);
     Ok(info.id)
+}
+
+/// agent 关掉它正在用的页签。只关这一个：用户自己另开的页签不动；没在用的就不新建、
+/// 也不去挑用户的页签来关。用户接管着的页签不让关（和其他工具一样被拒）。
+fn close_agent_pane(
+    app: &tauri::AppHandle,
+    panes: &BrowserPanes,
+    session_id: i64,
+) -> Result<String, String> {
+    let selection = session_selection_lock(session_id);
+    let _selection = selection.lock().map_err(|e| e.to_string())?;
+    let current = agent_panes()
+        .lock()
+        .map_err(|e| e.to_string())?
+        .get(&session_id)
+        .copied();
+    let found = current.and_then(|id| {
+        let map = panes.panes.lock().ok()?;
+        let info = map.get(&id).filter(|info| info.owner == session_id)?;
+        Some((id, info.operation.clone(), info.agent_paused))
+    });
+    let Some((id, operation, paused)) = found else {
+        if let Ok(mut map) = agent_panes().lock() {
+            map.remove(&session_id);
+        }
+        return Ok("没有在用的页签，不用关。".into());
+    };
+    if paused {
+        return Err(TAKEOVER_ERROR.into());
+    }
+    // 等手上的动作做完再关，别在点击、等待的半路把页签拿掉。
+    let _operation = operation.lock().map_err(|e| e.to_string())?;
+    if let Ok(mut map) = panes.panes.lock() {
+        map.remove(&id);
+    }
+    if let Ok(mut map) = agent_panes().lock() {
+        map.remove(&session_id);
+    }
+    if let Ok(mut map) = last_used().lock() {
+        map.remove(&id);
+    }
+    if let Ok(mut map) = cursor_positions().lock() {
+        map.remove(&id);
+    }
+    crate::browser_permission::forget(app, id);
+    if let Ok(webview) = browser_pane::webview(app, id) {
+        webview.close().map_err(|e| e.to_string())?;
+    }
+    {
+        use tauri::Emitter;
+        let _ = app.emit_to(
+            tauri::EventTarget::webview("chat"),
+            "browser-pane-closed",
+            json!({ "id": id, "owner": session_id }),
+        );
+    }
+    Ok("已关闭页签。之后再用 browser_open 会新开一个。".into())
 }
 
 fn remember(session_id: i64, id: u32) {
@@ -918,6 +978,7 @@ const AUTO_ALLOWED: &[&str] = &[
     "browser_back",
     "browser_forward",
     "browser_reload",
+    "browser_close",
     "browser_screenshot",
     "browser_emulate",
 ];

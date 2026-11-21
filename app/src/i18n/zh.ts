@@ -1881,6 +1881,7 @@ export const zh = {
       browser_back: "后退",
       browser_forward: "前进",
       browser_reload: "刷新网页",
+      browser_close: "关闭页签",
       browser_evaluate: "运行脚本",
       browser_wait_for: "等待网页",
       browser_emulate: "模拟设备",
