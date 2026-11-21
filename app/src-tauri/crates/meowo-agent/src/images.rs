@@ -133,6 +133,10 @@ impl From<Result<PathBuf, ImageError>> for ResolvedChatImage {
 /// opencode `meowo_send_image`、codex 命名空间 `mcp__meowo` + `send_image`）。
 pub const MCP_SERVER: &str = "meowo";
 pub const SEND_IMAGE: &str = "send_image";
+/// 改前改后对照工具：两张本地图，Meowo 算出差异图，三张一起显示给用户（chat_images.rs）。
+pub const COMPARE_IMAGES: &str = "compare_images";
+/// 只把图片显示给用户、不改用户任何东西的工具：五家都免逐次审批，也不受浏览器开关约束。
+pub const IMAGE_TOOLS: &[&str] = &[SEND_IMAGE, COMPARE_IMAGES];
 
 /// Meowo 自己的 MCP 工具（发图、浏览器）在对话页上统一叫 `mcp__meowo__<工具>`：claude、kimi
 /// 原样就是这个形态，codex 的命名空间形态由插件拼成它。gemini（`mcp_meowo_<工具>`）与 opencode

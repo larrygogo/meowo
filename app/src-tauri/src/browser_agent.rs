@@ -145,9 +145,14 @@ fn screenshot(app: &tauri::AppHandle, id: u32) -> Result<Value, String> {
         .ok()
         .and_then(|v| v.as_str().map(str::to_string))
         .unwrap_or_default();
+    // 截图也存一份到 Meowo 图片目录（按内容哈希命名，和对话页从回执里存的是同一个文件），
+    // 把路径告诉 agent：改界面前后各截一张，就能直接交给 compare_images。
+    let saved = meowo_agent::images::store_bytes(meowo_agent::images::ImageKind::Tool, &bytes)
+        .map(|path| format!("\n截图已存为本地文件：{}（可直接交给 compare_images 对比改前改后）", path.display()))
+        .unwrap_or_default();
     Ok(json!({
         "text": format!("面板浏览器截图（{} KB）
-    {title}", bytes.len() / 1024),
+    {title}{saved}", bytes.len() / 1024),
         "image": base64::engine::general_purpose::STANDARD.encode(&bytes),
         "mime": "image/jpeg",
     }))
@@ -955,9 +960,9 @@ pub(crate) fn reassign_panels(from: i64, to: i64) {
 /// MCP 服务器在 agent 那边的名字；claude 里工具名就是 `mcp__meowo__browser_*`。
 const SERVER_NAME: &str = "meowo";
 
-/// 发图工具（meowo-reporter mcp.rs 的 SEND_IMAGE）。与浏览器开关无关，始终挂上并免逐次审批：
-/// 它只是把一张图显示给用户，不改用户的任何东西。
-const SEND_IMAGE: &str = "send_image";
+/// 发图一类的工具（meowo-reporter mcp.rs 的发图、改前改后对照）：与浏览器开关无关，始终挂上并免逐次审批——
+/// 它们只是把图片显示给用户，不改用户的任何东西。
+const IMAGE_TOOLS: &[&str] = meowo_agent::images::IMAGE_TOOLS;
 
 /// 浏览器开关关掉时让服务器只列发图工具（meowo-reporter mcp.rs 的 NO_BROWSER_FLAG）。
 const NO_BROWSER_FLAG: &str = "--no-browser";
@@ -997,7 +1002,7 @@ fn server_args(browser: bool) -> Vec<&'static str> {
 
 /// 免审批的工具：发图始终在；浏览器工具只在开关开着时。
 fn auto_allowed(browser: bool) -> Vec<&'static str> {
-    let mut tools = vec![SEND_IMAGE];
+    let mut tools = IMAGE_TOOLS.to_vec();
     if browser {
         tools.extend_from_slice(AUTO_ALLOWED);
     }
@@ -1097,7 +1102,9 @@ fn inline_config(existing: Option<&str>, reporter: &str, browser: bool) -> Optio
     let permission = obj.entry("permission").or_insert_with(|| json!({}));
     // permission 也可以是一个字符串（全局 allow/ask）：那是用户的意思，不改写成对象。
     if let Some(permission) = permission.as_object_mut() {
-        permission.insert(format!("{SERVER_NAME}_{SEND_IMAGE}"), json!("allow"));
+        for tool in IMAGE_TOOLS {
+            permission.insert(format!("{SERVER_NAME}_{tool}"), json!("allow"));
+        }
         permission.insert(format!("{SERVER_NAME}_{ALWAYS_ASK}"), json!("ask"));
     }
     serde_json::to_string(&root).ok()
@@ -1133,10 +1140,12 @@ fn toml_mcp_args(
         format!("mcp_servers.{SERVER_NAME}.args=[{args}]"),
         flag.to_owned(),
         format!("mcp_servers.{SERVER_NAME}.env={env}"),
-        // 发图免审批。
-        flag.to_owned(),
-        format!("mcp_servers.{SERVER_NAME}.tools.{SEND_IMAGE}.approval_mode='approve'"),
     ];
+    // 发图、对照免审批。
+    for tool in IMAGE_TOOLS {
+        out.push(flag.to_owned());
+        out.push(format!("mcp_servers.{SERVER_NAME}.tools.{tool}.approval_mode='approve'"));
+    }
     if browser {
         // codex 默认 auto 下没有只读注解的 browser_evaluate 本来就要审批；显式写上，防默认值变化。
         out.push(flag.to_owned());
@@ -1491,7 +1500,7 @@ mod tests {
     /// claude 的免审批清单：发图始终在；浏览器开关关掉时只剩它。
     #[test]
     fn send_image_is_always_auto_allowed() {
-        assert_eq!(auto_allowed(false), vec!["send_image"]);
+        assert_eq!(auto_allowed(false), vec!["send_image", "compare_images"]);
         let on = auto_allowed(true);
         assert!(on.contains(&"send_image") && on.contains(&"browser_click"));
         assert!(!on.contains(&"browser_evaluate"));
@@ -1554,7 +1563,7 @@ mod tests {
         }
     }
 
-    /// kimi config.toml：加一条只放行 send_image 的规则，用户与 Lead 的规则原样保留；
+    /// kimi config.toml：加放行 send_image、compare_images 的规则，用户与 Lead 的规则原样保留；
     /// 重复同步不重复加；关掉时只摘自己的那条；文件不存在不新建。
     #[test]
     fn kimi_permission_rule_is_added_once_and_removed_cleanly() {
@@ -1571,10 +1580,18 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         let doc: toml_edit::DocumentMut = text.parse().unwrap();
         let rules = doc["permission"]["rules"].as_array_of_tables().unwrap();
-        assert_eq!(rules.len(), 2, "{text}");
+        assert_eq!(rules.len(), 3, "{text}");
         assert_eq!(rules.get(0).unwrap()["pattern"].as_str(), Some("Bash(rm *)"));
         assert_eq!(rules.get(1).unwrap()["pattern"].as_str(), Some("mcp__meowo__send_image"));
+        assert_eq!(rules.get(2).unwrap()["pattern"].as_str(), Some("mcp__meowo__compare_images"));
         assert_eq!(rules.get(1).unwrap()["decision"].as_str(), Some("allow"));
+        // 旧版本只放行了发图：升级后再同步要补上对照，且不留重复。
+        let mut old_doc: toml_edit::DocumentMut = text.parse().unwrap();
+        old_doc["permission"]["rules"].as_array_of_tables_mut().unwrap().remove(2);
+        std::fs::write(&path, old_doc.to_string()).unwrap();
+        sync_permission_rule(&path, "mcp__", true);
+        let upgraded: toml_edit::DocumentMut = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        assert_eq!(upgraded["permission"]["rules"].as_array_of_tables().unwrap().len(), 3);
         assert_eq!(doc["default_model"].as_str(), Some("keep"));
         sync_permission_rule(&path, "mcp__", false);
         let doc: toml_edit::DocumentMut = std::fs::read_to_string(&path).unwrap().parse().unwrap();
