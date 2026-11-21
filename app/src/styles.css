@@ -4701,10 +4701,11 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 改前改后对照卡（CompareCard.tsx）：一张图的位置放两张，拖把手左右比较；红框圈出变化范围。
    三版方案（滑块 / 并排 / 只标变化）的截图与取舍见 .lead/20261122-image-tools/decisions.md。 */
 .chat-compare { margin: 0; width: min(560px, 100%); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-lg); overflow: hidden; background: var(--fill-selected); }
-.chat-compare-stage { position: relative; width: 100%; overflow: hidden; background: var(--cc-code-bg); cursor: ew-resize; touch-action: pan-y; user-select: none; -webkit-user-select: none; outline: none; }
+.chat-compare-stage { position: relative; width: 100%; max-height: 520px; overflow: hidden; background: var(--cc-code-bg); cursor: ew-resize; touch-action: pan-y; user-select: none; -webkit-user-select: none; outline: none; }
 .chat-compare-stage:focus-visible { box-shadow: inset 0 0 0 2px var(--cc-accent); }
 .chat-compare[data-mode="diff"] .chat-compare-stage { cursor: zoom-in; }
 .chat-compare[data-state="loading"] .chat-compare-stage { min-height: 120px; }
+.chat-compare-canvas { position: relative; width: 100%; }
 .chat-compare-img { position: absolute; top: 0; left: 0; display: block; pointer-events: none; }
 .chat-compare-after { position: absolute; inset: 0; }
 .chat-compare-handle { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #fff; box-shadow: 0 0 3px rgba(0, 0, 0, .45); pointer-events: none; }

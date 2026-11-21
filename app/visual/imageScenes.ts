@@ -194,6 +194,12 @@ export function imageSceneItems(part: string, lang: Lang): { items: ChatItem[]; 
           `[Image compare: ${JSON.stringify({ changed: "4.38%", before: [1280, 800], after: [1280, 800], bounds: [480, 260, 320, 210], caption })}]`,
         ].join("\n")),
         say("a1", 190, zh ? "改动只在登录卡片里，其他地方没变。" : "Changes stay inside the sign-in card; nothing else moved."),
+        // 整页长截图：舞台限高、标「长图」。
+        compareCall("c2", 120),
+        receipt("c2", at(119), [
+          ref("sent", "pricing-long.png"), ref("sent", "pricing-long.png"),
+          `[Image compare: ${JSON.stringify({ changed: "0%", before: [390, 2600], after: [390, 2600], bounds: null, caption: null })}]`,
+        ].join("\n")),
       ],
     };
   }

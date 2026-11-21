@@ -40,9 +40,10 @@ describe("对照回执", () => {
   it("没有变化时没有差异图；不是对照回执或摘要坏了返回 null", () => {
     const same = parseCompareReceipt(receipt({ changed: "0%", before: [20, 20], after: [20, 20], bounds: null, caption: null }, false))!;
     expect(same.diff).toBeNull();
-    expect(same.summary.bounds).toBeNull();
+    expect(same.summary?.bounds).toBeNull();
     expect(parseCompareReceipt(`[Image: source: ${DIR}a.png]`)).toBeNull();
-    expect(parseCompareReceipt(`[Image: source: ${DIR}a.png]\n[Image: source: ${DIR}b.png]\n[Image compare: {坏了]`)).toBeNull();
+    // 摘要坏了或丢了：照样给两张图，摘要为 null（Codex 转义输出时只还原了引用行）。
+    expect(parseCompareReceipt(`[Image: source: ${DIR}a.png]\n[Image: source: ${DIR}b.png]\n[Image compare: {坏了]`)?.summary).toBeNull();
   });
 });
 
@@ -94,6 +95,32 @@ describe("对照卡", () => {
     expect(screen.getByText("没有变化")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "差异" })).toBeNull();
     expect(document.querySelector(".chat-compare-box")).toBeNull();
+  });
+
+  it("回执里没有摘要行（Codex 转义输出）：照样显示改前改后，不判失败、不写变化比例", () => {
+    const text = [`[Image: source: ${DIR}before.png]`, `[Image: source: ${DIR}after.png]`].join("\n");
+    render(<ToolActivity item={call("c8")} result={result("c8", text)} />);
+    expect(document.querySelectorAll(".chat-compare-img")).toHaveLength(2);
+    expect(screen.queryByText("对照没能发过来")).toBeNull();
+    expect(document.querySelector(".chat-compare-stat")).toBeNull();
+  });
+
+  it("差异视图里按回车开的是差异图；差异图读不出来时退回滑动、去掉切换", () => {
+    render(<ToolActivity item={call("c9")} result={result("c9", receipt(CHANGED))} />);
+    loadAll();
+    fireEvent.click(screen.getByRole("button", { name: "差异" }));
+    fireEvent.keyDown(screen.getByRole("slider"), { key: "Enter" });
+    expect(document.querySelector(".chat-lightbox-caption")?.textContent).toBe("差异");
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.error(document.querySelector(".chat-compare-img")!);
+    expect(screen.queryByRole("button", { name: "差异" })).toBeNull();
+    expect(document.querySelectorAll(".chat-compare-img")).toHaveLength(2);
+  });
+
+  it("整页长截图：标「长图」，舞台限高", () => {
+    render(<ToolActivity item={call("c10")} result={result("c10", receipt({ ...CHANGED, before: [390, 2600], after: [390, 2600], bounds: [0, 0, 10, 10] }))} />);
+    expect(document.querySelector(".chat-compare")?.getAttribute("data-tall")).toBe("true");
+    expect(screen.getByText("长图")).toBeTruthy();
   });
 
   it("失败回执按原因给人话；没有回执时是正在对比", () => {

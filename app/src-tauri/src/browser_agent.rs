@@ -1551,7 +1551,10 @@ mod tests {
         assert_eq!(rule["mcpName"].as_str(), Some("meowo"));
         assert_eq!(rule["toolName"].as_str(), Some("send_image"));
         assert_eq!(rule["decision"].as_str(), Some("allow"));
-        // 只放行发图，没有服务器级 trust 或通配。
+        let rules = doc["rule"].as_array_of_tables().unwrap();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules.get(1).unwrap()["toolName"].as_str(), Some("compare_images"));
+        // 只放行发图与对照，没有服务器级 trust 或通配。
         assert!(!body.contains("browser") && !body.contains('*'));
     }
 

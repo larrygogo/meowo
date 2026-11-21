@@ -356,8 +356,8 @@ fn local_source(args: &Value, key: &str) -> Result<PathBuf, ImageError> {
 /// 两个像素在白底上合成后，任一通道差超过这个值才算变了。JPEG 压缩、字体抗锯齿的细微差别
 /// 常在十几以内；真改了颜色、位置的差别远大于它。
 const DIFF_THRESHOLD: u8 = 24;
-/// 两张图合起来的像素上限（约两张 4K 截图再多一些）。再大逐像素比较要好几秒，也不会是一次界面截图。
-const COMPARE_MAX_PIXELS: u64 = 40_000_000;
+/// 两张图合起来的像素上限（两张 4K 截图约 1660 万）。按 16 位色深解码时每像素 8 字节，这一档峰值约 300MB。
+const COMPARE_MAX_PIXELS: u64 = 20_000_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DiffStats {
@@ -397,20 +397,33 @@ fn compare_into(root: &Path, args: &Value) -> Result<String, ImageError> {
     let after_path = local_source(args, "after")?;
     let before_bytes = images::read_image_file(&before_path)?;
     let after_bytes = images::read_image_file(&after_path)?;
-    let before = decode_for_compare(&before_bytes, &before_path)?;
-    let after = decode_for_compare(&after_bytes, &after_path)?;
-    let pixels = |img: &image::RgbaImage| img.width() as u64 * img.height() as u64;
-    if pixels(&before) + pixels(&after) > COMPARE_MAX_PIXELS {
+    // 先做和发图同一套的便宜检查（真图判定、尺寸、GIF 每帧），再按文件头里的尺寸估总像素，
+    // 都过了才解码：解码要按像素分配内存，小文件也能写出很大的尺寸（做空：2.3MB 的 PNG 解码
+    // 峰值近 800MB），而这个工具免审批、跑在 Meowo 主进程里。
+    let mut pixels = 0u64;
+    for (bytes, path) in [(&before_bytes, &before_path), (&after_bytes, &after_path)] {
+        let ext = images::precheck(bytes)?;
+        let dims = (ext != "svg").then(|| images::image_dimensions(bytes)).flatten();
+        let Some((w, h)) = dims else {
+            return Err(not_pixels(path));
+        };
+        pixels += w as u64 * h as u64;
+    }
+    if pixels > COMPARE_MAX_PIXELS {
         return Err(ImageError::new(
             ImageErrorCode::TooLarge,
-            "两张图太大，没法逐像素比较（合计超过 4000 万像素）。截一个窗口大小的画面再比",
+            "两张图太大，没法逐像素比较（合计超过 2000 万像素）。截一个窗口大小的画面再比",
         ));
     }
+    let before = decode_for_compare(&before_bytes, &before_path)?;
+    let after = decode_for_compare(&after_bytes, &after_path)?;
     let (stats, diff) = diff_images(&before, &after);
+    let diff_png = diff.as_ref().map(encode_png).transpose()?;
+    // 全部算完才落盘：中途失败不在 sent/（回收时最后才删的一档）里留下半套文件。
     let before_stored = images::store_bytes_in(root, ImageKind::Sent, &before_bytes)?;
     let after_stored = images::store_bytes_in(root, ImageKind::Sent, &after_bytes)?;
-    let diff_stored = match diff {
-        Some(diff) => Some(images::store_bytes_in(root, ImageKind::Sent, &encode_png(&diff)?)?),
+    let diff_stored = match diff_png {
+        Some(png) => Some(images::store_bytes_in(root, ImageKind::Sent, &png)?),
         None => None,
     };
     let caption = args
@@ -429,15 +442,19 @@ fn compare_into(root: &Path, args: &Value) -> Result<String, ImageError> {
 }
 
 fn decode_for_compare(bytes: &[u8], path: &Path) -> Result<image::RgbaImage, ImageError> {
-    image::load_from_memory(bytes).map(|img| img.to_rgba8()).map_err(|_| {
-        ImageError::new(
-            ImageErrorCode::NotImage,
-            format!(
-                "读不出这张图的像素：{}。对照只支持 PNG、JPEG、GIF、WebP；SVG 先截成位图再比",
-                path.display()
-            ),
-        )
-    })
+    image::load_from_memory(bytes)
+        .map(|img| img.to_rgba8())
+        .map_err(|_| not_pixels(path))
+}
+
+fn not_pixels(path: &Path) -> ImageError {
+    ImageError::new(
+        ImageErrorCode::NotImage,
+        format!(
+            "读不出这张图的像素：{}。对照只支持 PNG、JPEG、GIF、WebP；SVG 先截成位图再比",
+            path.display()
+        ),
+    )
 }
 
 fn encode_png(img: &image::RgbaImage) -> Result<Vec<u8>, ImageError> {
@@ -907,6 +924,47 @@ mod tests {
             assert!(Path::new(path).starts_with(root.join("sent")), "{path}");
             assert!(Path::new(path).is_file());
         }
+    }
+
+    /// 只有文件头的 PNG：尺寸写多大都行，内容是空的（不会真去解码）。
+    fn png_header(width: u32, height: u32) -> Vec<u8> {
+        let mut ihdr = Vec::new();
+        ihdr.extend_from_slice(b"IHDR");
+        ihdr.extend_from_slice(&width.to_be_bytes());
+        ihdr.extend_from_slice(&height.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+        let crc = ihdr.iter().fold(0xFFFF_FFFFu32, |mut crc, byte| {
+            crc ^= *byte as u32;
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
+            }
+            crc
+        }) ^ 0xFFFF_FFFF;
+        let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+        out.extend_from_slice(&13u32.to_be_bytes());
+        out.extend_from_slice(&ihdr);
+        out.extend_from_slice(&crc.to_be_bytes());
+        out
+    }
+
+    #[test]
+    fn compare_checks_both_images_before_decoding_or_storing_anything() {
+        let dir = temp("compare-precheck");
+        let root = dir.join("images");
+        let ok = write_png(&dir, "ok.png", &page(8, 8));
+        // 第二张尺寸超过单张上限：第一张也不能先存进 sent/。
+        let huge = dir.join("huge.png");
+        std::fs::write(&huge, png_header(20_000, 20_000)).unwrap();
+        let err = compare_into(&root, &json!({ "before": ok, "after": huge })).unwrap_err();
+        assert_eq!(err.code, ImageErrorCode::TooLarge);
+        assert!(!root.join("sent").exists(), "失败时不该留下改前那张");
+        // 单张都在上限内、合计超过对照上限：按文件头里的尺寸拒，不解码。
+        let big = dir.join("big.png");
+        std::fs::write(&big, png_header(4_000, 3_000)).unwrap();
+        let err = compare_into(&root, &json!({ "before": big, "after": big })).unwrap_err();
+        assert_eq!(err.code, ImageErrorCode::TooLarge);
+        assert!(err.message.contains("2000 万"), "{}", err.message);
+        assert!(!root.join("sent").exists());
     }
 
     #[test]

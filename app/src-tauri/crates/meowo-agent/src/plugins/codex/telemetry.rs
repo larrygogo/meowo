@@ -555,7 +555,26 @@ fn unescaped_image_refs(text: &str) -> Vec<String> {
             out.push(line);
         }
     }
+    if let Some(line) = unescaped_compare_summary(text) {
+        out.push(line);
+    }
     out
+}
+
+/// 对照工具（compare_images）回执的摘要行 `[Image compare: {JSON}]` 被当成 JSON 字符串输出时，
+/// 里面的引号和反斜杠都多了一层转义。按 JSON 字符串的规则还原一次，还原出来是合法 JSON 才补回去。
+fn unescaped_compare_summary(text: &str) -> Option<String> {
+    const OPEN: &str = "[Image compare: ";
+    if text.lines().any(|l| l.trim().starts_with(OPEN)) {
+        return None;
+    }
+    let at = text.find(OPEN)?;
+    let after = &text[at + OPEN.len()..];
+    let end = after.find("}]")?;
+    let escaped = &after[..end + 1];
+    let json: String = serde_json::from_str(&format!("\"{escaped}\"")).ok()?;
+    serde_json::from_str::<serde_json::Value>(&json).ok()?.as_object()?;
+    Some(format!("{OPEN}{json}]"))
 }
 
 fn append_lines(text: &mut String, lines: impl IntoIterator<Item = String>) {
@@ -804,7 +823,8 @@ fn mcp_side_images(line: &str) -> Option<crate::transcript::ToolSideImages> {
             refs.extend(
                 text.lines()
                     .map(str::trim)
-                    .filter(|l| l.starts_with("[Image: source: ") && l.ends_with(']'))
+                    // 对照工具的摘要行（`[Image compare: {…}]`）也带上：前端靠它画对照卡。
+                    .filter(|l| (l.starts_with("[Image: source: ") || l.starts_with("[Image compare: ")) && l.ends_with(']'))
                     .map(str::to_string),
             );
         } else if let Some(line) = output_image(part) {
@@ -1449,6 +1469,29 @@ mod tests {
         assert!(text.lines().any(|l| l == r"[Image: source: C:\Users\me\.meowo\images\sent\ab.png]"), "{text}");
         // 已经是干净的一行时不重复补。
         assert_eq!(unescaped_image_refs("ok\n[Image: source: C:\\a.png]"), Vec::<String>::new());
+    }
+
+    /// 对照回执同样被转义时：引用行和摘要行都还原出来，前端才画得出对照卡（做空：Codex 下误报失败）。
+    #[test]
+    fn escaped_compare_receipt_in_script_output_is_restored() {
+        let output = r#"{"timestamp":"t","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_c","output":[{"type":"input_text","text":"Script completed\nWall time 0.3 seconds\nOutput:\n"},{"type":"input_text","text":"{\"content\":[{\"type\":\"text\",\"text\":\"对照已发给用户。\\n[Image: source: C:\\\\i\\\\a.png]\\n[Image: source: C:\\\\i\\\\b.png]\\n[Image compare: {\\\"changed\\\":\\\"1.00%\\\",\\\"before\\\":[10,10],\\\"after\\\":[10,10],\\\"bounds\\\":[0,0,1,1],\\\"caption\\\":\\\"按钮] 换色\\\"}]\"}]}"}]}}"#;
+        let results = parse_transcript_events(output);
+        let TranscriptEvent::ToolResult { text, .. } = &results[0] else { panic!("{results:?}") };
+        assert!(text.lines().any(|l| l == r"[Image: source: C:\i\b.png]"), "{text}");
+        assert!(
+            text.lines().any(|l| l == r#"[Image compare: {"changed":"1.00%","before":[10,10],"after":[10,10],"bounds":[0,0,1,1],"caption":"按钮] 换色"}]"#),
+            "{text}"
+        );
+    }
+
+    /// 脚本没输出回执、只有旁路记录时，对照的摘要行也跟着引用行补回来。
+    #[test]
+    fn side_channel_keeps_compare_summary() {
+        let line = r#"{"timestamp":"t","type":"event_msg","payload":{"type":"item_completed","started_at_ms":1,"item":{"type":"McpToolCall","server":"meowo","tool":"compare_images","result":{"content":[{"type":"text","text":"ok\n[Image: source: C:\\a.png]\n[Image: source: C:\\b.png]\n[Image compare: {\"changed\":\"0%\",\"before\":[2,2],\"after\":[2,2],\"bounds\":null,\"caption\":null}]"}]}}}}"#;
+        let side = mcp_side_images(line).expect("旁路记录");
+        assert_eq!(side.tool, "mcp__meowo__compare_images");
+        assert_eq!(side.refs.len(), 3, "{:?}", side.refs);
+        assert!(side.refs[2].starts_with("[Image compare: "));
     }
 
     #[test]

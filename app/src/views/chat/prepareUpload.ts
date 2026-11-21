@@ -36,7 +36,8 @@ export async function prepareUpload(file: File): Promise<File> {
   if (!image) return file;
   let bitmap: ImageBitmap;
   try {
-    bitmap = await createImageBitmap(file);
+    // 显式按 EXIF 方向转正：缩小后 EXIF 就没了，旧版 Safari 默认不转，竖拍会变横。
+    bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
   } catch {
     if (heic) throw new UploadPrepareError("heic_unsupported");
     return file;
@@ -55,8 +56,9 @@ export async function prepareUpload(file: File): Promise<File> {
     }
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(bitmap, 0, 0, size.width, size.height);
-    // 截图（png）缩小后仍用 png，文字边缘不糊；照片一律 jpeg。
-    const type = /png/i.test(file.type) && !heic ? "image/png" : "image/jpeg";
+    // 截图（png）缩小后仍用 png，文字边缘不糊；可能带透明的 webp/bmp 也用 png（转 jpeg 透明处会变黑）；
+    // 照片（jpeg、HEIC）用 jpeg。
+    const type = !heic && /png|webp|bmp/i.test(file.type) ? "image/png" : "image/jpeg";
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, JPEG_QUALITY));
     if (!blob) {
       if (heic) throw new UploadPrepareError("heic_unsupported");
@@ -67,4 +69,12 @@ export async function prepareUpload(file: File): Promise<File> {
   } finally {
     bitmap.close?.();
   }
+}
+
+/// 一次只处理一张：一次选十张 1200 万像素的照片，同时解码要近 500MB，iOS 会直接杀掉页面（做空）。
+let queue: Promise<unknown> = Promise.resolve();
+export function prepareUploadQueued(file: File): Promise<File> {
+  const run = queue.then(() => prepareUpload(file), () => prepareUpload(file));
+  queue = run.catch(() => undefined);
+  return run;
 }

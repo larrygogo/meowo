@@ -280,7 +280,7 @@ pub fn policy_body() -> String {
     }
     doc.insert("rule", toml_edit::Item::ArrayOfTables(rules));
     format!(
-        "# 由 Meowo 管理：Meowo 的发图工具 send_image 只把图片显示给用户，免逐次确认。\n{doc}"
+        "# 由 Meowo 管理：Meowo 的发图工具 send_image、对照工具 compare_images 只把图片显示给用户，免逐次确认。\n{doc}"
     )
 }
 

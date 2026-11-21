@@ -22,8 +22,15 @@ export type CompareSummary = {
 
 const MARKER = "[Image compare: ";
 
-/** 从回执里取对照：三张图（差异图可能没有）和摘要。不是对照回执（或摘要读不出来）返回 null。 */
-export function parseCompareReceipt(text: string): { before: string; after: string; diff: string | null; summary: CompareSummary } | null {
+/** 从回执里取对照：三张图（差异图可能没有）和摘要。少于两张图返回 null。摘要行丢了或读不出来时
+ *  summary 为 null，照样给两张图（做空：Codex 脚本把回执转义输出时只还原了引用行，不该因此判失败）。 */
+export function parseCompareReceipt(text: string): { before: string; after: string; diff: string | null; summary: CompareSummary | null } | null {
+  const images = [...text.matchAll(/\[Image(?: #\d+)?: source: ([^\]]+?)\]/g)].map((match) => match[1].trim());
+  if (images.length < 2) return null;
+  return { before: images[0], after: images[1], diff: images[2] ?? null, summary: parseSummary(text) };
+}
+
+function parseSummary(text: string): CompareSummary | null {
   const line = text.split("\n").map((entry) => entry.trim()).reverse().find((entry) => entry.startsWith(MARKER) && entry.endsWith("]"));
   if (!line) return null;
   let raw: Record<string, unknown>;
@@ -40,19 +47,12 @@ export function parseCompareReceipt(text: string): { before: string; after: stri
   const bounds = Array.isArray(raw.bounds) && raw.bounds.length === 4 && raw.bounds.every((n) => typeof n === "number")
     ? raw.bounds as [number, number, number, number]
     : null;
-  const images = [...text.matchAll(/\[Image(?: #\d+)?: source: ([^\]]+?)\]/g)].map((match) => match[1].trim());
-  if (images.length < 2) return null;
   return {
-    before: images[0],
-    after: images[1],
-    diff: images[2] ?? null,
-    summary: {
-      changed: typeof raw.changed === "string" ? raw.changed : "",
-      before,
-      after,
-      bounds,
-      caption: typeof raw.caption === "string" && raw.caption.trim() ? raw.caption.trim() : null,
-    },
+    changed: typeof raw.changed === "string" ? raw.changed : "",
+    before,
+    after,
+    bounds,
+    caption: typeof raw.caption === "string" && raw.caption.trim() ? raw.caption.trim() : null,
   };
 }
 
@@ -79,7 +79,7 @@ export const CompareMessage = memo(function CompareMessage({ item, result }: { i
   } else {
     content = <CompareCard {...parsed} />;
   }
-  const caption = parsed?.summary.caption ?? null;
+  const caption = parsed?.summary?.caption ?? null;
   return (
     <article className="chat-message chat-sent" data-enter-id={item.id}>
       {content}
@@ -88,7 +88,10 @@ export const CompareMessage = memo(function CompareMessage({ item, result }: { i
   );
 });
 
-function CompareCard({ before, after, diff, summary }: { before: string; after: string; diff: string | null; summary: CompareSummary }) {
+/** 画布比这个高宽比还高（整页长截图）时，舞台限高、标「长图」，点开看全图。 */
+const TALL_RATIO = 1.3;
+
+function CompareCard({ before, after, diff, summary }: { before: string; after: string; diff: string | null; summary: CompareSummary | null }) {
   const t = useT();
   const [ref, inView] = useInView<HTMLElement>();
   const [mode, setMode] = useState<"swipe" | "diff">("swipe");
@@ -98,14 +101,22 @@ function CompareCard({ before, after, diff, summary }: { before: string; after: 
   const afterLoad = useImageLoad(after);
   const drag = useRef<{ id: number; x: number; moved: boolean } | null>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  const [diffFailed, setDiffFailed] = useState(false);
 
+  // 两张图的尺寸：摘要里有就用摘要（图还没加载就能占好位），没有就等图读到（读到之前按 16:10 占位）。
+  const natural = (load: { natural: { w: number; h: number } | null }): [number, number] | null => (load.natural ? [load.natural.w, load.natural.h] : null);
+  const beforeSize = summary?.before ?? natural(beforeLoad) ?? [16, 10];
+  const afterSize = summary?.after ?? natural(afterLoad) ?? [16, 10];
   // 画布按两张图的最大宽高：尺寸不同时，较小的那张从左上角摆起，空出来的地方就是「多出来的部分」。
-  const width = Math.max(summary.before[0], summary.after[0]);
-  const height = Math.max(summary.before[1], summary.after[1]);
+  const width = Math.max(beforeSize[0], afterSize[0]);
+  const height = Math.max(beforeSize[1], afterSize[1]);
+  const tall = height / width > TALL_RATIO;
   const pct = (value: number, total: number) => `${(value / total) * 100}%`;
-  const place = (size: [number, number]) => ({ width: pct(size[0], width), height: pct(size[1], height) });
+  const place = (size: readonly [number, number]) => ({ width: pct(size[0], width), height: pct(size[1], height) });
 
-  const changed = summary.bounds !== null;
+  const bounds = summary?.bounds ?? null;
+  const changed = bounds !== null;
+  const hasDiff = !!diff && !diffFailed;
   const items: GalleryItem[] = useMemo(() => {
     const entry = (path: string, label: string): GalleryItem => ({ src: safeFileSrc(path) ?? "", name: `${label} · ${fileNameOf(path)}`, caption: label, path });
     const list = [entry(before, t.chat.compareBefore), entry(after, t.chat.compareAfter)];
@@ -126,6 +137,8 @@ function CompareCard({ before, after, diff, summary }: { before: string; after: 
   const diffSrc = show && diff ? safeFileSrc(diff) : null;
   const ready = !!beforeLoad.natural && !!afterLoad.natural;
 
+  // 点开大图从当前看的那张开始：差异视图开差异图，滑块偏左（露出的多是改后）开改后。
+  const openIndex = () => (mode === "diff" && hasDiff ? 2 : split < 50 ? 1 : 0);
   const moveTo = (clientX: number) => {
     const stage = stageRef.current;
     if (!stage) return;
@@ -152,7 +165,7 @@ function CompareCard({ before, after, diff, summary }: { before: string; after: 
     drag.current = null;
     if (!current || current.id !== event.pointerId) return;
     // 没拖动就是点一下：看大图，从当前看的那张开始。
-    if (!current.moved && ready) setGallery(mode === "diff" && diff ? 2 : split < 50 ? 1 : 0);
+    if (!current.moved && ready) setGallery(openIndex());
   };
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const step = event.shiftKey ? 10 : 2;
@@ -160,19 +173,19 @@ function CompareCard({ before, after, diff, summary }: { before: string; after: 
     else if (event.key === "ArrowRight") setSplit((value) => Math.min(100, value + step));
     else if (event.key === "Home") setSplit(0);
     else if (event.key === "End") setSplit(100);
-    else if (event.key === "Enter" || event.key === " ") setGallery(split < 50 ? 1 : 0);
+    else if (event.key === "Enter" || event.key === " ") setGallery(openIndex());
     else return;
     event.preventDefault();
   };
 
-  const [bx, by, bw, bh] = summary.bounds ?? [0, 0, 0, 0];
-  const sizes = summary.before[0] !== summary.after[0] || summary.before[1] !== summary.after[1];
+  const [bx, by, bw, bh] = bounds ?? [0, 0, 0, 0];
+  const sizes = !!summary && (summary.before[0] !== summary.after[0] || summary.before[1] !== summary.after[1]);
+  const view = mode === "diff" && hasDiff ? "diff" : "swipe";
   return (
-    <figure ref={ref} className="chat-compare" data-mode={mode} data-state={ready ? "ready" : "loading"}>
+    <figure ref={ref} className="chat-compare" data-mode={view} data-state={ready ? "ready" : "loading"} data-tall={tall || undefined}>
       <div
         ref={stageRef}
         className="chat-compare-stage"
-        style={{ aspectRatio: `${width} / ${height}` }}
         role="slider"
         tabIndex={0}
         aria-label={t.chat.compareSlider}
@@ -186,37 +199,47 @@ function CompareCard({ before, after, diff, summary }: { before: string; after: 
         onPointerCancel={() => { drag.current = null; }}
         onKeyDown={onKeyDown}
       >
-        {mode === "swipe" ? (
+        {/* 画布按两张图的真实比例；舞台限高，整页长截图只露顶部一段（点开看全图）。 */}
+        <div className="chat-compare-canvas" style={{ aspectRatio: `${width} / ${height}` }}>
+          {view === "swipe" ? (
+            <>
+              {beforeSrc && <img className="chat-compare-img" src={beforeSrc} alt={t.chat.compareBefore} style={place(beforeSize)} draggable={false} onLoad={beforeLoad.onLoad} onError={beforeLoad.onError} />}
+              <div className="chat-compare-after" style={{ clipPath: `inset(0 0 0 ${split}%)` }}>
+                {afterSrc && <img className="chat-compare-img" src={afterSrc} alt={t.chat.compareAfter} style={place(afterSize)} draggable={false} onLoad={afterLoad.onLoad} onError={afterLoad.onError} />}
+              </div>
+            </>
+          ) : (
+            diffSrc && <img className="chat-compare-img" src={diffSrc} alt={t.chat.compareDiff} style={{ width: "100%", height: "100%" }} draggable={false}
+              onError={() => { setDiffFailed(true); setMode("swipe"); }} />
+          )}
+          {changed && (
+            <span className="chat-compare-box" aria-hidden="true"
+              style={{ left: pct(bx, width), top: pct(by, height), width: pct(bw, width), height: pct(bh, height) }} />
+          )}
+        </div>
+        {view === "swipe" ? (
           <>
-            {beforeSrc && <img className="chat-compare-img" src={beforeSrc} alt={t.chat.compareBefore} style={place(summary.before)} draggable={false} onLoad={beforeLoad.onLoad} onError={beforeLoad.onError} />}
-            <div className="chat-compare-after" style={{ clipPath: `inset(0 0 0 ${split}%)` }}>
-              {afterSrc && <img className="chat-compare-img" src={afterSrc} alt={t.chat.compareAfter} style={place(summary.after)} draggable={false} onLoad={afterLoad.onLoad} onError={afterLoad.onError} />}
-            </div>
             <span className="chat-compare-handle" style={{ left: `${split}%` }} aria-hidden="true"><span /></span>
             <span className="chat-compare-tag is-before">{t.chat.compareBefore}</span>
             <span className="chat-compare-tag is-after">{t.chat.compareAfter}</span>
           </>
         ) : (
-          <>
-            {diffSrc && <img className="chat-compare-img" src={diffSrc} alt={t.chat.compareDiff} style={{ width: "100%", height: "100%" }} draggable={false} />}
-            <span className="chat-compare-tag is-before">{t.chat.compareDiffTag}</span>
-          </>
+          <span className="chat-compare-tag is-before">{t.chat.compareDiffTag}</span>
         )}
-        {changed && (
-          <span className="chat-compare-box" aria-hidden="true"
-            style={{ left: pct(bx, width), top: pct(by, height), width: pct(bw, width), height: pct(bh, height) }} />
-        )}
+        {tall && <span className="chat-sent-badge">{t.chat.imageLong}</span>}
       </div>
       <figcaption className="chat-compare-bar">
-        <span className="chat-compare-stat" data-changed={changed || undefined}>
-          {changed ? t.chat.compareChanged(summary.changed) : t.chat.compareNone}
-        </span>
+        {summary && (
+          <span className="chat-compare-stat" data-changed={changed || undefined}>
+            {changed ? t.chat.compareChanged(summary.changed) : t.chat.compareNone}
+          </span>
+        )}
         {changed && <span className="chat-compare-meta">{t.chat.compareRegion(bw, bh)}</span>}
-        {sizes && <span className="chat-compare-meta">{t.chat.compareSizes(`${summary.before[0]}×${summary.before[1]}`, `${summary.after[0]}×${summary.after[1]}`)}</span>}
-        {diff && (
+        {sizes && summary && <span className="chat-compare-meta">{t.chat.compareSizes(`${summary.before[0]}×${summary.before[1]}`, `${summary.after[0]}×${summary.after[1]}`)}</span>}
+        {hasDiff && (
           <span className="chat-compare-seg" role="group" aria-label={t.chat.compareView}>
-            <button type="button" aria-pressed={mode === "swipe"} onClick={() => setMode("swipe")}>{t.chat.compareSwipe}</button>
-            <button type="button" aria-pressed={mode === "diff"} onClick={() => setMode("diff")}>{t.chat.compareDiff}</button>
+            <button type="button" aria-pressed={view === "swipe"} onClick={() => setMode("swipe")}>{t.chat.compareSwipe}</button>
+            <button type="button" aria-pressed={view === "diff"} onClick={() => setMode("diff")}>{t.chat.compareDiff}</button>
           </span>
         )}
       </figcaption>

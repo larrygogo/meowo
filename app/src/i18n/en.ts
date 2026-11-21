@@ -740,7 +740,7 @@ export const en: Dict = {
     // Attachment type badges (tiny monospace tag on each compose attachment chip).
     attachmentFile: "FILE",
     attachmentLimit: (max) => `Up to ${max} attachments; the rest were skipped`,
-    photoHeicUnsupported: "This photo is HEIC and this browser can't convert it. Set the camera to \"Most Compatible\" or send a screenshot instead",
+    photoHeicUnsupported: "This HEIC photo couldn't be converted to JPEG (browser support or size). Set the camera to \"Most Compatible\" or send a screenshot instead",
     attachmentInstruction: attachmentInstructionEn,
     approvalTitle: "Agent requests permission",
     approvalPending: vocab.request.approval,

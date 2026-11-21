@@ -490,7 +490,7 @@ pub fn validate(bytes: &[u8]) -> Result<&'static str, ImageError> {
 }
 
 /// [`validate`] 里不栅格化的那部分（便宜的检查）。落盘时先做它，算出文件名，已经有副本就不再栅格化。
-fn precheck(bytes: &[u8]) -> Result<&'static str, ImageError> {
+pub fn precheck(bytes: &[u8]) -> Result<&'static str, ImageError> {
     if bytes.len() as u64 > IMAGE_MAX_BYTES {
         return Err(too_large(bytes.len() as u64));
     }

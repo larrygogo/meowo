@@ -878,7 +878,7 @@ export const zh = {
     // 附件徽章：图片/文件的类型小标签（compose 附件行 8px 等宽小块）。
     attachmentFile: "文件",
     attachmentLimit: (max: number) => `最多添加 ${max} 个附件，超出的已忽略`,
-    photoHeicUnsupported: "这张照片是 HEIC 格式，这台手机的浏览器转不了。请在相机设置里选「兼容性最佳」，或截个图再发",
+    photoHeicUnsupported: "这张 HEIC 照片没能转成 JPEG（浏览器不支持，或照片太大）。请在相机设置里选「兼容性最佳」，或截个图再发",
     // 拼进发给 agent 的消息里，必须跟随界面语言——英文界面混入中文指令会把 agent 的回答语言带偏。
     attachmentInstruction: attachmentInstructionZh,
     approvalTitle: "Agent 请求权限",

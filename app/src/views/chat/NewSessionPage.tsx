@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { type AgentId, type LiveSession, type QueuedPromptDto, agentName, getSessionAdminPage, listSubdirectories, promptQueueOrphans, promptQueueRestoreOrphan, savePastedAttachment } from "../../api";
 import { formatBackendError } from "../../i18n/errors";
 import { type Attachment, attachmentOf, base64OfBuffer } from "./drafts";
-import { prepareUpload, UploadPrepareError } from "./prepareUpload";
+import { prepareUploadQueued, UploadPrepareError } from "./prepareUpload";
 import { remoteUi } from "../../remoteMode";
 import { ImageRef } from "./Message";
 import { fmtShortAgo } from "../sticker/helpers";
@@ -116,9 +116,10 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
 
   const pasteFiles = async (files: File[]) => {
     setPasting((count) => count + 1);
-    const results = await Promise.allSettled(files.map(async (picked) => {
+    // 超过上限的那些不处理也不上传（之前先全部解码再截，多选的照片白白吃内存）。
+    const results = await Promise.allSettled(files.slice(0, 12).map(async (picked) => {
       // 手机上与对话页同一套：大照片缩到 2048、HEIC 转 JPEG（prepareUpload.ts）。
-      const file = remoteUi() ? await prepareUpload(picked) : picked;
+      const file = remoteUi() ? await prepareUploadQueued(picked) : picked;
       const path = await savePastedAttachment(file.name || "pasted.png", base64OfBuffer(await file.arrayBuffer()));
       return { ...attachmentOf(path), size: file.size };
     }));

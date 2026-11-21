@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fitEdge, isHeic, prepareUpload, UploadPrepareError } from "./prepareUpload";
+import { fitEdge, isHeic, prepareUpload, prepareUploadQueued, UploadPrepareError } from "./prepareUpload";
 
 // jsdom 没有图片解码和 canvas 导出：createImageBitmap 按测试给尺寸；toBlob 交回一个带类型的假图。
 let drawn: { width: number; height: number } | null = null;
@@ -38,6 +38,31 @@ describe("手机发照片前的处理", () => {
     expect(await prepareUpload(gif)).toBe(gif);
     const text = new File(["a"], "a.txt", { type: "text/plain" });
     expect(await prepareUpload(text)).toBe(text);
+  });
+
+  it("按 EXIF 方向解码；可能带透明的 webp 缩小后用 png，不变黑底", async () => {
+    const decode = bitmap(4000, 3000);
+    vi.stubGlobal("createImageBitmap", decode);
+    const out = await prepareUpload(new File(["a"], "sticker.webp", { type: "image/webp" }));
+    expect(decode).toHaveBeenCalledWith(expect.any(File), { imageOrientation: "from-image" });
+    expect(out.type).toBe("image/png");
+    expect(out.name).toBe("sticker.png");
+  });
+
+  it("多张照片一张一张处理，不同时解码", async () => {
+    let active = 0;
+    let peak = 0;
+    vi.stubGlobal("createImageBitmap", vi.fn(async () => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return { width: 4000, height: 3000, close: () => {} };
+    }));
+    const files = Array.from({ length: 4 }, (_, i) => new File(["a"], `p${i}.jpg`, { type: "image/jpeg" }));
+    const out = await Promise.all(files.map((file) => prepareUploadQueued(file)));
+    expect(out.map((file) => file.name)).toEqual(["p0.jpg", "p1.jpg", "p2.jpg", "p3.jpg"]);
+    expect(peak).toBe(1);
   });
 
   it("截图（png）缩小后仍是 png，文字不糊", async () => {

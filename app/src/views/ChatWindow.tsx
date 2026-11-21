@@ -101,7 +101,7 @@ import { usePanel } from "./chat/usePanel";
 import { SessionInfo } from "./chat/SessionInfo";
 import { ImageAnnotator } from "./chat/ImageAnnotator";
 import { ImageReplyContext } from "./chat/imageReply";
-import { prepareUpload, UploadPrepareError } from "./chat/prepareUpload";
+import { prepareUploadQueued, UploadPrepareError } from "./chat/prepareUpload";
 import { ChatCwdContext } from "./chat/ToolActivity";
 import { ChatSessionContext } from "./chat/remoteImageGate";
 import { WelcomePanel, type WelcomeInfo } from "./chat/WelcomePanel";
@@ -3749,9 +3749,10 @@ export function ChatWindow() {
   /// 交给 CLI 自己读」——先经宿主落成临时文件拿到路径，再走与文件选择器完全相同的流程。
   /// 截图（剪贴板位图）与资源管理器里复制的文件都会出现在 clipboardData.files 里。
   const pasteAttachments = async (files: File[]) => {
-    const results = await Promise.allSettled(files.map(async (picked) => {
+    // 超过上限的那些不处理也不上传（之前先全部解码再截，多选的照片白白吃内存）。
+    const results = await Promise.allSettled(files.slice(0, 12).map(async (picked) => {
       // 手机上：大照片先缩到 2048、HEIC 转 JPEG（prepareUpload.ts），模型收得下、传得动。
-      const file = remoteUi() ? await prepareUpload(picked) : picked;
+      const file = remoteUi() ? await prepareUploadQueued(picked) : picked;
       const data = base64OfBuffer(await file.arrayBuffer());
       // 剪贴板截图统一叫 image.png；名字进的是带时间戳的独立子目录，不会互踩。
       const path = await savePastedAttachment(file.name || "pasted.png", data);
@@ -3770,7 +3771,7 @@ export function ChatWindow() {
     // formatBackendError 与其余错误路径同一口径——String(reason) 会把英文技术串原样上屏。
     setAttachmentNotice(failed
       ? failed.reason instanceof UploadPrepareError ? t.chat.photoHeicUnsupported : formatBackendError(failed.reason, t.locale)
-      : attachmentsRef.current.length + fresh.length > 12 ? t.chat.attachmentLimit(12) : "");
+      : attachmentsRef.current.length + fresh.length > 12 || files.length > 12 ? t.chat.attachmentLimit(12) : "");
     setAttachments((current) => [...current, ...fresh].slice(0, 12));
   };
   /// 图片标注：path 是要标的附件；replace 非空时标完替换掉这张附件。
