@@ -4597,19 +4597,59 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 轨道必须显式定成 minmax(0,1fr)：隐式 auto 轨道随内容撑开，img 的 max-height:100%
    无确定参照而失效，高图初始就溢出舞台被 overflow 切掉（无头 Edge 实测复现）。 */
 .chat-lightbox-stage { position: absolute; inset: 0; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center; padding: calc(48px + env(safe-area-inset-top, 0px)) 48px calc(48px + env(safe-area-inset-bottom, 0px)); overflow: hidden; touch-action: none; }
-.chat-lightbox-stage img { max-width: 100%; max-height: 100%; border-radius: var(--radius-md); box-shadow: var(--shadow-xl); cursor: grab; user-select: none; }
+.chat-lightbox-stage img { max-width: 100%; max-height: 100%; border-radius: var(--radius-md); box-shadow: var(--shadow-xl); cursor: grab; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .chat-lightbox-stage img:active { cursor: grabbing; }
-/* 手机页避开刘海与状态栏（安全区，与 mobile.css 的标题行同一个做法）。 */
-.chat-lightbox-bar { position: absolute; top: calc(14px + env(safe-area-inset-top, 0px)); right: calc(14px + env(safe-area-inset-right, 0px)); z-index: calc(var(--z-raised) + 1); display: flex; gap: var(--sp-6); }
-.chat-lightbox-bar button { min-width: 34px; height: 34px; padding: 0 var(--sp-8); display: grid; place-items: center; border: 0; border-radius: var(--radius-md); background: #2c2c30; color: #fff; font-size: var(--text-lg); cursor: pointer; }
-/* 按钮底不透明：半透明时底下的标题行文字会透到按钮里（手机浅色实拍）。 */
-.chat-lightbox-bar button:hover { background: #45454b; }
-.chat-lightbox-bar .chat-lightbox-zoom { font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
-.chat-lightbox-bar .chat-lightbox-action { display: inline-flex; align-items: center; gap: var(--sp-6); padding: 0 var(--sp-10); font-size: var(--text-sm); }
+/* 沉浸式（2026-11-22）：图是主角，界面收在上下两条渐变里，不再是右上角一排同样重量的实心按钮。
+   上条：左边「2 / 5」与文件名，右边复制、保存、在文件夹中显示、关闭（幽灵按钮）。下条：说明、手机圆点、缩放。
+   两条都避开安全区（刘海、底部横条，与 mobile.css 的标题行同一个做法）。 */
+.chat-lightbox-top, .chat-lightbox-bottom { position: absolute; left: 0; right: 0; z-index: calc(var(--z-raised) + 1); color: #fff; transition: opacity var(--dur-fast) var(--ease-out); }
+.chat-lightbox-top { top: 0; display: flex; align-items: center; gap: var(--sp-10); padding: calc(10px + env(safe-area-inset-top, 0px)) calc(12px + env(safe-area-inset-right, 0px)) var(--sp-18) calc(18px + env(safe-area-inset-left, 0px)); background: linear-gradient(rgba(0, 0, 0, .55), rgba(0, 0, 0, 0)); pointer-events: none; }
+.chat-lightbox-top > * { pointer-events: auto; }
+.chat-lightbox-count { flex: none; font-size: var(--text-sm); font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, .86); }
+.chat-lightbox-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); color: rgba(255, 255, 255, .6); }
+.chat-lightbox-bar { flex: none; display: flex; align-items: center; gap: var(--sp-2); }
+.chat-lightbox-bar button, .chat-lightbox-zoombar button { min-width: 34px; height: 34px; padding: 0 var(--sp-8); display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-6); border: 0; border-radius: var(--radius-md); background: transparent; color: rgba(255, 255, 255, .9); font-size: var(--text-sm); cursor: pointer; }
+.chat-lightbox-bar button:hover, .chat-lightbox-zoombar button:hover { background: rgba(255, 255, 255, .12); color: #fff; }
+.chat-lightbox-bar .chat-lightbox-action[data-state="done"] { color: var(--cc-ok-text, #7ee2a8); }
+.chat-lightbox-close { margin-left: var(--sp-4); }
 .chat-lightbox-note { align-self: center; max-width: 280px; padding: var(--sp-4) var(--sp-8); border-radius: var(--radius-md); background: rgba(0, 0, 0, .6); color: #fff; font-size: var(--text-xs); }
+/* 左右切换：圆形半透明，放在舞台两侧中线（Telegram 桌面、Claude.ai 的位置）。 */
+.chat-lightbox-nav { position: absolute; top: 50%; z-index: calc(var(--z-raised) + 1); width: 44px; height: 44px; margin-top: -22px; display: grid; place-items: center; border: 0; border-radius: 50%; background: rgba(255, 255, 255, .12); color: #fff; cursor: pointer; transition: opacity var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
+.chat-lightbox-nav:hover { background: rgba(255, 255, 255, .22); }
+.chat-lightbox-nav.is-prev { left: calc(16px + env(safe-area-inset-left, 0px)); }
+.chat-lightbox-nav .is-mirrored { transform: scaleX(-1); }
+.chat-lightbox-nav.is-next { right: calc(16px + env(safe-area-inset-right, 0px)); }
+.chat-lightbox-bottom { bottom: 0; display: flex; flex-direction: column; align-items: center; gap: var(--sp-10); padding: var(--sp-24) var(--sp-16) calc(16px + env(safe-area-inset-bottom, 0px)); background: linear-gradient(rgba(0, 0, 0, 0), rgba(0, 0, 0, .55)); pointer-events: none; }
+.chat-lightbox-bottom > * { pointer-events: auto; }
 /* 发图时 agent 附的那句话：看大图时也知道这张图是干什么的。 */
-.chat-lightbox-stage.has-caption { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
-.chat-lightbox-caption { position: absolute; left: 50%; bottom: calc(var(--sp-18) + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); max-width: min(720px, calc(100% - 32px)); padding: var(--sp-8) var(--sp-14); border-radius: var(--radius-lg); background: rgba(0, 0, 0, .6); color: #fff; font-size: var(--text-sm); line-height: var(--leading-normal); text-align: center; overflow-wrap: anywhere; }
+.chat-lightbox-caption { max-width: min(720px, 100%); color: #fff; font-size: var(--text-sm); line-height: var(--leading-normal); text-align: center; overflow-wrap: anywhere; text-shadow: 0 1px 2px rgba(0, 0, 0, .6); }
+.chat-lightbox-dots { display: none; gap: 6px; }
+.chat-lightbox-dots span { width: 6px; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, .35); }
+.chat-lightbox-dots span[data-current] { background: #fff; }
+.chat-lightbox-zoombar { display: flex; gap: var(--sp-2); padding: var(--sp-2); border-radius: var(--radius-md); background: rgba(0, 0, 0, .55); }
+.chat-lightbox-zoombar .chat-lightbox-zoom { min-width: 92px; font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+.chat-lightbox-stage.has-caption { padding-bottom: calc(110px + env(safe-area-inset-bottom, 0px)); }
+.chat-lightbox-stage { padding-top: calc(64px + env(safe-area-inset-top, 0px)); padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px)); }
+/* 手机（触屏）：缩放靠双指，不给 − / + 和左右箭头（滑动切换），给圆点；轻点图片切换界面显隐（iOS 照片）。
+   图铺满宽度：舞台左右不留 48px。 */
+@media (pointer: coarse) {
+  .chat-lightbox-zoombar, .chat-lightbox-nav, .chat-lightbox-name { display: none; }
+  .chat-lightbox-dots { display: flex; }
+  .chat-lightbox-top { justify-content: space-between; }
+  .chat-lightbox-count { flex: 1; text-align: center; order: 1; }
+  .chat-lightbox-bar { display: contents; }
+  .chat-lightbox-close { order: 0; margin: 0; }
+  .chat-lightbox-bar > :not(.chat-lightbox-close) { order: 2; }
+  .chat-lightbox-bar .chat-lightbox-action span, .chat-lightbox-bar .chat-sent-action span { display: none; }
+  .chat-lightbox-stage, .chat-lightbox-stage.has-caption { padding: 0; }
+  /* 手机看图纯黑底（iOS 照片、微信）；下滑关闭时由行内样式渐淡。 */
+  .chat-lightbox:not([style*="background"]) { background: #000; }
+  .chat-lightbox-stage img { border-radius: 0; box-shadow: none; }
+}
+.chat-lightbox[data-chrome="hidden"] .chat-lightbox-top,
+.chat-lightbox[data-chrome="hidden"] .chat-lightbox-bottom,
+.chat-lightbox[data-chrome="hidden"] .chat-lightbox-nav { opacity: 0; pointer-events: none; }
+.chat-lightbox[data-chrome="hidden"] .chat-lightbox-top > *, .chat-lightbox[data-chrome="hidden"] .chat-lightbox-bottom > * { pointer-events: none; }
 
 /* agent 发来的图片消息（ChatImage.tsx 的 SentImageMessage）。 */
 .chat-sent { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-6); }
@@ -4636,6 +4676,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-sent-tile[data-shape="album"][data-state="loading"] { width: auto; height: auto; }
 .chat-sent-tile[data-shape="album"] .chat-sent-open,
 .chat-sent-tile[data-shape="album"] .chat-sent-img { width: 100%; height: 100%; max-width: none; max-height: none; object-fit: cover; }
+/* 三张拼满（Telegram 的一大两小）：原先排成 2+1，第三张单独占半行、右边空着（2026-11-22 审计）。 */
+.chat-sent-media[data-count="3"] > .chat-sent-tile[data-shape="album"]:first-child { grid-row: span 2; aspect-ratio: auto; }
 .chat-sent-badge { position: absolute; right: var(--sp-6); bottom: var(--sp-6); padding: 1px var(--sp-6); border-radius: var(--radius-xs); background: rgba(0, 0, 0, .55); color: #fff; font-size: var(--text-2xs); }
 .chat-sent-actions { position: absolute; top: var(--sp-6); right: var(--sp-6); display: flex; gap: var(--sp-4); opacity: 0; transition: opacity var(--dur-fast) var(--ease-in-out); }
 .chat-sent-tile:hover .chat-sent-actions,

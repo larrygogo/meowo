@@ -16,7 +16,7 @@ import { icImage } from "../../icons/glyphs.chat";
 import { icAlert, icDownload, icFolderOpen } from "../../icons/glyphs";
 import { FILE_TOKEN_REFRESHED_EVENT, IMAGE_LOAD_FAILED_EVENT, remoteUi } from "../../remoteMode";
 import { useFlash } from "../../hooks/useFlash";
-import { Lightbox } from "./Lightbox";
+import { collectGallery, galleryAttrs, Lightbox, type GalleryItem } from "./Lightbox";
 import { ChatCwdContext } from "./chatCwd";
 import { ChatSessionContext, useRemoteImageGate } from "./remoteImageGate";
 import { useToolRunState } from "./toolState";
@@ -234,11 +234,14 @@ function ImageFailure({ title, reason, name }: { title: string; reason: string; 
   );
 }
 
+/** 大图里每张图的「保存」「在文件夹中显示」：有本地路径的才有。 */
+const lightboxActions = (item: GalleryItem) => (item.path ? <ImageActions path={item.path} /> : null);
+
 /// 一张发来的图。多图时外层按相册排（data-count），单张按原比例摆。
 const SentImageTile = memo(function SentImageTile({ path, caption, album }: { path: string; caption: string | null; album: boolean }) {
   const t = useT();
   const [ref, inView] = useInView<HTMLElement>();
-  const [open, setOpen] = useState(false);
+  const [gallery, setGallery] = useState<{ items: GalleryItem[]; index: number } | null>(null);
   const load = useImageLoad(path);
   const name = fileNameOf(path);
   if (isRemotePath(path)) return <ImageFailure title={t.chat.sentImageFailed} reason={t.chat.imageErrors.forbidden} name={name} />;
@@ -247,13 +250,15 @@ const SentImageTile = memo(function SentImageTile({ path, caption, album }: { pa
   const shape = imageShape(load.natural);
   return (
     <figure ref={ref} className="chat-sent-tile" data-shape={album ? "album" : shape ?? undefined} data-state={shape ? "ready" : "loading"}>
-      <button type="button" className="chat-sent-open" aria-label={`${t.chat.sentImageOpen} ${name}`} onClick={() => setOpen(true)} disabled={!shape}>
+      <button type="button" className="chat-sent-open" aria-label={`${t.chat.sentImageOpen} ${name}`} disabled={!shape}
+        {...(shape ? galleryAttrs({ path, name, caption }) : {})}
+        onClick={(event) => src && setGallery(collectGallery(event.currentTarget, { src, name, caption, path }))}>
         {src && <img className="chat-sent-img" src={src} alt={caption ?? name} referrerPolicy="no-referrer" draggable={false} onLoad={load.onLoad} onError={load.onError} />}
         {!shape && <span className="chat-sent-loading" role="img" aria-label={t.chat.imageLoading}><Icon glyph={icImage} size={20} /></span>}
         {shape === "long" && !album && <span className="chat-sent-badge">{t.chat.imageLong}</span>}
       </button>
       {shape && <div className="chat-sent-actions"><ImageActions path={path} variant="overlay" /></div>}
-      {open && src && <Lightbox src={src} name={name} caption={caption} onClose={() => setOpen(false)} actions={<ImageActions path={path} />} />}
+      {gallery && <Lightbox items={gallery.items} index={gallery.index} onClose={() => setGallery(null)} renderActions={lightboxActions} />}
     </figure>
   );
 });
@@ -340,7 +345,7 @@ export function ToolImageStrip({ paths }: { paths: string[] }) {
 function ToolThumb({ path }: { path: string }) {
   const t = useT();
   const [ref, inView] = useInView<HTMLButtonElement>();
-  const [open, setOpen] = useState(false);
+  const [gallery, setGallery] = useState<{ items: GalleryItem[]; index: number } | null>(null);
   const load = useImageLoad(path);
   const name = fileNameOf(path);
   if (isRemotePath(path)) return <ImageChip name={name} reason={t.chat.imageErrors.forbidden} />;
@@ -350,10 +355,12 @@ function ToolThumb({ path }: { path: string }) {
   return (
     <>
       <button ref={ref} type="button" className="chat-tool-thumb" data-shape={shape ?? undefined} data-state={shape ? "ready" : "loading"}
-        aria-label={`${t.chat.sentImageOpen} ${name}`} data-tip={name} onClick={() => setOpen(true)}>
+        aria-label={`${t.chat.sentImageOpen} ${name}`} data-tip={name}
+        {...(shape ? galleryAttrs({ path, name }) : {})}
+        onClick={(event) => src && setGallery(collectGallery(event.currentTarget, { src, name, path }))}>
         {src && <img src={src} alt={name} referrerPolicy="no-referrer" draggable={false} onLoad={load.onLoad} onError={load.onError} />}
       </button>
-      {open && src && <Lightbox src={src} name={name} onClose={() => setOpen(false)} actions={<ImageActions path={path} />} />}
+      {gallery && <Lightbox items={gallery.items} index={gallery.index} onClose={() => setGallery(null)} renderActions={lightboxActions} />}
     </>
   );
 }
@@ -393,7 +400,7 @@ export function ResolvedImage({ src, alt, mode }: { src: string; alt?: string | 
   const gate = useRemoteImageGate(src);
   const [ref, inView] = useInView<HTMLSpanElement>();
   const [outcome, setOutcome] = useState<ResolveChatImageResult | null>(null);
-  const [open, setOpen] = useState(false);
+  const [gallery, setGallery] = useState<{ items: GalleryItem[]; index: number } | null>(null);
   const path = outcome && "path" in outcome ? outcome.path : null;
   const load = useImageLoad(path);
   const name = alt?.trim() || fileNameOf(src.replace(/[?#].*$/, "")) || src;
@@ -415,11 +422,13 @@ export function ResolvedImage({ src, alt, mode }: { src: string; alt?: string | 
   const cls = mode === "inline" ? "chat-md-image" : "chat-tool-thumb";
   return (
     <span ref={ref} className={cls} data-shape={shape ?? undefined} data-state={shape ? "ready" : "loading"}>
-      <button type="button" className="chat-md-image-open" aria-label={`${t.chat.sentImageOpen} ${name}`} data-tip={name} onClick={() => setOpen(true)} disabled={!shape}>
+      <button type="button" className="chat-md-image-open" aria-label={`${t.chat.sentImageOpen} ${name}`} data-tip={name} disabled={!shape}
+        {...(shape && path ? galleryAttrs({ path, name }) : {})}
+        onClick={(event) => url && path && setGallery(collectGallery(event.currentTarget, { src: url, name, path }))}>
         {url && <img src={url} alt={name} referrerPolicy="no-referrer" draggable={false} onLoad={load.onLoad} onError={load.onError} />}
       </button>
       {!shape && mode === "inline" && <span className="chat-sent-loading" role="img" aria-label={t.chat.imageLoading}><Icon glyph={icImage} size={16} /></span>}
-      {open && url && path && <Lightbox src={url} name={name} onClose={() => setOpen(false)} actions={<ImageActions path={path} />} />}
+      {gallery && <Lightbox items={gallery.items} index={gallery.index} onClose={() => setGallery(null)} renderActions={lightboxActions} />}
     </span>
   );
 }
