@@ -59,3 +59,19 @@ describe("段尾不留孤字（U2）", () => {
     expect(container.querySelector(".chat-md-keep")).toBeNull();
   });
 });
+
+describe("行内代码在分隔符后可换行", () => {
+  it("路径和长标识符在 / . _ 后插入换行点，文字不变", () => {
+    const { container } = render(<ChatMarkdown text={"问题出在 `app/src/chat_image.tsx` 和 `foo` 里"} />);
+    const codes = container.querySelectorAll("code");
+    expect(codes[0].textContent).toBe("app/src/chat_image.tsx");
+    expect(codes[0].querySelectorAll("wbr").length).toBe(4);
+    expect(codes[1].textContent).toBe("foo");
+    expect(codes[1].querySelectorAll("wbr").length).toBe(0);
+  });
+
+  it("围栏代码块不插换行点", () => {
+    const { container } = render(<ChatMarkdown text={"```\na/b/c\n```"} />);
+    expect(container.querySelectorAll("pre wbr").length).toBe(0);
+  });
+});

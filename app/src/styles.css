@@ -6979,7 +6979,7 @@ button.lead-entry-head:hover { background: var(--fill-hover); }
    会把正文切成碎片，阅读节奏被反复打断。文字色不变，对比度不受影响。 */
 /* 行内代码：灰底 + 正文色（对照 Kimi，用户 2026-10-29 定，取代 A+B 改版的主题色底）——强调色按配额
    只留给链接与小指示物；等宽字形与底色已足够把路径/命令从正文里区分出来。 */
-.chat-md :not(pre) > code { padding: var(--sp-1) var(--sp-5); border-radius: var(--radius-sm); background: var(--fill-selected); color: var(--cc-text); font-family: var(--cc-mono); font-size: .88em; }
+.chat-md :not(pre) > code { overflow-wrap: anywhere; padding: var(--sp-1) var(--sp-5); border-radius: var(--radius-sm); background: var(--fill-selected); color: var(--cc-text); font-family: var(--cc-mono); font-size: .88em; }
 /* 外框/底色归 .chat-md-pre 外壳（pre 恒由 CopyablePre 包着），这里只管内边距与横滚。 */
 /* 左内边距 16（原 14）：代码与头行的语言名落在同一列各卡片的内容线上（卡片外缘 +16）。 */
 .chat-md pre { margin: 0; padding: var(--sp-6) var(--sp-14) var(--sp-12) var(--sp-16); overflow-x: auto; }
