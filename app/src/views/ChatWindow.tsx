@@ -79,6 +79,7 @@ import { ModelMenu, effortLabel } from "./chat/ModelMenu";
 import { mustDefer, requestRestarts, useSessionSettings, type TerminalAction } from "./chat/useSessionSettings";
 import { modeChoiceViews, screenShowsAny } from "./chat/modeChoices";
 import { QuestionPanels } from "./chat/QuestionPanels";
+import { appendQuote, QuoteSelection } from "./chat/QuoteSelection";
 import { RemoteTerminalKeys } from "./chat/RemoteTerminalKeys";
 import { peekSessionMeta, prefetchPending, recallHistory, rememberHistory, takePrefetch, trackPrefetch } from "./chat/historyCache";
 import { ChatTitleMenu, ChatTitlePlaceholder } from "./chat/TitleMenus";
@@ -1604,6 +1605,18 @@ export function ChatWindow() {
   insertIntoPromptRef.current = insertIntoPrompt;
   const mentionPrefix = chatUi?.attachment_mention ? "@" : "";
   const mentionPath = useCallback((rel: string) => insertIntoPromptRef.current(`${mentionPrefix}${rel} `), [mentionPrefix]);
+  // 选中 AI 回复里的一段点「引用」：引用块接在输入框已有内容后面（可以连引几段），光标停在后面接着写。
+  // 聚焦不带滚动：对话区停在原来读到的位置（QuoteSelection.tsx）。
+  const quoteIntoPrompt = useCallback((text: string) => {
+    const next = appendQuote(promptRef.current, text);
+    setPrompt(next);
+    requestAnimationFrame(() => {
+      const el = promptInputRef.current;
+      if (!el) return;
+      el.focus({ preventScroll: true });
+      el.setSelectionRange(next.length, next.length);
+    });
+  }, []);
   // 「更改」面板的「交给 agent」（冲突、拉取冲突）：把现成的一句话放进输入框，用户看过再发。
   const insertPanelPrompt = useCallback((text: string) => insertIntoPromptRef.current(text), []);
   const pickStarter = (text: string) => {
@@ -4770,6 +4783,7 @@ export function ChatWindow() {
       <EchoPhaseContext.Provider value={echoPhases}>
       <EchoActionsContext.Provider value={echoActions}>
       <main className="chat-scroll" ref={scrollRef} onScroll={onScroll} hidden={view !== "chat"}>
+        {sessionId !== 0 && view === "chat" && <QuoteSelection root={scrollRef} onQuote={quoteIntoPrompt} />}
         {/* 同步失败降级：已有内容时只挂顶部细横幅继续渲染缓存的对话——轮询周期性地发，
             一次瞬时 IPC 抖动就整屏换错误行，比不提示更吓人。整屏错误只留给「一条都没有」。
             连续失败（syncLost）升级为「同步中断」（C-18）：它只说窗口与后端的通道断了，

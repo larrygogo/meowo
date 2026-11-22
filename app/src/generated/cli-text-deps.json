@@ -1618,7 +1618,7 @@
           "needle": "turn_aborted",
           "note": "0.167.2 rollout 实样（用户中断处的分隔条，68 份里 64 次）；codex.exe 17 处",
           "rule": "record:turn_aborted",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/telemetry.rs:758"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/telemetry.rs:764"
         },
         {
           "legacy": false,
@@ -1646,7 +1646,7 @@
           "needle": "McpToolCall",
           "note": "0.169.0 rollout 真机实样（2026-11-21 探针，exec 脚本只 await 发图不输出时，靠它补回执里的图片引用行）",
           "rule": "record:McpToolCall",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/telemetry.rs:803"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/telemetry.rs:809"
         }
       ],
       "id": "codex",

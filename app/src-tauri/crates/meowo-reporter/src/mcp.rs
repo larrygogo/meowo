@@ -29,8 +29,11 @@ const SEND_IMAGE: &str = "send_image";
 /// 改前改后对照工具名。和发图一样不走浏览器、不受浏览器开关约束。
 const COMPARE_IMAGES: &str = "compare_images";
 
+/// 方案卡工具名。同样不走浏览器、不受浏览器开关约束。
+const OFFER_CHOICES: &str = "offer_choices";
+
 fn is_image_tool(name: &str) -> bool {
-    name == SEND_IMAGE || name == COMPARE_IMAGES
+    name == SEND_IMAGE || name == COMPARE_IMAGES || name == OFFER_CHOICES
 }
 
 #[derive(Clone, Copy)]
@@ -132,20 +135,20 @@ const SEND_IMAGE_HINT: &str = concat!(
     "想让用户看到一张图（你截的图、画的图表、改过的图标、找到的参考图）时，用 send_image 把它发给用户：给本地图片文件的路径，可带一句说明。网络上的图先用你自己的下载工具存到本地再发。图片会直接显示在用户的对话里；只在路径里提到图片，用户是看不到的。",
     "\n\n",
     "改界面（样式、布局、组件）时，动手前先截一张当前画面，改完在同样的页面和窗口大小下再截一张，用 compare_images 把两张发给用户：Meowo 会算出哪里变了，给用户看改前、改后和差异图，你也会拿到变化比例和变化范围。范围超出你想改的地方，说明顺手改坏了别处，先查清楚再汇报。",
+    "\n\n",
+    "要用户拍板、而且看了才能比的取舍（布局、配色、交互方式），先把 2~4 个方案各做出来截图，再用 offer_choices 发一张方案卡让用户点一个，不要写几段文字让用户去想象。调用后先结束这一轮，用户的选择会作为下一条消息发给你。小决定自己定。",
 );
 
 const INSTRUCTIONS_IMAGES_ONLY: &str = SEND_IMAGE_HINT;
 
 const INSTRUCTIONS_WITH_BROWSER: &str = concat!(
     "这是 Meowo 对话窗右侧面板里的浏览器，用户就在旁边看着。凡是要打开网页、在网站上操作（填表、点按钮、查信息）、看本地 dev server 效果的，都优先用这组工具，不用找别的浏览器扩展或桌面控制。需要登录的网站，打开后让用户直接在面板里登录，再继续。用法：先 browser_open 或 browser_snapshot 拿到元素编号（如 e12），再按编号 browser_click / browser_type。提交、付款这类不可撤销的操作，先跟用户确认。面板通常比桌面浏览器窄，快照开头会写当前视口：测响应式布局或按 UA 出页面的 SSR 网站前先看一眼，需要桌面版、手机版或特定请求头时先用 browser_emulate 设好再测。",
-    "
-
-",
+    "\n\n",
     "想让用户看到一张图（你截的图、画的图表、改过的图标、找到的参考图）时，用 send_image 把它发给用户：给本地图片文件的路径，可带一句说明。网络上的图先用你自己的下载工具存到本地再发。图片会直接显示在用户的对话里；只在路径里提到图片，用户是看不到的。",
-    "
-
-",
+    "\n\n",
     "改界面（样式、布局、组件）时，动手前先截一张当前画面，改完在同样的页面和窗口大小下再截一张，用 compare_images 把两张发给用户：Meowo 会算出哪里变了，给用户看改前、改后和差异图，你也会拿到变化比例和变化范围。范围超出你想改的地方，说明顺手改坏了别处，先查清楚再汇报。browser_screenshot 的结果里有截图存下的本地路径，直接拿来用。",
+    "\n\n",
+    "要用户拍板、而且看了才能比的取舍（布局、配色、交互方式），先把 2~4 个方案各做出来截图，再用 offer_choices 发一张方案卡让用户点一个，不要写几段文字让用户去想象。调用后先结束这一轮，用户的选择会作为下一条消息发给你。小决定自己定。",
 );
 
 /// 发图失败的回执固定以 `[Image error: <code>] ` 开头（contract.md）：app 侧的失败已带前缀，
@@ -161,6 +164,20 @@ fn error_text(tool: &str, error: String) -> String {
 /// 发图的本地相对路径按本进程的工作目录补全：本服务器由 agent 拉起，工作目录就是 agent 的；
 /// Meowo 那边不知道 agent 在哪个目录。`~/` 也在这里展开。网址原样转发。
 fn prepare_args(tool: &str, mut args: Value) -> Value {
+    if tool == OFFER_CHOICES {
+        let cwd = std::env::current_dir().ok();
+        if let Some(options) = args.get_mut("options").and_then(Value::as_array_mut) {
+            for option in options {
+                let Some(source) = option.get("image").and_then(Value::as_str).map(str::trim) else {
+                    continue;
+                };
+                if let Some(path) = absolute_source(source, cwd.as_deref()) {
+                    option["image"] = json!(path.to_string_lossy());
+                }
+            }
+        }
+        return args;
+    }
     let keys: &[&str] = match tool {
         SEND_IMAGE => &["source"],
         COMPARE_IMAGES => &["before", "after"],
@@ -292,8 +309,34 @@ fn send_image_tool() -> Value {
     )
 }
 
+fn offer_choices_tool() -> Value {
+    tool(
+        OFFER_CHOICES,
+        "请用户在 2~4 个方案里点一个：Meowo 在对话里把方案并排显示成一张卡（手机上也能点），每个方案可带一张本地截图。用户点选后，卡片会以用户的身份发一条消息告诉你选了哪个（可能附一句补充），也可能一个都不要。用在真正需要用户拍板、而且看了才能比的取舍上：布局、配色、交互方式、文案语气这类。先把每个方案做出来截图（比如用 browser_screenshot），再调用。小决定自己定，不要每步都弹卡。调用后立即返回，不会等用户：收到确认后先结束这一轮，等用户的选择消息到了再按它动手。截图只接受本地文件（PNG、JPEG、GIF、WebP、SVG，单张不超过 20MB），不接受网址。",
+        json!({
+            "question": { "type": "string", "description": "要用户决定的问题，一句话，比如「设置页用哪种布局？」" },
+            "options": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 4,
+                "description": "2~4 个方案，按你推荐的顺序排",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "label": { "type": "string", "description": "方案的短名字，几个字，比如「列表式」" },
+                        "description": { "type": "string", "description": "可选。一句说明这个方案的特点或代价" },
+                        "image": { "type": "string", "description": "可选。这个方案的截图：本地路径（绝对路径，或相对当前工作目录）" }
+                    },
+                    "required": ["label"]
+                }
+            }
+        }),
+        &["question", "options"],
+    )
+}
+
 fn tools(options: Options) -> Vec<Value> {
-    let mut list = vec![send_image_tool(), compare_images_tool()];
+    let mut list = vec![send_image_tool(), compare_images_tool(), offer_choices_tool()];
     if options.browser {
         list.extend(browser_tools());
     }
@@ -458,7 +501,7 @@ mod tests {
             IMAGES_ONLY,
         )
         .unwrap();
-        assert_eq!(names(&list), vec!["send_image".to_string(), "compare_images".to_string()]);
+        assert_eq!(names(&list), vec!["send_image".to_string(), "compare_images".to_string(), "offer_choices".to_string()]);
         let reply = respond(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "browser_snapshot" } }), Some(&channel), IMAGES_ONLY).unwrap();
         assert_eq!(reply["result"]["isError"], true);
         let init = respond(&json!({ "jsonrpc": "2.0", "id": 3, "method": "initialize", "params": {} }), Some(&channel), IMAGES_ONLY).unwrap();

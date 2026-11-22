@@ -26,7 +26,9 @@ import { FoldScopeContext, foldScope } from "./foldMemory";
 import { isSubagentDelegation, type ToolResultItem } from "./shared";
 import { liveTurnStart, SessionAliveContext, TurnLiveContext, type TurnActivity } from "./toolState";
 import { markEntering, trackEntering, type EnterTrack } from "./enterMotion";
-import { isCompareTool, isImageMessage } from "./imageTools";
+import { isChoicesTool, isCompareTool, isImageMessage } from "./imageTools";
+import { ChoiceMessage, parseChoicesReceipt } from "./ChoiceCard";
+import { looksLikeChoiceReply, parseChoiceAnswer, type ChoiceCardText } from "./choiceReply";
 import { CompareMessage } from "./CompareCard";
 
 type SubagentOutcomeInfo = NonNullable<ToolResultItem["subagent"]>;
@@ -52,6 +54,9 @@ type BlockRec = {
   /// 这块不在末尾，却按「还在进行」画的（它后面只跟着回合中途送进去的话）。后面一旦来了新内容它就该
   /// 收起，所以这种块不复用，每次重算（它紧挨着末尾，代价是一两块）。
   trailing: boolean;
+  /// 这块里有还没等到用户回复的方案卡：之后来了用户消息，卡片要据此显示「已选」或「没在卡上选」，
+  /// 所以不复用。这种卡后面还没有用户消息，只会在末尾附近。
+  awaitsReply: boolean;
   nodes: JSX.Element[];
   daySep: boolean;
   reply: number | null;
@@ -170,7 +175,7 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
       // 这块是按另一个活动态生成的（活动态翻了，或回合起点挪了）：从它起重算。能走到这里复用的都不是
       // 末尾那块，所以只看它在不在当前回合里。
       if (block.activity !== null && block.activity !== activityAt(block.start)) break;
-      if (block.trailing) break;
+      if (block.trailing || block.awaitsReply) break;
       keep += 1;
     }
     reuse = cache.blocks.slice(0, keep);
@@ -198,7 +203,7 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
   for (let index = resume ? resume.start : 0; index < items.length;) {
     const item = items[index];
     const previous = blocks[blocks.length - 1];
-    const record: BlockRec = { start: index, lastDayBefore: lastDay, subagentId: null, unresolved: [], activity: null, trailing: false, nodes: [], daySep: false, reply: null, fold: null };
+    const record: BlockRec = { start: index, lastDayBefore: lastDay, subagentId: null, unresolved: [], activity: null, trailing: false, awaitsReply: false, nodes: [], daySep: false, reply: null, fold: null };
     blocks.push(record);
     pushDaySep(record, item);
     // 连续的纯图片用户消息合成一行：Claude Code 把一次多图粘贴记成连续多条独立消息，
@@ -376,6 +381,15 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
     }
     // 正文之前的节点都是过程:回合级折叠从这里切开,之后的正文/改动/页脚留在外面。
     const bodyAt = record.nodes.length;
+    const choiceFollowUp = (entry: ChatItem) => {
+      const receipt = results.get(entry.id);
+      const parsed = receipt && !receipt.is_error ? parseChoicesReceipt(receipt.text) : null;
+      const card = parsed ? { question: parsed.question, labels: parsed.options.map((option) => option.label) } : null;
+      const { texts, settled } = choiceFollowUps(items, items.indexOf(entry), card);
+      // 还没认出答案、也没遇到用户自己打的话：答案可能还在路上（或同一轮别的卡先答了），这块不复用缓存。
+      if (!settled) record.awaitsReply = true;
+      return texts;
+    };
     for (const entry of bodyItems) {
       // 出错卡只有在它就是时间线末尾时才给「继续」（后面已有新内容的旧错误不必再续）。
       const latest = entry.type === "turn_error" && next >= items.length && entry === bodyItems[bodyItems.length - 1];
@@ -383,7 +397,9 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
         // 发图、对照的「正在发送」「已中断」取决于这一段的活动态，与工具行同一个来源。
         record.nodes.push(
           <TurnLiveContext.Provider key={entry.id} value={blockActivity}>
-            {isCompareTool(entry)
+            {isChoicesTool(entry)
+              ? <ChoiceMessage item={entry} result={results.get(entry.id)} followUps={choiceFollowUp(entry)} sessionId={sessionId} />
+              : isCompareTool(entry)
               ? <CompareMessage item={entry} result={results.get(entry.id)} />
               : <SentImageMessage item={entry} result={results.get(entry.id)} />}
           </TurnLiveContext.Provider>,
@@ -469,3 +485,18 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
     </SessionAliveContext.Provider>
   );
 });
+
+/** 方案卡之后的用户消息：一条条收，收到这张卡自己的答案、或一条不像方案卡回复的（用户自己打的话）为止，
+ *  那一条也收进来。同一轮有几张卡时，别的卡的回复排在前面也不会挡住这张卡的答案（ChoiceCard 往后逐条认）。
+ *  settled：已经有了定论（认出答案或用户打了字），这一段可以进缓存；连续几轮都只点卡时不会一直收下去
+ *  （做空第三轮）。card 为空（回执还没到或坏了）时只看「像不像回复」。 */
+export function choiceFollowUps(items: readonly ChatItem[], index: number, card: ChoiceCardText | null = null): { texts: string[]; settled: boolean } {
+  const texts: string[] = [];
+  for (let i = index + 1; i < items.length; i += 1) {
+    const entry = items[i];
+    if (entry.type !== "user_text") continue;
+    texts.push(entry.text);
+    if ((card && parseChoiceAnswer(entry.text, card)) || !looksLikeChoiceReply(entry.text)) return { texts, settled: true };
+  }
+  return { texts, settled: false };
+}

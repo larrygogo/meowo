@@ -506,11 +506,38 @@ fn session(data: &Value, registry: &Path) -> Option<String> {
     // → 登记表。恢复会话时 session_id 不变（2.1.319 实测），但 active 全项目只有一个：同项目
     // 别的会话开了新任务，它就指着别人的。此前 active 优先，恢复后注入的是别人的任务（安装版
     // reporter 实测复现，2026-11-09）。登记表放最后：它不分项目，放前面会把别的项目的任务带进来。
+    // `.lead/active` 那一档要看归属（与面板 visible_to 同一规则）：此前不看，同项目里无关的新会话
+    // （只想问个小问题）也被注入别的会话正在实施的任务，一次两万多字（leader 2026-11-22：
+    // 「每次会话是不是都会把整个面板的东西都发给这个新的会话」）。
     let task = cwd
         .and_then(|c| own_task(c, sid))
-        .or_else(|| find_task(cwd))
-        .or_else(|| task_of_session(sid, registry))?;
-    session_context(&task, sid)
+        .or_else(|| find_task(cwd).filter(|task| visible_to(task, Some(sid))))
+        .or_else(|| task_of_session(sid, registry));
+    match task {
+        Some(task) => session_context(&task, sid),
+        None => clear_hint(data, cwd),
+    }
+}
+
+/// `/clear` 或压缩后，`.lead/active` 指的任务对本会话不可见时，只给一行指引，不给摘要（做空审查）：
+/// `/clear` 会换 session_id，而任务的 .owner 还是旧 id，按归属规则这个会话拿不到注入，
+/// 「/clear 后说一句继续」就接不上了。一行指引只说任务在哪、到了哪个阶段，内容不串到别的会话；
+/// 新开的会话（startup、resume）不给，免得无关会话也收到。
+fn clear_hint(data: &Value, cwd: Option<&str>) -> Option<String> {
+    let source = data.get("source").and_then(Value::as_str)?;
+    if !matches!(source, "clear" | "compact") {
+        return None;
+    }
+    let task = find_task(cwd)?;
+    let phase = phase_of(&task);
+    if phase == "done" {
+        return None;
+    }
+    let hint = format!(
+        "[lead] 项目里有一个进行中的任务：{}（phase: {phase}），不归这个会话。如果它是你在 /clear 或压缩前做的、用户又说要继续，先读它的 progress.md 和 acceptance.json 再接着推进；否则不用管它。",
+        task.display()
+    );
+    Some(json!({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": hint}}).to_string())
 }
 
 fn session_context(task: &Path, sid: &str) -> Option<String> {
@@ -534,12 +561,14 @@ fn session_context(task: &Path, sid: &str) -> Option<String> {
         .collect();
     let leader_n = open.len() - agent_n;
     let live = items.iter().filter(|i| waived(i).is_none()).count();
+    // 只放恢复工作必须的摘要，其余给路径按需读（任务 20261122-lead-hook-slim）：此前把规格、进度、
+    // 决定、证据、product、standards 原文都塞进来，上限 2.4 万字，多数时候用不上。
     let mut parts = vec![
         format!(
             "[lead] 这个项目有进行中的任务：{}（phase: {phase}）。如果用户这次说的事与它有关，就按 lead skill 的流程继续推进，不要等用户说“继续”；无关就正常处理用户的请求。",
             task.display()
         ),
-        format!("## SPEC.md\n{}", truncate(&read_text(&task.join("SPEC.md"), false), 4000)),
+        format!("## SPEC.md（开头）\n{}", truncate(&read_text(&task.join("SPEC.md"), false), 600)),
         format!(
             "## 未通过的验收项（{}/{}）\n{}{}",
             agent_n,
@@ -547,17 +576,11 @@ fn session_context(task: &Path, sid: &str) -> Option<String> {
             if fail.is_empty() { "  无".to_owned() } else if agent_n > fail.len() { format!("{}\n  …另有 {} 条，完整清单见 acceptance.json", fail.join("\n"), agent_n - fail.len()) } else { fail.join("\n") },
             if leader_n > 0 { format!("\n  另有 {leader_n} 条待 leader 验收（by: leader），不用你勾，关卡 C 接受时会勾上") } else { String::new() }
         ),
-        format!("## progress.md（最近部分）\n{}", tail(&read_text(&task.join("progress.md"), true), 2500)),
+        format!("## progress.md（最近几行）\n{}", tail(&read_text(&task.join("progress.md"), true), 500)),
+        format!("## decisions.md（最近部分）\n{}", tail(&read_text(&task.join("decisions.md"), true), 400)),
     ];
     if acceptance_unavailable {
         parts[2] = "## 验收清单不可读\nacceptance.json 缺失、损坏或超过 4MiB 读取上限；无法判断未完成项，不代表验收通过。请核对文件，精简内嵌内容并保留证据引用。".into();
-    }
-    parts.push(format!("## decisions.md（最近部分）\n{}", tail(&read_text(&task.join("decisions.md"), true), 2500)));
-    let evidence: Vec<String> = open.iter().take(12).filter_map(|item| {
-        item.get("evidence").map(|evidence| format!("{}\n{}", item_line(item), truncate(&evidence.to_string(), 600)))
-    }).collect();
-    if !evidence.is_empty() {
-        parts.push(format!("## 未完成项的证据索引（完整记录见 acceptance.json）\n{}", truncate(&evidence.join("\n"), 3000)));
     }
     // 只有关卡的归属会话才拿到「按答复继续」：同项目新开的无关会话不能去执行别人的单向门决定
     // （做空审查第二轮 M1；第一轮只修了 wait）。
@@ -566,14 +589,17 @@ fn session_context(task: &Path, sid: &str) -> Option<String> {
     if let Some(g) = read_gate(task).filter(|g| g.status == "answered" && owner) {
         parts.push(truncate(&answer_message(task, &g), 2000));
     }
-    for extra in ["product.md", "standards.md"] {
-        let t = read_text(&lead.join(extra), false);
-        if !t.is_empty() {
-            parts.push(format!("## .lead/{extra}\n{}", truncate(&t, 3000)));
-        }
-    }
+    // 任务目录开头已经给过，这里只列文件名：每条都写全路径时，光这一段就八百多字。
+    let conventions: Vec<&str> = ["product.md", "standards.md"]
+        .into_iter()
+        .filter(|extra| lead.join(extra).is_file())
+        .collect();
+    parts.push(format!(
+        "## 按需读（恢复任务时先核对未完成项、最新决定和证据，摘要不能替代原文）\n  任务目录里：SPEC.md（完整规格）、acceptance.json（全部验收项与证据）、progress.md、decisions.md{}",
+        if conventions.is_empty() { String::new() } else { format!("\n  项目约定：.lead/{}", conventions.join("、.lead/")) }
+    ));
     Some(
-        json!({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": truncate(&parts.join("\n\n"), 24000)}})
+        json!({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": truncate(&parts.join("\n\n"), 8000)}})
             .to_string(),
     )
 }
@@ -722,6 +748,12 @@ fn background_pending(tail: &str, now: i64) -> bool {
                 let r = o.get("toolUseResult");
                 let service = tool_use.as_ref().and_then(|id| bg_calls.get(id)).copied().unwrap_or(false);
                 if let Some(id) = r.filter(|r| r.get("status").and_then(Value::as_str) == Some("async_launched")).and_then(|r| str_of(r.get("agentId"))) {
+                    launched.push(Launch { task: Some(id), tool_use, at, ttl: BACKGROUND_STALE_SECS });
+                } else if let Some(id) = r.and_then(|r| str_of(r.get("resumedAgentId"))) {
+                    // SendMessage 把已经回报过的子代理叫回来继续干（复验常这样起）：它之后的通知沿用同一个
+                    // task-id，所以先把旧的回报记录去掉，重新算「在等」，下一条通知到了再清。只按行的先后
+                    // 处理就对得上。漏了这一种时，等复验的那几轮被连拦 9 次（任务 20261122-lead-hook-slim）。
+                    resolved.remove(&id);
                     launched.push(Launch { task: Some(id), tool_use, at, ttl: BACKGROUND_STALE_SECS });
                 } else if let Some(id) = r.and_then(|r| str_of(r.get("backgroundTaskId"))) {
                     if !service {

@@ -39,3 +39,43 @@ describe("QuestionPanels 作答面", () => {
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("QuestionPanels 选项预览", () => {
+  const withPreview: StructuredQuestion = {
+    question: "设置页用哪种布局？", header: null, multiSelect: false,
+    options: [
+      { label: "卡片式", description: null, preview: "┌────┐\n│ 卡 │\n└────┘" },
+      { label: "列表式", description: null, preview: "- 深色模式  [x]\n- 声音      [ ]" },
+      { label: "随你", description: null },
+    ],
+  };
+  const noop = () => {};
+
+  it("默认显示第一个带预览的选项，ASCII 草图按原样保留换行", () => {
+    const view = render(<QuestionPanels mode="answer" items={[withPreview]} answers={new Map()} onSelect={noop} onCustom={noop} />);
+    const pre = view.container.querySelector(".chat-question-preview pre")!;
+    expect(pre.textContent).toBe("┌────┐\n│ 卡 │\n└────┘");
+  });
+
+  it("悬停或聚焦到别的选项就换成它的预览；指到没预览的选项时保持上一张", () => {
+    const view = render(<QuestionPanels mode="answer" items={[withPreview]} answers={new Map()} onSelect={noop} onCustom={noop} />);
+    const buttons = view.container.querySelectorAll<HTMLButtonElement>(".chat-approval-options button");
+    fireEvent.mouseEnter(buttons[1]);
+    expect(view.container.querySelector(".chat-question-preview pre")!.textContent).toContain("深色模式");
+    fireEvent.focus(buttons[2]);
+    expect(view.container.querySelector(".chat-question-preview pre")!.textContent).toContain("┌");
+  });
+
+  it("已选的选项优先显示它的预览", () => {
+    const view = render(<QuestionPanels mode="answer" items={[withPreview]} answers={new Map([[0, { selected: ["列表式"], custom: "" }]])} onSelect={noop} onCustom={noop} />);
+    expect(view.container.querySelector(".chat-question-preview pre")!.textContent).toContain("深色模式");
+  });
+
+  it("只读题面也显示预览；全都没有预览时不渲染预览框", () => {
+    const view = render(<QuestionPanels items={[withPreview]} interactive={false} queuedAnswers={new Map()} onToggle={noop} />);
+    expect(view.container.querySelector(".chat-question-preview")).toBeTruthy();
+    cleanup();
+    const plain = render(<QuestionPanels mode="answer" items={[question(false)]} answers={new Map()} onSelect={noop} onCustom={noop} />);
+    expect(plain.container.querySelector(".chat-question-preview")).toBeNull();
+  });
+});

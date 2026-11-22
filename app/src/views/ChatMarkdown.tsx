@@ -186,6 +186,9 @@ function useCodeWrap(): boolean {
   }, () => codeWrap);
 }
 
+/** 代码块超过这么多行默认收起；收起时露出的行数见样式 .chat-md-pre.is-folded（18 行）。 */
+export const CODE_FOLD_LINES = 30;
+
 /** 带复制按钮与语言角标的代码块外壳。AI 输出的代码是最高频「要拿走」的内容，
  *  此前只能跨滚动区手动框选。文本从 DOM 取（innerText）——网格重排（chat-md-diagram）
  *  后 children 已不是纯文本，从 props 拼会丢字。 */
@@ -198,12 +201,17 @@ function CopyablePre({ children }: { children?: ReactNode }) {
   // 按钮只是噪声。框图不给——它的对齐靠一行不断，换行就散架。
   const [overflowing, setOverflowing] = useState(false);
   const [diagram, setDiagram] = useState(false);
+  // 超长代码块默认收起（调研 landscape.md 第 5 节）：一段上百行的代码把后面的说明挤出好几屏，
+  // 手机上尤其要滑很久。收起时露出开头 CODE_FOLD_SHOW 行，底部给「展开全部 N 行」；复制照旧复制全部。
+  const [lines, setLines] = useState(0);
+  const [expanded, setExpanded] = useState(false);
   useEffect(() => {
     const el = preRef.current;
     if (!el) return;
     const measure = () => {
       setDiagram(el.querySelector(".chat-md-diagram") !== null);
       setOverflowing(el.scrollWidth > el.clientWidth + 1);
+      setLines((el.textContent ?? "").replace(/\n$/, "").split("\n").length);
     };
     measure();
     if (typeof ResizeObserver === "undefined") return;
@@ -247,8 +255,10 @@ function CopyablePre({ children }: { children?: ReactNode }) {
   }
   // 顶栏常驻（A+B 改版定稿）：语言角标 + 复制。此前悬停才显形，代码块看着像一段没有出处
   // 的灰底文字，复制入口也要先找；顶栏占一行但不压代码，阅读时不抢戏的诉求仍然成立。
+  const foldable = lines > CODE_FOLD_LINES && !diagram;
+  const folded = foldable && !expanded;
   return (
-    <div className={"chat-md-pre" + (wrap && !diagram ? " is-wrapped" : "")}>
+    <div className={"chat-md-pre" + (wrap && !diagram ? " is-wrapped" : "") + (folded ? " is-folded" : "")}>
       <div className="chat-md-pre-head">
         {lang && <span className="chat-md-lang">{lang}</span>}
         {!diagram && (overflowing || wrap) && (
@@ -261,6 +271,11 @@ function CopyablePre({ children }: { children?: ReactNode }) {
       {/* 横向溢出时代码块是可滚动区域，键盘用户要能 Tab 进来用方向键滚（axe scrollable-region-focusable，
           验收 #23）。不溢出时不进 Tab 序，免得每个短代码块都多停一下。 */}
       <pre ref={preRef} {...(overflowing ? { tabIndex: 0, role: "region", "aria-label": t.chat.codeBlockLabel(lang) } : {})}>{children}</pre>
+      {foldable && (
+        <button type="button" className="chat-md-pre-fold" aria-expanded={expanded} onClick={() => setExpanded((v) => !v)}>
+          {expanded ? t.chat.codeFold : t.chat.codeUnfold(lines)}
+        </button>
+      )}
     </div>
   );
 }

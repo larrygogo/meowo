@@ -555,26 +555,32 @@ fn unescaped_image_refs(text: &str) -> Vec<String> {
             out.push(line);
         }
     }
-    if let Some(line) = unescaped_compare_summary(text) {
-        out.push(line);
+    for open in SUMMARY_LINES {
+        if let Some(line) = unescaped_summary(text, open) {
+            out.push(line);
+        }
     }
     out
 }
 
-/// 对照工具（compare_images）回执的摘要行 `[Image compare: {JSON}]` 被当成 JSON 字符串输出时，
-/// 里面的引号和反斜杠都多了一层转义。按 JSON 字符串的规则还原一次，还原出来是合法 JSON 才补回去。
-fn unescaped_compare_summary(text: &str) -> Option<String> {
-    const OPEN: &str = "[Image compare: ";
-    if text.lines().any(|l| l.trim().starts_with(OPEN)) {
+/// 回执里一行 JSON 摘要的开头：对照（compare_images）、方案卡（offer_choices）。
+const SUMMARY_LINES: [&str; 2] = ["[Image compare: ", "[Choices: "];
+
+/// 摘要行 `[Image compare: {JSON}]`、`[Choices: {JSON}]` 被当成 JSON 字符串输出时，里面的引号和
+/// 反斜杠都多了一层转义。按 JSON 字符串的规则还原一次，还原出来是合法 JSON 对象才补回去。
+/// 结尾逐个试 `}]`：方案卡的摘要里有选项数组，第一个 `}]` 是数组的结尾，不是整行的。
+fn unescaped_summary(text: &str, open: &str) -> Option<String> {
+    if text.lines().any(|l| l.trim().starts_with(open)) {
         return None;
     }
-    let at = text.find(OPEN)?;
-    let after = &text[at + OPEN.len()..];
-    let end = after.find("}]")?;
-    let escaped = &after[..end + 1];
-    let json: String = serde_json::from_str(&format!("\"{escaped}\"")).ok()?;
-    serde_json::from_str::<serde_json::Value>(&json).ok()?.as_object()?;
-    Some(format!("{OPEN}{json}]"))
+    let at = text.find(open)?;
+    let after = &text[at + open.len()..];
+    after.match_indices("}]").find_map(|(end, _)| {
+        let escaped = &after[..end + 1];
+        let json: String = serde_json::from_str(&format!("\"{escaped}\"")).ok()?;
+        serde_json::from_str::<serde_json::Value>(&json).ok()?.as_object()?;
+        Some(format!("{open}{json}]"))
+    })
 }
 
 fn append_lines(text: &mut String, lines: impl IntoIterator<Item = String>) {
@@ -823,8 +829,8 @@ fn mcp_side_images(line: &str) -> Option<crate::transcript::ToolSideImages> {
             refs.extend(
                 text.lines()
                     .map(str::trim)
-                    // 对照工具的摘要行（`[Image compare: {…}]`）也带上：前端靠它画对照卡。
-                    .filter(|l| (l.starts_with("[Image: source: ") || l.starts_with("[Image compare: ")) && l.ends_with(']'))
+                    // 对照、方案卡的摘要行（`[Image compare: {…}]`、`[Choices: {…}]`）也带上：前端靠它画卡片。
+                    .filter(|l| (l.starts_with("[Image: source: ") || SUMMARY_LINES.iter().any(|open| l.starts_with(open))) && l.ends_with(']'))
                     .map(str::to_string),
             );
         } else if let Some(line) = output_image(part) {
@@ -1492,6 +1498,27 @@ mod tests {
         assert_eq!(side.tool, "mcp__meowo__compare_images");
         assert_eq!(side.refs.len(), 3, "{:?}", side.refs);
         assert!(side.refs[2].starts_with("[Image compare: "));
+    }
+
+    /// 方案卡回执被转义时：摘要里有选项数组（第一个 `}]` 是数组结尾），仍要还原出整行。
+    #[test]
+    fn escaped_choices_receipt_in_script_output_is_restored() {
+        let output = r#"{"timestamp":"t","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_x","output":[{"type":"input_text","text":"Script completed\nOutput:\n"},{"type":"input_text","text":"{\"content\":[{\"type\":\"text\",\"text\":\"方案卡已显示给用户。\\n[Image: source: C:\\\\i\\\\a.png]\\n[Choices: {\\\"question\\\":\\\"选布局\\\",\\\"options\\\":[{\\\"label\\\":\\\"卡片\\\",\\\"description\\\":null,\\\"image\\\":0},{\\\"label\\\":\\\"列表\\\",\\\"description\\\":\\\"密]度高\\\",\\\"image\\\":null}]}]\"}]}"}]}}"#;
+        let results = parse_transcript_events(output);
+        let TranscriptEvent::ToolResult { text, .. } = &results[0] else { panic!("{results:?}") };
+        assert!(
+            text.lines().any(|l| l == r#"[Choices: {"question":"选布局","options":[{"label":"卡片","description":null,"image":0},{"label":"列表","description":"密]度高","image":null}]}]"#),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn side_channel_keeps_choices_summary() {
+        let line = r#"{"timestamp":"t","type":"event_msg","payload":{"type":"item_completed","started_at_ms":1,"item":{"type":"McpToolCall","server":"meowo","tool":"offer_choices","result":{"content":[{"type":"text","text":"ok\n[Image: source: C:\\a.png]\n[Choices: {\"question\":\"q\",\"options\":[{\"label\":\"a\",\"description\":null,\"image\":0},{\"label\":\"b\",\"description\":null,\"image\":null}]}]"}]}}}}"#;
+        let side = mcp_side_images(line).expect("旁路记录");
+        assert_eq!(side.tool, "mcp__meowo__offer_choices");
+        assert_eq!(side.refs.len(), 2, "{:?}", side.refs);
+        assert!(side.refs[1].starts_with("[Choices: "));
     }
 
     #[test]

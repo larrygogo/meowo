@@ -8,6 +8,7 @@ mod browser_emulation;
 mod browser_pane;
 mod browser_permission;
 mod chat;
+mod chat_choices;
 mod chat_images;
 mod checkpoints;
 mod confirm;
