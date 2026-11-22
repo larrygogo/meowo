@@ -198,7 +198,7 @@ describe("这一轮的检查", () => {
     // check 与 clippy 都会打印 could not compile，分不清是谁：不冤枉 check，但也不藏失败，写「其中一项没过」。
     expect(clippy.map((c) => [c.kinds, c.status, c.note.kind])).toEqual([[["typecheck", "lint"], "fail", "oneFailed"]]);
     const two = collectTurnChecks(run("cargo test -p a && cargo test -p b", { is_error: true, text: "test result: ok. 3 passed; 0 failed;\ntest result: FAILED. 1 passed; 2 failed;" }));
-    expect(two.map((c) => [c.kinds, c.status])).toEqual([[["test"], "fail"]]);
+    expect(two.map((c) => [c.kinds, c.status, c.note.kind])).toEqual([[["test", "test"], "fail", "oneFailed"]]);
     const lintFirst = collectTurnChecks(run("bun run lint && bunx vitest run", { is_error: true, text: "Tests  2 failed | 8 passed (10)" }));
     expect(lintFirst.map((c) => [c.kinds, c.status])).toEqual([[["lint"], "pass"], [["test"], "fail"]]);
   });
@@ -251,6 +251,50 @@ describe("这一轮的检查", () => {
   it("做空第三轮：codex 的小写超时文案是没跑完", () => {
     const [check] = collectTurnChecks(run("bun test", { exit_code: 124, text: "Exit code: 124\nOutput:\ncommand timed out after 120208 milliseconds" }));
     expect(check.note.kind).toBe("notRun");
+  });
+
+  it("做空第四轮：退出码是后面 echo / || 给的，不推「通过」", () => {
+    const cases: [string, string][] = [
+      ["npm run build && echo OK || echo FAILED", "error during build\nFAILED"],
+      ["npm run build && npm test || true", "error during build"],
+      ["cargo build && cargo test; echo exit=$?", "error: could not compile `a`\nexit=101"],
+      ["bun run lint && echo LINT_OK || echo LINT_FAIL", "Found 0 warnings and 2 errors.\nLINT_FAIL"],
+      ["(npm run build && echo ok) || echo fail", "error during build\nfail"],
+    ];
+    for (const [command, text] of cases) {
+      const checks = collectTurnChecks(run(command, { text, exit_code: 0 }));
+      expect(checks.some((c) => c.status === "pass" && c.kinds.includes("build"))).toBe(false);
+      expect(checks.some((c) => c.status === "pass" && c.kinds.includes("lint"))).toBe(false);
+    }
+    // oxlint 的输出认得出：lint 失败。
+    expect(collectTurnChecks(run("bun run lint && echo LINT_OK || echo LINT_FAIL", { text: "Found 0 warnings and 2 errors.", exit_code: 0 }))[0].status).toBe("fail");
+  });
+
+  it("做空第四轮：换了命令的失败不被别的命令的通过盖掉；同一命令重跑才盖", () => {
+    const cross = collectTurnChecks([
+      ...run("cargo test", { is_error: true, text: "test result: FAILED. 1 passed; 2 failed;" }),
+      ...run("bunx vitest run", { text: "Tests  10 passed (10)" }),
+    ]);
+    expect(cross.map((c) => [c.command, c.status])).toEqual([["cargo test", "fail"], ["bunx vitest run", "pass"]]);
+    const narrower = collectTurnChecks([
+      ...run("bunx vitest run", { is_error: true, text: "Tests  2 failed | 8 passed (10)" }),
+      ...run("bunx vitest run src/a.test.ts", { text: "Tests  3 passed (3)" }),
+    ]);
+    expect(narrower.map((c) => c.status)).toEqual(["fail", "pass"]);
+    const rerun = collectTurnChecks([
+      ...run("bunx vitest run", { is_error: true, text: "Tests  2 failed | 8 passed (10)" }),
+      ...run("bunx vitest run 2>&1", { text: "Tests  10 passed (10)" }),
+    ]);
+    expect(rerun.map((c) => c.status)).toEqual(["pass"]);
+    const sameCommand = collectTurnChecks(run("pytest ; npx vitest run", { text: "===== 2 failed, 5 passed in 1.0s =====" }));
+    expect(sameCommand.map((c) => [c.kinds, c.status])).toEqual([[["test"], "fail"], [["test"], "pass"]]);
+  });
+
+  it("做空第四轮：构建脚本里嵌着的 tsc 报错不归给前面的类型检查", () => {
+    const checks = collectTurnChecks(run("npx tsc --noEmit && npm run build", { is_error: true, text: "src/a.ts(1,1): error TS2322: x" }));
+    expect(checks.map((c) => [c.kinds, c.status, c.note.kind])).toEqual([[["typecheck", "build"], "fail", "oneFailed"]]);
+    // tsc && vitest：vitest 不会打印 error TS，照旧归给 tsc。
+    expect(collectTurnChecks(run("npx tsc --noEmit && npx vitest run", { is_error: true, text: "a.ts(1,1): error TS2322: x" }))[0].status).toBe("fail");
   });
 
   it("PowerShell 先设环境变量再跑：失败归到检查上", () => {

@@ -30,7 +30,15 @@ export type TurnCheck = {
   toolId: string;
   /** 在 items 里的位置：和之后的改动比先后。 */
   at: number;
+  /** 去重用：每类对应的「类别 + 那一段命令」。同一条命令重跑才算盖过，换了命令（cargo test 换成 vitest、
+   *  全量换成只跑一个文件）各留各的（做空第四轮：先 cargo test 失败、再 vitest 通过，只剩「测试 ✓」）。 */
+  keys: string[];
 };
+
+/** 一段命令的去重键：规范化后的命令，去掉 `2>&1`、多余空白。 */
+function segmentKey(text: string): string {
+  return headOf(text).replace(/\s*\d?>&\d\s*/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+}
 
 const KIND_ORDER: CheckKind[] = ["typecheck", "test", "lint", "build"];
 
@@ -204,7 +212,15 @@ export function checkKindsOf(segment: string): CheckKind[] {
 }
 
 /** 输出里的一条信号：from 是它可能出自哪几类检查（`Found 3 errors` 是 tsc、mypy、ruff 都会打印的）。 */
-type Marker = { from: CheckKind[]; failed: number; passed: number | null; unit: "tests" | "errors" | "problems" | null };
+/** scripts：包管理器脚本（`npm run build`、`bun run lint`）里也可能嵌着产生它的工具（构建脚本常是 `tsc && vite build`），
+ *  这类段也算可能的来源（做空第四轮）。 */
+/** tool：只有这个工具会打印这种汇总（pytest 的 `== … in 1.2s ==`、cargo 的 `test result:`）；同一条命令里有两段测试时据此分归属。 */
+type Marker = { from: CheckKind[]; tool?: RegExp; scripts?: boolean; failed: number; passed: number | null; unit: "tests" | "errors" | "problems" | null };
+
+/** 包管理器脚本：脚本里跑什么看不见。 */
+function isScript(segment: string): boolean {
+  return /^(?:npm|pnpm|yarn)\s|^bun\s+run\s|^make\s/i.test(headOf(segment));
+}
 
 function sumAll(text: string, re: RegExp): number | null {
   let total: number | null = null;
@@ -216,7 +232,8 @@ function sumAll(text: string, re: RegExp): number | null {
 function markersOf(output: string): Marker[] {
   const text = output.replace(/\x1b\[[0-9;]*m/g, "");
   const found: Marker[] = [];
-  const test = (failed: number, passed: number | null, unit: Marker["unit"] = "tests") => found.push({ from: ["test"], failed, passed, unit });
+  const test = (tool: RegExp, failed: number, passed: number | null, unit: Marker["unit"] = "tests") => found.push({ from: ["test"], tool, failed, passed, unit });
+  const VITEST = /\b(?:vitest|jest|playwright)\b/i;
   // 测试文件没加载起来（语法错、import 坏了）、未处理的异常：用例数可能全过，但这一轮没通过。
   // vitest：`Test Files  1 failed | 3 passed`、`Errors  1 error`；jest：`Test Suites: 1 failed, …`
   const broken = Number(/^\s*Test (?:Files|Suites):?\s+.*?(\d+)\s+failed/im.exec(text)?.[1] ?? 0)
@@ -229,32 +246,36 @@ function markersOf(output: string): Marker[] {
   if (line && /\b(?:passed|failed)\b/.test(line)) {
     const failed = Number(/(\d+)\s+failed/.exec(line)?.[1] ?? 0);
     const passed = Number(/(\d+)\s+passed/.exec(line)?.[1] ?? 0);
-    if (failed > 0) test(failed, passed);
-    else if (broken > 0) test(broken, passed, null);
-    else test(0, passed);
+    if (failed > 0) test(VITEST, failed, passed);
+    else if (broken > 0) test(VITEST, broken, passed, null);
+    else test(VITEST, 0, passed);
   } else if (broken > 0) {
-    test(broken, null, null);
+    test(VITEST, broken, null, null);
   } else if (/test result: (?:ok|FAILED)\./.test(text)) {
     // cargo：每个测试二进制一行 `test result: ok. 45 passed; 0 failed; …`，加总。
-    test(sumAll(text, /test result: \w+\. \d+ passed; (\d+) failed/g) ?? 0, sumAll(text, /test result: \w+\. (\d+) passed/g));
+    test(/\bcargo\b/i, sumAll(text, /test result: \w+\. \d+ passed; (\d+) failed/g) ?? 0, sumAll(text, /test result: \w+\. (\d+) passed/g));
   } else if (pytest) {
     // pytest：`===== 3 failed, 159 passed in 2.31s =====`
-    test(Number(/(\d+) failed/.exec(pytest)?.[1] ?? 0) + Number(/(\d+) errors?/.exec(pytest)?.[1] ?? 0), Number(/(\d+) passed/.exec(pytest)?.[1] ?? 0));
+    test(/\b(?:pytest|unittest)\b/i, Number(/(\d+) failed/.exec(pytest)?.[1] ?? 0) + Number(/(\d+) errors?/.exec(pytest)?.[1] ?? 0), Number(/(\d+) passed/.exec(pytest)?.[1] ?? 0));
   } else if (bunPass || bunFail) {
     // bun test：` 162 pass` / ` 0 fail`
-    test(Number(bunFail?.[1] ?? 0), Number(bunPass?.[1] ?? 0));
+    test(/\bbun\s+test\b/i, Number(bunFail?.[1] ?? 0), Number(bunPass?.[1] ?? 0));
   } else if (/^(?:--- FAIL|FAIL\s)/m.test(text)) {
     // go test：有 `--- FAIL` 或行首 FAIL 即失败；全是 ok 即通过。
-    test((text.match(/^--- FAIL/gm) ?? []).length || 1, null);
+    test(/\bgo\s+test\b/i, (text.match(/^--- FAIL/gm) ?? []).length || 1, null);
   } else if (/^ok\s+\S+\s+[\d.]+s/m.test(text)) {
-    test(0, null);
+    test(/\bgo\s+test\b/i, 0, null);
   }
   // tsc 独有的 `error TS1234:`。
   const tsErrors = (text.match(/\berror TS\d+:/g) ?? []).length;
-  if (tsErrors > 0) found.push({ from: ["typecheck"], failed: tsErrors, passed: null, unit: "errors" });
+  // tsc 的 `error TS1234:`：类型检查独有，但构建（`tsc -b && vite build`）和包管理器脚本里也常嵌着 tsc。
+  if (tsErrors > 0) found.push({ from: ["typecheck", "build"], scripts: true, failed: tsErrors, passed: null, unit: "errors" });
   // `Found N errors`：tsc、mypy、ruff、biome 都会打印，分不清是类型检查还是代码检查。
   const foundErrors = /\bFound (\d+) errors?\b/.exec(text);
-  if (foundErrors && tsErrors === 0) found.push({ from: ["typecheck", "lint"], failed: Number(foundErrors[1]), passed: null, unit: "errors" });
+  if (foundErrors && tsErrors === 0) found.push({ from: ["typecheck", "lint"], scripts: true, failed: Number(foundErrors[1]), passed: null, unit: "errors" });
+  // oxlint：`Found 0 warnings and 2 errors.`
+  const oxlint = /\bFound \d+ warnings? and (\d+) errors?\b/.exec(text);
+  if (oxlint && Number(oxlint[1]) > 0) found.push({ from: ["lint"], scripts: true, failed: Number(oxlint[1]), passed: null, unit: "errors" });
   // eslint：`✖ 5 problems (3 errors, 2 warnings)`；只有警告不算失败。
   const problems = /✖ (\d+) problems? \((\d+) errors?/.exec(text);
   if (problems && Number(problems[2]) > 0) found.push({ from: ["lint"], failed: Number(problems[2]), passed: null, unit: "problems" });
@@ -326,7 +347,16 @@ function judgeCommand(segments: Segment[], kindsBySegment: CheckKind[][], result
   const verdicts: (Verdict | null)[] = segments.map(() => null);
   const checks = kindsBySegment.flatMap((kinds, index) => (kinds.length > 0 ? [index] : []));
   const failed = runFailed(result);
-  const owners = (marker: Marker) => checks.filter((index) => kindsBySegment[index].some((kind) => marker.from.includes(kind)));
+  const scripts = segments.map((segment) => isScript(segment.text));
+  const heads = segments.map((segment) => headOf(segment.text));
+  const owners = (marker: Marker) => checks.filter((index) => (marker.scripts && scripts[index])
+    // 类别对得上，且是打印这种汇总的那个工具；包管理器脚本（`npm test`）里跑的是什么看不见，类别对得上就算。
+    || (kindsBySegment[index].some((kind) => marker.from.includes(kind)) && (!marker.tool || marker.tool.test(heads[index]) || scripts[index])));
+  // 子 shell、if/for 这类结构：段与段的先后、谁的退出码是整条的，按字面切出来的段推不准，不拿退出码推结论。
+  const complex = segments.some((seg) => /^[({]|[)}]$|^(?:if|then|else|elif|fi|for|while|do|done)\b/.test(seg.text));
+  const lastIndex = segments.length - 1;
+  // 这一段的成败会不会一路传到整条的退出码：从它到末尾全用 && 接着，末段没被管道接走、没丢后台。
+  const exitFromHere = (index: number) => !complex && chainedAnd(segments, index, lastIndex) && !segments[lastIndex].piped && !segments[lastIndex].background;
   // 每段独占的信号。
   const own = new Map<number, Marker[]>();
   for (const marker of markersOf(result.text)) {
@@ -357,8 +387,9 @@ function judgeCommand(segments: Segment[], kindsBySegment: CheckKind[][], result
     const summary = (own.get(index) ?? []).find((marker) => marker.failed === 0 && marker.unit === "tests");
     const ownsExit = !segment.piped && segment.prev !== "||";
     if (!failed) {
-      // 整条成功、这段后面只用 && 接着（或什么都没有）：它一定跑过且成功。后面是 ; 或 || 时它失败了整条也可能成功。
-      if (ownsExit && (segment.next === null || segment.next === "&&")) verdicts[index] = { status: "pass", note: { kind: "passed", count: summary?.passed ?? null } };
+      // 整条成功、从这段到末尾全用 && 接着：它一定跑过且成功。只看紧挨着的连接符不够（做空第四轮）：
+      // `npm run build && echo OK || echo FAILED` 构建失败时整条也是 0，退出码是后面 echo 的。
+      if (ownsExit && exitFromHere(index)) verdicts[index] = { status: "pass", note: { kind: "passed", count: summary?.passed ?? null } };
       // 退出码不算数，但输出里认出了这段独占的「0 个失败」测试汇总：照输出算通过。
       else if (summary) verdicts[index] = { status: "pass", note: { kind: "passed", count: summary.passed } };
       else verdicts[index] = UNCLEAR;
@@ -366,7 +397,7 @@ function judgeCommand(segments: Segment[], kindsBySegment: CheckKind[][], result
     }
     // 整条失败、这段是最后一段、退出码是它的，且它一定跑到了：前面是 ;（不管前面成败都会跑），
     // 或前面全是切目录这类、已判通过的段。
-    const last = index === segments.length - 1;
+    const last = index === lastIndex && !complex && !segment.background;
     const reached = segment.prev === ";" || segments.slice(0, index).every((seg, at) => SETUP.test(headOf(seg.text)) || verdicts[at]?.status === "pass");
     if (ownsExit && last && reached && failing.length === 0 && NOT_RUN.test(result.text)) verdicts[index] = NOT_REACHED;
     else if (ownsExit && last && reached && (failing.length === 0 || segment.prev === ";")) verdicts[index] = { status: "fail", note: { kind: "failed", count: null, unit: null } };
@@ -379,7 +410,7 @@ function judgeCommand(segments: Segment[], kindsBySegment: CheckKind[][], result
     } else {
       const open = checks.filter((index) => verdicts[index]?.status === "unknown" && verdicts[index]?.note.kind === "unclear");
       const others = segments.every((seg, at) => kindsBySegment[at].length > 0 || SETUP.test(headOf(seg.text)));
-      const chain = segments.every((seg, at) => at === segments.length - 1 || (seg.next === "&&" && !seg.piped && !seg.background));
+      const chain = exitFromHere(0);
       if (open.length > 0 && others && chain && open.length === checks.length) {
         for (const index of open) verdicts[index] = { status: "fail", note: { kind: "oneFailed" } };
       }
@@ -389,7 +420,8 @@ function judgeCommand(segments: Segment[], kindsBySegment: CheckKind[][], result
 }
 
 /**
- * 这一段回复里的检查：每类只留最后一次（先跑失败、修好再跑通过，读者要的是现在的状态）。
+ * 这一段回复里的检查：同一段命令只留最后一次（先跑失败、修好再跑通过，读者要的是现在的状态）；
+ * 换了命令的各留各的，旧的失败不被别的命令的通过盖掉。
  * 一条命令里结论相同的几类合成一行，结论不同的分行（`tsc && vitest`：类型检查失败、测试没跑到）。
  */
 export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
@@ -412,39 +444,43 @@ export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
       : !runFailed(result) && BACKGROUND.test(result.text) ? { status: "unknown", note: { kind: "background" } }
       : null;
     const verdicts = whole ? kindsBySegment.map((kinds) => (kinds.length > 0 ? whole : null)) : judgeCommand(segments, kindsBySegment, result!);
-    // 类别按在命令里出现的先后排；同一类出现几次取最后一段的结论。
-    const found = new Map<CheckKind, Verdict>();
+    // 按在命令里出现的先后排；同一段命令出现几次取最后一次的结论。
+    const found = new Map<string, { kind: CheckKind; verdict: Verdict }>();
     kindsBySegment.forEach((kinds, index) => {
       for (const kind of kinds) {
-        found.delete(kind);
-        found.set(kind, verdicts[index]!);
+        const key = `${kind}|${segmentKey(segments[index].text)}`;
+        found.delete(key);
+        found.set(key, { kind, verdict: verdicts[index]! });
       }
     });
-    // 结论相同的几类合成一行：都通过的合成一行，其余结论完全相同才合。
-    const groups: { kinds: CheckKind[]; verdict: Verdict }[] = [];
-    for (const [kind, verdict] of found) {
-      const same = groups.find((group) => (group.verdict.status === "pass" && verdict.status === "pass") || JSON.stringify(group.verdict) === JSON.stringify(verdict));
+    // 结论相同的几类合成一行：都通过的合成一行，其余结论完全相同才合。同一类出现两次（pytest; vitest）不合，分行。
+    const groups: { kinds: CheckKind[]; keys: string[]; verdict: Verdict }[] = [];
+    for (const [key, { kind, verdict }] of found) {
+      // 「其中一项没过」本来就是对一组说的，同类也合（`cargo test -p a && cargo test -p b`）。
+      const same = groups.find((group) => (verdict.note.kind === "oneFailed" || !group.kinds.includes(kind))
+        && ((group.verdict.status === "pass" && verdict.status === "pass") || JSON.stringify(group.verdict) === JSON.stringify(verdict)));
       if (!same) {
-        groups.push({ kinds: [kind], verdict });
+        groups.push({ kinds: [kind], keys: [key], verdict });
         continue;
       }
       same.kinds.push(kind);
+      same.keys.push(key);
       // 几类合成的通过行不带计数：「类型检查 + 测试 162 个通过」会让人以为 162 是两类加起来的。
       if (same.verdict.status === "pass") same.verdict = PASSED;
     }
-    for (const group of groups) all.push({ kinds: group.kinds, ...group.verdict, command, toolId: item.id, at });
+    for (const group of groups) all.push({ kinds: group.kinds, keys: group.keys, ...group.verdict, command, toolId: item.id, at });
   });
-  // 每类最后一次：倒着走，某行的类别全被更晚的行盖过就丢掉；部分被盖过的只留没被盖的类别。
-  const covered = new Set<CheckKind>();
+  // 同一段命令只留最后一次：倒着走，某行的键全被更晚的行盖过就丢掉；部分被盖过的只留没被盖的。
+  const covered = new Set<string>();
   const kept: TurnCheck[] = [];
   for (let index = all.length - 1; index >= 0; index -= 1) {
     const check = all[index];
-    const fresh = check.kinds.filter((kind) => !covered.has(kind));
+    const fresh = check.keys.flatMap((key, at) => (covered.has(key) ? [] : [at]));
     if (fresh.length === 0) continue;
-    fresh.forEach((kind) => covered.add(kind));
+    fresh.forEach((at) => covered.add(check.keys[at]));
     // 「其中一项没过」是对整组说的：拆掉一部分类别后就不成立了，改写成看不出。
     const note = check.note.kind === "oneFailed" && fresh.length < check.kinds.length ? UNCLEAR : null;
-    kept.unshift({ ...check, kinds: fresh, ...(note ?? {}) });
+    kept.unshift({ ...check, kinds: fresh.map((at) => check.kinds[at]), keys: fresh.map((at) => check.keys[at]), ...(note ?? {}) });
   }
   return kept;
 }

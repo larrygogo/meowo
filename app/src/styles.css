@@ -4569,8 +4569,12 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-turn-checks-note { margin: 0; padding: var(--sp-8) var(--sp-14); border-top: var(--hairline) solid var(--cc-border); font-size: var(--text-xs); color: var(--cc-text-faint); }
 .chat-turn-changes > .chat-turn-checks-note:first-child { border-top: 0; }
 .chat-turn-checks-note.is-warn { color: var(--cc-warn-text); }
-/* 窄屏（手机远程页）：命令原文让位，只留类别和结果；命令在跳过去的那一行里看得到。 */
-@media (max-width: 480px) { .chat-turn-check-cmd { display: none; } }
+/* 窄屏（手机远程页）：命令原文另起一行、缩进到类别下面。不藏：同一类可以有两行（cargo test 失败、vitest 通过），
+   只看「测试」分不清是哪一条。 */
+@media (max-width: 480px) {
+  .chat-turn-check { flex-wrap: wrap; row-gap: 0; }
+  .chat-turn-check-cmd { order: 3; flex-basis: 100%; padding-left: calc(16px + var(--sp-8)); }
+}
 /* 从检查行跳过来：那一行闪一下底色，告诉你落在哪。 */
 @keyframes chat-jump-flash { from { background: var(--fill-selected); } to { background: transparent; } }
 .chat-tool.is-flash > summary { animation: chat-jump-flash var(--dur-idle) var(--ease-out); }

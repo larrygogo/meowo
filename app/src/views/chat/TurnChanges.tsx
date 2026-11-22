@@ -188,11 +188,11 @@ function TurnChecks({ checks, replyId, editedAfter, staleIds, codeChanged }: { c
     <>
       <ul className={"chat-turn-checks" + (codeChanged || editedAfter.length ? "" : " is-only")} aria-label={t.chat.checkTitle}>
         {checks.map((check) => {
-          const label = check.kinds.map((kind) => KIND_LABEL(t, kind)).join(" + ");
+          const label = [...new Set(check.kinds)].map((kind) => KIND_LABEL(t, kind)).join(" + ");
           const stale = staleIds.has(check.toolId);
           const result = t.chat.checkResult(check.note) + (stale ? ` · ${t.chat.checkStaleTag}` : "");
           return (
-            <li key={`${check.toolId}:${check.kinds.join()}`}>
+            <li key={`${check.toolId}:${check.keys.join()}`}>
               <button type="button" className={`chat-turn-check is-${check.status}` + (stale ? " is-stale" : "")} data-tip={check.command}
                 aria-label={`${label} ${result} · ${t.chat.checkJump}`} onClick={(event) => jump(check.toolId, event.currentTarget)}>
                 <span className="chat-turn-check-icon" aria-hidden="true">{check.status === "pass" ? "✓" : check.status === "fail" ? "✕" : "?"}</span>
