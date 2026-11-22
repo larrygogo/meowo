@@ -4782,6 +4782,11 @@ button.chat-choice-pick:focus-visible { outline: none; box-shadow: inset 0 0 0 2
 .chat-choices-toggle { flex: 0 0 auto; height: 26px; padding: 0 var(--sp-8); border: 0; border-radius: var(--radius-md); background: none; color: var(--cc-text-dim); font: inherit; font-size: var(--text-xs); white-space: nowrap; cursor: pointer; }
 .chat-choices-toggle:hover { background: var(--fill-hover); color: var(--cc-text); }
 .chat-lightbox-action.is-pick { background: var(--cc-accent); color: var(--cc-on-accent); }
+/* 选中 AI 回复里的一段后浮出的「引用」（QuoteSelection.tsx）：贴着选区，fixed 定位，随选区算位置。 */
+.chat-quote-button { position: fixed; z-index: var(--z-float); height: 30px; padding: 0 var(--sp-12); border: 0; border-radius: var(--radius-full); background: var(--cc-panel-raised); box-shadow: var(--edge-float), var(--shadow-md); color: var(--cc-text); font: inherit; font-size: var(--text-sm); white-space: nowrap; cursor: pointer; }
+.chat-quote-button:hover { background: var(--fill-hover); }
+.chat-quote-button:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: 2px; }
+@media (pointer: coarse) { .chat-quote-button { height: 36px; } }
 /* 卡片窄（手机、窄对话窗）：有图的方案改横滑，每张占八成宽，露出下一张的边；底栏输入框独占一行。 */
 @container (max-width: 460px) {
   .chat-choices-grid[data-images] { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior-x: contain; }

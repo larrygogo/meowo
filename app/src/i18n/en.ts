@@ -1445,6 +1445,8 @@ export const en: Dict = {
     choicesHideAll: "Hide",
     choicesZoom: (n) => `Enlarge option ${n}`,
     choicesPickThis: (n) => `Pick option ${n}`,
+    quote: "Quote",
+    quoteTip: "Quote into the message box and ask about it",
     sentImageUrlRejected: "Only local image files can be sent; the agent needs to download the URL first",
     sentImageOpen: "View full size",
     imageLoading: "Loading image",

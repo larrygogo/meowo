@@ -1667,6 +1667,9 @@ export const zh = {
     choicesHideAll: "收起",
     choicesZoom: (n: number) => `放大看方案 ${n}`,
     choicesPickThis: (n: number) => `选方案 ${n}`,
+    // 选中 AI 回复里的一段引用进输入框（QuoteSelection.tsx）。
+    quote: "引用",
+    quoteTip: "引用到输入框，接着写你的问题",
     sentImageUrlRejected: "只能发本地图片，网址要 agent 先下载到本地再发",
     sentImageOpen: "查看大图",
     imageLoading: "图片加载中",
