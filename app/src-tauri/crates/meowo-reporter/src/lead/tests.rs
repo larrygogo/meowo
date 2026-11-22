@@ -102,7 +102,11 @@ fn scenarios() {
     let edit_prog = ("Edit", json!({"file_path": prog}));
 
     // 无主、已在实施的任务：不注入给项目里随便哪个会话（与面板 visible_to 同一规则，任务 20261122-lead-hook-slim）
-    assert!(call(&e, "session", json!({"cwd": sub, "source": "compact"})).is_none());
+    // 新开的会话什么都不给；压缩后只给一行指引（任务在哪），不给摘要。
+    assert!(call(&e, "session", json!({"cwd": sub, "source": "startup"})).is_none());
+    let hint = call(&e, "session", json!({"cwd": sub, "source": "compact"})).unwrap();
+    let hint = hint["hookSpecificOutput"]["additionalContext"].as_str().unwrap();
+    assert!(hint.contains("不归这个会话") && !hint.contains("目的：演示"), "{hint}");
     // 起头阶段的无主任务照旧注入：从子目录找到所在 git 根目录的任务
     fs::write(t.join("progress.md"), "phase: spec\n").unwrap();
     let ctx = call(&e, "session", json!({"cwd": sub, "source": "compact"})).unwrap();
@@ -927,6 +931,11 @@ fn resume_injects_the_sessions_own_task_over_active() {
     // 没认领任务的新会话：active 指的任务已在实施（无主）→ 不注入；还在起头阶段 → 照旧注入。
     let new_ctx = || call(&e, "session", json!({"session_id": "NEW", "cwd": root, "source": "resume"}));
     assert!(new_ctx().is_none(), "已在实施的无主任务不塞给无关的新会话");
+    // /clear 换了 session_id：只给一行指引（任务在哪、阶段），不给摘要内容。
+    let cleared = call(&e, "session", json!({"session_id": "NEW2", "cwd": root, "source": "clear"})).unwrap();
+    let hint = cleared["hookSpecificOutput"]["additionalContext"].as_str().unwrap();
+    assert!(hint.contains("20261110-other") && hint.contains("不归这个会话") && !hint.contains("别人的任务"), "{hint}");
+    assert!(hint.chars().count() < 400);
     fs::write(other.join("progress.md"), "phase: spec\n").unwrap();
     assert!(ctx("NEW").contains("别人的任务"), "起头阶段的无主任务照旧给项目里的会话");
     fs::write(other.join("progress.md"), "phase: implement\n").unwrap();

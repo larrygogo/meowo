@@ -512,8 +512,32 @@ fn session(data: &Value, registry: &Path) -> Option<String> {
     let task = cwd
         .and_then(|c| own_task(c, sid))
         .or_else(|| find_task(cwd).filter(|task| visible_to(task, Some(sid))))
-        .or_else(|| task_of_session(sid, registry))?;
-    session_context(&task, sid)
+        .or_else(|| task_of_session(sid, registry));
+    match task {
+        Some(task) => session_context(&task, sid),
+        None => clear_hint(data, cwd),
+    }
+}
+
+/// `/clear` 或压缩后，`.lead/active` 指的任务对本会话不可见时，只给一行指引，不给摘要（做空审查）：
+/// `/clear` 会换 session_id，而任务的 .owner 还是旧 id，按归属规则这个会话拿不到注入，
+/// 「/clear 后说一句继续」就接不上了。一行指引只说任务在哪、到了哪个阶段，内容不串到别的会话；
+/// 新开的会话（startup、resume）不给，免得无关会话也收到。
+fn clear_hint(data: &Value, cwd: Option<&str>) -> Option<String> {
+    let source = data.get("source").and_then(Value::as_str)?;
+    if !matches!(source, "clear" | "compact") {
+        return None;
+    }
+    let task = find_task(cwd)?;
+    let phase = phase_of(&task);
+    if phase == "done" {
+        return None;
+    }
+    let hint = format!(
+        "[lead] 项目里有一个进行中的任务：{}（phase: {phase}），不归这个会话。如果它是你在 /clear 或压缩前做的、用户又说要继续，先读它的 progress.md 和 acceptance.json 再接着推进；否则不用管它。",
+        task.display()
+    );
+    Some(json!({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": hint}}).to_string())
 }
 
 fn session_context(task: &Path, sid: &str) -> Option<String> {
