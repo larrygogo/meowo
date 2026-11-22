@@ -7155,7 +7155,10 @@ button.lead-entry-head:hover { background: var(--fill-hover); }
 .chat-md-pre > pre:focus-visible { outline-offset: -2px; }
 /* 超长代码块收起（CopyablePre，超过 CODE_FOLD_LINES 行）：露出开头 18 行，底部渐隐提示下面还有；
    展开按钮贴在代码块底边，和顶栏的复制、换行同一种文字按钮。 */
-.chat-md-pre.is-folded > pre { max-height: calc(var(--text-sm) * var(--leading-body) * 18 + var(--sp-6)); overflow-y: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 48px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 48px), transparent); }
+/* 收起时限高、渐隐都加在里面的 code 上，不加在 pre 上（做空第一轮）：pre 是横向滚动容器，
+   遮罩加在它身上会连底部的横向滚动条一起遮掉。code 撑到最长那行的宽度，横向仍由 pre 滚。 */
+.chat-md-pre.is-folded > pre > code { display: block; width: max-content; min-width: 100%; max-height: calc(var(--text-sm) * var(--leading-body) * 18); overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 48px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 48px), transparent); }
+.chat-md-pre.is-folded.is-wrapped > pre > code { width: auto; }
 .chat-md-pre-fold { display: block; width: 100%; min-height: var(--btn-h-sm); margin: 0; padding: var(--sp-4) var(--sp-16) var(--sp-8); border: 0; background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--text-xs); text-align: left; cursor: pointer; }
 .chat-md-pre-fold:hover { color: var(--cc-text); }
 .chat-md-pre-fold:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: -2px; }
@@ -7463,6 +7466,9 @@ button.lead-entry-head:hover { background: var(--fill-hover); }
 /* 选项预览（AskUserQuestion 的 preview）：等宽框，限高可滚，免得一张草图把卡片撑出可视区。 */
 .chat-question-preview { margin-top: var(--sp-6); max-height: min(320px, 40vh); overflow: auto; padding: var(--sp-8) var(--sp-10); border: var(--hairline) solid var(--line-subtle); border-radius: var(--radius-md); background: var(--cc-code-bg); }
 .chat-question-preview pre { margin: 0; font: var(--text-xs)/1.45 var(--cc-mono); color: var(--cc-text); white-space: pre; }
+/* Markdown 预览（带代码块）：代码块自己有底色和顶栏，外层不再套一层框。 */
+.chat-question-preview:has(.chat-md) { padding: 0; border: 0; background: none; }
+.chat-question-preview .chat-md-pre { margin: 0; }
 .chat-approval-options.is-single .is-selected i::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--cc-on-accent); }
 .chat-approval-options span { min-width: 0; display: flex; flex-direction: column; gap: var(--sp-3); }
 .chat-approval-options b { font-size: var(--text-sm); font-weight: var(--fw-medium); }

@@ -27,9 +27,11 @@ fn invalid(message: impl Into<String>) -> ImageError {
     ImageError::new(ImageErrorCode::NotFound, message)
 }
 
-/// 一段必填或可选的文字：去掉首尾空白，按字符截到上限（截断不报错，卡片上放不下也没意义）。
+/// 一段必填或可选的文字：换行和连续空白压成一个空格，按字符截到上限（截断不报错，卡片上放不下也没意义）。
+/// 压掉换行（做空第一轮）：卡片替用户发的消息是「选了方案 N：<方案名>」加可选的「补充：…」一行，
+/// 方案名里带换行会被认成一段用户没写过的补充。
 fn text_field(value: Option<&Value>, max: usize) -> Option<String> {
-    let text = value?.as_str()?.trim();
+    let text = value?.as_str()?.split_whitespace().collect::<Vec<_>>().join(" ");
     (!text.is_empty()).then(|| text.chars().take(max).collect())
 }
 
@@ -191,5 +193,6 @@ mod tests {
         let sum = summary(&text);
         assert_eq!(sum["question"].as_str().unwrap().chars().count(), QUESTION_MAX);
         assert_eq!(sum["options"][1]["label"].as_str().unwrap().chars().count(), LABEL_MAX);
+        assert!(!sum["options"][0]["label"].as_str().unwrap().contains('\n'), "方案名里的换行要压成空格");
     }
 }

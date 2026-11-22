@@ -11,7 +11,7 @@ function OptionPreview({ option }: { option: StructuredQuestionOption }) {
   const text = option.preview ?? "";
   return (
     <div className="chat-question-preview" aria-label={t.chat.questionPreview(option.label)} role="region">
-      {/```/.test(text) ? <ChatMarkdown text={text} /> : <pre>{text}</pre>}
+      {/```/.test(text) ? <div className="chat-md"><ChatMarkdown text={text} /></div> : <pre>{text}</pre>}
     </div>
   );
 }

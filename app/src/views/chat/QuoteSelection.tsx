@@ -43,10 +43,14 @@ export function pickQuote(root: HTMLElement | null): Picked | null {
   const range = selection.getRangeAt(0);
   const start = elementOf(range.startContainer)?.closest(ASSISTANT_TEXT);
   const end = elementOf(range.endContainer)?.closest(ASSISTANT_TEXT);
-  if (!start || !end || !root.contains(start) || !root.contains(end)) return null;
+  // 起点、终点要在同一条回复里（做空第一轮）：跨两条回复拖选时，中间的用户消息、工具行文字也会被选进来。
+  if (!start || start !== end || !root.contains(start)) return null;
   const text = selection.toString().trim();
   if (!text) return null;
   const rect = typeof range.getBoundingClientRect === "function" ? range.getBoundingClientRect() : null;
+  // 选区已经滚出对话区（上翻或下翻看别处）：不给按钮，免得它钉在窗口边上、离开选中的字。
+  const view = root.getBoundingClientRect();
+  if (rect && view.height > 0 && (rect.bottom < view.top || rect.top > view.bottom)) return null;
   return { text, top: rect?.top ?? 0, bottom: rect?.bottom ?? 0, left: rect?.left ?? 0, right: rect?.right ?? 0 };
 }
 

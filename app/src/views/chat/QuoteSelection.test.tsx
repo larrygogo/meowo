@@ -38,6 +38,7 @@ describe("选中 AI 正文浮出「引用」", () => {
       <div ref={root}>
         <article className="chat-message is-assistant"><div className="chat-text"><p id="a">另外我顺手把全局按钮圆角从 6 改成 8。</p></div></article>
         <article className="chat-message is-user"><div className="chat-text"><p id="u">我自己说的话</p></div></article>
+        <article className="chat-message is-assistant"><div className="chat-text"><p id="b">另一条回复</p></div></article>
         <QuoteSelection root={root} onQuote={onQuote} />
       </div>,
     );
@@ -72,6 +73,26 @@ describe("选中 AI 正文浮出「引用」", () => {
     expect(screen.queryByRole("button", { name: "引用" })).toBeNull();
     window.getSelection()!.removeAllRanges();
     act(() => { document.dispatchEvent(new Event("selectionchange")); });
+    expect(screen.queryByRole("button", { name: "引用" })).toBeNull();
+  });
+
+  it("从一条回复拖选到另一条：不出按钮（中间夹着用户消息）", () => {
+    mount();
+    const range = document.createRange();
+    range.setStart(document.getElementById("a")!.firstChild!, 2);
+    range.setEnd(document.getElementById("b")!.firstChild!, 2);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    act(() => { document.dispatchEvent(new Event("selectionchange")); });
+    expect(screen.queryByRole("button", { name: "引用" })).toBeNull();
+  });
+
+  it("选区滚出对话区：按钮收起", () => {
+    mount();
+    const root = document.getElementById("a")!.closest("div")!.parentElement!.parentElement!;
+    root.getBoundingClientRect = () => ({ top: 400, bottom: 900, left: 0, right: 800, width: 800, height: 500, x: 0, y: 400, toJSON: () => ({}) });
+    select("a");
     expect(screen.queryByRole("button", { name: "引用" })).toBeNull();
   });
 

@@ -185,8 +185,9 @@ export function questionInput(lang: "zh" | "en"): string {
   const zh = lang === "zh";
   return JSON.stringify({ questions: [
     { header: zh ? "校验库" : "Library", question: zh ? "schema 用哪个校验库？" : "Which validation library for the schema?", multiSelect: false, options: [
-      { label: "Zod", description: zh ? "项目里已经在用，类型推导最好" : "Already in the project, best type inference" },
-      { label: "Valibot", description: zh ? "体积更小，但要新增依赖" : "Smaller, but a new dependency" },
+      // preview：Claude 的选项预览（代码片段），提问卡里聚焦或选中哪个就显示哪个。
+      { label: "Zod", description: zh ? "项目里已经在用，类型推导最好" : "Already in the project, best type inference", preview: "```ts\nconst Login = z.object({\n  email: z.string().email(),\n  password: z.string().min(8),\n});\n```" },
+      { label: "Valibot", description: zh ? "体积更小，但要新增依赖" : "Smaller, but a new dependency", preview: "```ts\nconst Login = v.object({\n  email: v.pipe(v.string(), v.email()),\n  password: v.pipe(v.string(), v.minLength(8)),\n});\n```" },
       { label: "Yup", description: null },
     ] },
     { header: zh ? "范围" : "Scope", question: zh ? "哪些表单一起迁移？" : "Which forms should migrate too?", multiSelect: true, options: [

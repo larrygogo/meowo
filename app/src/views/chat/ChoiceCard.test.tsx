@@ -58,16 +58,25 @@ describe("方案卡回执", () => {
 });
 
 describe("方案卡替用户发的消息", () => {
-  it("中英两种写法都认得；带补充；超出方案个数的不算", () => {
-    const labels = ["卡片式", "列表式"];
-    const zh = formatChoiceAnswer({ kind: "picked", index: 1, note: "按钮用 1 的颜色" }, labels, "zh-CN");
+  const card = { question: "设置页用哪种布局？", labels: ["卡片式", "列表式"] };
+
+  it("中英两种写法都认得；带补充", () => {
+    const zh = formatChoiceAnswer({ kind: "picked", index: 1, note: "按钮用 1 的颜色" }, card, "zh-CN");
     expect(zh).toBe("选了方案 2：列表式\n补充：按钮用 1 的颜色");
-    expect(parseChoiceAnswer(zh, 2)).toEqual({ kind: "picked", index: 1, note: "按钮用 1 的颜色" });
-    const en = formatChoiceAnswer({ kind: "none", note: null }, labels, "en-US");
-    expect(en).toBe("None of these options");
-    expect(parseChoiceAnswer(en, 2)).toEqual({ kind: "none", note: null });
-    expect(parseChoiceAnswer("选了方案 3：不存在", 2)).toBeNull();
-    expect(parseChoiceAnswer("我觉得第二个好", 2)).toBeNull();
+    expect(parseChoiceAnswer(zh, card)).toEqual({ kind: "picked", index: 1, note: "按钮用 1 的颜色" });
+    const en = formatChoiceAnswer({ kind: "none", note: null }, card, "en-US");
+    expect(en).toBe("None of these options: 设置页用哪种布局？");
+    expect(parseChoiceAnswer(en, card)).toEqual({ kind: "none", note: null });
+  });
+
+  it("只认这张卡发的：方案名、题面要对上；用户手打的相似句子不算", () => {
+    // 同一轮另一张配色卡的消息：序号 2 在范围内，但方案名不是这张卡的。
+    expect(parseChoiceAnswer("选了方案 2：浅色", card)).toBeNull();
+    expect(parseChoiceAnswer("方案都不要：主色用哪个？", card)).toBeNull();
+    expect(parseChoiceAnswer("选了方案 2：其实我想说别的", card)).toBeNull();
+    expect(parseChoiceAnswer("选了方案 2：列表式\n然后顺便把首页也改了", card)).toBeNull();
+    expect(parseChoiceAnswer("选了方案 3：不存在", card)).toBeNull();
+    expect(parseChoiceAnswer("我觉得第二个好", card)).toBeNull();
   });
 });
 
@@ -102,7 +111,7 @@ describe("方案卡", () => {
   it("「都不要」也发一条消息；发送失败留在卡上并提示重试", async () => {
     const { sendText } = withActions(<ChoiceMessage item={call("c3")} result={result("c3", receipt())} />, vi.fn(async () => false));
     await act(async () => { fireEvent.click(document.querySelector(".chat-choices-none")!); });
-    expect(sendText).toHaveBeenCalledWith("方案都不要");
+    expect(sendText).toHaveBeenCalledWith("方案都不要：设置页用哪种布局？");
     expect(screen.getByRole("alert").textContent).toContain("没发出去");
     expect(document.querySelector(".chat-choices-foot")).toBeTruthy();
   });
@@ -151,6 +160,33 @@ describe("方案卡", () => {
     // 回合已经停了还没回执：中断，不再转圈。
     render(<ChoiceMessage item={call("c10")} />);
     expect(document.querySelector(".chat-sent-failed")).toBeTruthy();
+  });
+
+  it("发出后卡片重新挂载（切走会话再回来）：仍是已选，不会再发一次", async () => {
+    const { sendText, view } = withActions(<ChoiceMessage item={call("m1")} result={result("m1", receipt())} />);
+    fireEvent.click(screen.getAllByRole("radio")[0]);
+    await act(async () => { fireEvent.click(document.querySelector(".chat-choices-send")!); });
+    view.unmount();
+    withActions(<ChoiceMessage item={call("m1")} result={result("m1", receipt())} />, sendText);
+    expect(document.querySelector(".chat-choices.is-settled")!.textContent).toContain("你选了 1 · 卡片式");
+    expect(sendText).toHaveBeenCalledTimes(1);
+  });
+
+  it("同一轮两张卡：之后那条消息只记到它对应的那张上", () => {
+    const colors = receipt([{ label: "深色", description: null, image: null }, { label: "浅色", description: null, image: null }], [])
+      .replace("设置页用哪种布局？", "主色用哪个？");
+    const items: ChatItem[] = [
+      { type: "user_text", id: "u", timestamp: null, text: "做两版" },
+      call("x1"), result("x1", receipt()),
+      call("x2"), result("x2", colors),
+      { type: "assistant_text", id: "a", timestamp: null, text: "两张卡你都看看" },
+      { type: "user_text", id: "u2", timestamp: null, text: "选了方案 2：列表式" },
+    ];
+    withActions(<Transcript sessionId={1} items={items} />);
+    const cards = [...document.querySelectorAll(".chat-choices")];
+    expect(cards[0].textContent).toContain("你选了 2 · 列表式");
+    expect(cards[1].textContent).toContain("没有在卡上选");
+    expect(cards[1].textContent).not.toContain("你选了");
   });
 
   it("排在正文里不收进过程块；之后来了用户消息，缓存的旧段也会重算成已选", () => {

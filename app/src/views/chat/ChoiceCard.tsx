@@ -76,7 +76,7 @@ export const ChoiceMessage = memo(function ChoiceMessage({ item, result, followU
     const reason = error?.code === "not_found" && error.message ? error.message : error ? imageErrorText(t, error) : t.chat.imageErrors.unknown;
     content = <ImageFailure title={t.chat.choicesFailed} reason={reason} name={null} />;
   } else {
-    content = <ChoiceCard receipt={receipt} followUp={followUp} />;
+    content = <ChoiceCard cardId={item.id} receipt={receipt} followUp={followUp} />;
   }
   return (
     <article className="chat-message chat-sent" data-enter-id={item.id}>
@@ -85,7 +85,12 @@ export const ChoiceMessage = memo(function ChoiceMessage({ item, result, followU
   );
 });
 
-function ChoiceCard({ receipt, followUp }: { receipt: ChoicesReceipt; followUp?: string }) {
+/// 已经从卡上发出去的选择，按工具调用 id 记在组件之外（做空第一轮）：消息发出后、回到时间线之前
+/// （agent 没按说明结束这一轮，消息在排队），切走会话再切回来，卡片会重新挂载；只记在 state 里
+/// 它又变回可点，会发第二次。
+const sentChoices = new Map<string, ChoiceAnswer>();
+
+function ChoiceCard({ cardId, receipt, followUp }: { cardId: string; receipt: ChoicesReceipt; followUp?: string }) {
   const t = useT();
   const actions = useContext(ChatActionsContext);
   const { question, options } = receipt;
@@ -94,11 +99,12 @@ function ChoiceCard({ receipt, followUp }: { receipt: ChoicesReceipt; followUp?:
   const [sending, setSending] = useState(false);
   const [sendFailed, setSendFailed] = useState(false);
   // 发出去之后先按发出的结果显示（先给结果）；时间线里的那条用户消息到了，两者一致。
-  const [sent, setSent] = useState<ChoiceAnswer | null>(null);
+  const [sent, setSent] = useState<ChoiceAnswer | null>(() => sentChoices.get(cardId) ?? null);
   const [expanded, setExpanded] = useState(false);
   const [gallery, setGallery] = useState<number | null>(null);
 
-  const recorded = followUp !== undefined ? parseChoiceAnswer(followUp, options.length) : null;
+  const card = useMemo(() => ({ question, labels: options.map((option) => option.label) }), [question, options]);
+  const recorded = followUp !== undefined ? parseChoiceAnswer(followUp, card) : null;
   const answer = sent ?? recorded;
   // 之后已经有用户消息、却不是在卡上选的：用户直接打字回复了，这张卡不再接受点选。
   const skipped = !answer && followUp !== undefined;
@@ -111,13 +117,18 @@ function ChoiceCard({ receipt, followUp }: { receipt: ChoicesReceipt; followUp?:
   }), [options]);
 
   const send = async (next: ChoiceAnswer) => {
-    if (!actions || sending) return;
+    if (!actions || sending || sentChoices.has(cardId)) return;
     setSending(true);
     setSendFailed(false);
-    const ok = await actions.sendText(formatChoiceAnswer(next, options.map((option) => option.label), t.locale)).catch(() => false);
+    sentChoices.set(cardId, next);
+    const ok = await actions.sendText(formatChoiceAnswer(next, card, t.locale)).catch(() => false);
     setSending(false);
-    if (ok) setSent(next);
-    else setSendFailed(true);
+    if (ok) {
+      setSent(next);
+    } else {
+      sentChoices.delete(cardId);
+      setSendFailed(true);
+    }
   };
   const submit = () => {
     if (selected !== null) void send({ kind: "picked", index: selected, note: note.trim() || null });
