@@ -302,6 +302,48 @@ describe("这一轮的检查", () => {
     expect(checks.find((c) => c.kinds.includes("test"))?.status).not.toBe("pass");
   });
 
+  it("做空第五轮：注释里的单引号不吞掉后面的命令", () => {
+    const checks = collectTurnChecks(run("# don't care\nnpx tsc --noEmit\nnpx vitest run 2>&1 | tail -3", { text: "Tests  2 failed | 109 passed (111)" }));
+    expect(checks.find((c) => c.kinds.includes("test"))?.status).toBe("fail");
+    const inline = collectTurnChecks(run("npx tsc --noEmit # don't skip\nnpx vitest run", { exit_code: 1, text: "Tests  1 failed | 9 passed (10)" }));
+    expect(inline.map((c) => [c.kinds, c.status])).toEqual([[["typecheck"], "unknown"], [["test"], "fail"]]);
+  });
+
+  it("做空第五轮：一份输出里两种测试汇总各认各的", () => {
+    const checks = collectTurnChecks(run("cargo test; npx vitest run", { text: "test result: FAILED. 3 passed; 1 failed;\n      Tests  111 passed (111)" }));
+    expect(checks.map((c) => [c.command.length > 0, c.status])).toEqual([[true, "fail"], [true, "pass"]]);
+  });
+
+  it("做空第五轮：echo 这类不会失败，构建失败归到构建上", () => {
+    expect(collectTurnChecks(run("npm run build && echo done", { exit_code: 1, text: "error during build" }))[0].status).toBe("fail");
+    expect(collectTurnChecks(run("echo start && npm run build", { exit_code: 1, text: "error during build" }))[0].status).toBe("fail");
+  });
+
+  it("做空第五轮：换个写法重跑全量通过，旧失败退场；范围更窄的不盖", () => {
+    const pairs: [string, string, string[]][] = [
+      ["npx tsc --noEmit -p app", "cd app && npx tsc --noEmit", ["pass"]],
+      ["npx vitest run", "bunx vitest run", ["pass"]],
+      ["npx vitest run src/a.test.ts", "npx vitest run", ["pass"]],
+      ["npx tsc --noEmit", "npx tsc --noEmit -p .", ["pass"]],
+      ["npx vitest run", "npx vitest run src/a.test.ts", ["fail", "pass"]],
+      ["cargo test", "cargo clippy", ["fail", "pass"]],
+    ];
+    for (const [first, second, expected] of pairs) {
+      const checks = collectTurnChecks([...run(first, { is_error: true, text: "boom" }), ...run(second, {})]);
+      expect([first, second, checks.map((c) => c.status)]).toEqual([first, second, expected]);
+    }
+  });
+
+  it("做空第五轮：PowerShell 5.1 不认 &&，命令没跑", () => {
+    const checks = collectTurnChecks(run("npx tsc --noEmit && npx vitest run", { is_error: true, text: "The token '&&' is not a valid statement separator in this version." }));
+    expect(checks.every((c) => c.note.kind === "notRun")).toBe(true);
+  });
+
+  it("做空第五轮：set -e 之后，前面失败的后面没跑到", () => {
+    const checks = collectTurnChecks(run("set -e\nnpx tsc --noEmit\nnpx vitest run", { exit_code: 1, text: "a.ts(1,1): error TS2322: x" }));
+    expect(checks.map((c) => [c.kinds, c.note.kind])).toEqual([[["typecheck"], "failed"], [["test"], "notRun"]]);
+  });
+
   it("PowerShell 先设环境变量再跑：失败归到检查上", () => {
     const [check] = collectTurnChecks(run("$env:CARGO_TARGET_DIR='C:\\t'; cargo test", { is_error: true, text: "boom" }));
     expect(check.status).toBe("fail");
