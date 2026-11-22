@@ -379,7 +379,9 @@ function judgeCommand(segments: Segment[], kindsBySegment: CheckKind[][], result
       verdicts[index] = NOT_REACHED;
       continue;
     }
-    if (failing.some((f) => f > index && chainedAnd(segments, index, f))) {
+    // 后面 && 接着的段跑了，说明这段跑过且成功。这段前面是 || 时不成立：`a || b && c` 是 `(a || b) && c`，
+    // a 成功时 b 根本没跑、c 照样跑（矩阵复验找到的）。
+    if (segment.prev !== "||" && !complex && failing.some((f) => f > index && chainedAnd(segments, index, f))) {
       verdicts[index] = PASSED;
       continue;
     }

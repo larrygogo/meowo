@@ -297,6 +297,11 @@ describe("这一轮的检查", () => {
     expect(collectTurnChecks(run("npx tsc --noEmit && npx vitest run", { is_error: true, text: "a.ts(1,1): error TS2322: x" }))[0].status).toBe("fail");
   });
 
+  it("矩阵复验：a || b && c 里 b 可能没跑，不因 c 跑了就推 b 通过", () => {
+    const checks = collectTurnChecks(run("npx tsc --noEmit || npx vitest run && npx eslint .", { is_error: true, text: "✖ 3 problems (3 errors, 0 warnings)" }));
+    expect(checks.find((c) => c.kinds.includes("test"))?.status).not.toBe("pass");
+  });
+
   it("PowerShell 先设环境变量再跑：失败归到检查上", () => {
     const [check] = collectTurnChecks(run("$env:CARGO_TARGET_DIR='C:\\t'; cargo test", { is_error: true, text: "boom" }));
     expect(check.status).toBe("fail");
