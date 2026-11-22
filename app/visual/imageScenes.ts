@@ -223,6 +223,22 @@ export function imageSceneItems(part: string, lang: Lang): { items: ChatItem[]; 
   const at = (s: number) => new Date(FIXED_NOW - s * 1000).toISOString();
   const say = (id: string, s: number, text: string) => ({ type: "assistant_text", id, timestamp: at(s), text }) as unknown as ChatItem;
   const user = (id: string, s: number, text: string) => ({ type: "user_text", id, timestamp: at(s), text }) as unknown as ChatItem;
+  if (part === "outline") {
+    // 长回复：五个小标题 + 一段 45 行的代码，看目录按钮和代码块收起。
+    const para = zh
+      ? "这一处的问题在于状态在两个地方各存一份，改了一边另一边不知道。表单提交时读的是旧值，所以看起来像校验没生效。修法是只留一个来源，其余地方都从它派生。"
+      : "The problem here is that the state lives in two places, so changing one leaves the other stale. Submit reads the old value, which looks like validation did not run. The fix is a single source that everything else derives from.";
+    const code = ["```ts", ...Array.from({ length: 45 }, (_, i) => `export const rule${i} = (value: string) => value.length > ${i} || "${zh ? "太短" : "too short"}";`), "```"].join("\n");
+    const titles = zh ? ["问题一：校验跑了两遍", "问题二：错误提示不跟随输入框", "问题三：提交按钮的禁用态", "问题四：手机上键盘挡住按钮", "建议的改法"] : ["Issue 1: validation runs twice", "Issue 2: errors don't follow inputs", "Issue 3: submit button disabled state", "Issue 4: keyboard covers the button on mobile", "Suggested fix"];
+    const body = titles.map((title, i) => `## ${title}\n\n${para}\n\n${para}${i === 4 ? `\n\n${code}` : ""}`).join("\n\n");
+    return {
+      running: false,
+      items: [
+        user("u1", 300, zh ? "把登录表单的校验逻辑审一遍，问题都列出来。" : "Review the login form validation and list every issue."),
+        say("a1", 120, body),
+      ],
+    };
+  }
   if (part === "choices") {
     const choicesCall = (id: string, s: number) => ({
       type: "tool_use", id, timestamp: at(s), name: "mcp__meowo__offer_choices", kind: "other", summary: "",

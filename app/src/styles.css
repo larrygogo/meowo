@@ -4787,6 +4787,19 @@ button.chat-choice-pick:focus-visible { outline: none; box-shadow: inset 0 0 0 2
 .chat-quote-button:hover { background: var(--fill-hover); }
 .chat-quote-button:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: 2px; }
 @media (pointer: coarse) { .chat-quote-button { height: 36px; } }
+/* 长回复的目录（ReplyOutline.tsx）：高度为 0 的 sticky 条贴在这条回复顶边，按钮浮在右上角，
+   往下读时一直够得着，不占正文的位置。菜单在按钮下方展开，限高可滚。 */
+.chat-message.has-outline { position: relative; }
+.chat-outline { position: sticky; top: var(--sp-8); z-index: var(--z-raised); height: 0; display: flex; justify-content: flex-end; }
+.chat-outline-toggle { height: 26px; display: inline-flex; align-items: center; gap: var(--sp-4); padding: 0 var(--sp-8); font-variant-numeric: tabular-nums; border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-full); background: var(--cc-panel-raised); color: var(--cc-text-dim); font: inherit; font-size: var(--text-xs); white-space: nowrap; cursor: pointer; box-shadow: var(--shadow-sm); }
+/* 悬停、展开的底色叠在不透明底上：按钮压在正文上方，半透明的 fill 会让底下的字透出来。 */
+.chat-outline-toggle:hover, .chat-outline-toggle[aria-expanded="true"] { color: var(--cc-text); background: linear-gradient(var(--fill-hover), var(--fill-hover)), var(--cc-panel-raised); }
+.chat-outline-toggle:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: 2px; }
+.chat-outline-menu { position: absolute; top: 32px; right: 0; z-index: var(--z-dropdown); width: min(320px, 80vw); max-height: min(360px, 60vh); overflow-y: auto; padding: var(--sp-4); display: flex; flex-direction: column; border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: var(--cc-panel-raised); box-shadow: var(--edge-float), var(--shadow-md); }
+.chat-outline-item { width: 100%; min-height: 30px; padding: var(--sp-4) var(--sp-10); border: 0; border-radius: var(--radius-sm); background: none; color: var(--cc-text); font: inherit; font-size: var(--text-sm); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.chat-outline-item:hover { background: var(--fill-hover); }
+.chat-outline-item:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: -2px; }
+@media (pointer: coarse) { .chat-outline-toggle { height: 32px; } .chat-outline-item { min-height: 40px; } }
 /* 卡片窄（手机、窄对话窗）：有图的方案改横滑，每张占八成宽，露出下一张的边；底栏输入框独占一行。 */
 @container (max-width: 460px) {
   .chat-choices-grid[data-images] { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior-x: contain; }
@@ -7140,6 +7153,12 @@ button.lead-entry-head:hover { background: var(--fill-hover); }
 .chat-md pre { margin: 0; padding: var(--sp-6) var(--sp-14) var(--sp-12) var(--sp-16); overflow-x: auto; }
 /* 溢出的代码块可 Tab 聚焦（ChatMarkdown）：外壳 overflow:hidden 会裁掉外扩的焦点环，往里收。 */
 .chat-md-pre > pre:focus-visible { outline-offset: -2px; }
+/* 超长代码块收起（CopyablePre，超过 CODE_FOLD_LINES 行）：露出开头 18 行，底部渐隐提示下面还有；
+   展开按钮贴在代码块底边，和顶栏的复制、换行同一种文字按钮。 */
+.chat-md-pre.is-folded > pre { max-height: calc(var(--text-sm) * var(--leading-body) * 18 + var(--sp-6)); overflow-y: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 48px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 48px), transparent); }
+.chat-md-pre-fold { display: block; width: 100%; min-height: var(--btn-h-sm); margin: 0; padding: var(--sp-4) var(--sp-16) var(--sp-8); border: 0; background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--text-xs); text-align: left; cursor: pointer; }
+.chat-md-pre-fold:hover { color: var(--cc-text); }
+.chat-md-pre-fold:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: -2px; }
 .chat-md pre code { padding: 0; background: transparent; font-family: var(--cc-mono); font-size: var(--text-sm); line-height: var(--leading-body); }
 /* 含框线字符的代码块（模型画的结构图）由 renderGrid 钉到字符网格：宽字符锁 2ch、
    歧义符号锁 1ch，ch 基准取自本块的等宽字体，对齐不依赖用户装了哪款 CJK 字体。

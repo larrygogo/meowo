@@ -21,6 +21,7 @@ import { Icon } from "../../icons/Icon";
 import { icCopy, icImage, icLightbulb, icSwap, icUndo } from "../../icons/glyphs.chat";
 import { icAlert, icCheck, icTerminal } from "../../icons/glyphs";
 import { busyProps } from "../../busyButton";
+import { ReplyOutline, useOutline } from "./ReplyOutline";
 
 export function MessageCopyButton({ text, className = "chat-message-copy" }: { text: string; className?: string }) {
   const t = useT();
@@ -622,11 +623,7 @@ function MessageBody({ item, nextStamp = null, latest = false, compactSummary = 
     return <TurnErrorCard item={item} latest={latest} />;
   }
   if (item.type === "assistant_text" || item.type === "assistant_delta") {
-    return (
-      <article className="chat-message is-assistant" data-enter-id={item.id}>
-        <div className="chat-text chat-md"><ChatMarkdown text={item.text} /></div>
-      </article>
-    );
+    return <AssistantReply id={item.id} text={item.text} done={item.type === "assistant_text"} />;
   }
   if (item.type === "reasoning" || item.type === "reasoning_delta") {
     // 长推理默认收成**预览**（显示开头几行并渐隐），而不是整段藏起来——既能一眼看到
@@ -653,4 +650,17 @@ function MessageBody({ item, nextStamp = null, latest = false, compactSummary = 
   // 送达回执在 reduceChatEvents 就滤掉了，走到这里说明有绕过它的来源，不画。
   if (item.type === "prompt_queued") return null;
   return <CompactDivider item={item} summary={compactSummary} />;
+}
+
+/** AI 的一段正文。写完的长回复（够长、有两个以上小标题）在右上角给目录（ReplyOutline.tsx）；
+ *  还在流式输出的不给，免得目录跟着字一起闪。 */
+function AssistantReply({ id, text, done }: { id: string; text: string; done: boolean }) {
+  const body = useRef<HTMLDivElement>(null);
+  const headings = useOutline(body, done ? text : "");
+  return (
+    <article className={"chat-message is-assistant" + (headings.length > 0 ? " has-outline" : "")} data-enter-id={id}>
+      {headings.length > 0 && <ReplyOutline headings={headings} />}
+      <div className="chat-text chat-md" ref={body}><ChatMarkdown text={text} /></div>
+    </article>
+  );
 }

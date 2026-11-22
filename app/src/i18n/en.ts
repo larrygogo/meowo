@@ -582,6 +582,8 @@ export const en: Dict = {
     // Bubble after selecting text: pull the quote into the composer and keep writing.
     codeCopy: "Copy",
     codeCopied: "Copied",
+    codeUnfold: (lines) => `Show all ${lines} lines`,
+    codeFold: "Collapse code",
     codeRevealPath: "Click to show in folder",
     codeOpenLink: "Click to open in browser",
     codeWrap: "Wrap lines",
@@ -1447,6 +1449,8 @@ export const en: Dict = {
     choicesPickThis: (n) => `Pick option ${n}`,
     quote: "Quote",
     quoteTip: "Quote into the message box and ask about it",
+    outline: (count) => `Contents · ${count}`,
+    outlineLabel: "Contents of this reply",
     sentImageUrlRejected: "Only local image files can be sent; the agent needs to download the URL first",
     sentImageOpen: "View full size",
     imageLoading: "Loading image",

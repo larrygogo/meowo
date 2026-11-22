@@ -696,6 +696,8 @@ export const zh = {
     // 选中正文后的气泡：把这段话引进输入框，接着写回应。
     codeCopy: "复制",
     codeCopied: "已复制",
+    codeUnfold: (lines: number) => `展开全部 ${lines} 行`,
+    codeFold: "收起代码",
     codeRevealPath: "点击在文件夹中显示",
     codeOpenLink: "点击在浏览器中打开",
     codeWrap: "自动换行",
@@ -1670,6 +1672,9 @@ export const zh = {
     // 选中 AI 回复里的一段引用进输入框（QuoteSelection.tsx）。
     quote: "引用",
     quoteTip: "引用到输入框，接着写你的问题",
+    // 长回复的目录（ReplyOutline.tsx）。
+    outline: (count: number) => `目录 · ${count}`,
+    outlineLabel: "这条回复的目录",
     sentImageUrlRejected: "只能发本地图片，网址要 agent 先下载到本地再发",
     sentImageOpen: "查看大图",
     imageLoading: "图片加载中",
