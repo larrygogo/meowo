@@ -9,6 +9,8 @@ import { Icon } from "../../icons/Icon";
 import { icPencil } from "../../icons/glyphs";
 import { icSidebarRight } from "../../icons/glyphs.chat";
 import { RevealChangeContext } from "./panelReveal";
+import { collectTurnChecks, isDocPath, type CheckKind, type TurnCheck } from "./turnChecks";
+import { revealItem } from "./foldMemory";
 
 /// 折叠时露出的行数（Kimi 实拍：3 行 + 「还有 N 个文件」）。
 const PREVIEW_ROWS = 3;
@@ -60,16 +62,22 @@ export const TurnChanges = memo(function TurnChanges({ items }: { items: ChatIte
   const [openFile, setOpenFile] = useState<string | null>(null);
   const detailId = useId();
   const files = collectFileChanges(items, cwd);
-  if (files.length === 0) return null;
+  const checks = collectTurnChecks(items);
+  // 没改文件、检查又全都没有确定结果（多半是用户打断了）：这张卡说不出什么，不出。
+  if (files.length === 0 && !checks.some((check) => check.status !== "unknown")) return null;
+  const codeFiles = files.filter((file) => !isDocPath(file.path));
+  // 最后一次检查之后又改了哪些代码文件：上面的「通过」不含这些改动。
+  const lastCheckAt = checks.length > 0 ? Math.max(...checks.map((check) => check.at)) : -1;
+  const editedAfter = checks.length > 0 ? editedAfterIndex(items, lastCheckAt, cwd).filter((path) => !isDocPath(path)) : [];
   const shown = expanded ? files : files.slice(0, PREVIEW_ROWS);
   const hidden = files.length - PREVIEW_ROWS;
   return (
     <div className="chat-turn-changes">
-      <div className="chat-turn-changes-head">
+      {files.length > 0 && <div className="chat-turn-changes-head">
         <Icon glyph={icPencil} size={14} />
         <span>{t.chat.turnChangedFiles(files.length)}</span>
-      </div>
-      <ul className="chat-turn-changes-list">
+      </div>}
+      {files.length > 0 && <ul className="chat-turn-changes-list">
         {shown.map((file) => {
           const cut = file.path.lastIndexOf("/");
           return (
@@ -112,13 +120,72 @@ export const TurnChanges = memo(function TurnChanges({ items }: { items: ChatIte
             </li>
           );
         })}
-      </ul>
+      </ul>}
       {hidden > 0 && (
         <button type="button" className="chat-turn-changes-more" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
           {expanded ? t.chat.turnChangedLess : t.chat.turnChangedMore(hidden)}
           <span className="chat-turn-changes-caret" aria-hidden="true">›</span>
         </button>
       )}
+      <TurnChecks checks={checks} replyId={items[0]?.id ?? null} editedAfter={editedAfter} codeChanged={codeFiles.length > 0} />
     </div>
   );
 });
+
+/// 某个位置之后又改了哪些文件（相对路径，去重，按首次出现）。
+function editedAfterIndex(items: ChatItem[], after: number, cwd: string | null): string[] {
+  return collectFileChanges(items.slice(after + 1), cwd).map((file) => file.path);
+}
+
+const KIND_LABEL = (t: ReturnType<typeof useT>, kind: CheckKind) => t.chat.checkKind[kind];
+
+/// 检查段（对照 GitHub PR 底部的检查区）：一行一项，状态、类别、命令原文、结果。数据全部来自会话记录。
+/// 点一行跳回过程里的那次命令：展开回合折叠和那一行，滚过去，看完整输出。
+function TurnChecks({ checks, replyId, editedAfter, codeChanged }: { checks: TurnCheck[]; replyId: string | null; editedAfter: string[]; codeChanged: boolean }) {
+  const t = useT();
+  if (checks.length === 0) {
+    // 改了代码却一项检查都没跑：如实写出来。只改文档不提。
+    return codeChanged ? <p className="chat-turn-checks-note">{t.chat.checkNone}</p> : null;
+  }
+  const jump = (toolId: string) => {
+    revealItem(toolId, [...(replyId ? [`reply:${replyId}`] : []), `tool:${toolId}`]);
+    // 折叠展开要等下一帧挂载，最多等几帧再滚。
+    let tries = 0;
+    const seek = () => {
+      const target = document.querySelector<HTMLElement>(`[data-enter-id="${CSS.escape(toolId)}"]`);
+      if (target) {
+        target.scrollIntoView({ block: "center", behavior: "smooth" });
+        target.classList.remove("is-flash");
+        void target.offsetWidth;
+        target.classList.add("is-flash");
+        return;
+      }
+      if ((tries += 1) < 10) requestAnimationFrame(seek);
+    };
+    requestAnimationFrame(seek);
+  };
+  return (
+    <>
+      <ul className={"chat-turn-checks" + (codeChanged || editedAfter.length ? "" : " is-only")} aria-label={t.chat.checkTitle}>
+        {checks.map((check) => {
+          const label = check.kinds.map((kind) => KIND_LABEL(t, kind)).join(" + ");
+          const result = t.chat.checkResult(check.note);
+          return (
+            <li key={check.toolId}>
+              <button type="button" className={`chat-turn-check is-${check.status}`} data-tip={check.command}
+                aria-label={`${label} ${result} · ${t.chat.checkJump}`} onClick={() => jump(check.toolId)}>
+                <span className="chat-turn-check-icon" aria-hidden="true">{check.status === "pass" ? "✓" : check.status === "fail" ? "✕" : "?"}</span>
+                <span className="chat-turn-check-kind">{label}</span>
+                <code className="chat-turn-check-cmd">{check.command.split(/\r?\n/)[0]}</code>
+                <span className="chat-turn-check-result">{result}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      {editedAfter.length > 0 && (
+        <p className="chat-turn-checks-note is-warn">{t.chat.checkStale(editedAfter.length, editedAfter.map((path) => path.slice(path.lastIndexOf("/") + 1)))}</p>
+      )}
+    </>
+  );
+}

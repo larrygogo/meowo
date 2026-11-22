@@ -756,6 +756,15 @@ export const zh = {
     turnChangeStep: (index: number, total: number) => `第 ${index}/${total} 次修改`,
     turnChangePending: "回执尚未到达，以下是请求的修改内容",
     turnChangeMissing: "这条记录未包含修改详情",
+    checkTitle: "本轮检查",
+    checkKind: { typecheck: "类型检查", test: "测试", lint: "代码检查", build: "构建" } as Record<"typecheck" | "test" | "lint" | "build", string>,
+    checkResult: (note: import("../views/chat/turnChecks").CheckNote) =>
+      note.kind === "passed" ? (note.count ? `${note.count} 个通过` : "通过")
+        : note.kind === "failed" ? (note.count ? `${note.count} 个${note.unit === "errors" ? "错误" : note.unit === "problems" ? "问题" : "失败"}` : "失败")
+        : note.kind === "interrupted" ? "被打断" : note.kind === "background" ? "在后台运行" : note.kind === "missing" ? "没有结果" : "看不出结果",
+    checkJump: "跳到这条命令",
+    checkStale: (count: number, names: string[]) => `最后一次检查之后又改了 ${count} 个文件（${names.slice(0, 3).join("、")}${count > 3 ? " 等" : ""}），上面的结果不含这些改动`,
+    checkNone: "这一轮改了代码，没有跑测试、类型检查、代码检查或构建",
     revealInChanges: "在「更改」中查看",
     revealNoChange: "这个文件现在没有未提交的改动",
     revealNoChangeOutside: "这个文件不在面板列出的 git 仓库里，没有可看的改动",

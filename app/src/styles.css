@@ -4551,6 +4551,27 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-turn-changes-more:hover { background: var(--fill-hover); }
 .chat-turn-changes-caret { color: var(--cc-text-faint); transform: rotate(90deg); transition: transform var(--dur-fast) var(--ease-out); }
 .chat-turn-changes-more[aria-expanded="true"] .chat-turn-changes-caret { transform: rotate(-90deg); }
+/* 本轮检查（turnChecks.ts）：改动清单下面一行一项，对照 GitHub PR 底部的检查区。点一行跳回那次命令。
+   只有检查、没有改动时（用户让它跑测试）卡片里只有这一段，不画顶部分隔线。 */
+.chat-turn-checks { margin: 0; padding: var(--sp-6) 0; list-style: none; border-top: var(--hairline) solid var(--cc-border); }
+.chat-turn-changes > .chat-turn-checks:first-child { border-top: 0; }
+.chat-turn-check { display: flex; align-items: center; gap: var(--sp-8); width: 100%; min-width: 0; padding: var(--sp-6) var(--sp-14); border: 0; background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-sm); line-height: var(--leading-body); text-align: left; cursor: pointer; }
+.chat-turn-check:hover { background: var(--fill-hover); }
+.chat-turn-check-icon { flex: 0 0 auto; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; font-size: 10px; font-weight: var(--fw-semibold); background: var(--fill-hover); color: var(--cc-text-dim); }
+.chat-turn-check.is-pass .chat-turn-check-icon { background: color-mix(in srgb, var(--cc-ok-vivid) 16%, transparent); color: var(--cc-ok-text); }
+.chat-turn-check.is-fail .chat-turn-check-icon { background: color-mix(in srgb, var(--cc-err-vivid) 18%, transparent); color: var(--cc-err-text); }
+.chat-turn-check-kind { flex: 0 0 auto; }
+.chat-turn-check-cmd { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-family: var(--cc-mono); font-size: var(--text-xs); color: var(--cc-text-faint); background: none; padding: 0; }
+.chat-turn-check-result { flex: 0 0 auto; margin-left: auto; font-size: var(--text-xs); color: var(--cc-text-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.chat-turn-check.is-fail .chat-turn-check-result { color: var(--cc-err-text); }
+.chat-turn-checks-note { margin: 0; padding: var(--sp-8) var(--sp-14); border-top: var(--hairline) solid var(--cc-border); font-size: var(--text-xs); color: var(--cc-text-faint); }
+.chat-turn-changes > .chat-turn-checks-note:first-child { border-top: 0; }
+.chat-turn-checks-note.is-warn { color: var(--cc-warn-text); }
+/* 窄屏（手机远程页）：命令原文让位，只留类别和结果；命令在跳过去的那一行里看得到。 */
+@media (max-width: 480px) { .chat-turn-check-cmd { display: none; } }
+/* 从检查行跳过来：那一行闪一下底色，告诉你落在哪。 */
+@keyframes chat-jump-flash { from { background: var(--fill-selected); } to { background: transparent; } }
+.chat-tool.is-flash > summary { animation: chat-jump-flash var(--dur-idle) var(--ease-out); }
 .chat-turn-time { color: var(--cc-text-faint); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
 .chat-turn-copy { width: var(--icon-button-sm); height: var(--icon-button-sm); display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); cursor: pointer; }
 .chat-turn-copy:hover, .chat-turn-copy:focus-visible { color: var(--cc-text); background: var(--fill-hover); }
