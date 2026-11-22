@@ -177,6 +177,8 @@ fn write_user_config(path: &Path, body: &str) {
 }
 
 /// 本条规则的标记（`reason` 字段），增删时按它认自己的那条，不碰用户与 Lead 的规则。
+/// 文字虽只提到 send_image，但它是标记不是说明：已装用户的 config.toml 里存的就是这句，
+/// 改了就认不出旧规则、升级时会重复加。新增的工具（对照、方案卡）沿用同一个标记。
 pub const RULE_REASON: &str = "由 Meowo 管理：send_image 只把图片显示给用户，免逐次审批";
 
 /// kimi `config.toml` 的 `[[permission.rules]]`：开着时确保有一条放行发图工具的规则，
@@ -280,7 +282,7 @@ pub fn policy_body() -> String {
     }
     doc.insert("rule", toml_edit::Item::ArrayOfTables(rules));
     format!(
-        "# 由 Meowo 管理：Meowo 的发图工具 send_image、对照工具 compare_images 只把图片显示给用户，免逐次确认。\n{doc}"
+        "# 由 Meowo 管理：Meowo 的发图 send_image、对照 compare_images、方案卡 offer_choices 只把内容显示给用户，免逐次确认。\n{doc}"
     )
 }
 

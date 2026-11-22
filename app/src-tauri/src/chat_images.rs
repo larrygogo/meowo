@@ -275,7 +275,7 @@ fn private_address() -> ImageError {
     )
 }
 
-fn images_root() -> Result<PathBuf, ImageError> {
+pub(crate) fn images_root() -> Result<PathBuf, ImageError> {
     images::images_root()
         .ok_or_else(|| ImageError::new(ImageErrorCode::Forbidden, "找不到用户目录，没法保存图片"))
 }
@@ -310,7 +310,7 @@ fn send_into(root: &Path, args: &Value) -> Result<PathBuf, ImageError> {
 
 /// 工具参数里的一个本地图片路径（send_image 的 source、compare_images 的 before/after）。
 /// 只收本地绝对路径或 file: 网址；网址、UNC 一律拒（理由见 [`send_into`]）。
-fn local_source(args: &Value, key: &str) -> Result<PathBuf, ImageError> {
+pub(crate) fn local_source(args: &Value, key: &str) -> Result<PathBuf, ImageError> {
     let source = args
         .get(key)
         .and_then(Value::as_str)
