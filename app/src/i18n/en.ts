@@ -646,9 +646,10 @@ export const en: Dict = {
     checkResult: (note: import("../views/chat/turnChecks").CheckNote) =>
       note.kind === "passed" ? (note.count ? `${note.count} passed` : "Passed")
         : note.kind === "failed" ? (note.count ? `${note.count} ${note.unit === "errors" ? (note.count === 1 ? "error" : "errors") : note.unit === "problems" ? (note.count === 1 ? "problem" : "problems") : "failed"}` : "Failed")
-        : note.kind === "interrupted" ? "Interrupted" : note.kind === "background" ? "Running in background" : note.kind === "missing" ? "No result" : "Result unclear",
+        : note.kind === "interrupted" ? "Interrupted" : note.kind === "background" ? "Running in background" : note.kind === "missing" ? "No result" : note.kind === "notRun" ? "Didn't finish" : "Result unclear",
     checkJump: "Jump to this command",
-    checkStale: (count: number, names: string[]) => `${count} ${count === 1 ? "file" : "files"} changed after the last check (${names.slice(0, 3).join(", ")}${count > 3 ? ", …" : ""}); the results above don't include ${count === 1 ? "it" : "them"}`,
+    checkStale: (count: number, names: string[]) => `${count} ${count === 1 ? "file" : "files"} changed after checks ran (${names.slice(0, 3).join(", ")}${count > 3 ? ", …" : ""}); results marked "changed since" don't include ${count === 1 ? "it" : "them"}`,
+    checkStaleTag: "changed since",
     checkNone: "Code changed this turn, but no tests, type check, lint or build ran",
     revealInChanges: "View in Changes",
     revealNoChange: "This file has no uncommitted changes now",

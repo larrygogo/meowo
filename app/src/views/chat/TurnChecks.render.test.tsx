@@ -25,11 +25,23 @@ describe("本轮结果卡的检查段", () => {
     ]} />);
     const rows = [...document.querySelectorAll(".chat-turn-check")];
     expect(rows.map((row) => [row.className, row.querySelector(".chat-turn-check-kind")?.textContent, row.querySelector(".chat-turn-check-result")?.textContent])).toEqual([
-      ["chat-turn-check is-pass", "类型检查", "通过"],
-      ["chat-turn-check is-pass", "测试", "162 个通过"],
+      ["chat-turn-check is-pass is-stale", "类型检查", "通过 · 之后改过"],
+      ["chat-turn-check is-pass is-stale", "测试", "162 个通过 · 之后改过"],
     ]);
     // README 是文档，不算「检查之后又改了」。
     expect(screen.getByText(zh.chat.checkStale(1, ["Row.tsx"]))).toBeTruthy();
+  });
+
+  it("类型检查之后改了文件、只重跑了测试：类型检查那一行标「之后改过」，测试不标", () => {
+    render(<TurnChanges items={[
+      edit("e1", "src/a.ts"), ok("e1"),
+      run("c1", "bunx tsc --noEmit"), ok("c1"),
+      edit("e2", "src/b.ts"), ok("e2"),
+      run("c2", "bunx vitest run"), ok("c2", "Tests  5 passed (5)"),
+    ]} />);
+    const rows = [...document.querySelectorAll(".chat-turn-check")];
+    expect(rows.map((row) => row.querySelector(".chat-turn-check-result")?.textContent)).toEqual(["通过 · 之后改过", "5 个通过"]);
+    expect(screen.getByText(zh.chat.checkStale(1, ["b.ts"]))).toBeTruthy();
   });
 
   it("改了代码却没跑检查：如实写；只改文档：不提", () => {

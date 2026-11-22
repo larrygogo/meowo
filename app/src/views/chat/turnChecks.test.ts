@@ -3,14 +3,14 @@ import type { ChatItem } from "../../api";
 import { checkKindsOf, collectTurnChecks, isDocPath, parseOutput, splitCommand } from "./turnChecks";
 
 let seq = 0;
-function run(command: string, result?: { text?: string; is_error?: boolean; interrupted?: boolean } | null, viaSummary = false): ChatItem[] {
+function run(command: string, result?: { text?: string; is_error?: boolean; interrupted?: boolean; exit_code?: number } | null, viaSummary = false): ChatItem[] {
   const id = `t${(seq += 1)}`;
   const use = {
     type: "tool_use", id, timestamp: null, name: "Bash", kind: "run", summary: command,
     detail: viaSummary ? null : { kind: "command", command, description: null },
   } as ChatItem;
   if (result === null) return [use];
-  const res = { type: "tool_result", id: `${id}r`, timestamp: null, tool_use_id: id, text: result?.text ?? "", is_error: result?.is_error ?? false, interrupted: result?.interrupted } as ChatItem;
+  const res = { type: "tool_result", id: `${id}r`, timestamp: null, tool_use_id: id, text: result?.text ?? "", is_error: result?.is_error ?? false, interrupted: result?.interrupted, exit_code: result?.exit_code } as ChatItem;
   return [use, res];
 }
 
@@ -37,11 +37,23 @@ describe("认检查类别", () => {
     ["npm run build", ["build"]],
     ["CI=1 bunx vitest run", ["test"]],
     ["& npx tsc --noEmit", ["typecheck"]],
+    ["npx -y tsc", ["typecheck"]],
+    ["bunx --bun vitest run", ["test"]],
+    ["pnpm -C app test", ["test"]],
+    ["npm --prefix app test", ["test"]],
+    ["pnpm --filter web test", ["test"]],
+    ["yarn workspace app test", ["test"]],
+    ["bun run --cwd app test", ["test"]],
+    ["npm -w app run lint", ["lint"]],
+    ["./node_modules/.bin/vitest run", ["test"]],
+    ["make test", ["test"]],
+    ["node --test", ["test"]],
+    ["deno check main.ts", ["typecheck"]],
   ])("%s", (command, kinds) => {
     expect(checkKindsOf(command)).toEqual(kinds);
   });
 
-  it.each(["grep -rn vitest src", "cat tsconfig.json", "git log --grep=test", "rg tsc", "ls tests", "Get-Content package.json", "echo npm test"])("不是检查：%s", (command) => {
+  it.each(["grep -rn vitest src", "cat tsconfig.json", "git log --grep=test", "rg tsc", "ls tests", "Get-Content package.json", "echo npm test", "tsc --version", "npx tsc --init", "pytest --version", "vitest --help", "cargo build --help", "ruff format .", "npx webpack serve", "webpack-dev-server", "bunx vitest --watch"])("不是检查：%s", (command) => {
     expect(checkKindsOf(command)).toEqual([]);
   });
 });
@@ -71,7 +83,7 @@ describe("从输出认汇总", () => {
   it("tsc 与 eslint 的错误数；只有警告不算失败", () => {
     expect(parseOutput(["typecheck"], "src/a.ts(3,1): error TS2304: x\nsrc/b.ts(1,1): error TS2322: y")).toEqual({ failed: 2, passed: null, unit: "errors" });
     expect(parseOutput(["lint"], "✖ 5 problems (3 errors, 2 warnings)")).toEqual({ failed: 3, passed: null, unit: "problems" });
-    expect(parseOutput(["lint"], "✖ 2 problems (0 errors, 2 warnings)")).toEqual({ failed: 0, passed: null, unit: "problems" });
+    expect(parseOutput(["lint"], "✖ 2 problems (0 errors, 2 warnings)")).toBeNull();
   });
 
   it("带颜色码的输出照样认", () => {
@@ -129,6 +141,42 @@ describe("这一轮的检查", () => {
     expect(check.status).toBe("unknown");
   });
 
+  it("gemini / opencode：命令跑完不标 is_error，非零退出码照样算失败", () => {
+    const checks = collectTurnChecks([
+      ...run("npm run build", { exit_code: 1, text: "vite error\nExit Code: 1" }),
+      ...run("cargo test", { exit_code: 101, text: "error[E0425]: x" }),
+    ]);
+    expect(checks.map((c) => [c.kinds[0], c.status])).toEqual([["build", "fail"], ["test", "fail"]]);
+  });
+
+  it("用例全过但测试文件没加载起来 / 有未处理的异常：算失败", () => {
+    expect(collectTurnChecks(run("bunx vitest run", { is_error: true, text: " Test Files  1 failed | 3 passed (4)\n      Tests  30 passed (30)" }))[0].status).toBe("fail");
+    expect(collectTurnChecks(run("bunx vitest run", { is_error: true, text: "      Tests  30 passed (30)\n     Errors  1 error" }))[0].status).toBe("fail");
+    expect(collectTurnChecks(run("npx jest", { is_error: true, text: "Test Suites: 1 failed, 4 passed, 5 total\nTests:       40 passed, 40 total" }))[0].status).toBe("fail");
+    // 汇总行写着全过、但退出码是 1：不写通过。
+    expect(collectTurnChecks(run("bunx vitest run", { is_error: true, text: "Tests  30 passed (30)" }))[0].status).toBe("fail");
+  });
+
+  it("用户拒绝、超时：没跑完，不算失败", () => {
+    const checks = collectTurnChecks([
+      ...run("npm test", { is_error: true, text: "The user doesn't want to proceed with this tool use. The tool use was rejected." }),
+      ...run("bun run lint", { is_error: true, text: "Command timed out after 2m 0.0s" }),
+    ]);
+    expect(checks.map((c) => [c.status, c.note.kind])).toEqual([["unknown", "notRun"], ["unknown", "notRun"]]);
+  });
+
+  it("tsc && vitest，tsc 报错：类型检查失败、测试没跑到，分两行；之后单独跑 tsc 通过只替换类型检查那一行", () => {
+    const first = collectTurnChecks(run("bunx tsc --noEmit && bunx vitest run", { is_error: true, text: "a.ts(1,1): error TS2304: x" }));
+    expect(first.map((c) => [c.kinds, c.status, c.note.kind])).toEqual([[["typecheck"], "fail", "failed"], [["test"], "unknown", "notRun"]]);
+    const later = collectTurnChecks([...run("bunx tsc --noEmit && bunx vitest run", { is_error: true, text: "a.ts(1,1): error TS2304: x" }), ...run("bunx tsc --noEmit")]);
+    expect(later.map((c) => [c.kinds, c.status])).toEqual([[["test"], "unknown"], [["typecheck"], "pass"]]);
+  });
+
+  it("PowerShell 用 ; 串起来：认出汇总的测试照样算通过，类型检查看不出", () => {
+    const checks = collectTurnChecks(run("cd app; bunx tsc --noEmit; bunx vitest run", { text: "Tests  5 passed (5)" }));
+    expect(checks.map((c) => [c.kinds, c.status])).toEqual([[["typecheck"], "unknown"], [["test"], "pass"]]);
+  });
+
   it("PowerShell 先设环境变量再跑：失败归到检查上", () => {
     const [check] = collectTurnChecks(run("$env:CARGO_TARGET_DIR='C:\\t'; cargo test", { is_error: true, text: "boom" }));
     expect(check.status).toBe("fail");
@@ -144,7 +192,7 @@ describe("这一轮的检查", () => {
 });
 
 describe("文档类文件", () => {
-  it.each([["README.md", true], ["docs/guide.mdx", true], [".lead/x/SPEC.md", true], ["assets/a.png", true], ["src/a.ts", false], ["styles.css", false]])("%s", (path, doc) => {
+  it.each([["README.md", true], ["docs/guide.mdx", true], ["requirements.txt", false], ["CMakeLists.txt", false], [".lead/x/SPEC.md", true], ["assets/a.png", true], ["src/a.ts", false], ["styles.css", false]])("%s", (path, doc) => {
     expect(isDocPath(path)).toBe(doc);
   });
 });
