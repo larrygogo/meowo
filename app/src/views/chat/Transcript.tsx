@@ -27,8 +27,8 @@ import { isSubagentDelegation, type ToolResultItem } from "./shared";
 import { liveTurnStart, SessionAliveContext, TurnLiveContext, type TurnActivity } from "./toolState";
 import { markEntering, trackEntering, type EnterTrack } from "./enterMotion";
 import { isChoicesTool, isCompareTool, isImageMessage } from "./imageTools";
-import { ChoiceMessage } from "./ChoiceCard";
-import { looksLikeChoiceReply } from "./choiceReply";
+import { ChoiceMessage, parseChoicesReceipt } from "./ChoiceCard";
+import { looksLikeChoiceReply, parseChoiceAnswer, type ChoiceCardText } from "./choiceReply";
 import { CompareMessage } from "./CompareCard";
 
 type SubagentOutcomeInfo = NonNullable<ToolResultItem["subagent"]>;
@@ -382,9 +382,12 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
     // 正文之前的节点都是过程:回合级折叠从这里切开,之后的正文/改动/页脚留在外面。
     const bodyAt = record.nodes.length;
     const choiceFollowUp = (entry: ChatItem) => {
-      const texts = choiceFollowUps(items, items.indexOf(entry));
-      // 后面还没有「用户自己打的话」：答案可能还在路上（或同一轮别的卡先答了），这块不复用缓存。
-      if (texts.length === 0 || looksLikeChoiceReply(texts[texts.length - 1])) record.awaitsReply = true;
+      const receipt = results.get(entry.id);
+      const parsed = receipt && !receipt.is_error ? parseChoicesReceipt(receipt.text) : null;
+      const card = parsed ? { question: parsed.question, labels: parsed.options.map((option) => option.label) } : null;
+      const { texts, settled } = choiceFollowUps(items, items.indexOf(entry), card);
+      // 还没认出答案、也没遇到用户自己打的话：答案可能还在路上（或同一轮别的卡先答了），这块不复用缓存。
+      if (!settled) record.awaitsReply = true;
       return texts;
     };
     for (const entry of bodyItems) {
@@ -395,7 +398,7 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
         record.nodes.push(
           <TurnLiveContext.Provider key={entry.id} value={blockActivity}>
             {isChoicesTool(entry)
-              ? <ChoiceMessage item={entry} result={results.get(entry.id)} followUps={choiceFollowUp(entry)} />
+              ? <ChoiceMessage item={entry} result={results.get(entry.id)} followUps={choiceFollowUp(entry)} sessionId={sessionId} />
               : isCompareTool(entry)
               ? <CompareMessage item={entry} result={results.get(entry.id)} />
               : <SentImageMessage item={entry} result={results.get(entry.id)} />}
@@ -483,15 +486,17 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
   );
 });
 
-/** 方案卡之后的用户消息：一条条收，直到遇到一条不像方案卡回复的（用户自己打的话，也收进来）为止。
- *  同一轮有几张卡时，别的卡的回复排在前面也不会挡住这张卡的答案（ChoiceCard 往后逐条认）。 */
-export function choiceFollowUps(items: readonly ChatItem[], index: number): string[] {
+/** 方案卡之后的用户消息：一条条收，收到这张卡自己的答案、或一条不像方案卡回复的（用户自己打的话）为止，
+ *  那一条也收进来。同一轮有几张卡时，别的卡的回复排在前面也不会挡住这张卡的答案（ChoiceCard 往后逐条认）。
+ *  settled：已经有了定论（认出答案或用户打了字），这一段可以进缓存；连续几轮都只点卡时不会一直收下去
+ *  （做空第三轮）。card 为空（回执还没到或坏了）时只看「像不像回复」。 */
+export function choiceFollowUps(items: readonly ChatItem[], index: number, card: ChoiceCardText | null = null): { texts: string[]; settled: boolean } {
   const texts: string[] = [];
   for (let i = index + 1; i < items.length; i += 1) {
     const entry = items[i];
     if (entry.type !== "user_text") continue;
     texts.push(entry.text);
-    if (!looksLikeChoiceReply(entry.text)) break;
+    if ((card && parseChoiceAnswer(entry.text, card)) || !looksLikeChoiceReply(entry.text)) return { texts, settled: true };
   }
-  return texts;
+  return { texts, settled: false };
 }

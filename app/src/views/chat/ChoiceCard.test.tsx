@@ -6,7 +6,7 @@ import { ChoiceMessage, parseChoicesReceipt } from "./ChoiceCard";
 import { formatChoiceAnswer, parseChoiceAnswer } from "./choiceReply";
 import { ToolActivity } from "./ToolActivity";
 import { TurnLiveContext } from "./toolState";
-import { Transcript } from "./Transcript";
+import { choiceFollowUps, Transcript } from "./Transcript";
 
 vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tauri-apps/api/core")>()),
@@ -209,6 +209,17 @@ describe("方案卡", () => {
     await act(async () => { finish(false); });
     expect(screen.getByRole("alert").textContent).toContain("没发出去");
     expect(screen.getAllByRole("radio")).toHaveLength(3);
+  });
+
+  it("连续几轮只点卡：一认出这张卡的答案就停，后面的回复不再收进来（这一段能进缓存）", () => {
+    const card = { question: "设置页用哪种布局？", labels: ["卡片式", "列表式"] };
+    const items: ChatItem[] = [
+      call("q1"), result("q1", receipt()),
+      ...Array.from({ length: 20 }, (_, i) => ({ type: "user_text", id: `r${i}`, timestamp: null, text: i === 0 ? "选了方案 1：卡片式" : `选了方案 1：别的卡${i}` }) as ChatItem),
+    ];
+    expect(choiceFollowUps(items, 0, card)).toEqual({ texts: ["选了方案 1：卡片式"], settled: true });
+    // 还没答：一路是别的卡的回复，没有定论。
+    expect(choiceFollowUps(items.slice(0, 2), 0, card)).toEqual({ texts: [], settled: false });
   });
 
   it("工具调用 id 相同但时间不同（kimi 两个会话撞号）：不共用「已发出」", async () => {

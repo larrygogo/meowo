@@ -51,9 +51,11 @@ export function parseChoicesReceipt(text: string): ChoicesReceipt | null {
   return options.length >= 2 ? { question, options } : null;
 }
 
-export const ChoiceMessage = memo(function ChoiceMessage({ item, result, followUps }: {
+export const ChoiceMessage = memo(function ChoiceMessage({ item, result, followUps, sessionId }: {
   item: ToolUseItem;
   result?: ToolResultItem;
+  /** 所在会话：记发送状态的键带上它，不同会话的卡不会串（kimi 的调用 id 可能撞号）。 */
+  sessionId?: number;
   /** 这张卡之后的用户消息（Transcript.choiceFollowUps）：用来认出当时选了哪个（回放旧会话也一样）。
    *  没传 = 拿不到后续（子任务记录等），按没有后续算。 */
   followUps?: readonly string[];
@@ -77,8 +79,8 @@ export const ChoiceMessage = memo(function ChoiceMessage({ item, result, followU
     const reason = error?.code === "not_found" && error.message ? error.message : error ? imageErrorText(t, error) : t.chat.imageErrors.unknown;
     content = <ImageFailure title={t.chat.choicesFailed} reason={reason} name={null} />;
   } else {
-    // 调用 id 带上时间：kimi 直接用模型给的调用 id，两个会话可能撞号（做空第二轮 A）。
-    content = <ChoiceCard cardId={`${item.id}@${item.timestamp ?? ""}`} receipt={receipt} followUps={followUps ?? []} />;
+    // 键带上会话与调用时间：kimi 直接用模型给的调用 id，两个会话可能撞号（做空第二、三轮）。
+    content = <ChoiceCard cardId={`${sessionId ?? ""}:${item.id}@${item.timestamp ?? ""}`} receipt={receipt} followUps={followUps ?? []} />;
   }
   return (
     <article className="chat-message chat-sent" data-enter-id={item.id}>
