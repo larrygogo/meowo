@@ -4728,6 +4728,76 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 触屏：分段按钮视觉高度不变，用看不见的外扩热区凑够命中面（standards.md）。 */
 @media (pointer: coarse) { .chat-compare-seg button::after { content: ""; position: absolute; inset: -11px -2px; } }
 .chat-sent-failed-reason { color: var(--cc-text-dim); font-size: var(--text-xs); overflow-wrap: anywhere; }
+/* 「点一个」方案卡（ChoiceCard.tsx）：外框与对照卡同一套（描边、圆角、底色），两种卡在正文里像一家。
+   有截图的方案并排成缩略图（4 个排成 2×2），只有文字的方案排成一列；卡片窄（手机、窄对话窗）时缩略图改横滑，
+   一次看一张多一点，露出下一张的边提示还能滑。 */
+.chat-choices { width: min(640px, 100%); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-lg); background: var(--fill-selected); container-type: inline-size; outline: none; }
+.chat-choices-head { display: flex; align-items: center; gap: var(--sp-8); padding: var(--sp-8) var(--sp-10) 0; }
+.chat-choices-tag { padding: 1px var(--sp-8); border-radius: var(--radius-full); background: var(--cc-accent-soft); color: var(--cc-accent-text); font-size: var(--text-2xs); white-space: nowrap; }
+.chat-choices-hint { margin-left: auto; color: var(--cc-text-faint); font-size: var(--text-2xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-choices-question { padding: var(--sp-4) var(--sp-10) var(--sp-8); color: var(--cc-text); font-size: var(--text-base); font-weight: var(--fw-medium); line-height: var(--leading-normal); overflow-wrap: anywhere; }
+.chat-choices-grid { display: grid; grid-template-columns: 1fr; gap: var(--sp-6); padding: 0 var(--sp-8) var(--sp-8); }
+.chat-choices-grid[data-images] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.chat-choices-grid[data-images][data-count="2"], .chat-choices-grid[data-images][data-count="4"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.chat-choice { position: relative; min-width: 0; border: var(--hairline) solid var(--line-subtle); border-radius: var(--radius-md); background: var(--cc-panel-raised); overflow: hidden; transition: border-color var(--dur-fast) var(--ease-in-out), box-shadow var(--dur-fast) var(--ease-in-out); }
+.chat-choice.is-selected { border-color: var(--cc-accent); box-shadow: 0 0 0 1px var(--cc-accent); }
+.chat-choice-pick { width: 100%; height: auto; padding: 0; display: flex; flex-direction: column; align-items: stretch; border: 0; border-radius: 0; background: none; color: var(--cc-text); font: inherit; text-align: left; white-space: normal; cursor: pointer; }
+div.chat-choice-pick { cursor: default; }
+button.chat-choice-pick:hover .chat-choice-text { background: var(--fill-hover); }
+button.chat-choice-pick:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--cc-accent); }
+.chat-choice-shot { display: block; aspect-ratio: 16 / 10; background: var(--cc-code-bg); overflow: hidden; }
+.chat-choice-shot img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top center; user-select: none; -webkit-user-select: none; }
+.chat-choice-shot-missing { display: grid; place-items: center; height: 100%; padding: var(--sp-8); color: var(--cc-text-faint); font-size: var(--text-2xs); text-align: center; overflow-wrap: anywhere; }
+.chat-choice-num { position: absolute; top: var(--sp-6); left: var(--sp-6); width: 20px; height: 20px; display: grid; place-items: center; border-radius: var(--radius-sm); background: rgba(0, 0, 0, .6); color: #fff; font-size: var(--text-2xs); font-weight: var(--fw-medium); font-variant-numeric: tabular-nums; pointer-events: none; }
+.chat-choice.is-selected .chat-choice-num { background: var(--cc-accent); color: var(--cc-on-accent); }
+.chat-choice-text { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-6) var(--sp-8) var(--sp-8); min-width: 0; }
+.chat-choice-text b { font-size: var(--text-sm); font-weight: var(--fw-medium); overflow-wrap: anywhere; }
+.chat-choice-text small { color: var(--cc-text-faint); font-size: var(--text-xs); line-height: var(--leading-normal); overflow-wrap: anywhere; }
+/* 只有文字的方案：序号放在行首，不压在图上。 */
+.chat-choice:not(.has-shot) .chat-choice-pick { flex-direction: row; align-items: flex-start; }
+.chat-choice:not(.has-shot) .chat-choice-num { position: static; flex: 0 0 auto; margin: var(--sp-8) 0 0 var(--sp-8); background: var(--fill-hover); color: var(--cc-text-dim); }
+.chat-choice:not(.has-shot) .chat-choice-text { flex: 1; }
+.chat-choice-zoom { position: absolute; top: var(--sp-6); right: var(--sp-6); width: 24px; height: 24px; padding: 0; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: rgba(0, 0, 0, .6); color: #fff; font-size: 13px; line-height: 1; cursor: zoom-in; opacity: 0; transition: opacity var(--dur-fast) var(--ease-in-out); }
+.chat-choice:hover .chat-choice-zoom, .chat-choice-zoom:focus-visible, .chat-choice.is-selected .chat-choice-zoom { opacity: 1; }
+.chat-choice-zoom:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: 1px; }
+.chat-choices-foot { display: flex; align-items: center; gap: var(--sp-6); padding: var(--sp-8); border-top: var(--hairline) solid var(--line-subtle); }
+.chat-choices-note { flex: 1; min-width: 0; height: 30px; padding: 0 var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-sm); }
+.chat-choices-note::placeholder { color: var(--cc-text-faint); }
+.chat-choices-note:focus-visible { outline: none; border-color: var(--cc-accent); }
+.chat-choices-none, .chat-choices-send { height: 30px; padding: 0 var(--sp-12); border-radius: var(--radius-md); font: inherit; font-size: var(--text-sm); white-space: nowrap; cursor: pointer; }
+.chat-choices-none { border: var(--hairline) solid var(--cc-border); background: transparent; color: var(--cc-text-dim); }
+.chat-choices-none:hover:not([aria-disabled="true"]) { background: var(--fill-hover); color: var(--cc-text); }
+.chat-choices-send { border: 0; background: var(--cc-accent); color: var(--cc-on-accent); font-weight: var(--fw-medium); }
+.chat-choices-send:disabled, .chat-choices-send[aria-disabled="true"] { background: var(--fill-hover); color: var(--cc-text-faint); cursor: default; }
+.chat-choices-none[aria-disabled="true"] { opacity: .5; cursor: default; }
+.chat-choices-none:focus-visible, .chat-choices-send:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: 2px; }
+.chat-choices-error { padding: 0 var(--sp-10) var(--sp-8); color: var(--cc-err-text); font-size: var(--text-xs); }
+/* 选完：收成一行，记下选了什么；要回看再展开。 */
+.chat-choices.is-settled { background: transparent; }
+.chat-choices-result { display: flex; align-items: center; gap: var(--sp-10); padding: var(--sp-8) var(--sp-10); }
+.chat-choices-result-thumb { flex: 0 0 auto; width: 72px; aspect-ratio: 16 / 10; border-radius: var(--radius-sm); object-fit: cover; object-position: top center; background: var(--cc-code-bg); }
+.chat-choices-result-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.chat-choices-result-title { color: var(--cc-text); font-size: var(--text-sm); font-weight: var(--fw-medium); overflow-wrap: anywhere; }
+.chat-choices-result-meta { color: var(--cc-text-faint); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.chat-choices-toggle { flex: 0 0 auto; height: 26px; padding: 0 var(--sp-8); border: 0; border-radius: var(--radius-md); background: none; color: var(--cc-text-dim); font: inherit; font-size: var(--text-xs); white-space: nowrap; cursor: pointer; }
+.chat-choices-toggle:hover { background: var(--fill-hover); color: var(--cc-text); }
+.chat-lightbox-action.is-pick { background: var(--cc-accent); color: var(--cc-on-accent); }
+/* 卡片窄（手机、窄对话窗）：有图的方案改横滑，每张占八成宽，露出下一张的边；底栏输入框独占一行。 */
+@container (max-width: 460px) {
+  .chat-choices-grid[data-images] { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior-x: contain; }
+  .chat-choices-grid[data-images]::-webkit-scrollbar { display: none; }
+  .chat-choices-grid[data-images] .chat-choice { flex: 0 0 78%; scroll-snap-align: start; }
+  .chat-choices-foot { flex-wrap: wrap; }
+  .chat-choices-note { flex-basis: 100%; }
+  .chat-choices-send { flex: 1; }
+  .chat-choices-hint { display: none; }
+}
+/* 触屏：放大按钮常显（没有悬停）；输入框字号 16px，免得 iOS 聚焦时整页放大。 */
+@media (pointer: coarse) {
+  .chat-choice-zoom { opacity: 1; }
+  .chat-choices-note { font-size: 16px; height: 36px; }
+  .chat-choices-none, .chat-choices-send { height: 36px; }
+}
 
 /* 工具行下直接露出的缩略图（截图、读图、写出的图片）：左缘对齐工具名文字（图标 20px + 间距 8px）。 */
 .chat-tool-media { display: flex; flex-wrap: wrap; gap: var(--sp-6); padding: var(--sp-2) 0 var(--sp-8) 28px; }

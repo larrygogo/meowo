@@ -126,8 +126,54 @@ function icon(): string {
 }
 
 let images: Record<string, string> | null = null;
+/** 方案卡场景的三种设置页布局（1280×800）：卡片式、列表式、分组标签式。 */
+function settingsShot(kind: "cards" | "list" | "tabs"): string {
+  return canvas(1280, 800, (g) => {
+    const text = (str: string, x: number, y: number, size: number, color: string, bold = false) => {
+      g.fillStyle = color; g.font = `${bold ? "bold " : ""}${size}px sans-serif`; g.fillText(str, x, y);
+    };
+    const toggle = (x: number, y: number, on: boolean) => {
+      box(g, x, y, 52, 30, on ? "#2f6fed" : "#d1d5db", 15);
+      g.fillStyle = "#fff"; g.beginPath(); g.arc(on ? x + 37 : x + 15, y + 15, 11, 0, 7); g.fill();
+    };
+    g.fillStyle = kind === "cards" ? "#f3f4f6" : "#ffffff"; g.fillRect(0, 0, 1280, 800);
+    g.fillStyle = "#ffffff"; g.fillRect(0, 0, 1280, 80);
+    g.fillStyle = "#e5e7eb"; g.fillRect(0, 80, 1280, 2);
+    text("Settings", 56, 52, 30, "#111827", true);
+    if (kind === "cards") {
+      [[128, "General", ["Dark mode", "Open at login"]], [420, "Notifications", ["Desktop alerts", "Sounds"]]].forEach(([y, title, rows]) => {
+        box(g, 56, y as number, 1168, 250, "#ffffff", 24);
+        text(title as string, 96, (y as number) + 60, 26, "#111827", true);
+        (rows as string[]).forEach((row, i) => { text(row, 96, (y as number) + 130 + i * 70, 22, "#374151"); toggle(1110, (y as number) + 105 + i * 70, i === 0); });
+      });
+    } else if (kind === "list") {
+      let y = 120;
+      [["GENERAL", ["Dark mode", "Open at login", "Language"]], ["NOTIFICATIONS", ["Desktop alerts", "Sounds"]]].forEach(([title, rows]) => {
+        text(title as string, 56, y + 20, 18, "#6b7280", true); y += 40;
+        (rows as string[]).forEach((row, i) => {
+          text(row, 56, y + 44, 22, "#111827");
+          if (row === "Language") text("English  ›", 1080, y + 44, 20, "#6b7280"); else toggle(1170, y + 22, i === 0);
+          g.fillStyle = "#f3f4f6"; g.fillRect(56, y + 72, 1168, 2); y += 74;
+        });
+        y += 30;
+      });
+    } else {
+      ["General", "Notifications", "Account", "About"].forEach((tab, i) => {
+        if (i === 0) box(g, 56 + i * 170, 112, 150, 50, "#111827", 25);
+        text(tab, 82 + i * 170, 145, 20, i === 0 ? "#ffffff" : "#6b7280");
+      });
+      box(g, 56, 196, 1168, 560, "#f9fafb", 20);
+      ["Dark mode", "Open at login", "Language", "Font size"].forEach((row, i) => {
+        text(row, 96, 262 + i * 120, 22, "#111827");
+        text("A short explanation of this setting", 96, 294 + i * 120, 18, "#9ca3af");
+        toggle(1110, 248 + i * 120, i % 2 === 0);
+      });
+    }
+  });
+}
+
 function imageFor(path: string): string {
-  images ??= { "login-before.png": canvas(1280, 800, (g) => drawLogin(g, false)), "login-after.png": canvas(1280, 800, (g) => drawLogin(g, true)), "login-diff.png": loginDiff(), "login.png": loginShot(), "chart.png": chart(), "palette.png": photo(), "pricing-long.png": longShot(), "icon-48.png": icon(), "ref.png": photo() };
+  images ??= { "login-before.png": canvas(1280, 800, (g) => drawLogin(g, false)), "login-after.png": canvas(1280, 800, (g) => drawLogin(g, true)), "login-diff.png": loginDiff(), "login.png": loginShot(), "chart.png": chart(), "palette.png": photo(), "pricing-long.png": longShot(), "icon-48.png": icon(), "ref.png": photo(), "settings-cards.png": settingsShot("cards"), "settings-list.png": settingsShot("list"), "settings-tabs.png": settingsShot("tabs") };
   const name = path.split(/[\\/]/).pop() ?? "";
   // 真机样本的图在探针时的持久目录里（sent/ 是发来的图表，tool/ 是浏览器截图），这台机器上没有：换成同类的现画图。
   return images[name] ?? (/[\\/]sent[\\/]/.test(path) ? images["chart.png"] : /[\\/]tool[\\/]/.test(path) ? images["login.png"] : path);
@@ -177,6 +223,37 @@ export function imageSceneItems(part: string, lang: Lang): { items: ChatItem[]; 
   const at = (s: number) => new Date(FIXED_NOW - s * 1000).toISOString();
   const say = (id: string, s: number, text: string) => ({ type: "assistant_text", id, timestamp: at(s), text }) as unknown as ChatItem;
   const user = (id: string, s: number, text: string) => ({ type: "user_text", id, timestamp: at(s), text }) as unknown as ChatItem;
+  if (part === "choices") {
+    const choicesCall = (id: string, s: number) => ({
+      type: "tool_use", id, timestamp: at(s), name: "mcp__meowo__offer_choices", kind: "other", summary: "",
+    }) as unknown as ChatItem;
+    const choices = (question: string, options: unknown[], refs: string[]) => [
+      zh ? "方案卡已显示给用户。" : "Options card shown to the user.",
+      ...refs,
+      `[Choices: ${JSON.stringify({ question, options })}]`,
+    ].join("\n");
+    return {
+      running: false,
+      items: [
+        user("u1", 600, zh ? "导出按钮放哪儿？你给我几个选项。" : "Where should the export button go? Give me options."),
+        choicesCall("k0", 590),
+        receipt("k0", at(589), choices(zh ? "导出按钮放在哪里？" : "Where should the export button go?", [
+          { label: zh ? "工具栏右侧" : "Toolbar, right", description: zh ? "和分享放一起，最好找" : "Next to Share; easiest to find", image: null },
+          { label: zh ? "更多菜单里" : "In the More menu", description: zh ? "界面最干净，但多点一下" : "Cleanest, one extra click", image: null },
+        ], [])),
+        user("u2", 560, zh ? "选了方案 1：工具栏右侧\n补充：图标用下载箭头" : "Picked option 1: Toolbar, right\nNote: use a download arrow icon"),
+        say("a1", 550, zh ? "好，导出按钮放到工具栏右侧了。" : "Done, the export button is on the right of the toolbar."),
+        user("u3", 300, zh ? "设置页做得好看点。" : "Make the settings page look nicer."),
+        choicesCall("k1", 200),
+        receipt("k1", at(199), choices(zh ? "设置页用哪种布局？" : "Which layout for the settings page?", [
+          { label: zh ? "卡片式" : "Cards", description: zh ? "每组设置一张卡，留白多" : "One card per group, airy", image: 0 },
+          { label: zh ? "列表式" : "List", description: zh ? "像系统设置，信息密度高" : "Like system settings, dense", image: 1 },
+          { label: zh ? "分组标签式" : "Tabs", description: zh ? "顶部标签切换分组" : "Tabs switch between groups", image: 2 },
+        ], [ref("sent", "settings-cards.png"), ref("sent", "settings-list.png"), ref("sent", "settings-tabs.png")])),
+        say("a2", 190, zh ? "三种都做出来截了图，你挑一个，我照着改完。" : "I built all three and took screenshots. Pick one and I'll finish it."),
+      ],
+    };
+  }
   if (part === "compare") {
     const compareCall = (id: string, s: number) => ({
       type: "tool_use", id, timestamp: at(s), name: "mcp__meowo__compare_images", kind: "other",

@@ -26,7 +26,8 @@ import { FoldScopeContext, foldScope } from "./foldMemory";
 import { isSubagentDelegation, type ToolResultItem } from "./shared";
 import { liveTurnStart, SessionAliveContext, TurnLiveContext, type TurnActivity } from "./toolState";
 import { markEntering, trackEntering, type EnterTrack } from "./enterMotion";
-import { isCompareTool, isImageMessage } from "./imageTools";
+import { isChoicesTool, isCompareTool, isImageMessage } from "./imageTools";
+import { ChoiceMessage } from "./ChoiceCard";
 import { CompareMessage } from "./CompareCard";
 
 type SubagentOutcomeInfo = NonNullable<ToolResultItem["subagent"]>;
@@ -52,6 +53,9 @@ type BlockRec = {
   /// 这块不在末尾，却按「还在进行」画的（它后面只跟着回合中途送进去的话）。后面一旦来了新内容它就该
   /// 收起，所以这种块不复用，每次重算（它紧挨着末尾，代价是一两块）。
   trailing: boolean;
+  /// 这块里有还没等到用户回复的方案卡：之后来了用户消息，卡片要据此显示「已选」或「没在卡上选」，
+  /// 所以不复用。这种卡后面还没有用户消息，只会在末尾附近。
+  awaitsReply: boolean;
   nodes: JSX.Element[];
   daySep: boolean;
   reply: number | null;
@@ -170,7 +174,7 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
       // 这块是按另一个活动态生成的（活动态翻了，或回合起点挪了）：从它起重算。能走到这里复用的都不是
       // 末尾那块，所以只看它在不在当前回合里。
       if (block.activity !== null && block.activity !== activityAt(block.start)) break;
-      if (block.trailing) break;
+      if (block.trailing || block.awaitsReply) break;
       keep += 1;
     }
     reuse = cache.blocks.slice(0, keep);
@@ -198,7 +202,7 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
   for (let index = resume ? resume.start : 0; index < items.length;) {
     const item = items[index];
     const previous = blocks[blocks.length - 1];
-    const record: BlockRec = { start: index, lastDayBefore: lastDay, subagentId: null, unresolved: [], activity: null, trailing: false, nodes: [], daySep: false, reply: null, fold: null };
+    const record: BlockRec = { start: index, lastDayBefore: lastDay, subagentId: null, unresolved: [], activity: null, trailing: false, awaitsReply: false, nodes: [], daySep: false, reply: null, fold: null };
     blocks.push(record);
     pushDaySep(record, item);
     // 连续的纯图片用户消息合成一行：Claude Code 把一次多图粘贴记成连续多条独立消息，
@@ -376,6 +380,11 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
     }
     // 正文之前的节点都是过程:回合级折叠从这里切开,之后的正文/改动/页脚留在外面。
     const bodyAt = record.nodes.length;
+    const choiceFollowUp = (entry: ChatItem) => {
+      const text = followUpText(items, items.indexOf(entry));
+      if (text === undefined) record.awaitsReply = true;
+      return text;
+    };
     for (const entry of bodyItems) {
       // 出错卡只有在它就是时间线末尾时才给「继续」（后面已有新内容的旧错误不必再续）。
       const latest = entry.type === "turn_error" && next >= items.length && entry === bodyItems[bodyItems.length - 1];
@@ -383,7 +392,9 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
         // 发图、对照的「正在发送」「已中断」取决于这一段的活动态，与工具行同一个来源。
         record.nodes.push(
           <TurnLiveContext.Provider key={entry.id} value={blockActivity}>
-            {isCompareTool(entry)
+            {isChoicesTool(entry)
+              ? <ChoiceMessage item={entry} result={results.get(entry.id)} followUp={choiceFollowUp(entry)} />
+              : isCompareTool(entry)
               ? <CompareMessage item={entry} result={results.get(entry.id)} />
               : <SentImageMessage item={entry} result={results.get(entry.id)} />}
           </TurnLiveContext.Provider>,
@@ -469,3 +480,12 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
     </SessionAliveContext.Provider>
   );
 });
+
+/** 时间线里某条之后的第一条用户消息原文；还没有时 undefined。方案卡靠它认出当时选了哪个。 */
+export function followUpText(items: readonly ChatItem[], index: number): string | undefined {
+  for (let i = index + 1; i < items.length; i += 1) {
+    const entry = items[i];
+    if (entry.type === "user_text") return entry.text;
+  }
+  return undefined;
+}

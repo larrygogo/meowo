@@ -172,6 +172,13 @@ export const QA_SHOTS = [
   { name: "qa-compare", scene: "flow-images-compare", size: [1100, 900], sel: ".chat-compare", steps: [["tick", 600]] },
   { name: "qa-compare-diff", scene: "flow-images-compare", size: [1100, 900], sel: ".chat-compare", steps: [["tick", 600], ["click", ".chat-compare-seg button >> nth=1"], ["tick", 300]] },
   { name: "qa-m-compare", page: "mobile", scene: "mobile-images-compare", size: PHONE, sel: ".chat-compare", steps: [["tick", 600]] },
+  // 「点一个」方案卡（offer_choices）：前一张已选（收成一行）、后一张等你选；点选、放大、手机横滑。
+  { name: "qa-choices", scene: "flow-images-choices", size: [1100, 1000], sel: ".chat-choices", steps: [["tick", 600]] },
+  { name: "qa-choices-picked", scene: "flow-images-choices", size: [1100, 1000], sel: ".chat-choices", steps: [["tick", 600], ["click", ".chat-choice-pick >> nth=1"], ["tick", 200]] },
+  { name: "qa-choices-zoom", scene: "flow-images-choices", size: [1100, 800], sel: ".chat-choices", steps: [["tick", 600], ["hover", ".chat-choice >> nth=1"], ["click", ".chat-choice-zoom >> nth=1"], ["tick", 400]] },
+  { name: "qa-choices-expanded", scene: "flow-images-choices", size: [1100, 1000], sel: ".chat-choices", steps: [["tick", 600], ["click", ".chat-choices-toggle"], ["tick", 200]] },
+  { name: "qa-m-choices", page: "mobile", scene: "mobile-images-choices", size: PHONE, sel: ".chat-choices", steps: [["tick", 600]] },
+  { name: "qa-m-choices-picked", page: "mobile", scene: "mobile-images-choices", size: PHONE, sel: ".chat-choices", steps: [["tick", 600], ["click", ".chat-choice-pick >> nth=0"], ["tick", 200]] },
   { name: "qa-images-bottom", scene: "flow-images-main", size: [1100, 900], sel: ".chat-sent", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 1e6"], ["tick", 300]] },
   { name: "qa-images-states", scene: "flow-images-states", size: [1100, 1000], sel: ".chat-sent-failed", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300]] },
   // 过程块展开：截图、读图、写图片三行的动作名都是人话（不露 mcp__meowo__browser_screenshot）。
