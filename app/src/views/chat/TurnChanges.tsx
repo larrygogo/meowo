@@ -1,4 +1,4 @@
-import { memo, useContext, useId, useState } from "react";
+import { memo, useContext, useId, useMemo, useState } from "react";
 import type { ChatItem } from "../../api";
 import { useT } from "../../i18n";
 import { ChatCwdContext, editOutcome, relativize, UnifiedDiff } from "./ToolActivity";
@@ -63,7 +63,11 @@ export const TurnChanges = memo(function TurnChanges({ items }: { items: ChatIte
   const [openFile, setOpenFile] = useState<string | null>(null);
   const detailId = useId();
   const files = collectFileChanges(items, cwd);
-  const checks = collectTurnChecks(items);
+  // 只在命令或回执变了时重算：流式输出时每来一段字这张卡都会重渲染，命令多、输出长时一次要 5~20ms（实测 100~400 条）。
+  const runSignature = items.map((item) => (item.type === "tool_use" && item.kind === "run") ? item.id
+    : item.type === "tool_result" ? `${item.id}:${item.text.length}:${item.is_error ? 1 : 0}:${item.interrupted ? 1 : 0}:${item.exit_code ?? ""}` : "").join(",");
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- runSignature 已覆盖 collectTurnChecks 用到的全部字段
+  const checks = useMemo(() => collectTurnChecks(items), [runSignature]);
   // 没改文件、检查又全都没有确定结果（多半是用户打断了）：这张卡说不出什么，不出。
   if (files.length === 0 && !checks.some((check) => check.status !== "unknown")) return null;
   const codeFiles = files.filter((file) => !isDocPath(file.path));
