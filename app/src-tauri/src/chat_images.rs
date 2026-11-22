@@ -304,15 +304,22 @@ fn send_receipt(path: &Path) -> String {
 /// 请求不弹确认地发出去，等于开了一条外泄通道。要发网络上的图，agent 用它自己的
 /// 下载 / 取网页工具（那些各家都要审批）先存到本地，再发本地路径。
 fn send_into(root: &Path, args: &Value) -> Result<PathBuf, ImageError> {
+    let path = local_source(args, "source")?;
+    images::store_file_in(root, ImageKind::Sent, &path)
+}
+
+/// 工具参数里的一个本地图片路径（send_image 的 source、compare_images 的 before/after）。
+/// 只收本地绝对路径或 file: 网址；网址、UNC 一律拒（理由见 [`send_into`]）。
+fn local_source(args: &Value, key: &str) -> Result<PathBuf, ImageError> {
     let source = args
-        .get("source")
+        .get(key)
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .ok_or_else(|| {
             ImageError::new(
                 ImageErrorCode::NotFound,
-                "缺少 source 参数：给一个本地图片文件的路径",
+                format!("缺少 {key} 参数：给一个本地图片文件的路径"),
             )
         })?;
     // UNC 在任何文件系统访问之前拒（见 images::is_remote_path）。
@@ -322,7 +329,7 @@ fn send_into(root: &Path, args: &Value) -> Result<PathBuf, ImageError> {
     if is_http_url(source) {
         return Err(ImageError::new(
             ImageErrorCode::Forbidden,
-            "send_image 只接受本地图片文件，不下载网址。要发网络上的图，先用你自己的下载或取网页工具把它下载到本地，再把本地路径发过来",
+            "只接受本地图片文件，不下载网址。要发网络上的图，先用你自己的下载或取网页工具把它下载到本地，再把本地路径发过来",
         ));
     }
     let path = match url_scheme(source) {
@@ -341,8 +348,235 @@ fn send_into(root: &Path, args: &Value) -> Result<PathBuf, ImageError> {
             format!("需要绝对路径：{source}"),
         ));
     }
-    images::store_file_in(root, ImageKind::Sent, &path)
+    Ok(path)
 }
+
+// ── 改前改后对照（MCP 工具 compare_images）─────────────────
+
+/// 两个像素在白底上合成后，任一通道差超过这个值才算变了。JPEG 压缩、字体抗锯齿的细微差别
+/// 常在十几以内；真改了颜色、位置的差别远大于它。
+const DIFF_THRESHOLD: u8 = 24;
+/// 两张图合起来的像素上限（两张 4K 截图约 1660 万）。按 16 位色深解码时每像素 8 字节，这一档峰值约 300MB。
+const COMPARE_MAX_PIXELS: u64 = 20_000_000;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DiffStats {
+    changed: u64,
+    total: u64,
+    before: (u32, u32),
+    after: (u32, u32),
+    /// 变化范围：x, y, 宽, 高（像素）。没有变化时为 None。
+    bounds: Option<(u32, u32, u32, u32)>,
+}
+
+impl DiffStats {
+    fn percent(&self) -> String {
+        if self.changed == 0 || self.total == 0 {
+            return "0%".into();
+        }
+        let pct = self.changed as f64 * 100.0 / self.total as f64;
+        if pct < 0.01 {
+            "<0.01%".into()
+        } else {
+            format!("{pct:.2}%")
+        }
+    }
+}
+
+/// broker 收到 `compare_images` 后调这里（pty.rs handle_browser）。两张图都存进 sent/（与发图同档，
+/// 回收时最后才删），有变化时再存一张差异图；回执里依次是改前、改后、差异的引用行和一行对照摘要。
+pub(crate) fn compare_images(args: &Value) -> Result<Value, String> {
+    let root = images_root().map_err(|e| e.receipt())?;
+    compare_into(&root, args)
+        .map(|text| json!({ "text": text }))
+        .map_err(|e| e.receipt())
+}
+
+fn compare_into(root: &Path, args: &Value) -> Result<String, ImageError> {
+    let before_path = local_source(args, "before")?;
+    let after_path = local_source(args, "after")?;
+    let before_bytes = images::read_image_file(&before_path)?;
+    let after_bytes = images::read_image_file(&after_path)?;
+    // 先做和发图同一套的便宜检查（真图判定、尺寸、GIF 每帧），再按文件头里的尺寸估总像素，
+    // 都过了才解码：解码要按像素分配内存，小文件也能写出很大的尺寸（做空：2.3MB 的 PNG 解码
+    // 峰值近 800MB），而这个工具免审批、跑在 Meowo 主进程里。
+    let mut pixels = 0u64;
+    for (bytes, path) in [(&before_bytes, &before_path), (&after_bytes, &after_path)] {
+        let ext = images::precheck(bytes)?;
+        let dims = (ext != "svg").then(|| images::image_dimensions(bytes)).flatten();
+        let Some((w, h)) = dims else {
+            return Err(not_pixels(path));
+        };
+        pixels += w as u64 * h as u64;
+    }
+    if pixels > COMPARE_MAX_PIXELS {
+        return Err(ImageError::new(
+            ImageErrorCode::TooLarge,
+            "两张图太大，没法逐像素比较（合计超过 2000 万像素）。截一个窗口大小的画面再比",
+        ));
+    }
+    let before = decode_for_compare(&before_bytes, &before_path)?;
+    let after = decode_for_compare(&after_bytes, &after_path)?;
+    let (stats, diff) = diff_images(&before, &after);
+    let diff_png = diff.as_ref().map(encode_png).transpose()?;
+    // 全部算完才落盘：中途失败不在 sent/（回收时最后才删的一档）里留下半套文件。
+    let before_stored = images::store_bytes_in(root, ImageKind::Sent, &before_bytes)?;
+    let after_stored = images::store_bytes_in(root, ImageKind::Sent, &after_bytes)?;
+    let diff_stored = match diff_png {
+        Some(png) => Some(images::store_bytes_in(root, ImageKind::Sent, &png)?),
+        None => None,
+    };
+    let caption = args
+        .get("caption")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.chars().take(500).collect::<String>());
+    Ok(compare_receipt(
+        &stats,
+        &before_stored,
+        &after_stored,
+        diff_stored.as_deref(),
+        caption.as_deref(),
+    ))
+}
+
+fn decode_for_compare(bytes: &[u8], path: &Path) -> Result<image::RgbaImage, ImageError> {
+    image::load_from_memory(bytes)
+        .map(|img| img.to_rgba8())
+        .map_err(|_| not_pixels(path))
+}
+
+fn not_pixels(path: &Path) -> ImageError {
+    ImageError::new(
+        ImageErrorCode::NotImage,
+        format!(
+            "读不出这张图的像素：{}。对照只支持 PNG、JPEG、GIF、WebP；SVG 先截成位图再比",
+            path.display()
+        ),
+    )
+}
+
+fn encode_png(img: &image::RgbaImage) -> Result<Vec<u8>, ImageError> {
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Png).map_err(|e| {
+        ImageError::new(ImageErrorCode::NotImage, format!("差异图生成失败：{e}"))
+    })?;
+    Ok(out.into_inner())
+}
+
+/// 白底上合成：半透明截图（少见）也按用户看到的颜色比。
+fn on_white(p: &image::Rgba<u8>) -> [u8; 3] {
+    let a = p[3] as u32;
+    let blend = |c: u8| ((c as u32 * a + 255 * (255 - a)) / 255) as u8;
+    [blend(p[0]), blend(p[1]), blend(p[2])]
+}
+
+/// 逐像素比较。画布取两张图的最大宽高：只在一张图里有的区域都算变化（尺寸变了本身就是变化）。
+/// 差异图照 pixelmatch 的样子：没变的地方是淡化的灰度底（看得出位置），变了的像素涂红。
+fn diff_images(
+    before: &image::RgbaImage,
+    after: &image::RgbaImage,
+) -> (DiffStats, Option<image::RgbaImage>) {
+    let width = before.width().max(after.width());
+    let height = before.height().max(after.height());
+    let mut diff = image::RgbaImage::new(width, height);
+    let mut changed = 0u64;
+    let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0u32, 0u32);
+    let inside = |img: &image::RgbaImage, x: u32, y: u32| x < img.width() && y < img.height();
+    for y in 0..height {
+        for x in 0..width {
+            let a = inside(before, x, y).then(|| on_white(before.get_pixel(x, y)));
+            let b = inside(after, x, y).then(|| on_white(after.get_pixel(x, y)));
+            let is_changed = match (a, b) {
+                (Some(a), Some(b)) => a
+                    .iter()
+                    .zip(b.iter())
+                    .any(|(p, q)| p.abs_diff(*q) > DIFF_THRESHOLD),
+                (None, None) => false,
+                _ => true,
+            };
+            let pixel = if is_changed {
+                changed += 1;
+                x0 = x0.min(x);
+                y0 = y0.min(y);
+                x1 = x1.max(x);
+                y1 = y1.max(y);
+                image::Rgba([230, 40, 40, 255])
+            } else {
+                match b.or(a) {
+                    Some([r, g, bl]) => {
+                        let gray = (r as u32 * 299 + g as u32 * 587 + bl as u32 * 114) / 1000;
+                        // 淡化到 20%：底图只用来认位置，不抢红色。
+                        let faint = (255 - (255 - gray) / 5) as u8;
+                        image::Rgba([faint, faint, faint, 255])
+                    }
+                    None => image::Rgba([255, 255, 255, 255]),
+                }
+            };
+            diff.put_pixel(x, y, pixel);
+        }
+    }
+    let stats = DiffStats {
+        changed,
+        total: width as u64 * height as u64,
+        before: before.dimensions(),
+        after: after.dimensions(),
+        bounds: (changed > 0).then(|| (x0, y0, x1 - x0 + 1, y1 - y0 + 1)),
+    };
+    (stats, (changed > 0).then_some(diff))
+}
+
+/// 对照回执：先一段给模型的话（变化多少、在哪），再是三张图的引用行，最后一行摘要给前端画对照卡
+/// （前端认 `[Image compare: {JSON}]`；旧前端只认引用行，照样显示成三张缩略图）。
+fn compare_receipt(
+    stats: &DiffStats,
+    before: &Path,
+    after: &Path,
+    diff: Option<&Path>,
+    caption: Option<&str>,
+) -> String {
+    let size = |(w, h): (u32, u32)| format!("{w}x{h}");
+    let mut lines = vec![
+        "对照已发给用户，对话里会显示改前、改后和差异图；不用再描述这几张图，也不要重复发送。"
+            .to_string(),
+    ];
+    match stats.bounds {
+        Some((x, y, w, h)) => lines.push(format!(
+            "变化：{}（{} / {} 像素）；变化范围：x {}–{}，y {}–{}（{}×{}）；尺寸：改前 {}，改后 {}。核对一下范围是不是只在你想改的地方。",
+            stats.percent(),
+            stats.changed,
+            stats.total,
+            x,
+            x + w - 1,
+            y,
+            y + h - 1,
+            w,
+            h,
+            size(stats.before),
+            size(stats.after),
+        )),
+        None => lines.push(
+            "两张图逐像素相同（忽略细微的压缩、抗锯齿差别），没有可见变化。".to_string(),
+        ),
+    }
+    lines.push(images::image_ref_line(before));
+    lines.push(images::image_ref_line(after));
+    if let Some(diff) = diff {
+        lines.push(images::image_ref_line(diff));
+    }
+    // 摘要是一行 JSON：说明是 agent 写的任意文字，JSON 转义后不会断行，也不会被里面的 `]` 截断。
+    let summary = json!({
+        "changed": stats.percent(),
+        "before": [stats.before.0, stats.before.1],
+        "after": [stats.after.0, stats.after.1],
+        "bounds": stats.bounds.map(|(x, y, w, h)| vec![x, y, w, h]),
+        "caption": caption,
+    });
+    lines.push(format!("[Image compare: {summary}]"));
+    lines.join("\n")
+}
+
 
 fn file_url_path(source: &str) -> Result<PathBuf, ImageError> {
     url::Url::parse(source)
@@ -652,6 +886,127 @@ mod tests {
         0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
         0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
     ];
+
+    fn write_png(dir: &Path, name: &str, img: &image::RgbaImage) -> PathBuf {
+        let path = dir.join(name);
+        img.save(&path).unwrap();
+        path
+    }
+
+    fn page(width: u32, height: u32) -> image::RgbaImage {
+        image::RgbaImage::from_pixel(width, height, image::Rgba([250, 250, 250, 255]))
+    }
+
+    #[test]
+    fn compare_reports_changed_region_and_writes_three_images() {
+        let dir = temp("compare");
+        let root = dir.join("images");
+        let before = page(100, 50);
+        let mut after = page(100, 50);
+        // 改了一个 10×4 的按钮；另有一个像素只差 10（压缩噪声），不算变化。
+        for y in 20..24 {
+            for x in 30..40 {
+                after.put_pixel(x, y, image::Rgba([20, 120, 255, 255]));
+            }
+        }
+        after.put_pixel(90, 5, image::Rgba([240, 240, 240, 255]));
+        let a = write_png(&dir, "before.png", &before);
+        let b = write_png(&dir, "after.png", &after);
+        let text = compare_into(&root, &json!({ "before": a, "after": b, "caption": "按钮换成蓝色] 第二行" })).unwrap();
+        assert!(text.contains("变化范围：x 30–39，y 20–23（10×4）"), "{text}");
+        let marker = text.lines().last().unwrap();
+        let summary: Value = serde_json::from_str(marker.trim_start_matches("[Image compare: ").trim_end_matches(']')).unwrap();
+        assert_eq!(summary, json!({ "changed": "0.80%", "before": [100, 50], "after": [100, 50], "bounds": [30, 20, 10, 4], "caption": "按钮换成蓝色] 第二行" }));
+        let refs: Vec<&str> = text.lines().filter(|l| l.starts_with("[Image: source: ")).collect();
+        assert_eq!(refs.len(), 3, "{text}");
+        for line in refs {
+            let path = line.trim_start_matches("[Image: source: ").trim_end_matches(']');
+            assert!(Path::new(path).starts_with(root.join("sent")), "{path}");
+            assert!(Path::new(path).is_file());
+        }
+    }
+
+    /// 只有文件头的 PNG：尺寸写多大都行，内容是空的（不会真去解码）。
+    fn png_header(width: u32, height: u32) -> Vec<u8> {
+        let mut ihdr = Vec::new();
+        ihdr.extend_from_slice(b"IHDR");
+        ihdr.extend_from_slice(&width.to_be_bytes());
+        ihdr.extend_from_slice(&height.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+        let crc = ihdr.iter().fold(0xFFFF_FFFFu32, |mut crc, byte| {
+            crc ^= *byte as u32;
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
+            }
+            crc
+        }) ^ 0xFFFF_FFFF;
+        let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+        out.extend_from_slice(&13u32.to_be_bytes());
+        out.extend_from_slice(&ihdr);
+        out.extend_from_slice(&crc.to_be_bytes());
+        out
+    }
+
+    #[test]
+    fn compare_checks_both_images_before_decoding_or_storing_anything() {
+        let dir = temp("compare-precheck");
+        let root = dir.join("images");
+        let ok = write_png(&dir, "ok.png", &page(8, 8));
+        // 第二张尺寸超过单张上限：第一张也不能先存进 sent/。
+        let huge = dir.join("huge.png");
+        std::fs::write(&huge, png_header(20_000, 20_000)).unwrap();
+        let err = compare_into(&root, &json!({ "before": ok, "after": huge })).unwrap_err();
+        assert_eq!(err.code, ImageErrorCode::TooLarge);
+        assert!(!root.join("sent").exists(), "失败时不该留下改前那张");
+        // 单张都在上限内、合计超过对照上限：按文件头里的尺寸拒，不解码。
+        let big = dir.join("big.png");
+        std::fs::write(&big, png_header(4_000, 3_000)).unwrap();
+        let err = compare_into(&root, &json!({ "before": big, "after": big })).unwrap_err();
+        assert_eq!(err.code, ImageErrorCode::TooLarge);
+        assert!(err.message.contains("2000 万"), "{}", err.message);
+        assert!(!root.join("sent").exists());
+    }
+
+    #[test]
+    fn compare_identical_images_has_no_diff_image() {
+        let dir = temp("compare-same");
+        let root = dir.join("images");
+        let a = write_png(&dir, "a.png", &page(20, 20));
+        let b = write_png(&dir, "b.png", &page(20, 20));
+        let text = compare_into(&root, &json!({ "before": a, "after": b })).unwrap();
+        assert!(text.contains("没有可见变化"), "{text}");
+        assert!(text.ends_with(r#"[Image compare: {"after":[20,20],"before":[20,20],"bounds":null,"caption":null,"changed":"0%"}]"#), "{text}");
+        assert_eq!(text.lines().filter(|l| l.starts_with("[Image: source: ")).count(), 2);
+    }
+
+    #[test]
+    fn compare_counts_size_change_as_change() {
+        let dir = temp("compare-size");
+        let root = dir.join("images");
+        let a = write_png(&dir, "a.png", &page(10, 10));
+        let b = write_png(&dir, "b.png", &page(10, 12));
+        let text = compare_into(&root, &json!({ "before": a, "after": b })).unwrap();
+        assert!(text.contains(r#""bounds":[0,10,10,2]"#), "{text}");
+        assert!(text.contains("尺寸：改前 10x10，改后 10x12"), "{text}");
+    }
+
+    #[test]
+    fn compare_rejects_urls_missing_files_and_non_images() {
+        let dir = temp("compare-bad");
+        let root = dir.join("images");
+        let ok = write_png(&dir, "ok.png", &page(4, 4));
+        let url = compare_into(&root, &json!({ "before": "https://example.com/a.png", "after": ok })).unwrap_err();
+        assert_eq!(url.code, ImageErrorCode::Forbidden);
+        let missing = compare_into(&root, &json!({ "before": ok, "after": dir.join("nope.png") })).unwrap_err();
+        assert_eq!(missing.code, ImageErrorCode::NotFound);
+        let no_arg = compare_into(&root, &json!({ "before": ok })).unwrap_err();
+        assert!(no_arg.message.contains("after"), "{}", no_arg.message);
+        let svg = dir.join("a.svg");
+        std::fs::write(&svg, "<svg xmlns='http://www.w3.org/2000/svg' width='4' height='4'/>").unwrap();
+        let not_pixels = compare_into(&root, &json!({ "before": ok, "after": svg })).unwrap_err();
+        assert_eq!(not_pixels.code, ImageErrorCode::NotImage);
+        assert!(!root.join("sent").exists(), "失败时不该留下半截文件");
+    }
 
     fn temp(tag: &str) -> PathBuf {
         static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

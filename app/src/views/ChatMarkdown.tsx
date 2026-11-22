@@ -51,8 +51,8 @@ export function trimCjkAutolinks(tree: MdNode): void {
 }
 const remarkTrimCjkAutolinks = () => (tree: MdNode) => trimCjkAutolinks(tree);
 
-/// 段尾不留孤字（U2，2026-11-18）：中文段落末行常只剩「难。」这样一个字加句号。样式表里的 text-wrap-style: pretty
-/// 在 Chromium / WebView2 上只处理「末行只有一个词」，中文的「字 + 标点」它不当孤行（progress.md 有实测），
+/// 段尾不留孤字（U2，2026-11-18）：中文段落末行常只剩「难。」这样一个字加句号。CSS 的 text-wrap-style: pretty
+/// 在 Chromium / WebView2 上不把中文「字 + 标点」当孤行，在 WebKit 上又会让每行提前折（2026-11-22 已撤），
 /// 所以在这里把段落最后 KEEP_TAIL 个字（含标点）包进一个不折行的 span：它们只能一起换行，末行至少四个字。
 /// 只改结构不加字符——复制、读屏拿到的文字不变；只动段落末尾那段纯文字，末尾是链接、代码、带空格的西文时不碰。
 const KEEP_TAIL = 4;
@@ -338,10 +338,25 @@ export function stripLineSuffix(path: string): string {
   return path.replace(/(?::\d+(?::\d+)?|\(\d+(?:,\d+)?\))$/, "");
 }
 
+/// 行内代码可在分隔符后换行（2026-11-22）：路径、长标识符在浏览器眼里是一整个「词」，一行放不下就整段挪到下一行，
+/// 上一行右边空出一大截（中文句子里夹 `app/src/views/chat/ChatImage.tsx` 时最明显）。在 / \ . _ - : 后面插 <wbr>，
+/// 让它在自然的分隔处折行；<wbr> 不是字符，复制和读屏拿到的文字不变。单段仍放不下时由样式里的 overflow-wrap 兜底。
+const CODE_BREAK_AFTER = /([/\\._:-])/;
+export function breakableCode(text: string): ReactNode {
+  if (!CODE_BREAK_AFTER.test(text)) return text;
+  const out: ReactNode[] = [];
+  text.split(CODE_BREAK_AFTER).forEach((part, i) => {
+    if (!part) return;
+    out.push(part);
+    if (i % 2 === 1) out.push(<wbr key={i} />);
+  });
+  return out;
+}
+
 /// 相对路径：有会话工作目录才做成可点的（接在它后面定位），没有就是普通代码。
 function RelPathCode({ text }: { text: string }) {
   const cwd = useContext(ChatCwdContext);
-  if (!cwd) return <code>{text}</code>;
+  if (!cwd) return <code>{breakableCode(text)}</code>;
   return <LinkCode text={text} kind="path" cwd={cwd} />;
 }
 
@@ -374,7 +389,7 @@ function LinkCode({ text, kind, cwd = "" }: { text: string; kind: "url" | "path"
         onKeyDown={(event) => {
           if (event.key === "Enter") open();
         }}
-      >{text}</code>
+      >{breakableCode(text)}</code>
       {failed && (
         <span className="chat-md-link-error">
           <span role="status">{failed}</span>
@@ -428,6 +443,7 @@ export const components: Components = {
       const kind = codeLinkKind(text);
       if (kind === "url" || (kind === "path" && !remoteUi())) return <LinkCode text={text} kind={kind} />;
       if (kind === "relpath" && !remoteUi()) return <RelPathCode text={text} />;
+      return <code>{breakableCode(text)}</code>;
     }
     const tag = /language-([\w+-]+)/.exec(className ?? "")?.[1];
     const lang = tag ? languageForFence(tag) : null;

@@ -111,6 +111,28 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
     setLiveFor(null);
     setReloadTick((tick) => tick + 1);
   });
+  // agent 用 browser_close 关了它的页签：后端已经关掉网页，这里去掉页签和缓存。
+  // 进程缓存按编号删，正在看与没在看的会话都一样。
+  useTauriEvent<{ id: number; owner: number }>("browser-pane-closed", ({ payload: { id, owner } }) => {
+    setPanes((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Map(prev);
+      next.delete(id);
+      return next;
+    });
+    const without = (prev: PanelState) => {
+      const keys = prev.tabs.filter((tab) => tab.type === "browser" && tab.paneId === id).map((tab) => tab.key);
+      return keys.length > 0 ? closeTabs(prev, keys) : prev;
+    };
+    if (owner === sessionId) {
+      update(without);
+      return;
+    }
+    // 不在看的会话：改它存着的页签记录，不然切过去时会按网址把页签重新打开。
+    const saved = loadPanel(owner);
+    const next = without(saved);
+    if (next !== saved) savePanel(owner, next);
+  });
   useTauriEvent<number>("panel-session-closed", ({ payload: closed }) => {
     forgetPanel(closed);
     untrackShellOwner(closed);

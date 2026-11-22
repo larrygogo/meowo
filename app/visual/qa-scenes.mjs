@@ -168,6 +168,10 @@ export const QA_SHOTS = [
   // agent 发来的图片（imageScenes.ts）：单张带说明、相册、长图、小图标、正在发送；四种失败、工具行缩略图、正文图片；
   // 悬停露出保存与在文件夹中显示；灯箱带说明与操作。手机同一份数据。
   { name: "qa-images", scene: "flow-images-main", size: [1100, 900], sel: ".chat-sent", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300]] },
+  // 改前改后对照卡（compare_images）：滑块、红框、差异视图；手机同一份数据。
+  { name: "qa-compare", scene: "flow-images-compare", size: [1100, 900], sel: ".chat-compare", steps: [["tick", 600]] },
+  { name: "qa-compare-diff", scene: "flow-images-compare", size: [1100, 900], sel: ".chat-compare", steps: [["tick", 600], ["click", ".chat-compare-seg button >> nth=1"], ["tick", 300]] },
+  { name: "qa-m-compare", page: "mobile", scene: "mobile-images-compare", size: PHONE, sel: ".chat-compare", steps: [["tick", 600]] },
   { name: "qa-images-bottom", scene: "flow-images-main", size: [1100, 900], sel: ".chat-sent", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 1e6"], ["tick", 300]] },
   { name: "qa-images-states", scene: "flow-images-states", size: [1100, 1000], sel: ".chat-sent-failed", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300]] },
   // 过程块展开：截图、读图、写图片三行的动作名都是人话（不露 mcp__meowo__browser_screenshot）。

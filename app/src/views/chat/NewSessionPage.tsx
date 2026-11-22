@@ -4,6 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { type AgentId, type LiveSession, type QueuedPromptDto, agentName, getSessionAdminPage, listSubdirectories, promptQueueOrphans, promptQueueRestoreOrphan, savePastedAttachment } from "../../api";
 import { formatBackendError } from "../../i18n/errors";
 import { type Attachment, attachmentOf, base64OfBuffer } from "./drafts";
+import { prepareUploadQueued, UploadPrepareError } from "./prepareUpload";
+import { remoteUi } from "../../remoteMode";
 import { ImageRef } from "./Message";
 import { fmtShortAgo } from "../sticker/helpers";
 import { agentAssets, tintStyle } from "../../providers";
@@ -114,14 +116,17 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
 
   const pasteFiles = async (files: File[]) => {
     setPasting((count) => count + 1);
-    const results = await Promise.allSettled(files.map(async (file) => {
+    // 超过上限的那些不处理也不上传（之前先全部解码再截，多选的照片白白吃内存）。
+    const results = await Promise.allSettled(files.slice(0, 12).map(async (picked) => {
+      // 手机上与对话页同一套：大照片缩到 2048、HEIC 转 JPEG（prepareUpload.ts）。
+      const file = remoteUi() ? await prepareUploadQueued(picked) : picked;
       const path = await savePastedAttachment(file.name || "pasted.png", base64OfBuffer(await file.arrayBuffer()));
       return { ...attachmentOf(path), size: file.size };
     }));
     setPasting((count) => count - 1);
     const fresh = results.flatMap((entry) => (entry.status === "fulfilled" ? [entry.value] : []));
     const failed = results.find((entry): entry is PromiseRejectedResult => entry.status === "rejected");
-    if (failed) setError(formatBackendError(failed.reason, t.locale));
+    if (failed) setError(failed.reason instanceof UploadPrepareError ? t.chat.photoHeicUnsupported : formatBackendError(failed.reason, t.locale));
     // 上限与对话页一致（12）：多出来的在那边也发不出去。
     setAttachments((current) => [...current, ...fresh].slice(0, 12));
   };

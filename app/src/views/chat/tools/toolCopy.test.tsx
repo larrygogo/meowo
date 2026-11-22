@@ -59,4 +59,13 @@ describe("工具行", () => {
     const count = container.querySelector("summary .chat-tool-count");
     expect(count?.textContent).toBe("读取失败");
   });
+
+  it("读图片的行不能展开，不画空的展开区（手机上是一块黑框）", () => {
+    const { container } = render(<ReadTool image item={use("Read", { kind: "read", path: "C:/x/a.png", offset: null, limit: null } as ToolUseItem["detail"])} result={res("")} />);
+    expect(container.querySelector(".chat-tool-body")).toBeNull();
+    expect(container.querySelector(".chat-tool-chevron")).toBeNull();
+    const summary = container.querySelector("summary")!;
+    summary.click();
+    expect((container.querySelector("details") as HTMLDetailsElement).open).toBe(false);
+  });
 });

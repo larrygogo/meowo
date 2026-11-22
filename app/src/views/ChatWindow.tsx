@@ -100,6 +100,8 @@ import { useGuardedWindowClose } from "./chat/windowClose";
 import { usePanel } from "./chat/usePanel";
 import { SessionInfo } from "./chat/SessionInfo";
 import { ImageAnnotator } from "./chat/ImageAnnotator";
+import { ImageReplyContext } from "./chat/imageReply";
+import { prepareUploadQueued, UploadPrepareError } from "./chat/prepareUpload";
 import { ChatCwdContext } from "./chat/ToolActivity";
 import { ChatSessionContext } from "./chat/remoteImageGate";
 import { WelcomePanel, type WelcomeInfo } from "./chat/WelcomePanel";
@@ -3747,7 +3749,10 @@ export function ChatWindow() {
   /// 交给 CLI 自己读」——先经宿主落成临时文件拿到路径，再走与文件选择器完全相同的流程。
   /// 截图（剪贴板位图）与资源管理器里复制的文件都会出现在 clipboardData.files 里。
   const pasteAttachments = async (files: File[]) => {
-    const results = await Promise.allSettled(files.map(async (file) => {
+    // 超过上限的那些不处理也不上传（之前先全部解码再截，多选的照片白白吃内存）。
+    const results = await Promise.allSettled(files.slice(0, 12).map(async (picked) => {
+      // 手机上：大照片先缩到 2048、HEIC 转 JPEG（prepareUpload.ts），模型收得下、传得动。
+      const file = remoteUi() ? await prepareUploadQueued(picked) : picked;
       const data = base64OfBuffer(await file.arrayBuffer());
       // 剪贴板截图统一叫 image.png；名字进的是带时间戳的独立子目录，不会互踩。
       const path = await savePastedAttachment(file.name || "pasted.png", data);
@@ -3765,12 +3770,14 @@ export function ChatWindow() {
     // 失败原因（超限/落盘失败）必须可见；没失败再按数量上限给提示，与文件选择器同一套。
     // formatBackendError 与其余错误路径同一口径——String(reason) 会把英文技术串原样上屏。
     setAttachmentNotice(failed
-      ? formatBackendError(failed.reason, t.locale)
-      : attachmentsRef.current.length + fresh.length > 12 ? t.chat.attachmentLimit(12) : "");
+      ? failed.reason instanceof UploadPrepareError ? t.chat.photoHeicUnsupported : formatBackendError(failed.reason, t.locale)
+      : attachmentsRef.current.length + fresh.length > 12 || files.length > 12 ? t.chat.attachmentLimit(12) : "");
     setAttachments((current) => [...current, ...fresh].slice(0, 12));
   };
   /// 图片标注：path 是要标的附件；replace 非空时标完替换掉这张附件。
   const [annotating, setAnnotating] = useState<{ path: string; replace: string | null } | null>(null);
+  // 大图里的「圈出来回复」（imageReply.ts）：标好的图作为新附件，不替换已有附件。
+  const replyWithImage = useCallback((path: string) => setAnnotating({ path, replace: null }), []);
   const finishAnnotation = async ({ png, notes }: { png: Blob | null; notes: string[] }) => {
     const target = annotating;
     setAnnotating(null);
@@ -4757,6 +4764,7 @@ export function ChatWindow() {
           终端侧懒挂载（terminalMounted），纯对话的用户不用白付 xterm 的创建成本。 */}
       {/* 工具行里落在会话目录下的路径显示成相对路径（见 ToolActivity 的 relativize）。 */}
       <ChatCwdContext.Provider value={cwd ?? null}>
+      <ImageReplyContext.Provider value={replyWithImage}>
       <RevealChangeContext.Provider value={revealChange}>
       <ChatActionsContext.Provider value={chatActions}>
       <EchoPhaseContext.Provider value={echoPhases}>
@@ -4961,6 +4969,7 @@ export function ChatWindow() {
       </EchoPhaseContext.Provider>
       </ChatActionsContext.Provider>
       </RevealChangeContext.Provider>
+      </ImageReplyContext.Provider>
       </ChatCwdContext.Provider>
       {/* 区内搜索的叠层与胶囊：覆盖在滚动区之上，故与导航同样放在 main 之外。 */}
       {searchOpen && view === "chat" && !loading && timelineItems.length > 0 && (
@@ -5438,9 +5447,9 @@ export function ChatWindow() {
               <ImageRef path={file.path} />
               <button type="button" data-attachment-remove="" aria-label={`${t.chat.removeAttachment} ${file.name}`} onClick={(event) => removeAttachment(event.currentTarget, file.path)}>×</button>
               {/* 已有的图也能补标注(粘贴进来的截图最常见):标完换成带框的那张。 */}
-              {!remoteUi() && <button type="button" className="chat-attachment-annotate" aria-label={`${t.chat.annotate} ${file.name}`} data-tip={t.chat.annotate} onClick={() => setAnnotating({ path: file.path, replace: file.path })}>
+              <button type="button" className="chat-attachment-annotate" aria-label={`${t.chat.annotate} ${file.name}`} data-tip={t.chat.annotate} onClick={() => setAnnotating({ path: file.path, replace: file.path })}>
                 <Icon glyph={icPencil} size={12} />
-              </button>}
+              </button>
             </div>
           ) : (
             <div className="chat-attachment" key={file.path} data-tip={file.path}>

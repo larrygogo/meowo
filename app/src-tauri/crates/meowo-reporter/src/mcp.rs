@@ -26,6 +26,12 @@ pub const NO_BROWSER_FLAG: &str = "--no-browser";
 
 /// 发图工具名。app 侧 pty.rs 按这个名字分流，不走浏览器。
 const SEND_IMAGE: &str = "send_image";
+/// 改前改后对照工具名。和发图一样不走浏览器、不受浏览器开关约束。
+const COMPARE_IMAGES: &str = "compare_images";
+
+fn is_image_tool(name: &str) -> bool {
+    name == SEND_IMAGE || name == COMPARE_IMAGES
+}
 
 #[derive(Clone, Copy)]
 struct Options {
@@ -96,7 +102,7 @@ fn respond(message: &Value, channel: Option<&(String, String)>, options: Options
                 .cloned()
                 .unwrap_or_else(|| json!({}));
             let (content, is_error) = match channel {
-                Some(_) if name != SEND_IMAGE && !options.browser => (
+                Some(_) if !is_image_tool(name) && !options.browser => (
                     vec![json!({ "type": "text", "text": "用户在 Meowo 设置里关掉了「允许 agent 操作面板浏览器」，这组工具现在不能用。" })],
                     true,
                 ),
@@ -122,7 +128,11 @@ fn respond(message: &Value, channel: Option<&(String, String)>, options: Options
     Some(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
 }
 
-const SEND_IMAGE_HINT: &str = "想让用户看到一张图（你截的图、画的图表、改过的图标、找到的参考图）时，用 send_image 把它发给用户：给本地图片文件的路径，可带一句说明。网络上的图先用你自己的下载工具存到本地再发。图片会直接显示在用户的对话里；只在路径里提到图片，用户是看不到的。";
+const SEND_IMAGE_HINT: &str = concat!(
+    "想让用户看到一张图（你截的图、画的图表、改过的图标、找到的参考图）时，用 send_image 把它发给用户：给本地图片文件的路径，可带一句说明。网络上的图先用你自己的下载工具存到本地再发。图片会直接显示在用户的对话里；只在路径里提到图片，用户是看不到的。",
+    "\n\n",
+    "改界面（样式、布局、组件）时，动手前先截一张当前画面，改完在同样的页面和窗口大小下再截一张，用 compare_images 把两张发给用户：Meowo 会算出哪里变了，给用户看改前、改后和差异图，你也会拿到变化比例和变化范围。范围超出你想改的地方，说明顺手改坏了别处，先查清楚再汇报。",
+);
 
 const INSTRUCTIONS_IMAGES_ONLY: &str = SEND_IMAGE_HINT;
 
@@ -132,12 +142,16 @@ const INSTRUCTIONS_WITH_BROWSER: &str = concat!(
 
 ",
     "想让用户看到一张图（你截的图、画的图表、改过的图标、找到的参考图）时，用 send_image 把它发给用户：给本地图片文件的路径，可带一句说明。网络上的图先用你自己的下载工具存到本地再发。图片会直接显示在用户的对话里；只在路径里提到图片，用户是看不到的。",
+    "
+
+",
+    "改界面（样式、布局、组件）时，动手前先截一张当前画面，改完在同样的页面和窗口大小下再截一张，用 compare_images 把两张发给用户：Meowo 会算出哪里变了，给用户看改前、改后和差异图，你也会拿到变化比例和变化范围。范围超出你想改的地方，说明顺手改坏了别处，先查清楚再汇报。browser_screenshot 的结果里有截图存下的本地路径，直接拿来用。",
 );
 
 /// 发图失败的回执固定以 `[Image error: <code>] ` 开头（contract.md）：app 侧的失败已带前缀，
 /// 这里补上连不上 Meowo 这类通道层失败，前端只认一种形态。
 fn error_text(tool: &str, error: String) -> String {
-    if tool != SEND_IMAGE || error.starts_with(meowo_agent::images::ERROR_PREFIX) {
+    if !is_image_tool(tool) || error.starts_with(meowo_agent::images::ERROR_PREFIX) {
         return error;
     }
     meowo_agent::images::ImageError::new(meowo_agent::images::ImageErrorCode::Forbidden, error)
@@ -147,14 +161,19 @@ fn error_text(tool: &str, error: String) -> String {
 /// 发图的本地相对路径按本进程的工作目录补全：本服务器由 agent 拉起，工作目录就是 agent 的；
 /// Meowo 那边不知道 agent 在哪个目录。`~/` 也在这里展开。网址原样转发。
 fn prepare_args(tool: &str, mut args: Value) -> Value {
-    if tool != SEND_IMAGE {
-        return args;
-    }
-    let Some(source) = args.get("source").and_then(Value::as_str).map(str::trim) else {
-        return args;
+    let keys: &[&str] = match tool {
+        SEND_IMAGE => &["source"],
+        COMPARE_IMAGES => &["before", "after"],
+        _ => return args,
     };
-    if let Some(path) = absolute_source(source, std::env::current_dir().ok().as_deref()) {
-        args["source"] = json!(path.to_string_lossy());
+    let cwd = std::env::current_dir().ok();
+    for key in keys {
+        let Some(source) = args.get(*key).and_then(Value::as_str).map(str::trim) else {
+            continue;
+        };
+        if let Some(path) = absolute_source(source, cwd.as_deref()) {
+            args[*key] = json!(path.to_string_lossy());
+        }
     }
     args
 }
@@ -248,6 +267,19 @@ fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> 
     })
 }
 
+fn compare_images_tool() -> Value {
+    tool(
+        COMPARE_IMAGES,
+        "把改前、改后两张本地截图发给用户对照：Meowo 逐像素比较，生成差异图（变了的地方标红），在用户的对话里显示成一张对照卡（可拖动滑块比较、看差异），手机上也能看。改界面时用它证明改了什么、没改坏别处。两张图最好是同一页面、同样窗口大小下截的；尺寸不同也能比，多出来的部分算作变化。支持 PNG、JPEG、GIF、WebP，单张不超过 20MB，不接受网址。你会收到变化比例和变化范围（像素坐标），图片不会回传给你。",
+        json!({
+            "before": { "type": "string", "description": "改之前的截图：本地路径（绝对路径，或相对当前工作目录）" },
+            "after": { "type": "string", "description": "改之后的截图：本地路径（绝对路径，或相对当前工作目录）" },
+            "caption": { "type": "string", "description": "可选。随对照卡显示给用户的一句说明，比如改了什么" }
+        }),
+        &["before", "after"],
+    )
+}
+
 fn send_image_tool() -> Value {
     tool(
         SEND_IMAGE,
@@ -261,7 +293,7 @@ fn send_image_tool() -> Value {
 }
 
 fn tools(options: Options) -> Vec<Value> {
-    let mut list = vec![send_image_tool()];
+    let mut list = vec![send_image_tool(), compare_images_tool()];
     if options.browser {
         list.extend(browser_tools());
     }
@@ -342,6 +374,12 @@ fn browser_tools() -> Vec<Value> {
         tool("browser_forward", "前进。", json!({}), &[]),
         tool("browser_reload", "刷新页面。", json!({}), &[]),
         tool(
+            "browser_close",
+            "关闭你正在用的面板浏览器页签（用户自己开的其他页签不动）。网页事情做完、页签不再需要时用；之后再 browser_open 会新开一个。",
+            json!({}),
+            &[],
+        ),
+        tool(
             "browser_evaluate",
             "在页面里执行一段 JavaScript 表达式，返回结果（会转成 JSON）。可以用 await（如 await fetch(...).then(r => r.json())），最多等 15 秒。读不到快照里的内容时用。",
             json!({ "expression": { "type": "string" } }),
@@ -420,7 +458,7 @@ mod tests {
             IMAGES_ONLY,
         )
         .unwrap();
-        assert_eq!(names(&list), vec!["send_image".to_string()]);
+        assert_eq!(names(&list), vec!["send_image".to_string(), "compare_images".to_string()]);
         let reply = respond(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "browser_snapshot" } }), Some(&channel), IMAGES_ONLY).unwrap();
         assert_eq!(reply["result"]["isError"], true);
         let init = respond(&json!({ "jsonrpc": "2.0", "id": 3, "method": "initialize", "params": {} }), Some(&channel), IMAGES_ONLY).unwrap();

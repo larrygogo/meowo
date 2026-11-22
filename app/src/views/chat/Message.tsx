@@ -1,6 +1,6 @@
 import { memo, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useFlash } from "../../hooks/useFlash";
-import { Lightbox } from "./Lightbox";
+import { collectGallery, galleryAttrs, Lightbox, type GalleryItem } from "./Lightbox";
 import { safeFileSrc } from "../../assetSrc";
 import { useT } from "../../i18n";
 import { deliveryStatusLabel } from "../../i18n/statusVocab";
@@ -188,7 +188,7 @@ function CrossMessageBlock({ message }: { message: CrossMessage }) {
  *  里的图片走同一套预览（按路径走 convertFileSrc，asset 读不到时回退文件名 chip）。 */
 export function ImageRef({ path }: { path: string }) {
   const [failed, setFailed] = useState(false);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState<{ items: GalleryItem[]; index: number } | null>(null);
   // 第一次加载失败多半是 asset 白名单没放行这个目录（拖进来、文件对话框选的图）：请宿主只放行这一个
   // 文件，带着新参数重试一次（失败的那次结果浏览器可能缓存着）。放行不了或重试还失败才退回文件名。
   // first：原地址；allowing：已失败、等宿主放行（地址不变，不会再触发 onError）；retry：放行后换地址重试。
@@ -215,7 +215,8 @@ export function ImageRef({ path }: { path: string }) {
   const src = stage === "retry" ? `${base}${base.includes("?") ? "&" : "?"}preview=1` : base;
   return (
     <>
-      <button type="button" className="chat-image-thumb-btn" data-tip={name} onClick={() => setExpanded(true)}>
+      <button type="button" className="chat-image-thumb-btn" data-tip={name} {...galleryAttrs({ src, name, path })}
+        onClick={(event) => setExpanded(collectGallery(event.currentTarget, { src, name, path }))}>
         <img className="chat-image-thumb" src={src} alt={name} loading="lazy" referrerPolicy="no-referrer" onError={() => {
           if (stage === "first" && !remoteUi()) {
             setStage("allowing");
@@ -230,7 +231,7 @@ export function ImageRef({ path }: { path: string }) {
       </button>
       {/* 灯箱走 portal（在 Lightbox 内）：消息块开着 content-visibility（paint 包含），
           fixed 覆盖层留在消息里会被裁剪在消息框内。 */}
-      {expanded && <Lightbox src={src} name={name} onClose={() => setExpanded(false)} />}
+      {expanded && <Lightbox items={expanded.items} index={expanded.index} onClose={() => setExpanded(null)} />}
     </>
   );
 }

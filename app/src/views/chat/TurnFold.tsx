@@ -8,6 +8,7 @@ import type { TurnActivity } from "./toolState";
 import { ChatCwdContext, toolSummary } from "./ToolActivity";
 import type { ChatItem } from "../../api";
 import { useRememberedOpen } from "./foldMemory";
+import { isCompareTool } from "./imageTools";
 
 /// 连续活动的汇总块（对照 Kimi 的 ActivityRun）：两段正文之间 ≥2 条思考/工具收成一行摘要。
 /// 进行中（在跑，或停在审批、提问上等人）展开，摘要写「正在做什么 · 已完成的」；
@@ -39,6 +40,7 @@ function currentClause(items: ProcessItem[], results: Map<string, ToolResultItem
     const doing = t.chat.turnToolDoing;
     if (kind === "run") return { text: doing.run, toolId: item.id };
     if (kind === "image") return { text: doing.image, toolId: item.id };
+    if (isCompareTool(item)) return { text: doing.compare, toolId: item.id };
     const subject = clip(toolSummary(item, cwd).replace(/\/ /g, "/"));
     const verb = kind === "read" || kind === "edit" || kind === "write" || kind === "search" || kind === "web" ? doing[kind] : null;
     return { text: verb && subject ? verb(subject) : doing.other, toolId: item.id };

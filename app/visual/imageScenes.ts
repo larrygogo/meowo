@@ -49,6 +49,41 @@ function loginShot(): string {
     g.fillStyle = "#9ca3af"; g.font = "16px sans-serif"; g.fillText("Forgot password?", 572, 520);
   });
 }
+/** 对照场景的登录页：改前输入框矮一些、主按钮是灰的；改后和 loginShot 一样。 */
+function drawLogin(g: CanvasRenderingContext2D, after: boolean) {
+  g.fillStyle = "#f5f6f8"; g.fillRect(0, 0, 1280, 800);
+  g.fillStyle = "#ffffff"; g.fillRect(0, 0, 1280, 64);
+  box(g, 40, 18, 120, 28, "#1f2937", 6);
+  box(g, 440, 150, 400, 470, "#ffffff", 16);
+  g.fillStyle = "#111827"; g.font = "bold 30px sans-serif"; g.fillText("Sign in", 480, 220);
+  const h = after ? 48 : 40;
+  box(g, 480, 260, 320, h, "#eef0f3", 8); box(g, 480, 282 + h, 320, h, "#eef0f3", 8);
+  box(g, 480, 420, 320, 50, after ? "#2f6fed" : "#6b7280", 8);
+  g.fillStyle = "#fff"; g.font = "20px sans-serif"; g.fillText("Continue", 598, 452);
+  g.fillStyle = "#9ca3af"; g.font = "16px sans-serif"; g.fillText("Forgot password?", 572, 520);
+}
+/** 差异图：和后端 chat_images.rs diff_images 同一种画法（没变的淡灰、变了的标红）。 */
+function loginDiff(): string {
+  const read = (after: boolean) => {
+    const c = document.createElement("canvas"); c.width = 1280; c.height = 800;
+    const g = c.getContext("2d"); if (!g) return null;
+    drawLogin(g, after);
+    return g.getImageData(0, 0, 1280, 800).data;
+  };
+  const a = read(false); const b = read(true);
+  return canvas(1280, 800, (g) => {
+    if (!a || !b) return;
+    const out = g.createImageData(1280, 800);
+    for (let i = 0; i < out.data.length; i += 4) {
+      const changed = [0, 1, 2].some((k) => Math.abs(a[i + k] - b[i + k]) > 24);
+      if (changed) { out.data[i] = 230; out.data[i + 1] = 40; out.data[i + 2] = 40; }
+      else { const gray = (b[i] * 299 + b[i + 1] * 587 + b[i + 2] * 114) / 1000; const faint = 255 - (255 - gray) / 5; out.data[i] = out.data[i + 1] = out.data[i + 2] = faint; }
+      out.data[i + 3] = 255;
+    }
+    g.putImageData(out, 0, 0);
+  });
+}
+
 /** 柱状图（AI 画的图表，800×500）。 */
 function chart(): string {
   return canvas(800, 500, (g) => {
@@ -92,7 +127,7 @@ function icon(): string {
 
 let images: Record<string, string> | null = null;
 function imageFor(path: string): string {
-  images ??= { "login.png": loginShot(), "chart.png": chart(), "palette.png": photo(), "pricing-long.png": longShot(), "icon-48.png": icon(), "ref.png": photo() };
+  images ??= { "login-before.png": canvas(1280, 800, (g) => drawLogin(g, false)), "login-after.png": canvas(1280, 800, (g) => drawLogin(g, true)), "login-diff.png": loginDiff(), "login.png": loginShot(), "chart.png": chart(), "palette.png": photo(), "pricing-long.png": longShot(), "icon-48.png": icon(), "ref.png": photo() };
   const name = path.split(/[\\/]/).pop() ?? "";
   // 真机样本的图在探针时的持久目录里（sent/ 是发来的图表，tool/ 是浏览器截图），这台机器上没有：换成同类的现画图。
   return images[name] ?? (/[\\/]sent[\\/]/.test(path) ? images["chart.png"] : /[\\/]tool[\\/]/.test(path) ? images["login.png"] : path);
@@ -142,6 +177,32 @@ export function imageSceneItems(part: string, lang: Lang): { items: ChatItem[]; 
   const at = (s: number) => new Date(FIXED_NOW - s * 1000).toISOString();
   const say = (id: string, s: number, text: string) => ({ type: "assistant_text", id, timestamp: at(s), text }) as unknown as ChatItem;
   const user = (id: string, s: number, text: string) => ({ type: "user_text", id, timestamp: at(s), text }) as unknown as ChatItem;
+  if (part === "compare") {
+    const compareCall = (id: string, s: number) => ({
+      type: "tool_use", id, timestamp: at(s), name: "mcp__meowo__compare_images", kind: "other",
+      summary: JSON.stringify({ before: "C:\\dev\\web-app\\shots\\before.png", after: "C:\\dev\\web-app\\shots\\after.png" }),
+    }) as unknown as ChatItem;
+    const caption = zh ? "登录页：输入框加高到 48px，主按钮换成品牌蓝。" : "Login page: inputs are 48px tall, primary button uses the brand blue.";
+    return {
+      running: false,
+      items: [
+        user("u1", 300, zh ? "登录页按设计稿改一下，改完给我看对照。" : "Update the login page to match the design and show me a before/after."),
+        compareCall("c1", 200),
+        receipt("c1", at(199), [
+          "对照已发给用户……",
+          ref("sent", "login-before.png"), ref("sent", "login-after.png"), ref("sent", "login-diff.png"),
+          `[Image compare: ${JSON.stringify({ changed: "4.38%", before: [1280, 800], after: [1280, 800], bounds: [480, 260, 320, 210], caption })}]`,
+        ].join("\n")),
+        say("a1", 190, zh ? "改动只在登录卡片里，其他地方没变。" : "Changes stay inside the sign-in card; nothing else moved."),
+        // 整页长截图：舞台限高、标「长图」。
+        compareCall("c2", 120),
+        receipt("c2", at(119), [
+          ref("sent", "pricing-long.png"), ref("sent", "pricing-long.png"),
+          `[Image compare: ${JSON.stringify({ changed: "2.96%", before: [390, 2600], after: [390, 2600], bounds: [20, 2340, 350, 220], caption: null })}]`,
+        ].join("\n")),
+      ],
+    };
+  }
   if (part === "main") {
     return {
       running: true,

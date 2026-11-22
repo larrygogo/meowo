@@ -167,6 +167,7 @@ export function DockWork({ sessionId, cwd, ccSessionId, items, history, loading,
     const popLayer = pushEscLayer();
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      if (document.querySelector(".chat-lightbox")) return; // 大图开着时 Esc 只关大图
       event.preventDefault();
       event.stopPropagation();
       setPanel(null);

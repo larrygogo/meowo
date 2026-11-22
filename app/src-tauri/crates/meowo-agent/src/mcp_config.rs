@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 
 /// Meowo 在各家那边登记的 MCP 服务器名与发图工具名。
 const SERVER_NAME: &str = crate::images::MCP_SERVER;
-const SEND_IMAGE: &str = crate::images::SEND_IMAGE;
+const IMAGE_TOOLS: &[&str] = crate::images::IMAGE_TOOLS;
 
 /// [`sync_mcp_file`] 的结果。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -189,19 +189,27 @@ pub fn sync_permission_rule(path: &Path, prefix: &str, enabled: bool) {
     let Ok(mut doc) = text.parse::<toml_edit::DocumentMut>() else {
         return;
     };
-    let pattern = format!("{prefix}{SERVER_NAME}__{SEND_IMAGE}");
+    let patterns: Vec<String> = IMAGE_TOOLS
+        .iter()
+        .map(|tool| format!("{prefix}{SERVER_NAME}__{tool}"))
+        .collect();
     let ours =
         |t: &toml_edit::Table| t.get("reason").and_then(|v| v.as_str()) == Some(RULE_REASON);
-    let has = doc
+    // 现有的「我们的规则」正好是这几条才算齐：旧版本只放行了发图，升级后要补上对照。
+    let current: Vec<String> = doc
         .get("permission")
         .and_then(|p| p.get("rules"))
         .and_then(|r| r.as_array_of_tables())
-        .is_some_and(|rules| {
-            rules.iter().any(|t| {
-                ours(t) && t.get("pattern").and_then(|v| v.as_str()) == Some(pattern.as_str())
-            })
-        });
-    if enabled == has {
+        .map(|rules| {
+            rules
+                .iter()
+                .filter(|t| ours(t))
+                .filter_map(|t| t.get("pattern").and_then(|v| v.as_str()).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let has = !current.is_empty();
+    if enabled && current == patterns || !enabled && !has {
         return;
     }
     if enabled {
@@ -227,12 +235,14 @@ pub fn sync_permission_rule(path: &Path, prefix: &str, enabled: bool) {
         };
         // 旧版本留下的同标记规则（pattern 变了）先清掉。
         rules.retain(|t| !ours(t));
-        let mut rule = toml_edit::Table::new();
-        rule.insert("decision", toml_edit::value("allow"));
-        rule.insert("scope", toml_edit::value("user"));
-        rule.insert("pattern", toml_edit::value(pattern));
-        rule.insert("reason", toml_edit::value(RULE_REASON));
-        rules.push(rule);
+        for pattern in patterns {
+            let mut rule = toml_edit::Table::new();
+            rule.insert("decision", toml_edit::value("allow"));
+            rule.insert("scope", toml_edit::value("user"));
+            rule.insert("pattern", toml_edit::value(pattern));
+            rule.insert("reason", toml_edit::value(RULE_REASON));
+            rules.push(rule);
+        }
     } else if let Some(rules) = doc
         .get_mut("permission")
         .and_then(|p| p.get_mut("rules"))
@@ -259,16 +269,18 @@ pub fn sync_policy_file(path: &Path, enabled: bool) {
 
 pub fn policy_body() -> String {
     let mut doc = toml_edit::DocumentMut::new();
-    let mut rule = toml_edit::Table::new();
-    rule.insert("mcpName", toml_edit::value(SERVER_NAME));
-    rule.insert("toolName", toml_edit::value(SEND_IMAGE));
-    rule.insert("decision", toml_edit::value("allow"));
-    rule.insert("priority", toml_edit::value(900));
     let mut rules = toml_edit::ArrayOfTables::new();
-    rules.push(rule);
+    for tool in IMAGE_TOOLS {
+        let mut rule = toml_edit::Table::new();
+        rule.insert("mcpName", toml_edit::value(SERVER_NAME));
+        rule.insert("toolName", toml_edit::value(*tool));
+        rule.insert("decision", toml_edit::value("allow"));
+        rule.insert("priority", toml_edit::value(900));
+        rules.push(rule);
+    }
     doc.insert("rule", toml_edit::Item::ArrayOfTables(rules));
     format!(
-        "# 由 Meowo 管理：Meowo 的发图工具 send_image 只把图片显示给用户，免逐次确认。\n{doc}"
+        "# 由 Meowo 管理：Meowo 的发图工具 send_image、对照工具 compare_images 只把图片显示给用户，免逐次确认。\n{doc}"
     )
 }
 

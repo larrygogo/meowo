@@ -176,6 +176,8 @@ export function editOutcome(item: import("./shared").ToolUseItem, result?: impor
 }
 
 import { ChatCwdContext } from "./chatCwd";
+import { CompareMessage } from "./CompareCard";
+import { isCompareTool } from "./imageTools";
 export { ChatCwdContext };
 
 /// 去掉 cwd 前缀。Windows 路径大小写不敏感、正反斜杠混用，比较前统一归一化。
@@ -319,6 +321,7 @@ export const ToolActivity = memo(function ToolActivity({ item, result }: { item:
   const files = useMemo(() => (media.images.length > 0 ? [] : fileImages(item, result)), [item, result, media.images.length]);
   // agent 发来的图在时间线里排在正文区（Transcript）；子任务记录等直接渲染工具行的地方也按图片消息显示。
   if (item.kind === "image") return <SentImageMessage item={item} result={result} />;
+  if (isCompareTool(item)) return <CompareMessage item={item} result={result} />;
   const row = (() => {
     switch (item.kind) {
       case "run": return <BashTool item={item} result={media.result} />;

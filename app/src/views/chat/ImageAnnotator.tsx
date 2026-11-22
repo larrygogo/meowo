@@ -47,8 +47,25 @@ export function ImageAnnotator({ path, onDone, onClose }: {
     return () => { cancelled = true; };
   }, [path]);
 
-  // 屏幕上的画布按可用区域等比缩小；框的坐标始终是原图像素。
-  const scale = image ? Math.min(1, 760 / image.width, (window.innerHeight * 0.62) / image.height) : 1;
+  // 屏幕上的画布按可用区域等比缩小；框的坐标始终是原图像素。可用宽度量舞台本身：
+  // 手机上弹窗只有屏幕那么宽，按固定 760 算的话画布会被 CSS 再缩一次，框就画不到手指下面。
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [room, setRoom] = useState(760);
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const measure = () => {
+      const style = getComputedStyle(stage);
+      const inner = stage.clientWidth - parseFloat(style.paddingLeft || "0") - parseFloat(style.paddingRight || "0");
+      if (inner > 0) setRoom(Math.min(760, inner));
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, [image]);
+  const scale = image ? Math.min(1, room / image.width, (window.innerHeight * 0.62) / image.height) : 1;
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !image) return;
@@ -60,13 +77,16 @@ export function ImageAnnotator({ path, onDone, onClose }: {
     drawBoxes(ctx, draft ? [...boxes, draft] : boxes, scale);
   }, [image, boxes, draft, scale]);
 
+  // 按画布实际显示大小换算：CSS 的 max-width 仍可能把画布再缩小一次（窗口刚变窄、量之前）。
   const toImage = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    return { x: (event.clientX - rect.left) / scale, y: (event.clientY - rect.top) / scale };
+    const canvas = event.currentTarget;
+    return pointToImage(canvas.getBoundingClientRect(), { width: canvas.width, height: canvas.height }, scale,
+      { x: event.clientX, y: event.clientY }, image ? { width: image.width, height: image.height } : null);
   };
   const onPointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     if (!image || event.button !== 0) return;
-    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
     dragRef.current = toImage(event);
   };
   const onPointerMove = (event: ReactPointerEvent<HTMLCanvasElement>) => {
@@ -111,7 +131,7 @@ export function ImageAnnotator({ path, onDone, onClose }: {
       ) : (
         <>
           <div className="chat-annotator-hint">{t.chat.annotateHint}</div>
-          <div className="chat-annotator-stage">
+          <div className="chat-annotator-stage" ref={stageRef}>
             <canvas
               ref={canvasRef}
               aria-label={t.chat.annotateTitle}
@@ -151,6 +171,24 @@ export function ImageAnnotator({ path, onDone, onClose }: {
       </div>
     </AppModal>
   );
+}
+
+/// 屏幕上的一点 → 原图像素。rect 是画布实际显示的框（可能被 CSS 缩过），canvas 是画布的绘制尺寸，
+/// scale 是绘制尺寸相对原图的比例；落在图外的点贴到边上。
+export function pointToImage(
+  rect: { left: number; top: number; width: number; height: number },
+  canvas: { width: number; height: number },
+  scale: number,
+  client: { x: number; y: number },
+  image: { width: number; height: number } | null,
+): { x: number; y: number } {
+  const sx = rect.width > 0 ? canvas.width / rect.width : 1;
+  const sy = rect.height > 0 ? canvas.height / rect.height : 1;
+  const clamp = (value: number, max: number) => Math.min(Math.max(value, 0), max);
+  return {
+    x: clamp(((client.x - rect.left) * sx) / scale, image?.width ?? Infinity),
+    y: clamp(((client.y - rect.top) * sy) / scale, image?.height ?? Infinity),
+  };
 }
 
 function normalizeBox(a: { x: number; y: number }, b: { x: number; y: number }): Box {

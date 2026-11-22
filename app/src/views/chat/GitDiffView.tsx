@@ -357,7 +357,7 @@ function GitDiffViewImpl({ cwd, summary, repos = null, width, collapsed, maximiz
       if (event.key !== "Escape") return;
       // 页内弹层（AppModal：重命名、截图标注…）开着时 Esc 归弹层。这里挂在捕获段，
       // 不让开的话弹层收不到 Esc，按下去收起的是背后的面板。
-      if (document.querySelector(".chat-modal-overlay")) return;
+      if (document.querySelector(".chat-modal-overlay, .chat-lightbox")) return;
       // 面板里的菜单（文件右键菜单）开着时 Esc 只关菜单。这里挂在捕获段，不让开的话
       // 先收起的是整个面板。
       if (document.querySelector('.chat-diff-panel [role="menu"]')) return;

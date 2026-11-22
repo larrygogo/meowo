@@ -109,6 +109,27 @@ describe("面板与后端进程对号", () => {
     expect(loadPanel(1).tabs).toHaveLength(0);
   });
 
+  it("agent 关了自己的浏览器页签：正在看的会话去掉页签，别的会话改存档，都不会再按网址重开", async () => {
+    invoke.mockImplementation(async (cmd: string, args?: { owner?: number }) => {
+      if (cmd === "browser_pane_list") return panes[args?.owner ?? 0] ?? [];
+      if (cmd === "shell_terminal_list") return [];
+      return null;
+    });
+    savePanel(1, { tabs: [{ key: "w", type: "browser", paneId: 5, url: "https://example.com/", title: "Example" }, { key: "f", type: "files" }], active: "w", visible: true, expanded: false });
+    savePanel(2, { tabs: [{ key: "x", type: "browser", paneId: 8, url: "https://b.test/", title: "" }], active: "x", visible: true, expanded: false });
+    const { result } = renderHook(() => usePanel(1, "C:\\repo", () => {}));
+    await waitFor(() => expect(result.current.panes.has(5)).toBe(true));
+    await waitFor(() => expect(handlers.has("browser-pane-closed")).toBe(true));
+    act(() => handlers.get("browser-pane-closed")?.({ payload: { id: 5, owner: 1 } }));
+    expect(result.current.state.tabs.map((tab) => tab.type)).toEqual(["files"]);
+    expect(result.current.panes.has(5)).toBe(false);
+    act(() => handlers.get("browser-pane-closed")?.({ payload: { id: 8, owner: 2 } }));
+    expect(loadPanel(2).tabs).toHaveLength(0);
+    expect(result.current.state.tabs).toHaveLength(1);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(invoke).not.toHaveBeenCalledWith("browser_pane_open", expect.anything());
+  });
+
   it("已结束的会话：进程早没了的终端和浏览器页签直接去掉，不再重新打开；之后手动新开的照常能起", async () => {
     savePanel(1, {
       tabs: [
