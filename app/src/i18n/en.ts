@@ -775,6 +775,7 @@ export const en: Dict = {
     submitAnswer: "Submit choices",
     questionNext: "Next",
     questionAnswered: "Answered",
+    questionPreview: (label: string) => `Preview of "${label}"`,
     questionAnswerReady: "Agent continues right after you submit",
     questionAnswerIncomplete: (count: number) => `${count} question${count === 1 ? "" : "s"} left`,
     questionNeedsTerminal: "These questions can't be answered in the card",

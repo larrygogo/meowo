@@ -7366,6 +7366,9 @@ button.lead-entry-head:hover { background: var(--fill-hover); }
 .chat-approval-options i { width: 16px; height: 16px; flex: 0 0 auto; display: grid; place-items: center; margin-top: var(--sp-2); border: 0; box-shadow: inset 0 0 0 1px var(--cc-text-faint); border-radius: var(--radius-xs); color: transparent; background: transparent; font: normal var(--text-xs)/1 sans-serif; }
 .chat-approval-options .is-selected i { box-shadow: none; background: var(--cc-accent); color: var(--cc-on-accent); }
 .chat-approval-options.is-single i { border-radius: 50%; }
+/* 选项预览（AskUserQuestion 的 preview）：等宽框，限高可滚，免得一张草图把卡片撑出可视区。 */
+.chat-question-preview { margin-top: var(--sp-6); max-height: min(320px, 40vh); overflow: auto; padding: var(--sp-8) var(--sp-10); border: var(--hairline) solid var(--line-subtle); border-radius: var(--radius-md); background: var(--cc-code-bg); }
+.chat-question-preview pre { margin: 0; font: var(--text-xs)/1.45 var(--cc-mono); color: var(--cc-text); white-space: pre; }
 .chat-approval-options.is-single .is-selected i::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--cc-on-accent); }
 .chat-approval-options span { min-width: 0; display: flex; flex-direction: column; gap: var(--sp-3); }
 .chat-approval-options b { font-size: var(--text-sm); font-weight: var(--fw-medium); }

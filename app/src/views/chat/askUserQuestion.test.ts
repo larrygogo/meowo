@@ -269,3 +269,14 @@ describe("parseAskUserQuestions", () => {
     ).toEqual([{ question: "q", header: null, multiSelect: false, options: [] }]);
   });
 });
+
+describe("parseAskUserQuestions 选项预览", () => {
+  it("保留选项的 preview；空白预览当没有", () => {
+    const [q] = parseAskUserQuestions(JSON.stringify({ questions: [{ question: "选布局", options: [
+      { label: "卡片", description: "留白多", preview: "┌──┐\n└──┘" },
+      { label: "列表", preview: "   " },
+    ] }] }));
+    expect(q.options[0].preview).toBe("┌──┐\n└──┘");
+    expect(q.options[1]).toEqual({ label: "列表", description: null });
+  });
+});

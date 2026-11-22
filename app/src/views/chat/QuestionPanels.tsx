@@ -1,7 +1,20 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useT } from "../../i18n";
 import { imeComposing } from "../../ime";
-import type { QuestionAnswerDraft, StructuredQuestion } from "./askUserQuestion";
+import { ChatMarkdown } from "../ChatMarkdown";
+import type { QuestionAnswerDraft, StructuredQuestion, StructuredQuestionOption } from "./askUserQuestion";
+
+/** 选项预览：带代码块标记的按 Markdown 渲染；其余（多是 ASCII 草图）按等宽原样排，
+ *  交给 Markdown 会把单个换行并成一段，草图就散了。 */
+function OptionPreview({ option }: { option: StructuredQuestionOption }) {
+  const t = useT();
+  const text = option.preview ?? "";
+  return (
+    <div className="chat-question-preview" aria-label={t.chat.questionPreview(option.label)} role="region">
+      {/```/.test(text) ? <ChatMarkdown text={text} /> : <pre>{text}</pre>}
+    </div>
+  );
+}
 
 /** AskUserQuestion 的题面。多问题用 tab 切换——全部竖排会把卡片堆得比对话区还高，
  *  把输入框挤出可视区（用户实拍反馈）；单问题不渲染 tab 条。
@@ -37,8 +50,11 @@ export function QuestionPanels(props: QuestionPanelsProps) {
   const t = useT();
   const { items } = props;
   const [active, setActive] = useState(0);
+  // 正在看预览的选项（悬停或键盘聚焦）；没有时退回已选项，再退回第一个带预览的。
+  const [peek, setPeek] = useState<number | null>(null);
   // 新一轮提问（题面数组换了）回到第一题。
   useEffect(() => { setActive(0); }, [items]);
+  useEffect(() => { setPeek(null); }, [items, active]);
   const index = Math.min(active, items.length - 1);
   const item = items[index];
   // tab 条的 roving tabindex：整组只占一个 Tab 停靠点，←/→/Home/End 换页签并自动激活
@@ -70,6 +86,15 @@ export function QuestionPanels(props: QuestionPanelsProps) {
     return (props.queuedAnswers.get(question)?.length ?? 0) > 0;
   };
   const draft = props.mode === "answer" ? (props.answers.get(index) ?? EMPTY_DRAFT) : EMPTY_DRAFT;
+  const chosen = props.mode === "answer" ? draft.selected : props.queuedAnswers.get(index) ?? [];
+  const hasPreview = (i: number) => !!item.options[i]?.preview;
+  const shownIndex = peek !== null && hasPreview(peek) ? peek
+    : (() => {
+      const picked = item.options.findIndex((option) => chosen.includes(option.label) && option.preview);
+      return picked >= 0 ? picked : item.options.findIndex((option) => option.preview);
+    })();
+  const shown = shownIndex >= 0 ? item.options[shownIndex] : undefined;
+  const peekProps = (i: number) => ({ onMouseEnter: () => setPeek(i), onFocus: () => setPeek(i) });
   return (
     <>
       {items.length > 1 && (
@@ -111,6 +136,7 @@ export function QuestionPanels(props: QuestionPanelsProps) {
                     className={selected ? "is-selected" : ""}
                     key={`${optionIndex}:${option.label}`}
                     onClick={() => props.onSelect(index, option.label)}
+                    {...peekProps(optionIndex)}
                   >
                     <i aria-hidden="true">{selected && item.multiSelect ? "✓" : ""}</i>
                     <span><b>{option.label}</b>{option.description && <small>{option.description}</small>}</span>
@@ -118,6 +144,7 @@ export function QuestionPanels(props: QuestionPanelsProps) {
                 );
               })}
             </div>
+            {shown && <OptionPreview option={shown} />}
             <div className="chat-approval-custom">
               <input
                 value={draft.custom}
@@ -141,6 +168,7 @@ export function QuestionPanels(props: QuestionPanelsProps) {
                 className={props.queuedAnswers.get(index)?.includes(option.label) ? "is-selected" : ""}
                 key={`${optionIndex}:${option.label}`}
                 onClick={() => props.onToggle(index, option.label)}
+                {...peekProps(optionIndex)}
               >
                 <span><b>{option.label}</b>{option.description && <small>{option.description}</small>}</span>
               </button>
@@ -149,12 +177,13 @@ export function QuestionPanels(props: QuestionPanelsProps) {
         ) : (
           <div className="chat-approval-options is-static">
             {item.options.map((option, optionIndex) => (
-              <div className="chat-approval-option-static" key={`${optionIndex}:${option.label}`}>
+              <div className="chat-approval-option-static" key={`${optionIndex}:${option.label}`} {...peekProps(optionIndex)}>
                 <span><b>{option.label}</b>{option.description && <small>{option.description}</small>}</span>
               </div>
             ))}
           </div>
         )}
+        {props.mode !== "answer" && shown && <OptionPreview option={shown} />}
       </div>
     </>
   );

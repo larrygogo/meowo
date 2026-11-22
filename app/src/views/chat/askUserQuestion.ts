@@ -4,7 +4,9 @@
 //
 // 防御式解析：hook 参数来自 agent 侧，形态不受我们控制；解析不出就返回空数组，
 // 调用方降级为不渲染（既有的屏幕识别路径仍会长出可作答的卡）。
-export type StructuredQuestionOption = { label: string; description: string | null };
+/// preview：Claude Code 的 AskUserQuestion 每个选项可带一段预览（ASCII 草图、代码片段），
+/// 终端里聚焦到该项时显示在旁边。此前解析时丢掉，卡片上只剩文字，看了才能比的选项比不了。
+export type StructuredQuestionOption = { label: string; description: string | null; preview?: string | null };
 export type StructuredQuestion = {
   question: string;
   header: string | null;
@@ -196,6 +198,8 @@ export function parseAskUserQuestions(input: string): StructuredQuestion[] {
           return [{
             label: option.label,
             description: typeof option.description === "string" && option.description ? option.description : null,
+            // 没有预览就不带这个键：旧题面的解析结果保持原样。
+            ...(typeof option.preview === "string" && option.preview.trim() ? { preview: option.preview } : {}),
           }];
         })
       : [];
