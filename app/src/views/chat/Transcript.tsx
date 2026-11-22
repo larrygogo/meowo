@@ -28,6 +28,7 @@ import { liveTurnStart, SessionAliveContext, TurnLiveContext, type TurnActivity 
 import { markEntering, trackEntering, type EnterTrack } from "./enterMotion";
 import { isChoicesTool, isCompareTool, isImageMessage } from "./imageTools";
 import { ChoiceMessage } from "./ChoiceCard";
+import { looksLikeChoiceReply } from "./choiceReply";
 import { CompareMessage } from "./CompareCard";
 
 type SubagentOutcomeInfo = NonNullable<ToolResultItem["subagent"]>;
@@ -381,9 +382,10 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
     // 正文之前的节点都是过程:回合级折叠从这里切开,之后的正文/改动/页脚留在外面。
     const bodyAt = record.nodes.length;
     const choiceFollowUp = (entry: ChatItem) => {
-      const text = followUpText(items, items.indexOf(entry));
-      if (text === undefined) record.awaitsReply = true;
-      return text;
+      const texts = choiceFollowUps(items, items.indexOf(entry));
+      // 后面还没有「用户自己打的话」：答案可能还在路上（或同一轮别的卡先答了），这块不复用缓存。
+      if (texts.length === 0 || looksLikeChoiceReply(texts[texts.length - 1])) record.awaitsReply = true;
+      return texts;
     };
     for (const entry of bodyItems) {
       // 出错卡只有在它就是时间线末尾时才给「继续」（后面已有新内容的旧错误不必再续）。
@@ -393,7 +395,7 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
         record.nodes.push(
           <TurnLiveContext.Provider key={entry.id} value={blockActivity}>
             {isChoicesTool(entry)
-              ? <ChoiceMessage item={entry} result={results.get(entry.id)} followUp={choiceFollowUp(entry)} />
+              ? <ChoiceMessage item={entry} result={results.get(entry.id)} followUps={choiceFollowUp(entry)} />
               : isCompareTool(entry)
               ? <CompareMessage item={entry} result={results.get(entry.id)} />
               : <SentImageMessage item={entry} result={results.get(entry.id)} />}
@@ -481,11 +483,15 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
   );
 });
 
-/** 时间线里某条之后的第一条用户消息原文；还没有时 undefined。方案卡靠它认出当时选了哪个。 */
-export function followUpText(items: readonly ChatItem[], index: number): string | undefined {
+/** 方案卡之后的用户消息：一条条收，直到遇到一条不像方案卡回复的（用户自己打的话，也收进来）为止。
+ *  同一轮有几张卡时，别的卡的回复排在前面也不会挡住这张卡的答案（ChoiceCard 往后逐条认）。 */
+export function choiceFollowUps(items: readonly ChatItem[], index: number): string[] {
+  const texts: string[] = [];
   for (let i = index + 1; i < items.length; i += 1) {
     const entry = items[i];
-    if (entry.type === "user_text") return entry.text;
+    if (entry.type !== "user_text") continue;
+    texts.push(entry.text);
+    if (!looksLikeChoiceReply(entry.text)) break;
   }
-  return undefined;
+  return texts;
 }

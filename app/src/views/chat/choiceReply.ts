@@ -49,3 +49,11 @@ export function parseChoiceAnswer(text: string, card: ChoiceCardText): ChoiceAns
   }
   return null;
 }
+
+/** 看起来是某张方案卡发的消息（不管是哪张卡）：同一轮有几张卡时，别的卡的回复不算「用户直接打字回复」。 */
+export function looksLikeChoiceReply(text: string): boolean {
+  const [head = "", ...rest] = text.trim().split("\n");
+  const tail = rest.join("\n");
+  if (tail.trim() && !NOTE.some((re) => re.test(tail))) return false;
+  return [...PICKED, ...NONE].some((re) => re.test(head.trim()));
+}

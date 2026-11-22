@@ -130,7 +130,7 @@ describe("方案卡", () => {
   });
 
   it("回放旧会话：之后那条消息是卡片发的，显示当时的选择；用户直接打字回复了，卡片不再接受点选", () => {
-    withActions(<ChoiceMessage item={call("c5")} result={result("c5", receipt())} followUp={"选了方案 1：卡片式\n补充：再紧凑点"} />);
+    withActions(<ChoiceMessage item={call("c5")} result={result("c5", receipt())} followUps={["选了方案 1：卡片式\n补充：再紧凑点"]} />);
     const settled = document.querySelector(".chat-choices.is-settled")!;
     expect(settled.textContent).toContain("你选了 1 · 卡片式");
     expect(settled.textContent).toContain("补充：再紧凑点");
@@ -139,7 +139,7 @@ describe("方案卡", () => {
     expect(document.querySelectorAll(".chat-choice").length).toBe(3);
     expect(document.querySelector(".chat-choice.is-selected .chat-choice-text b")!.textContent).toBe("卡片式");
     cleanup();
-    withActions(<ChoiceMessage item={call("c6")} result={result("c6", receipt())} followUp="我想再看一版" />);
+    withActions(<ChoiceMessage item={call("c6")} result={result("c6", receipt())} followUps={["我想再看一版"]} />);
     expect(document.querySelector(".chat-choices.is-settled")!.textContent).toContain("没有在卡上选");
   });
 
@@ -172,21 +172,53 @@ describe("方案卡", () => {
     expect(sendText).toHaveBeenCalledTimes(1);
   });
 
-  it("同一轮两张卡：之后那条消息只记到它对应的那张上", () => {
+  it("同一轮两张卡：各自认各自的回复；先答了一张，另一张仍可点；用户打字回复后都不再可点", () => {
     const colors = receipt([{ label: "深色", description: null, image: null }, { label: "浅色", description: null, image: null }], [])
       .replace("设置页用哪种布局？", "主色用哪个？");
-    const items: ChatItem[] = [
+    const base: ChatItem[] = [
       { type: "user_text", id: "u", timestamp: null, text: "做两版" },
       call("x1"), result("x1", receipt()),
       call("x2"), result("x2", colors),
       { type: "assistant_text", id: "a", timestamp: null, text: "两张卡你都看看" },
       { type: "user_text", id: "u2", timestamp: null, text: "选了方案 2：列表式" },
     ];
-    withActions(<Transcript sessionId={1} items={items} />);
-    const cards = [...document.querySelectorAll(".chat-choices")];
+    const { view } = withActions(<Transcript sessionId={1} items={base} />);
+    let cards = [...document.querySelectorAll(".chat-choices")];
     expect(cards[0].textContent).toContain("你选了 2 · 列表式");
-    expect(cards[1].textContent).toContain("没有在卡上选");
-    expect(cards[1].textContent).not.toContain("你选了");
+    expect(cards[1].querySelectorAll("[role=radio]")).toHaveLength(2);
+    const answered: ChatItem[] = [...base, { type: "user_text", id: "u3", timestamp: null, text: "选了方案 1：深色" }];
+    view.rerender(<ChatActionsContext.Provider value={{ sendText: async () => true }}><Transcript sessionId={1} items={answered} /></ChatActionsContext.Provider>);
+    cards = [...document.querySelectorAll(".chat-choices")];
+    expect(cards[0].textContent).toContain("你选了 2 · 列表式");
+    expect(cards[1].textContent).toContain("你选了 1 · 深色");
+    cleanup();
+    const typed: ChatItem[] = [...base.slice(0, -1), { type: "user_text", id: "u4", timestamp: null, text: "两个都再改改" }];
+    withActions(<Transcript sessionId={1} items={typed} />);
+    expect(document.querySelectorAll("[role=radio]")).toHaveLength(0);
+  });
+
+  it("发送途中卡片重新挂载、随后发送失败：新卡片也回到可点并提示重试，不停在没发出去的「已选」", async () => {
+    let finish: (ok: boolean) => void = () => {};
+    const sendText = vi.fn(() => new Promise<boolean>((resolve) => { finish = resolve; }));
+    const first = withActions(<ChoiceMessage item={call("f1")} result={result("f1", receipt())} />, sendText);
+    fireEvent.click(screen.getAllByRole("radio")[0]);
+    fireEvent.click(document.querySelector(".chat-choices-send")!);
+    first.view.unmount();
+    withActions(<ChoiceMessage item={call("f1")} result={result("f1", receipt())} />, sendText);
+    expect(document.querySelector(".chat-choices.is-settled")!.textContent).toContain("你选了 1 · 卡片式");
+    await act(async () => { finish(false); });
+    expect(screen.getByRole("alert").textContent).toContain("没发出去");
+    expect(screen.getAllByRole("radio")).toHaveLength(3);
+  });
+
+  it("工具调用 id 相同但时间不同（kimi 两个会话撞号）：不共用「已发出」", async () => {
+    const at = (id: string, ts: string) => ({ ...call(id), timestamp: ts }) as ToolUse;
+    const first = withActions(<ChoiceMessage item={at("functions.offer_choices:0", "2026-11-22T01:00:00Z")} result={result("k", receipt())} />);
+    fireEvent.click(screen.getAllByRole("radio")[0]);
+    await act(async () => { fireEvent.click(document.querySelector(".chat-choices-send")!); });
+    first.view.unmount();
+    withActions(<ChoiceMessage item={at("functions.offer_choices:0", "2026-11-22T02:00:00Z")} result={result("k", receipt())} />);
+    expect(screen.getAllByRole("radio")).toHaveLength(3);
   });
 
   it("排在正文里不收进过程块；之后来了用户消息，缓存的旧段也会重算成已选", () => {

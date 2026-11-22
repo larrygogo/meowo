@@ -5,14 +5,14 @@
 //
 // 后端回执（chat_choices.rs）：一句说明，每个带截图的方案一行图片引用，最后一行
 // `[Choices: {JSON}]` 是题面与方案（image 是引用行的下标）。界面只认统一工具名，不按 Provider 分支。
-import { memo, useContext, useMemo, useState, type KeyboardEvent } from "react";
+import { memo, useContext, useMemo, useState, useSyncExternalStore, type KeyboardEvent } from "react";
 import { isRemotePath, safeFileSrc } from "../../assetSrc";
 import { useT } from "../../i18n";
 import { busyProps } from "../../busyButton";
 import { imeComposing } from "../../ime";
 import { ChatActionsContext } from "./chatActions";
 import { fileNameOf, ImageFailure, imageErrorText, sentImageReceipt, useImageLoad } from "./ChatImage";
-import { formatChoiceAnswer, parseChoiceAnswer, type ChoiceAnswer } from "./choiceReply";
+import { formatChoiceAnswer, looksLikeChoiceReply, parseChoiceAnswer, type ChoiceAnswer } from "./choiceReply";
 import { Lightbox, type GalleryItem } from "./Lightbox";
 import { useToolRunState } from "./toolState";
 import type { ToolResultItem, ToolUseItem } from "./shared";
@@ -51,11 +51,12 @@ export function parseChoicesReceipt(text: string): ChoicesReceipt | null {
   return options.length >= 2 ? { question, options } : null;
 }
 
-export const ChoiceMessage = memo(function ChoiceMessage({ item, result, followUp }: {
+export const ChoiceMessage = memo(function ChoiceMessage({ item, result, followUps }: {
   item: ToolUseItem;
   result?: ToolResultItem;
-  /** 这张卡之后的第一条用户消息；还没有时 undefined。用来认出当时选了哪个（回放旧会话也一样）。 */
-  followUp?: string;
+  /** 这张卡之后的用户消息（Transcript.choiceFollowUps）：用来认出当时选了哪个（回放旧会话也一样）。
+   *  没传 = 拿不到后续（子任务记录等），按没有后续算。 */
+  followUps?: readonly string[];
 }) {
   const t = useT();
   const state = useToolRunState(result);
@@ -76,7 +77,8 @@ export const ChoiceMessage = memo(function ChoiceMessage({ item, result, followU
     const reason = error?.code === "not_found" && error.message ? error.message : error ? imageErrorText(t, error) : t.chat.imageErrors.unknown;
     content = <ImageFailure title={t.chat.choicesFailed} reason={reason} name={null} />;
   } else {
-    content = <ChoiceCard cardId={item.id} receipt={receipt} followUp={followUp} />;
+    // 调用 id 带上时间：kimi 直接用模型给的调用 id，两个会话可能撞号（做空第二轮 A）。
+    content = <ChoiceCard cardId={`${item.id}@${item.timestamp ?? ""}`} receipt={receipt} followUps={followUps ?? []} />;
   }
   return (
     <article className="chat-message chat-sent" data-enter-id={item.id}>
@@ -85,29 +87,48 @@ export const ChoiceMessage = memo(function ChoiceMessage({ item, result, followU
   );
 });
 
-/// 已经从卡上发出去的选择，按工具调用 id 记在组件之外（做空第一轮）：消息发出后、回到时间线之前
-/// （agent 没按说明结束这一轮，消息在排队），切走会话再切回来，卡片会重新挂载；只记在 state 里
-/// 它又变回可点，会发第二次。
-const sentChoices = new Map<string, ChoiceAnswer>();
+/// 卡片的发送状态，记在组件之外（做空第一、二轮）：消息发出后、回到时间线之前，切走会话再切回来，
+/// 卡片会重新挂载。只记在 state 里它又变回可点，会发第二次；发送途中挂载的新实例也要跟着旧实例的
+/// 结果走（发送失败时一起回到可点，而不是停在一个没发出去的「已选」）。所以状态放在这里，实例订阅它。
+type SendState = { status: "sending" | "sent"; answer: ChoiceAnswer } | { status: "failed" };
+const sendStates = new Map<string, SendState>();
+const sendListeners = new Set<() => void>();
+function setSendState(id: string, state: SendState) {
+  sendStates.set(id, state);
+  sendListeners.forEach((listener) => listener());
+}
+function subscribeSend(listener: () => void) {
+  sendListeners.add(listener);
+  return () => { sendListeners.delete(listener); };
+}
 
-function ChoiceCard({ cardId, receipt, followUp }: { cardId: string; receipt: ChoicesReceipt; followUp?: string }) {
+function ChoiceCard({ cardId, receipt, followUps }: { cardId: string; receipt: ChoicesReceipt; followUps: readonly string[] }) {
   const t = useT();
   const actions = useContext(ChatActionsContext);
   const { question, options } = receipt;
   const [selected, setSelected] = useState<number | null>(null);
   const [note, setNote] = useState("");
-  const [sending, setSending] = useState(false);
-  const [sendFailed, setSendFailed] = useState(false);
-  // 发出去之后先按发出的结果显示（先给结果）；时间线里的那条用户消息到了，两者一致。
-  const [sent, setSent] = useState<ChoiceAnswer | null>(() => sentChoices.get(cardId) ?? null);
+  const sendState = useSyncExternalStore(subscribeSend, () => sendStates.get(cardId));
+  const sending = sendState?.status === "sending";
+  const sendFailed = sendState?.status === "failed";
   const [expanded, setExpanded] = useState(false);
   const [gallery, setGallery] = useState<number | null>(null);
 
   const card = useMemo(() => ({ question, labels: options.map((option) => option.label) }), [question, options]);
-  const recorded = followUp !== undefined ? parseChoiceAnswer(followUp, card) : null;
-  const answer = sent ?? recorded;
-  // 之后已经有用户消息、却不是在卡上选的：用户直接打字回复了，这张卡不再接受点选。
-  const skipped = !answer && followUp !== undefined;
+  // 往后看用户消息：是这张卡发的就是答案；是别的卡发的（同一轮两张卡）就跳过接着看；
+  // 遇到用户自己打的话，说明没在卡上选，这张卡不再接受点选（做空第二轮 B）。
+  let recorded: ChoiceAnswer | null = null;
+  let skipped = false;
+  for (const text of followUps) {
+    recorded = parseChoiceAnswer(text, card);
+    if (recorded) break;
+    if (!looksLikeChoiceReply(text)) {
+      skipped = true;
+      break;
+    }
+  }
+  // 发出去之后先按发出的结果显示（先给结果）；时间线里的那条用户消息到了，两者一致。
+  const answer = recorded ?? (sendState && sendState.status !== "failed" ? sendState.answer : null);
   const open = !answer && !skipped && !!actions;
 
   const gallerySources = useMemo(() => options.flatMap((option, index) => {
@@ -117,18 +138,11 @@ function ChoiceCard({ cardId, receipt, followUp }: { cardId: string; receipt: Ch
   }), [options]);
 
   const send = async (next: ChoiceAnswer) => {
-    if (!actions || sending || sentChoices.has(cardId)) return;
-    setSending(true);
-    setSendFailed(false);
-    sentChoices.set(cardId, next);
+    const current = sendStates.get(cardId);
+    if (!actions || (current && current.status !== "failed")) return;
+    setSendState(cardId, { status: "sending", answer: next });
     const ok = await actions.sendText(formatChoiceAnswer(next, card, t.locale)).catch(() => false);
-    setSending(false);
-    if (ok) {
-      setSent(next);
-    } else {
-      sentChoices.delete(cardId);
-      setSendFailed(true);
-    }
+    setSendState(cardId, ok ? { status: "sent", answer: next } : { status: "failed" });
   };
   const submit = () => {
     if (selected !== null) void send({ kind: "picked", index: selected, note: note.trim() || null });
