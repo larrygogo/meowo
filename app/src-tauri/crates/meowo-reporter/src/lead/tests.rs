@@ -101,16 +101,21 @@ fn scenarios() {
     let prog = t.join("progress.md").to_string_lossy().into_owned();
     let edit_prog = ("Edit", json!({"file_path": prog}));
 
-    // session：从子目录找到所在 git 根目录的任务
+    // 无主、已在实施的任务：不注入给项目里随便哪个会话（与面板 visible_to 同一规则，任务 20261122-lead-hook-slim）
+    assert!(call(&e, "session", json!({"cwd": sub, "source": "compact"})).is_none());
+    // 起头阶段的无主任务照旧注入：从子目录找到所在 git 根目录的任务
+    fs::write(t.join("progress.md"), "phase: spec\n").unwrap();
     let ctx = call(&e, "session", json!({"cwd": sub, "source": "compact"})).unwrap();
     let ctx = ctx["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap()
         .to_owned();
+    // 项目约定只给路径，不贴原文（摘要化）。
     assert!(
-        ctx.contains("目的：演示") && ctx.contains("#1 检查1") && ctx.contains("用户会拼车"),
+        ctx.contains("目的：演示") && ctx.contains("#1 检查1") && ctx.contains("product.md") && !ctx.contains("用户会拼车"),
         "{ctx}"
     );
+    fs::write(t.join("progress.md"), "# 进度\n\nphase: implement   <!-- x -->\n").unwrap();
 
     // R1-P1：上层非 git 目录的任务不注入到下面；嵌套 git 项目不继承
     let outer = e.d.join("home");
@@ -279,7 +284,9 @@ fn scenarios() {
     assert!(blocked(&e, d_work.clone()));
     make(&root);
     fs::write(root.join(".lead/active"), format!("\u{feff}{SLUG}")).unwrap();
-    assert!(call(&e, "session", json!({"cwd": sub})).is_some());
+    // active 带 BOM 也认得出：用任务的归属会话来问（无关会话按归属规则本来就拿不到）。
+    let holder = owner(&t).expect("前面已认领");
+    assert!(call(&e, "session", json!({"cwd": sub, "session_id": holder})).is_some());
     make_with(&root, "implement", &[json!(false)], "..\\..");
     assert!(call(&e, "session", json!({"cwd": sub})).is_none());
 
@@ -871,17 +878,13 @@ fn answer_injected_only_into_owner_and_choice_validated() {
         json!({"file_path": t.join("progress.md").to_string_lossy()}),
     );
     let ctx = |sid: &str| {
-        call(&e, "session", json!({"session_id": sid, "cwd": root})).unwrap()["hookSpecificOutput"]
-            ["additionalContext"]
-            .as_str()
-            .unwrap()
-            .to_owned()
+        call(&e, "session", json!({"session_id": sid, "cwd": root})).map(|v| {
+            v["hookSpecificOutput"]["additionalContext"].as_str().unwrap().to_owned()
+        })
     };
-    assert!(ctx("OWNER").contains("选择 confirm"));
-    assert!(
-        !ctx("OTHER").contains("选择 confirm"),
-        "无关会话不能拿到「按答复继续」"
-    );
+    assert!(ctx("OWNER").unwrap().contains("选择 confirm"));
+    // 无关会话：任务归别人，整段都不注入，当然也拿不到「按答复继续」。
+    assert!(ctx("OTHER").is_none(), "无关会话不能拿到「按答复继续」");
 }
 
 /// 恢复会话（session_id 不变）时注入本会话自己的任务，不是 `.lead/active` 指的别人的任务
@@ -921,10 +924,12 @@ fn resume_injects_the_sessions_own_task_over_active() {
         ctx("ME").contains(SLUG) && !ctx("ME").contains("别人的任务"),
         "恢复后注入自己的任务"
     );
-    assert!(
-        ctx("NEW").contains("别人的任务"),
-        "没认领任务的会话照旧看 active"
-    );
+    // 没认领任务的新会话：active 指的任务已在实施（无主）→ 不注入；还在起头阶段 → 照旧注入。
+    let new_ctx = || call(&e, "session", json!({"session_id": "NEW", "cwd": root, "source": "resume"}));
+    assert!(new_ctx().is_none(), "已在实施的无主任务不塞给无关的新会话");
+    fs::write(other.join("progress.md"), "phase: spec\n").unwrap();
+    assert!(ctx("NEW").contains("别人的任务"), "起头阶段的无主任务照旧给项目里的会话");
+    fs::write(other.join("progress.md"), "phase: implement\n").unwrap();
     // 关卡答复：注入和唤醒都带任务目录。
     write_gate(&mine, "g1", "B", "pending");
     answer_gate(&mine, "g1", &ans("1", "")).unwrap();
@@ -940,8 +945,10 @@ fn resume_injects_the_sessions_own_task_over_active() {
     );
     assert_eq!(out.exit, 2);
     assert!(out.stderr.unwrap().contains(&format!("任务目录：{dir}")));
-    // 自己的任务做完了：退回 active。
+    // 自己的任务做完了：退回 active。active 指的是无主、已在实施的任务 → 不注入；还在起头阶段 → 注入。
     fs::write(mine.join("progress.md"), "phase: done\n").unwrap();
+    assert!(call(&e, "session", json!({"session_id": "ME", "cwd": root, "source": "resume"})).is_none());
+    fs::write(other.join("progress.md"), "phase: spec\n").unwrap();
     assert!(ctx("ME").contains("别人的任务"));
 }
 
@@ -1258,6 +1265,13 @@ fn background_work_pending_does_not_block() {
     // 后台 Bash 同理；两个都起了只回来一个，仍在等
     assert!(!blocked(&e, write("bash", &[&user, &bash_launch, &edit])));
     assert!(!blocked(&e, write("two", &[&user, &edit, &agent_launch, &bash_launch, &notif("bh1x")])));
+    // SendMessage 叫回已回报过的子代理（真实样本的 toolUseResult 形态）：再次在等 → 放行；
+    // 续跑后的通知（同一个 task-id）到了 → 照常拦。
+    let resume = json!({"type": "user",
+        "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_9", "content": "{\"success\":true,\"message\":\"Resuming agent a7ae0d\"}"}]},
+        "toolUseResult": {"success": true, "message": "Resuming agent a7ae0d", "resumedAgentId": "a7ae0d", "revivedAgentId": "a7ae0d"}});
+    assert!(!blocked(&e, write("resumed", &[&user, &edit, &agent_launch, &notif("a7ae0d"), &resume])));
+    assert!(blocked(&e, write("resumed-done", &[&user, &edit, &agent_launch, &notif("a7ae0d"), &resume, &notif("a7ae0d")])));
     // 会话正忙时到的通知：queued_command 附件或入队记录（2f8ca755 实测形态），都算回报
     let queued = json!({"type": "attachment", "attachment": {"type": "queued_command",
         "prompt": "<task-notification>\n<task-id>a7ae0d</task-id>\n<status>completed</status>"}});
@@ -1483,7 +1497,9 @@ fn evidence_is_bound_to_checks_and_resumed_with_decisions() {
     assert_eq!(checks[0].evidence.as_ref().unwrap()[0].revision, "build-proof");
     assert!(checks[1].evidence.is_none());
     let context = session_context(&task, "owner").unwrap();
-    assert!(context.contains("evidence/test.log"));
+    // 证据不再贴原文，只指向 acceptance.json；最近的决定仍带一小段。
+    assert!(!context.contains("evidence/test.log"));
+    assert!(context.contains("acceptance.json（全部验收项与证据）"));
     assert!(context.contains("keep official TUI"));
     fs::write(task.join("acceptance.json"), "broken").unwrap();
     fs::write(task.join(".owner"), "owner").unwrap();
@@ -1503,7 +1519,7 @@ fn recovery_context_has_bounded_check_list_and_total_output() {
     let raw = session_context(&task, "owner").unwrap();
     let value: Value = serde_json::from_str(&raw).unwrap();
     let text = value.pointer("/hookSpecificOutput/additionalContext").unwrap().as_str().unwrap();
-    assert!(text.chars().count() < 24100);
+    assert!(text.chars().count() <= 8000, "摘要化后上限 8000 字");
     assert!(text.contains("未通过的验收项（1000/1000）"));
     assert!(text.contains("另有 984 条"));
     assert!(text.contains("decisions.md"));
