@@ -761,7 +761,7 @@ export const zh = {
     checkResult: (note: import("../views/chat/turnChecks").CheckNote) =>
       note.kind === "passed" ? (note.count ? `${note.count} 个通过` : "通过")
         : note.kind === "failed" ? (note.count ? `${note.count} 个${note.unit === "errors" ? "错误" : note.unit === "problems" ? "问题" : "失败"}` : "失败")
-        : note.kind === "interrupted" ? "被打断" : note.kind === "background" ? "在后台运行" : note.kind === "missing" ? "没有结果" : note.kind === "notRun" ? "没跑完" : "看不出结果",
+        : note.kind === "interrupted" ? "被打断" : note.kind === "background" ? "在后台运行" : note.kind === "missing" ? "没有结果" : note.kind === "notRun" ? "没跑完" : note.kind === "oneFailed" ? "其中一项没过" : "看不出结果",
     checkJump: "跳到这条命令",
     checkStale: (count: number, names: string[]) => `检查之后又改了 ${count} 个文件（${names.slice(0, 3).join("、")}${count > 3 ? " 等" : ""}），标「之后改过」的结果不含这些改动`,
     checkStaleTag: "之后改过",

@@ -195,8 +195,8 @@ describe("这一轮的检查", () => {
 
   it("做空第二轮：后一段的失败不算到前一段头上", () => {
     const clippy = collectTurnChecks(run("cargo check && cargo clippy -- -D warnings", { is_error: true, text: "error: unused\nerror: could not compile `x` due to 1 previous error" }));
-    // check 与 clippy 都会打印 could not compile，分不清是谁：都写看不出，不冤枉 check。
-    expect(clippy.map((c) => [c.kinds, c.status])).toEqual([[["typecheck", "lint"], "unknown"]]);
+    // check 与 clippy 都会打印 could not compile，分不清是谁：不冤枉 check，但也不藏失败，写「其中一项没过」。
+    expect(clippy.map((c) => [c.kinds, c.status, c.note.kind])).toEqual([[["typecheck", "lint"], "fail", "oneFailed"]]);
     const two = collectTurnChecks(run("cargo test -p a && cargo test -p b", { is_error: true, text: "test result: ok. 3 passed; 0 failed;\ntest result: FAILED. 1 passed; 2 failed;" }));
     expect(two.map((c) => [c.kinds, c.status])).toEqual([[["test"], "fail"]]);
     const lintFirst = collectTurnChecks(run("bun run lint && bunx vitest run", { is_error: true, text: "Tests  2 failed | 8 passed (10)" }));
@@ -210,6 +210,47 @@ describe("这一轮的检查", () => {
   it("做空第二轮：字符串形态的 shell 包装拆开认", () => {
     expect(collectTurnChecks(run(`bash -lc 'cd app && bunx vitest run'`, { text: "Tests  3 passed (3)" }))[0].note).toEqual({ kind: "passed", count: 3 });
     expect(collectTurnChecks(run(`powershell -NoProfile -Command "npx tsc --noEmit"`, {}))[0].kinds).toEqual(["typecheck"]);
+  });
+
+  it("做空第三轮：tsc / eslint 的 -v 是问版本，不算检查；cargo、go 的 -v 照认", () => {
+    for (const command of ["npx tsc -v", "npx eslint -v", "npx vitest -v", "npx jest -v", "npx webpack -v"]) expect(checkKindsOf(command)).toEqual([]);
+    expect(checkKindsOf("cargo test -v")).toEqual(["test"]);
+    expect(checkKindsOf("go test -v ./...")).toEqual(["test"]);
+    expect(checkKindsOf("pytest -v")).toEqual(["test"]);
+  });
+
+  it("做空第三轮：几类共用的失败信号不往前推「通过」", () => {
+    // ruff 与 mypy 都会打印 Found N errors：分不清是谁，用 && 串着、整条失败 → 其中一项没过。
+    const ruff = collectTurnChecks(run("ruff check . && mypy .", { is_error: true, text: "Found 5 errors." }));
+    expect(ruff.map((c) => [c.kinds, c.status, c.note.kind])).toEqual([[["lint", "typecheck"], "fail", "oneFailed"]]);
+    const cargo = collectTurnChecks(run("cargo build && cargo test", { exit_code: 101, text: "error[E0425]: x\nerror: could not compile `a` due to 1 previous error" }));
+    expect(cargo.map((c) => [c.kinds, c.status, c.note.kind])).toEqual([[["build", "test"], "fail", "oneFailed"]]);
+  });
+
+  it("做空第三轮：各类有专属失败信号时各自判失败", () => {
+    const checks = collectTurnChecks(run("npx tsc --noEmit; npx vitest run", { is_error: true, text: "a.ts(1,1): error TS2322: x\n      Tests  2 failed | 8 passed (10)" }));
+    expect(checks.map((c) => [c.kinds, c.status])).toEqual([[["typecheck"], "fail"], [["test"], "fail"]]);
+  });
+
+  it("做空第三轮：; 串的最后一段退出码是它自己的", () => {
+    const tscLast = collectTurnChecks(run("npx vitest run; npx tsc --noEmit", { text: "Tests  1 failed | 9 passed (10)" }));
+    expect(tscLast.map((c) => [c.kinds, c.status])).toEqual([[["test"], "fail"], [["typecheck"], "pass"]]);
+    const testLast = collectTurnChecks(run("npx tsc --noEmit; npx vitest run", { text: "a.ts(1,1): error TS2322: x\nTests  11 passed (11)" }));
+    expect(testLast.map((c) => [c.kinds, c.status, c.note])).toEqual([[["typecheck"], "fail", { kind: "failed", count: 1, unit: "errors" }], [["test"], "pass", { kind: "passed", count: 11 }]]);
+  });
+
+  it("做空第三轮：包装外面还接着别的命令时不拆；cmd 里的 & 是依次执行；中间的 & 是后台", () => {
+    expect(collectTurnChecks(run(`bash -c "npm run build" ; echo "exit=$?"`, {}))).toEqual([]);
+    expect(collectTurnChecks(run(`bash -lc "npm run build" || echo "build failed"`, {}))).toEqual([]);
+    const cmd = collectTurnChecks(run(`cmd /c "npm run build & echo done"`, {}));
+    expect(cmd.map((c) => [c.kinds, c.status])).toEqual([[["build"], "unknown"]]);
+    expect(collectTurnChecks(run("npm run build & echo started", {}))[0].note.kind).toBe("background");
+    expect(collectTurnChecks(run("npx vitest run 2>&1", {}))[0].status).toBe("pass");
+  });
+
+  it("做空第三轮：codex 的小写超时文案是没跑完", () => {
+    const [check] = collectTurnChecks(run("bun test", { exit_code: 124, text: "Exit code: 124\nOutput:\ncommand timed out after 120208 milliseconds" }));
+    expect(check.note.kind).toBe("notRun");
   });
 
   it("PowerShell 先设环境变量再跑：失败归到检查上", () => {

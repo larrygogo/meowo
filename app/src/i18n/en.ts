@@ -646,7 +646,7 @@ export const en: Dict = {
     checkResult: (note: import("../views/chat/turnChecks").CheckNote) =>
       note.kind === "passed" ? (note.count ? `${note.count} passed` : "Passed")
         : note.kind === "failed" ? (note.count ? `${note.count} ${note.unit === "errors" ? (note.count === 1 ? "error" : "errors") : note.unit === "problems" ? (note.count === 1 ? "problem" : "problems") : "failed"}` : "Failed")
-        : note.kind === "interrupted" ? "Interrupted" : note.kind === "background" ? "Running in background" : note.kind === "missing" ? "No result" : note.kind === "notRun" ? "Didn't finish" : "Result unclear",
+        : note.kind === "interrupted" ? "Interrupted" : note.kind === "background" ? "Running in background" : note.kind === "missing" ? "No result" : note.kind === "notRun" ? "Didn't finish" : note.kind === "oneFailed" ? "One of these failed" : "Result unclear",
     checkJump: "Jump to this command",
     checkStale: (count: number, names: string[]) => `${count} ${count === 1 ? "file" : "files"} changed after checks ran (${names.slice(0, 3).join(", ")}${count > 3 ? ", …" : ""}); results marked "changed since" don't include ${count === 1 ? "it" : "them"}`,
     checkStaleTag: "changed since",

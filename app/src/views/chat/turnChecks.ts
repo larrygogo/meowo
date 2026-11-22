@@ -6,7 +6,7 @@
 // 跑完就不标 is_error，非零退出码只在 exit_code 里（做空第一轮实测）。两个都看。
 //
 // 退出码不总可信：`vitest run | tail -20` 的退出码是 tail 的，`cargo test || true` 永远是 0，
-// `tsc; echo done` 取的是 echo 的。这些情况改从输出里认常见的汇总行（vitest/jest/cargo/pytest/bun/go、
+// `tsc; echo done` 取的是 echo 的。这些情况改从输出里认常见的失败信号（vitest/jest/cargo/pytest/bun/go 的汇总行、
 // tsc 的 error TS、eslint 的 ✖ N problems），认不出就如实写「看不出结果」，不猜。
 // 宁可写「看不出」也不把没通过的写成「通过」：这一段存在的意义就是那个「✓」可信。
 import type { ChatItem } from "../../api";
@@ -14,11 +14,11 @@ import type { ToolResultItem } from "./shared";
 
 export type CheckKind = "typecheck" | "test" | "lint" | "build";
 export type CheckStatus = "pass" | "fail" | "unknown";
-/** 结果说明：通过/失败时给计数，看不出时给原因。 */
+/** 结果说明：通过/失败时给计数，看不出时给原因。oneFailed：几项用 && 串着、整条失败，但分不清是哪一项。 */
 export type CheckNote =
   | { kind: "passed"; count: number | null }
   | { kind: "failed"; count: number | null; unit: "tests" | "errors" | "problems" | null }
-  | { kind: "unclear" | "interrupted" | "background" | "missing" | "notRun" };
+  | { kind: "unclear" | "interrupted" | "background" | "missing" | "notRun" | "oneFailed" };
 
 export type TurnCheck = {
   /** 这一行的检查类别（一条命令里结论相同的几类合成一行：`tsc && vitest run` 都过了）。 */
@@ -70,19 +70,23 @@ const PATTERNS: Record<CheckKind, RegExp[]> = {
   ],
 };
 
-/** 认出来也不算检查：问版本、看帮助、初始化配置、起开发服务器、格式化（改文件不是检查）。 */
-/// 区分大小写：`-V` 是版本，`-v` 是 pytest / go test 的详细输出（做空第二轮：带 /i 时连 `pytest -v` 都不认了）。
+/** 认出来也不算检查：问版本、看帮助、初始化配置、监听模式、格式化（改文件不是检查）。
+ *  区分大小写：`-V` 是版本；`-v` 对 pytest / go test 是详细输出（做空第二轮），只对下面这些工具才是版本。 */
 const NOT_A_CHECK = /\s(?:--version|-V|--help|-h|--init|--watch)(?:\s|$)|^(?:npx\s+|bunx\s+)?ruff\s+format(?!.*--check)/;
+/** `-v` 是问版本的工具（做空第三轮：`npx tsc -v` 被当成类型检查通过）。 */
+/// 只列 `-v` 确实是版本的；cargo、go、mypy、pytest 的 `-v` 是详细输出，不在这里。且 `-v` 要紧跟工具名。
+const VERSION_V = /^(?:\S+\s+)*?(?:tsc|vue-tsc|tsgo|eslint|oxlint|biome|vitest|jest|webpack|vite|next|rollup|stylelint|prettier)\s+-v(?:\s|$)/i;
 
 /** 不会失败、也不改变结果的前置段：切目录、设环境变量。它们排在检查前面时，失败一定来自检查。 */
 const SETUP = /^(?:(?:cd|pushd|popd|push-location|pop-location|set-location|sl|export|set|setlocal)\b|\$env:\w+\s*=|\$ErrorActionPreference\s*=|\w+=\S*$)/i;
 
 type Connector = "&&" | "||" | ";" | null;
-type Segment = { text: string; piped: boolean; next: Connector; prev: Connector };
+type Segment = { text: string; piped: boolean; background: boolean; next: Connector; prev: Connector };
 
-/** 把一条命令切成段：记下每段前后的连接符、有没有被管道接走。引号里的符号不切。 */
-export function splitCommand(command: string): Segment[] {
-  const parts: { text: string; sep: "&&" | "||" | ";" | "|" | null }[] = [];
+/** 把一条命令切成段：记下每段前后的连接符、有没有被管道接走、有没有丢到后台。引号里的符号不切。
+ *  sequentialAmp：cmd 里单独的 `&` 是「依次执行」，bash 里是「丢到后台」。 */
+export function splitCommand(command: string, sequentialAmp = false): Segment[] {
+  const parts: { text: string; sep: "&&" | "||" | ";" | "|" | "&" | null }[] = [];
   let buf = "";
   let quote: string | null = null;
   for (let i = 0; i < command.length; i += 1) {
@@ -109,11 +113,17 @@ export function splitCommand(command: string): Segment[] {
       buf = "";
       continue;
     }
-    // `2>&1 |`、`|&` 都按管道算；单独的 `&`（后台）不切，留在段里由下面判后台。
+    // `2>&1 |`、`|&` 都按管道算。
     if (ch === "|") {
       parts.push({ text: buf, sep: "|" });
       buf = "";
       if (command[i + 1] === "&") i += 1;
+      continue;
+    }
+    // 单独的 `&`：重定向（`2>&1`、`&>`）和 PowerShell 开头的调用符不算；其余是后台（cmd 里是依次执行）。
+    if (ch === "&" && command[i - 1] !== ">" && command[i + 1] !== ">" && buf.trim() !== "") {
+      parts.push({ text: buf, sep: sequentialAmp ? ";" : "&" });
+      buf = "";
       continue;
     }
     buf += ch;
@@ -124,14 +134,15 @@ export function splitCommand(command: string): Segment[] {
   let prev: Connector = null;
   let current: Segment | null = null;
   for (const part of parts) {
-    if (!current) current = { text: part.text.trim(), piped: false, next: null, prev };
+    if (!current) current = { text: part.text.trim(), piped: false, background: false, next: null, prev };
     if (part.sep === "|") {
       current.piped = true;
       continue;
     }
-    current.next = part.sep;
+    if (part.sep === "&") current.background = true;
+    current.next = part.sep === "&" ? ";" : part.sep;
     if (current.text) segments.push(current);
-    prev = part.sep;
+    prev = current.next;
     current = null;
   }
   return segments;
@@ -165,15 +176,15 @@ function headOf(text: string): string {
   for (let i = 1; i < tokens.length; i += 1) {
     const token = tokens[i];
     const lower = token.toLowerCase();
-    if (token === "--") continue;
-    // pnpm 的 -w 是「在工作区根目录」，不带值；npm 的 -w 带工作区名。
-    if (pm === "pnpm" && lower === "-w") continue;
     // 只去掉脚本名之前的选项；遇到第一个不是选项的词（run/test/vitest…）后原样保留。
     if (out.length > 1 && out[out.length - 1].toLowerCase() !== "run") {
       out.push(...tokens.slice(i));
       break;
     }
-    if (lower === "workspace" && tokens[0].toLowerCase() === "yarn") {
+    if (token === "--") continue;
+    // pnpm 的 -w 是「在工作区根目录」，不带值；npm 的 -w 带工作区名。
+    if (pm === "pnpm" && lower === "-w") continue;
+    if (lower === "workspace" && pm === "yarn") {
       i += 1;
       continue;
     }
@@ -188,11 +199,12 @@ function headOf(text: string): string {
 
 export function checkKindsOf(segment: string): CheckKind[] {
   const head = headOf(segment);
-  if (NOT_A_CHECK.test(` ${head}`) || NOT_A_CHECK.test(head)) return [];
+  if (NOT_A_CHECK.test(` ${head}`) || NOT_A_CHECK.test(head) || VERSION_V.test(head)) return [];
   return KIND_ORDER.filter((kind) => PATTERNS[kind].some((re) => re.test(head)));
 }
 
-type Parsed = { failed: number; passed: number | null; unit: "tests" | "errors" | "problems" | null } | null;
+/** 输出里的一条信号：from 是它可能出自哪几类检查（`Found 3 errors` 是 tsc、mypy、ruff 都会打印的）。 */
+type Marker = { from: CheckKind[]; failed: number; passed: number | null; unit: "tests" | "errors" | "problems" | null };
 
 function sumAll(text: string, re: RegExp): number | null {
   let total: number | null = null;
@@ -200,75 +212,87 @@ function sumAll(text: string, re: RegExp): number | null {
   return total;
 }
 
-/** 从输出里认汇总行。认不出返回 null（不等于通过）。 */
-export function parseOutput(kinds: CheckKind[], output: string): Parsed {
+/** 从输出里认出所有信号。 */
+function markersOf(output: string): Marker[] {
   const text = output.replace(/\x1b\[[0-9;]*m/g, "");
-  if (kinds.includes("test")) {
-    // 测试文件没加载起来（语法错、import 坏了）、未处理的异常：用例数可能全过，但这一轮没通过。
-    // vitest：`Test Files  1 failed | 3 passed`、`Errors  1 error`；jest：`Test Suites: 1 failed, …`
-    const brokenFiles = Number(/^\s*Test (?:Files|Suites):?\s+.*?(\d+)\s+failed/im.exec(text)?.[1] ?? 0);
-    const unhandled = Number(/^\s*Errors\s+(\d+)\s+errors?/im.exec(text)?.[1] ?? 0);
-    const broken = brokenFiles + unhandled;
-    // vitest：`Tests  3 failed | 159 passed (162)`；jest：`Tests:       1 failed, 161 passed, 162 total`
-    const line = /^\s*Tests:?\s+(.+)$/im.exec(text)?.[1];
-    if (line && /\b(?:passed|failed)\b/.test(line)) {
-      const failed = Number(/(\d+)\s+failed/.exec(line)?.[1] ?? 0);
-      const passed = Number(/(\d+)\s+passed/.exec(line)?.[1] ?? 0);
-      return failed > 0 ? { failed, passed, unit: "tests" } : broken > 0 ? { failed: broken, passed, unit: null } : { failed: 0, passed, unit: "tests" };
-    }
-    if (broken > 0) return { failed: broken, passed: null, unit: null };
+  const found: Marker[] = [];
+  const test = (failed: number, passed: number | null, unit: Marker["unit"] = "tests") => found.push({ from: ["test"], failed, passed, unit });
+  // 测试文件没加载起来（语法错、import 坏了）、未处理的异常：用例数可能全过，但这一轮没通过。
+  // vitest：`Test Files  1 failed | 3 passed`、`Errors  1 error`；jest：`Test Suites: 1 failed, …`
+  const broken = Number(/^\s*Test (?:Files|Suites):?\s+.*?(\d+)\s+failed/im.exec(text)?.[1] ?? 0)
+    + Number(/^\s*Errors\s+(\d+)\s+errors?/im.exec(text)?.[1] ?? 0);
+  // vitest：`Tests  3 failed | 159 passed (162)`；jest：`Tests:       1 failed, 161 passed, 162 total`
+  const line = /^\s*Tests:?\s+(.+)$/im.exec(text)?.[1];
+  const pytest = /^=+ (.*\b(?:passed|failed)\b.*) in [\d.]+s/m.exec(text)?.[1];
+  const bunPass = /^\s*(\d+) pass\s*$/m.exec(text);
+  const bunFail = /^\s*(\d+) fail\s*$/m.exec(text);
+  if (line && /\b(?:passed|failed)\b/.test(line)) {
+    const failed = Number(/(\d+)\s+failed/.exec(line)?.[1] ?? 0);
+    const passed = Number(/(\d+)\s+passed/.exec(line)?.[1] ?? 0);
+    if (failed > 0) test(failed, passed);
+    else if (broken > 0) test(broken, passed, null);
+    else test(0, passed);
+  } else if (broken > 0) {
+    test(broken, null, null);
+  } else if (/test result: (?:ok|FAILED)\./.test(text)) {
     // cargo：每个测试二进制一行 `test result: ok. 45 passed; 0 failed; …`，加总。
-    if (/test result: (?:ok|FAILED)\./.test(text)) {
-      return { failed: sumAll(text, /test result: \w+\. \d+ passed; (\d+) failed/g) ?? 0, passed: sumAll(text, /test result: \w+\. (\d+) passed/g), unit: "tests" };
-    }
+    test(sumAll(text, /test result: \w+\. \d+ passed; (\d+) failed/g) ?? 0, sumAll(text, /test result: \w+\. (\d+) passed/g));
+  } else if (pytest) {
     // pytest：`===== 3 failed, 159 passed in 2.31s =====`
-    const pytest = /^=+ (.*\b(?:passed|failed)\b.*) in [\d.]+s/m.exec(text)?.[1];
-    if (pytest) {
-      return { failed: Number(/(\d+) failed/.exec(pytest)?.[1] ?? 0) + Number(/(\d+) errors?/.exec(pytest)?.[1] ?? 0), passed: Number(/(\d+) passed/.exec(pytest)?.[1] ?? 0), unit: "tests" };
-    }
+    test(Number(/(\d+) failed/.exec(pytest)?.[1] ?? 0) + Number(/(\d+) errors?/.exec(pytest)?.[1] ?? 0), Number(/(\d+) passed/.exec(pytest)?.[1] ?? 0));
+  } else if (bunPass || bunFail) {
     // bun test：` 162 pass` / ` 0 fail`
-    const bunPass = /^\s*(\d+) pass\s*$/m.exec(text);
-    const bunFail = /^\s*(\d+) fail\s*$/m.exec(text);
-    if (bunPass || bunFail) return { failed: Number(bunFail?.[1] ?? 0), passed: Number(bunPass?.[1] ?? 0), unit: "tests" };
+    test(Number(bunFail?.[1] ?? 0), Number(bunPass?.[1] ?? 0));
+  } else if (/^(?:--- FAIL|FAIL\s)/m.test(text)) {
     // go test：有 `--- FAIL` 或行首 FAIL 即失败；全是 ok 即通过。
-    if (/^(?:--- FAIL|FAIL\s)/m.test(text)) return { failed: (text.match(/^--- FAIL/gm) ?? []).length || 1, passed: null, unit: "tests" };
-    if (/^ok\s+\S+\s+[\d.]+s/m.test(text)) return { failed: 0, passed: null, unit: "tests" };
+    test((text.match(/^--- FAIL/gm) ?? []).length || 1, null);
+  } else if (/^ok\s+\S+\s+[\d.]+s/m.test(text)) {
+    test(0, null);
   }
-  if (kinds.includes("typecheck")) {
-    const errors = (text.match(/\berror TS\d+:/g) ?? []).length;
-    if (errors > 0) return { failed: errors, passed: null, unit: "errors" };
-    const found = /Found (\d+) errors?/.exec(text);
-    if (found) return { failed: Number(found[1]), passed: null, unit: "errors" };
+  // tsc 独有的 `error TS1234:`。
+  const tsErrors = (text.match(/\berror TS\d+:/g) ?? []).length;
+  if (tsErrors > 0) found.push({ from: ["typecheck"], failed: tsErrors, passed: null, unit: "errors" });
+  // `Found N errors`：tsc、mypy、ruff、biome 都会打印，分不清是类型检查还是代码检查。
+  const foundErrors = /\bFound (\d+) errors?\b/.exec(text);
+  if (foundErrors && tsErrors === 0) found.push({ from: ["typecheck", "lint"], failed: Number(foundErrors[1]), passed: null, unit: "errors" });
+  // eslint：`✖ 5 problems (3 errors, 2 warnings)`；只有警告不算失败。
+  const problems = /✖ (\d+) problems? \((\d+) errors?/.exec(text);
+  if (problems && Number(problems[2]) > 0) found.push({ from: ["lint"], failed: Number(problems[2]), passed: null, unit: "problems" });
+  // cargo check/build/clippy/test 编译失败都打印 `could not compile`。
+  if (/^error(?:\[E\d+\])?: /m.test(text) && /could not compile/.test(text)) {
+    found.push({ from: ["typecheck", "lint", "build", "test"], failed: sumAll(text, /due to (\d+) previous errors?/g) ?? 1, passed: null, unit: "errors" });
   }
-  if (kinds.includes("lint")) {
-    // eslint：`✖ 5 problems (3 errors, 2 warnings)`；只有警告不算失败。
-    const problems = /✖ (\d+) problems? \((\d+) errors?/.exec(text);
-    if (problems && Number(problems[2]) > 0) return { failed: Number(problems[2]), passed: null, unit: "problems" };
-  }
-  if (kinds.some((kind) => kind === "typecheck" || kind === "build" || kind === "lint" || kind === "test")) {
-    // cargo check/build/clippy/test：`error: could not compile`
-    if (/^error(?:\[E\d+\])?: /m.test(text) && /could not compile/.test(text)) {
-      return { failed: sumAll(text, /due to (\d+) previous errors?/g) ?? 1, passed: null, unit: "errors" };
-    }
-  }
-  return null;
+  return found;
+}
+
+type Parsed = { failed: number; passed: number | null; unit: Marker["unit"] } | null;
+
+/** 只有这几类检查时，输出里认出的结果（有失败的优先）。认不出返回 null（不等于通过）。 */
+export function parseOutput(kinds: CheckKind[], output: string): Parsed {
+  const mine = markersOf(output).filter((marker) => marker.from.some((kind) => kinds.includes(kind)));
+  const pick = mine.find((marker) => marker.failed > 0) ?? mine[0];
+  return pick ? { failed: pick.failed, passed: pick.passed, unit: pick.unit } : null;
 }
 
 const BACKGROUND = /running in background|in the background with ID|background shell|已在后台/i;
 /** 没跑完：用户拒绝执行、工具层超时。只认各家工具层的固定文案——测试输出里的「Test timed out in 5000ms」
- *  是测试失败，不是没跑完（做空第二轮）。并且只在输出里认不出失败时才用。 */
-const NOT_RUN = /The user doesn't want to proceed with this tool use|tool use was rejected|^Command timed out after|^Error: Command timed out|^Command was rejected|用户拒绝了这次工具调用/m;
+ *  是测试失败，不是没跑完（做空第二轮）。codex 的超时是小写的 `command timed out after 120208 milliseconds`。
+ *  并且只在输出里认不出失败时才用。 */
+const NOT_RUN = /The user doesn't want to proceed with this tool use|tool use was rejected|^(?:Error: )?Command timed out after|^Command was rejected|用户拒绝了这次工具调用/im;
 
-/** 字符串形态的 shell 包装：`bash -lc '…'`、`powershell -Command "…"`、`cmd /c …`。数组形态 codex 后端已拆。 */
-function unwrapShell(command: string): string {
-  const quoted = /^(?:\S*[\\/])?(?:bash|sh|zsh|pwsh|powershell)(?:\.exe)?\s+(?:-[\w-]+\s+)*?-(?:l?c|Command|NoProfile\s+-Command)\s+(['"])([\s\S]*)\1\s*$/i.exec(command);
-  if (quoted) return quoted[2];
-  const cmd = /^(?:\S*[\\/])?cmd(?:\.exe)?\s+\/[cs]\s+([\s\S]+)$/i.exec(command);
-  return cmd ? cmd[1].replace(/^"([\s\S]*)"$/, "$1") : command;
+/** 字符串形态的 shell 包装：`bash -lc '…'`、`powershell -Command "…"`、`cmd /c …`。数组形态 codex 后端已拆。
+ *  引号必须正好包住到整条命令末尾、中间没有同种引号：`bash -c "npm run build" ; echo $?` 外面还接着别的，
+ *  拆开会把外层的 `;` 吞掉（做空第三轮），这种不拆。返回 cmd 表示里面的 `&` 是依次执行。 */
+function unwrapShell(command: string): { text: string; cmd: boolean } {
+  const quoted = /^(?:\S*[\\/])?(?:bash|sh|zsh|pwsh|powershell)(?:\.exe)?\s+(?:-[\w-]+\s+)*?-(?:l?c|Command)\s+(?:"([^"]*)"|'([^']*)')\s*$/i.exec(command);
+  if (quoted) return { text: quoted[1] ?? quoted[2], cmd: false };
+  const cmd = /^(?:\S*[\\/])?cmd(?:\.exe)?\s+(?:\/[dqs]\s+)*\/[ck]\s+(?:"([^"]*)"|([^"]+))\s*$/i.exec(command);
+  if (cmd) return { text: cmd[1] ?? cmd[2], cmd: true };
+  return { text: command, cmd: false };
 }
 
 function commandOf(item: Extract<ChatItem, { type: "tool_use" }>): string {
-  return unwrapShell(item.detail?.kind === "command" ? item.detail.command : item.summary);
+  return item.detail?.kind === "command" ? item.detail.command : item.summary;
 }
 
 /** 整条命令有没有失败：is_error，或者非零退出码（gemini、opencode 跑完的命令不标 is_error）。 */
@@ -279,86 +303,87 @@ function runFailed(result: ToolResultItem): boolean {
 type Verdict = { status: CheckStatus; note: CheckNote };
 const UNCLEAR: Verdict = { status: "unknown", note: { kind: "unclear" } };
 const NOT_REACHED: Verdict = { status: "unknown", note: { kind: "notRun" } };
+const PASSED: Verdict = { status: "pass", note: { kind: "passed", count: null } };
 
-/** 段末单独的 `&`（不是 `&&`）：丢到后台跑，退出码与结果都不在这次回执里。 */
-function inBackground(segment: Segment): boolean {
-  return /(?:^|[^&])&\s*$/.test(segment.text);
-}
-
-/** 从 i 走到 j（不含 j）一路都用 && 接着：i 成功才会跑到 j。 */
+/** 从 i 走到 j（不含 j）一路都用 && 接着、没被管道接走、没丢后台：i 成功才会跑到 j。 */
 function chainedAnd(segments: Segment[], from: number, to: number): boolean {
-  for (let k = from; k < to; k += 1) if (segments[k].next !== "&&" || segments[k].piped) return false;
+  for (let k = from; k < to; k += 1) if (segments[k].next !== "&&" || segments[k].piped || segments[k].background) return false;
   return true;
 }
 
 /**
  * 一条命令里各检查段的结论（非检查段为 null）。
  *
- * 难点是整条命令只有一份输出、一个退出码，要分给几段（做空第二轮）：
- * - 输出里认出失败、且只有一段的类别对得上：失败归它；它前面用 && 接着的段一定跑过且成功；后面用 && 接着的没跑到。
- * - 几段都对得上（`cargo check && cargo clippy` 都会打印 could not compile）：同类的就都算失败（反正这一类没过），
- *   不同类的说不清是谁，写「看不出」，不把失败安到无辜的段上。
- * - 输出里没认出失败：整条成功时，退出码能落到的段算通过；计数只在汇总行只对得上一段时才给。
- *   整条失败时，只有最后一段、且前面只有切目录这类不会失败的段，失败才归它；工具层拒绝/超时写「没跑完」。
+ * 整条命令只有一份输出、一个退出码，要分给几段（做空第二、三轮）。原则：
+ * 1. 输出里的每条信号先看它可能出自哪几类（Marker.from）。只有一段对得上时才归给它：
+ *    它有失败就是失败；它前面用 && 接着的段一定跑过且成功；它后面用 && 接着的没跑到。
+ * 2. 没归出结论的段看退出码：整条成功、这段的退出码落得到（没管道、后面只有 && 或什么都没有）就算通过；
+ *    整条失败、这段是最后一段且一定跑到了，失败就是它的。
+ * 3. 整条失败却归不到任何一段：如果这些检查段用 && 串成一条链、链外只有切目录这类不会失败的段，
+ *    那一定是其中一项没过，写「其中一项没过」，不写「看不出」把失败藏掉。
  */
 function judgeCommand(segments: Segment[], kindsBySegment: CheckKind[][], result: ToolResultItem): (Verdict | null)[] {
   const verdicts: (Verdict | null)[] = segments.map(() => null);
   const checks = kindsBySegment.flatMap((kinds, index) => (kinds.length > 0 ? [index] : []));
-  const parsed = kindsBySegment.map((kinds) => (kinds.length > 0 ? parseOutput(kinds, result.text) : null));
-  const failing = checks.filter((index) => (parsed[index]?.failed ?? 0) > 0);
   const failed = runFailed(result);
-  if (failing.length === 1) {
-    const at = failing[0];
-    const p = parsed[at]!;
-    for (const index of checks) {
-      verdicts[index] = index === at ? { status: "fail", note: { kind: "failed", count: p.failed, unit: p.unit } }
-        : index < at && chainedAnd(segments, index, at) ? { status: "pass", note: { kind: "passed", count: null } }
-        : index > at && chainedAnd(segments, at, index) ? NOT_REACHED
-        : UNCLEAR;
-    }
-    return verdicts;
+  const owners = (marker: Marker) => checks.filter((index) => kindsBySegment[index].some((kind) => marker.from.includes(kind)));
+  // 每段独占的信号。
+  const own = new Map<number, Marker[]>();
+  for (const marker of markersOf(result.text)) {
+    const who = owners(marker);
+    if (who.length === 1) own.set(who[0], [...(own.get(who[0]) ?? []), marker]);
   }
-  if (failing.length > 1) {
-    const sameKinds = failing.every((index) => kindsBySegment[index].join() === kindsBySegment[failing[0]].join());
-    for (const index of checks) {
-      verdicts[index] = sameKinds && failing.includes(index) ? { status: "fail", note: { kind: "failed", count: null, unit: null } } : UNCLEAR;
-    }
-    return verdicts;
+  const failing = checks.filter((index) => (own.get(index) ?? []).some((marker) => marker.failed > 0));
+  for (const index of failing) {
+    const marker = own.get(index)!.find((m) => m.failed > 0)!;
+    verdicts[index] = { status: "fail", note: { kind: "failed", count: marker.failed, unit: marker.unit } };
   }
-  // 输出里没认出失败。
-  if (failed && NOT_RUN.test(result.text)) {
-    for (const index of checks) verdicts[index] = NOT_REACHED;
-    return verdicts;
-  }
-  // 汇总行（计数、0 失败）只对得上一段时才归给它：两段都是测试时分不清 162 是谁的。
-  const summaries = checks.filter((index) => parsed[index] != null);
-  const attributable = summaries.length === 1 ? summaries[0] : -1;
   for (const index of checks) {
+    if (verdicts[index]) continue;
     const segment = segments[index];
-    if (inBackground(segment)) {
+    if (segment.background) {
       verdicts[index] = { status: "unknown", note: { kind: "background" } };
       continue;
     }
-    // 退出码能不能落到这一段上：没被管道接走、前面不是 ||（可能根本没跑）。
-    const ownsExit = !segment.piped && segment.prev !== "||";
-    const own = index === attributable ? parsed[index] : null;
-    if (!failed) {
-      // 整条成功、这段后面只用 && 接着（或什么都没有）：它一定跑过且成功。后面是 ; 或 || 时它失败了整条也可能成功。
-      if (ownsExit && (segment.next === null || segment.next === "&&")) {
-        verdicts[index] = { status: "pass", note: { kind: "passed", count: own?.passed ?? null } };
-      } else if (own && own.unit === "tests") {
-        // 退出码不算数，但输出里认出了「0 个失败」的测试汇总：照输出算通过。
-        verdicts[index] = { status: "pass", note: { kind: "passed", count: own.passed } };
-      } else {
-        verdicts[index] = UNCLEAR;
-      }
+    if (failing.some((f) => f < index && chainedAnd(segments, f, index))) {
+      verdicts[index] = NOT_REACHED;
       continue;
     }
-    // 整条失败：这段是最后一段、退出码是它的、前面只有切目录这类不会失败的段，失败就是它的。
-    const cleanBefore = segments.slice(0, index).every((seg) => SETUP.test(headOf(seg.text)));
-    verdicts[index] = ownsExit && index === segments.length - 1 && cleanBefore
-      ? { status: "fail", note: { kind: "failed", count: null, unit: null } }
-      : UNCLEAR;
+    if (failing.some((f) => f > index && chainedAnd(segments, index, f))) {
+      verdicts[index] = PASSED;
+      continue;
+    }
+    // 这段独占的、0 失败的汇总（计数从这里来）。
+    const summary = (own.get(index) ?? []).find((marker) => marker.failed === 0 && marker.unit === "tests");
+    const ownsExit = !segment.piped && segment.prev !== "||";
+    if (!failed) {
+      // 整条成功、这段后面只用 && 接着（或什么都没有）：它一定跑过且成功。后面是 ; 或 || 时它失败了整条也可能成功。
+      if (ownsExit && (segment.next === null || segment.next === "&&")) verdicts[index] = { status: "pass", note: { kind: "passed", count: summary?.passed ?? null } };
+      // 退出码不算数，但输出里认出了这段独占的「0 个失败」测试汇总：照输出算通过。
+      else if (summary) verdicts[index] = { status: "pass", note: { kind: "passed", count: summary.passed } };
+      else verdicts[index] = UNCLEAR;
+      continue;
+    }
+    // 整条失败、这段是最后一段、退出码是它的，且它一定跑到了：前面是 ;（不管前面成败都会跑），
+    // 或前面全是切目录这类、已判通过的段。
+    const last = index === segments.length - 1;
+    const reached = segment.prev === ";" || segments.slice(0, index).every((seg, at) => SETUP.test(headOf(seg.text)) || verdicts[at]?.status === "pass");
+    if (ownsExit && last && reached && failing.length === 0 && NOT_RUN.test(result.text)) verdicts[index] = NOT_REACHED;
+    else if (ownsExit && last && reached && (failing.length === 0 || segment.prev === ";")) verdicts[index] = { status: "fail", note: { kind: "failed", count: null, unit: null } };
+    else verdicts[index] = UNCLEAR;
+  }
+  // 整条失败却没有一段认定失败：工具层拒绝、超时写「没跑完」；检查段用 && 串成一条链时写「其中一项没过」。
+  if (failed && !verdicts.some((verdict) => verdict?.status === "fail")) {
+    if (NOT_RUN.test(result.text)) {
+      for (const index of checks) verdicts[index] = NOT_REACHED;
+    } else {
+      const open = checks.filter((index) => verdicts[index]?.status === "unknown" && verdicts[index]?.note.kind === "unclear");
+      const others = segments.every((seg, at) => kindsBySegment[at].length > 0 || SETUP.test(headOf(seg.text)));
+      const chain = segments.every((seg, at) => at === segments.length - 1 || (seg.next === "&&" && !seg.piped && !seg.background));
+      if (open.length > 0 && others && chain && open.length === checks.length) {
+        for (const index of open) verdicts[index] = { status: "fail", note: { kind: "oneFailed" } };
+      }
+    }
   }
   return verdicts;
 }
@@ -375,9 +400,10 @@ export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
   const all: TurnCheck[] = [];
   items.forEach((item, at) => {
     if (item.type !== "tool_use" || item.kind !== "run") return;
-    const command = commandOf(item).trim();
+    const unwrapped = unwrapShell(commandOf(item).trim());
+    const command = unwrapped.text.trim();
     if (!command) return;
-    const segments = splitCommand(command);
+    const segments = splitCommand(command, unwrapped.cmd);
     const kindsBySegment = segments.map((segment) => checkKindsOf(segment.text));
     if (kindsBySegment.every((kinds) => kinds.length === 0)) return;
     const result = results.get(item.id);
@@ -404,7 +430,7 @@ export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
       }
       same.kinds.push(kind);
       // 几类合成的通过行不带计数：「类型检查 + 测试 162 个通过」会让人以为 162 是两类加起来的。
-      if (same.verdict.status === "pass") same.verdict = { status: "pass", note: { kind: "passed", count: null } };
+      if (same.verdict.status === "pass") same.verdict = PASSED;
     }
     for (const group of groups) all.push({ kinds: group.kinds, ...group.verdict, command, toolId: item.id, at });
   });
@@ -416,7 +442,9 @@ export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
     const fresh = check.kinds.filter((kind) => !covered.has(kind));
     if (fresh.length === 0) continue;
     fresh.forEach((kind) => covered.add(kind));
-    kept.unshift({ ...check, kinds: fresh });
+    // 「其中一项没过」是对整组说的：拆掉一部分类别后就不成立了，改写成看不出。
+    const note = check.note.kind === "oneFailed" && fresh.length < check.kinds.length ? UNCLEAR : null;
+    kept.unshift({ ...check, kinds: fresh, ...(note ?? {}) });
   }
   return kept;
 }
