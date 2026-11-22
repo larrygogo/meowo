@@ -29,7 +29,8 @@ const DB_SUBDIR: &str = "opencode";
 const DB_FILE: &str = "opencode.db";
 
 /// 缓存格式版本进目录名：行结构一变，旧缓存整体作废，不必写迁移。
-const CACHE_REL: &str = "cache/opencode/v1";
+/// v2：工具回执多留了命令退出码（metadata.exit）。v1 的行没有它，失败的命令会被当成通过。
+const CACHE_REL: &str = "cache/opencode/v2";
 
 /// 工具输出的落盘上限（字符）。bash/read 的输出动辄几十 KB，对话页只做预览。
 const TOOL_OUTPUT_MAX_CHARS: usize = 16_000;

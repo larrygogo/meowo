@@ -154,19 +154,33 @@ function TurnChecks({ checks, replyId, editedAfter, staleIds, codeChanged }: { c
     // 停在底部时对话区在自动跟随：先关掉，否则展开折叠后又被钉回底部。
     from.closest(".chat-scroll")?.dispatchEvent(new Event(RELEASE_FOLLOW_EVENT));
     revealItem(toolId, [...(replyId ? [`reply:${replyId}`] : []), `tool:${toolId}`]);
-    // 折叠展开要等下一帧挂载，最多等几帧再滚。
+    // 折叠展开要等下一帧挂载，最多等几帧再滚。滚到以后再看守一小会儿（约 20 帧）：展开引起的排版、
+    // 还没派发的滚动事件都可能把自动跟随又打开、把视口钉回底部（手机页 4 次里实测 1 次），被拉走就再关一次、再滚一次。
+    const scroller = from.closest<HTMLElement>(".chat-scroll");
     let tries = 0;
+    let guard = 0;
+    let flashed = false;
     const seek = () => {
       const target = document.querySelector<HTMLElement>(`[data-enter-id="${CSS.escape(toolId)}"]`);
-      if (target) {
+      if (!target) {
+        if ((tries += 1) < 10) requestAnimationFrame(seek);
+        return;
+      }
+      const box = scroller?.getBoundingClientRect();
+      const rect = target.getBoundingClientRect();
+      const visible = !box || (rect.bottom > box.top && rect.top < box.bottom);
+      if (!flashed || !visible) {
+        scroller?.dispatchEvent(new Event(RELEASE_FOLLOW_EVENT));
         // 瞬时滚过去：平滑滚动的头几帧还在底部附近，滚动事件会把自动跟随又判回「在底部」，被钉回去。
         target.scrollIntoView({ block: "center", behavior: "instant" });
+      }
+      if (!flashed) {
+        flashed = true;
         target.classList.remove("is-flash");
         void target.offsetWidth;
         target.classList.add("is-flash");
-        return;
       }
-      if ((tries += 1) < 10) requestAnimationFrame(seek);
+      if ((guard += 1) < 20) requestAnimationFrame(seek);
     };
     requestAnimationFrame(seek);
   };
@@ -178,7 +192,7 @@ function TurnChecks({ checks, replyId, editedAfter, staleIds, codeChanged }: { c
           const stale = staleIds.has(check.toolId);
           const result = t.chat.checkResult(check.note) + (stale ? ` · ${t.chat.checkStaleTag}` : "");
           return (
-            <li key={check.toolId}>
+            <li key={`${check.toolId}:${check.kinds.join()}`}>
               <button type="button" className={`chat-turn-check is-${check.status}` + (stale ? " is-stale" : "")} data-tip={check.command}
                 aria-label={`${label} ${result} · ${t.chat.checkJump}`} onClick={(event) => jump(check.toolId, event.currentTarget)}>
                 <span className="chat-turn-check-icon" aria-hidden="true">{check.status === "pass" ? "✓" : check.status === "fail" ? "✕" : "?"}</span>

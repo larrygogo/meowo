@@ -71,7 +71,8 @@ const PATTERNS: Record<CheckKind, RegExp[]> = {
 };
 
 /** 认出来也不算检查：问版本、看帮助、初始化配置、起开发服务器、格式化（改文件不是检查）。 */
-const NOT_A_CHECK = /\s(?:--version|-V|--help|-h|--init|--watch|serve)(?:\s|$)|^(?:npx\s+|bunx\s+)?ruff\s+format(?!.*--check)/i;
+/// 区分大小写：`-V` 是版本，`-v` 是 pytest / go test 的详细输出（做空第二轮：带 /i 时连 `pytest -v` 都不认了）。
+const NOT_A_CHECK = /\s(?:--version|-V|--help|-h|--init|--watch)(?:\s|$)|^(?:npx\s+|bunx\s+)?ruff\s+format(?!.*--check)/;
 
 /** 不会失败、也不改变结果的前置段：切目录、设环境变量。它们排在检查前面时，失败一定来自检查。 */
 const SETUP = /^(?:(?:cd|pushd|popd|push-location|pop-location|set-location|sl|export|set|setlocal)\b|\$env:\w+\s*=|\$ErrorActionPreference\s*=|\w+=\S*$)/i;
@@ -154,11 +155,19 @@ function headOf(text: string): string {
     head = next;
   }
   const tokens = head.split(/\s+/);
-  if (!/^(?:npm|pnpm|yarn|bun|npx|bunx|pnpx)$/i.test(tokens[0] ?? "")) return head;
+  const pm = (tokens[0] ?? "").toLowerCase();
+  if (!/^(?:npm|pnpm|yarn|bun|npx|bunx|pnpx)$/.test(pm)) return head;
+  // `npm exec -- vitest run` 等于 `npx vitest run`。
+  if (pm === "npm" && tokens[1]?.toLowerCase() === "exec") {
+    return headOf(["npx", ...tokens.slice(2).filter((token) => token !== "--")].join(" "));
+  }
   const out = [tokens[0]];
   for (let i = 1; i < tokens.length; i += 1) {
     const token = tokens[i];
     const lower = token.toLowerCase();
+    if (token === "--") continue;
+    // pnpm 的 -w 是「在工作区根目录」，不带值；npm 的 -w 带工作区名。
+    if (pm === "pnpm" && lower === "-w") continue;
     // 只去掉脚本名之前的选项；遇到第一个不是选项的词（run/test/vitest…）后原样保留。
     if (out.length > 1 && out[out.length - 1].toLowerCase() !== "run") {
       out.push(...tokens.slice(i));
@@ -246,11 +255,20 @@ export function parseOutput(kinds: CheckKind[], output: string): Parsed {
 }
 
 const BACKGROUND = /running in background|in the background with ID|background shell|已在后台/i;
-/** 没跑完：用户拒绝执行、超时。不是检查没过。 */
-const NOT_RUN = /doesn't want to proceed|tool use was rejected|was rejected by the user|user denied|permission denied by user|timed out|timeout exceeded|已拒绝|超时/i;
+/** 没跑完：用户拒绝执行、工具层超时。只认各家工具层的固定文案——测试输出里的「Test timed out in 5000ms」
+ *  是测试失败，不是没跑完（做空第二轮）。并且只在输出里认不出失败时才用。 */
+const NOT_RUN = /The user doesn't want to proceed with this tool use|tool use was rejected|^Command timed out after|^Error: Command timed out|^Command was rejected|用户拒绝了这次工具调用/m;
+
+/** 字符串形态的 shell 包装：`bash -lc '…'`、`powershell -Command "…"`、`cmd /c …`。数组形态 codex 后端已拆。 */
+function unwrapShell(command: string): string {
+  const quoted = /^(?:\S*[\\/])?(?:bash|sh|zsh|pwsh|powershell)(?:\.exe)?\s+(?:-[\w-]+\s+)*?-(?:l?c|Command|NoProfile\s+-Command)\s+(['"])([\s\S]*)\1\s*$/i.exec(command);
+  if (quoted) return quoted[2];
+  const cmd = /^(?:\S*[\\/])?cmd(?:\.exe)?\s+\/[cs]\s+([\s\S]+)$/i.exec(command);
+  return cmd ? cmd[1].replace(/^"([\s\S]*)"$/, "$1") : command;
+}
 
 function commandOf(item: Extract<ChatItem, { type: "tool_use" }>): string {
-  return item.detail?.kind === "command" ? item.detail.command : item.summary;
+  return unwrapShell(item.detail?.kind === "command" ? item.detail.command : item.summary);
 }
 
 /** 整条命令有没有失败：is_error，或者非零退出码（gemini、opencode 跑完的命令不标 is_error）。 */
@@ -262,34 +280,87 @@ type Verdict = { status: CheckStatus; note: CheckNote };
 const UNCLEAR: Verdict = { status: "unknown", note: { kind: "unclear" } };
 const NOT_REACHED: Verdict = { status: "unknown", note: { kind: "notRun" } };
 
+/** 段末单独的 `&`（不是 `&&`）：丢到后台跑，退出码与结果都不在这次回执里。 */
+function inBackground(segment: Segment): boolean {
+  return /(?:^|[^&])&\s*$/.test(segment.text);
+}
+
+/** 从 i 走到 j（不含 j）一路都用 && 接着：i 成功才会跑到 j。 */
+function chainedAnd(segments: Segment[], from: number, to: number): boolean {
+  for (let k = from; k < to; k += 1) if (segments[k].next !== "&&" || segments[k].piped) return false;
+  return true;
+}
+
 /**
- * 一段检查的结论。verdicts 是前面各段已经判好的（非检查段为 null）。
- * 原则：输出里认出了失败就是失败；要判「通过」必须退出码能落到这一段上且为成功；
- * 失败要归到这一段，前面的段必须确定没失败（切目录这类、或已判通过的检查）。
+ * 一条命令里各检查段的结论（非检查段为 null）。
+ *
+ * 难点是整条命令只有一份输出、一个退出码，要分给几段（做空第二轮）：
+ * - 输出里认出失败、且只有一段的类别对得上：失败归它；它前面用 && 接着的段一定跑过且成功；后面用 && 接着的没跑到。
+ * - 几段都对得上（`cargo check && cargo clippy` 都会打印 could not compile）：同类的就都算失败（反正这一类没过），
+ *   不同类的说不清是谁，写「看不出」，不把失败安到无辜的段上。
+ * - 输出里没认出失败：整条成功时，退出码能落到的段算通过；计数只在汇总行只对得上一段时才给。
+ *   整条失败时，只有最后一段、且前面只有切目录这类不会失败的段，失败才归它；工具层拒绝/超时写「没跑完」。
  */
-function judge(segments: Segment[], index: number, kinds: CheckKind[], result: ToolResultItem, verdicts: (Verdict | null)[]): Verdict {
-  const segment = segments[index];
-  const before = segments.slice(0, index);
-  // 前面用 && 接着、且前面有段已判失败：这段没跑到（`tsc && vitest`，tsc 报错时 vitest 根本没跑）。
-  const earlierFailed = verdicts.slice(0, index).some((verdict) => verdict?.status === "fail");
-  if (earlierFailed && segment.prev === "&&") return NOT_REACHED;
-  const parsed = parseOutput(kinds, result.text);
-  if (parsed && parsed.failed > 0) return { status: "fail", note: { kind: "failed", count: parsed.failed, unit: parsed.unit } };
+function judgeCommand(segments: Segment[], kindsBySegment: CheckKind[][], result: ToolResultItem): (Verdict | null)[] {
+  const verdicts: (Verdict | null)[] = segments.map(() => null);
+  const checks = kindsBySegment.flatMap((kinds, index) => (kinds.length > 0 ? [index] : []));
+  const parsed = kindsBySegment.map((kinds) => (kinds.length > 0 ? parseOutput(kinds, result.text) : null));
+  const failing = checks.filter((index) => (parsed[index]?.failed ?? 0) > 0);
   const failed = runFailed(result);
-  const cleanBefore = before.every((seg, at) => SETUP.test(headOf(seg.text)) || verdicts[at]?.status === "pass");
-  const isLast = index === segments.length - 1;
-  // 退出码能不能落到这一段上：没被管道接走、前面不是 ||（可能根本没跑）。
-  const ownsExit = !segment.piped && segment.prev !== "||";
-  if (!failed) {
-    // 整条成功、这段后面只用 && 接着（或什么都没有）：它一定跑过且成功。后面是 ; 或 || 时它失败了整条也可能成功。
-    if (ownsExit && (segment.next === null || segment.next === "&&")) return { status: "pass", note: { kind: "passed", count: parsed?.passed ?? null } };
-    // 退出码不算数，但输出里认出了「0 个失败」的测试汇总：照输出算通过。
-    if (parsed && parsed.unit === "tests") return { status: "pass", note: { kind: "passed", count: parsed.passed } };
-    return UNCLEAR;
+  if (failing.length === 1) {
+    const at = failing[0];
+    const p = parsed[at]!;
+    for (const index of checks) {
+      verdicts[index] = index === at ? { status: "fail", note: { kind: "failed", count: p.failed, unit: p.unit } }
+        : index < at && chainedAnd(segments, index, at) ? { status: "pass", note: { kind: "passed", count: null } }
+        : index > at && chainedAnd(segments, at, index) ? NOT_REACHED
+        : UNCLEAR;
+    }
+    return verdicts;
   }
-  // 整条失败：这段是最后一段、退出码是它的、前面确定没失败，失败就是它的。
-  if (ownsExit && isLast && cleanBefore) return { status: "fail", note: { kind: "failed", count: null, unit: null } };
-  return UNCLEAR;
+  if (failing.length > 1) {
+    const sameKinds = failing.every((index) => kindsBySegment[index].join() === kindsBySegment[failing[0]].join());
+    for (const index of checks) {
+      verdicts[index] = sameKinds && failing.includes(index) ? { status: "fail", note: { kind: "failed", count: null, unit: null } } : UNCLEAR;
+    }
+    return verdicts;
+  }
+  // 输出里没认出失败。
+  if (failed && NOT_RUN.test(result.text)) {
+    for (const index of checks) verdicts[index] = NOT_REACHED;
+    return verdicts;
+  }
+  // 汇总行（计数、0 失败）只对得上一段时才归给它：两段都是测试时分不清 162 是谁的。
+  const summaries = checks.filter((index) => parsed[index] != null);
+  const attributable = summaries.length === 1 ? summaries[0] : -1;
+  for (const index of checks) {
+    const segment = segments[index];
+    if (inBackground(segment)) {
+      verdicts[index] = { status: "unknown", note: { kind: "background" } };
+      continue;
+    }
+    // 退出码能不能落到这一段上：没被管道接走、前面不是 ||（可能根本没跑）。
+    const ownsExit = !segment.piped && segment.prev !== "||";
+    const own = index === attributable ? parsed[index] : null;
+    if (!failed) {
+      // 整条成功、这段后面只用 && 接着（或什么都没有）：它一定跑过且成功。后面是 ; 或 || 时它失败了整条也可能成功。
+      if (ownsExit && (segment.next === null || segment.next === "&&")) {
+        verdicts[index] = { status: "pass", note: { kind: "passed", count: own?.passed ?? null } };
+      } else if (own && own.unit === "tests") {
+        // 退出码不算数，但输出里认出了「0 个失败」的测试汇总：照输出算通过。
+        verdicts[index] = { status: "pass", note: { kind: "passed", count: own.passed } };
+      } else {
+        verdicts[index] = UNCLEAR;
+      }
+      continue;
+    }
+    // 整条失败：这段是最后一段、退出码是它的、前面只有切目录这类不会失败的段，失败就是它的。
+    const cleanBefore = segments.slice(0, index).every((seg) => SETUP.test(headOf(seg.text)));
+    verdicts[index] = ownsExit && index === segments.length - 1 && cleanBefore
+      ? { status: "fail", note: { kind: "failed", count: null, unit: null } }
+      : UNCLEAR;
+  }
+  return verdicts;
 }
 
 /**
@@ -312,34 +383,28 @@ export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
     const result = results.get(item.id);
     const whole: Verdict | null = !result ? { status: "unknown", note: { kind: "missing" } }
       : result.interrupted ? { status: "unknown", note: { kind: "interrupted" } }
-      : NOT_RUN.test(result.text) && runFailed(result) ? NOT_REACHED
       : !runFailed(result) && BACKGROUND.test(result.text) ? { status: "unknown", note: { kind: "background" } }
       : null;
-    const verdicts: (Verdict | null)[] = [];
+    const verdicts = whole ? kindsBySegment.map((kinds) => (kinds.length > 0 ? whole : null)) : judgeCommand(segments, kindsBySegment, result!);
+    // 类别按在命令里出现的先后排；同一类出现几次取最后一段的结论。
     const found = new Map<CheckKind, Verdict>();
-    segments.forEach((_, index) => {
-      const kinds = kindsBySegment[index];
-      if (kinds.length === 0) {
-        verdicts.push(null);
-        return;
+    kindsBySegment.forEach((kinds, index) => {
+      for (const kind of kinds) {
+        found.delete(kind);
+        found.set(kind, verdicts[index]!);
       }
-      const verdict = whole ?? judge(segments, index, kinds, result!, verdicts);
-      verdicts.push(verdict);
-      for (const kind of kinds) found.set(kind, verdict);
     });
-    // 结论相同的几类合成一行。
+    // 结论相同的几类合成一行：都通过的合成一行，其余结论完全相同才合。
     const groups: { kinds: CheckKind[]; verdict: Verdict }[] = [];
-    for (const kind of KIND_ORDER) {
-      const verdict = found.get(kind);
-      if (!verdict) continue;
-      // 都通过的合成一行（计数取有的那个：`tsc && vitest` 写「162 个通过」）；其余结论完全相同才合。
+    for (const [kind, verdict] of found) {
       const same = groups.find((group) => (group.verdict.status === "pass" && verdict.status === "pass") || JSON.stringify(group.verdict) === JSON.stringify(verdict));
       if (!same) {
         groups.push({ kinds: [kind], verdict });
         continue;
       }
       same.kinds.push(kind);
-      if (same.verdict.note.kind === "passed" && same.verdict.note.count == null && verdict.note.kind === "passed") same.verdict = verdict;
+      // 几类合成的通过行不带计数：「类型检查 + 测试 162 个通过」会让人以为 162 是两类加起来的。
+      if (same.verdict.status === "pass") same.verdict = { status: "pass", note: { kind: "passed", count: null } };
     }
     for (const group of groups) all.push({ kinds: group.kinds, ...group.verdict, command, toolId: item.id, at });
   });

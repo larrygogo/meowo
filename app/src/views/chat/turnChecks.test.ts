@@ -133,7 +133,8 @@ describe("这一轮的检查", () => {
     expect(checks).toHaveLength(1);
     expect(checks[0].kinds).toEqual(["typecheck", "test"]);
     expect(checks[0].status).toBe("pass");
-    expect(checks[0].note).toEqual({ kind: "passed", count: 10 });
+    // 几类合成的通过行不带计数：10 只是测试的用例数。
+    expect(checks[0].note).toEqual({ kind: "passed", count: null });
   });
 
   it("前面的段失败、检查没跑到：看不出，不冤枉检查", () => {
@@ -175,6 +176,40 @@ describe("这一轮的检查", () => {
   it("PowerShell 用 ; 串起来：认出汇总的测试照样算通过，类型检查看不出", () => {
     const checks = collectTurnChecks(run("cd app; bunx tsc --noEmit; bunx vitest run", { text: "Tests  5 passed (5)" }));
     expect(checks.map((c) => [c.kinds, c.status])).toEqual([[["typecheck"], "unknown"], [["test"], "pass"]]);
+  });
+
+  it("做空第二轮：-v 是详细输出不是版本，照样认", () => {
+    expect(checkKindsOf("pytest -v")).toEqual(["test"]);
+    expect(checkKindsOf("go test -v ./...")).toEqual(["test"]);
+    expect(checkKindsOf("cargo test serve")).toEqual(["test"]);
+    expect(checkKindsOf("pnpm -w test")).toEqual(["test"]);
+    expect(checkKindsOf("npm exec -- vitest run")).toEqual(["test"]);
+    const [check] = collectTurnChecks(run("go test -v ./...", { exit_code: 1, text: "--- FAIL: TestA (0.00s)\nFAIL" }));
+    expect(check.status).toBe("fail");
+  });
+
+  it("做空第二轮：测试输出里的 timed out 是失败，不是没跑完", () => {
+    const [check] = collectTurnChecks(run("bunx vitest run", { is_error: true, text: "Error: Test timed out in 5000ms.\n      Tests  1 failed | 9 passed (10)" }));
+    expect([check.status, check.note]).toEqual(["fail", { kind: "failed", count: 1, unit: "tests" }]);
+  });
+
+  it("做空第二轮：后一段的失败不算到前一段头上", () => {
+    const clippy = collectTurnChecks(run("cargo check && cargo clippy -- -D warnings", { is_error: true, text: "error: unused\nerror: could not compile `x` due to 1 previous error" }));
+    // check 与 clippy 都会打印 could not compile，分不清是谁：都写看不出，不冤枉 check。
+    expect(clippy.map((c) => [c.kinds, c.status])).toEqual([[["typecheck", "lint"], "unknown"]]);
+    const two = collectTurnChecks(run("cargo test -p a && cargo test -p b", { is_error: true, text: "test result: ok. 3 passed; 0 failed;\ntest result: FAILED. 1 passed; 2 failed;" }));
+    expect(two.map((c) => [c.kinds, c.status])).toEqual([[["test"], "fail"]]);
+    const lintFirst = collectTurnChecks(run("bun run lint && bunx vitest run", { is_error: true, text: "Tests  2 failed | 8 passed (10)" }));
+    expect(lintFirst.map((c) => [c.kinds, c.status])).toEqual([[["lint"], "pass"], [["test"], "fail"]]);
+  });
+
+  it("做空第二轮：结尾的 & 是丢到后台，不算通过", () => {
+    expect(collectTurnChecks(run("npx vitest run &", {}))[0].note.kind).toBe("background");
+  });
+
+  it("做空第二轮：字符串形态的 shell 包装拆开认", () => {
+    expect(collectTurnChecks(run(`bash -lc 'cd app && bunx vitest run'`, { text: "Tests  3 passed (3)" }))[0].note).toEqual({ kind: "passed", count: 3 });
+    expect(collectTurnChecks(run(`powershell -NoProfile -Command "npx tsc --noEmit"`, {}))[0].kinds).toEqual(["typecheck"]);
   });
 
   it("PowerShell 先设环境变量再跑：失败归到检查上", () => {
