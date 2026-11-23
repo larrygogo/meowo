@@ -63,7 +63,7 @@ import { useSidebarLayout } from "./chat/useSidebarLayout";
 import { pasteImagesNatively, useInterrupt, writeInterruptKeys } from "./chat/terminalInput";
 import { leaveSubagentView } from "./chat/subagentView";
 import { SubagentViewNotice } from "./chat/SubagentViewNotice";
-import { clearPartialImageDraft, createSendQueue, IMAGE_PASTE_LANDING_POLLS, LATE_IMAGE_GRACE_MS, RESUME_VERIFY_WINDOW_MS, setSingleLinePaste, submitToTerminal, terminalInput, waitForTerminalReady, type SubmitInput, type TerminalReadyMessages, type TerminalStartupResult } from "./chat/terminalSubmit";
+import { clearPartialImageDraft, createSendQueue, IMAGE_PASTE_LANDING_POLLS, LATE_IMAGE_GRACE_MS, RESUME_VERIFY_WINDOW_MS, setSingleLinePaste, submitToTerminal as writeToTerminal, terminalInput, waitForTerminalReady, type SubmitInput, type TerminalReadyMessages, type TerminalStartupResult } from "./chat/terminalSubmit";
 import { ComposerBlocked, composerBlockEvent, composerBlockExit, composerBlockNotice, useNativeDraft } from "./chat/nativeDraft";
 import { useSessionRef, useSessionScope, useSessionState, useSessionTimer } from "./chat/sessionScope";
 import { launchGrid } from "./chat/terminalGrid";
@@ -924,6 +924,13 @@ export function ChatWindow() {
   // 建议回复：Claude 回合结束后在终端输入框里画的「预测的下一句」，读出来放到输入框上方（只填不发）。
   // 只在主回合停下、终端由 Meowo 托管、没有待答的终端交互时读。
   const [composerSuggestion, dismissSuggestion] = useComposerSuggestion(sessionId, chatUi?.composer, tone !== "running" && history?.ptyManaged === true && !terminalReview);
+  // 所有往终端提交消息的路径（输入框、出错卡「继续」、方案卡、排队、侧问）都经这里：真写进终端那一刻，
+  // 那句建议就过期了，别在回合跑起来之前又冒出来、Tab 又填回去。放在写终端处而不是发送入口：
+  // 被拦下没发的不算（独立审查第 1 条与复验第 1、2 条）。
+  const submitToTerminal: typeof writeToTerminal = (...args) => {
+    dismissSuggestion();
+    return writeToTerminal(...args);
+  };
   // 往终端写东西之前收拾它的输入框（有草稿就收起或搬进对话页，见 chat/nativeDraft）。
   const nativeDraft = useNativeDraft({
     scope: sessionScope, sessionId, spec: chatUi?.composer, newline: chatUi?.newline_input, setPrompt,
@@ -3331,8 +3338,6 @@ export function ChatWindow() {
     const { prompt, attachments } = override ?? composerDraft;
     if ((!prompt.trim() && attachments.length === 0) || sending || !isCurrentOperation()
       || sendLockRef.current || interruptLockRef.current) return;
-    // 发出去了：终端那句建议这就过期，别在回合跑起来之前又冒出来（独立审查第 1 条）。
-    dismissSuggestion();
     // 重发（override）同样走这里：输入框里若正是这段原文（失败后被退回的），一并清掉。
     const clearSubmittedDraft = () => {
       if (!isCurrentOperation()) return;
