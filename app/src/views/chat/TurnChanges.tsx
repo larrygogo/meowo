@@ -9,7 +9,7 @@ import { Icon } from "../../icons/Icon";
 import { icPencil } from "../../icons/glyphs";
 import { icSidebarRight } from "../../icons/glyphs.chat";
 import { RevealChangeContext } from "./panelReveal";
-import { collectTurnChecks, editAffectsCheck, isDocPath, type CheckKind, type TurnCheck } from "./turnChecks";
+import { collectTurnChecks, editAffectsCheck, filesModifiedByRun, isDocPath, type CheckKind, type TurnCheck } from "./turnChecks";
 import { revealItem } from "./foldMemory";
 import { RELEASE_FOLLOW_EVENT } from "./useStickToBottom";
 import { ChatActionsContext } from "./chatActions";
@@ -77,8 +77,17 @@ export const TurnChanges = memo(function TurnChanges({ items }: { items: ChatIte
   // 最后一次检查之后又改了哪些代码文件：上面的「通过」不含这些改动。
   // 每条检查各自看：它之后有没有又改了代码。从最早一条「过时」的检查算起，列出之后改过的代码文件。
   // lint 点名了文件的，只看改没改到那几个文件（editAffectsCheck）。
-  const staleEdits = new Map(checks.map((check) => [check.toolId,
-    editedAfterIndex(items, check.at, cwd).filter((path) => !isDocPath(path) && editAffectsCheck(check, path))] as const));
+  // 用命令改的文件（sed -i 之类）也算：只对它之前跑的检查算，命令自己里头跑的检查不算（先改后查）。
+  const runEdits = runEditsOf(items);
+  const staleEdits = new Map(checks.map((check) => {
+    const edited = editedAfterIndex(items, check.at, cwd);
+    for (const run of runEdits) {
+      if (run.at <= check.at || run.id === check.toolId) continue;
+      // 同一个文件 Edit 工具记的是相对会话目录，命令提示里是相对命令当时的目录：结尾对得上算同一个。
+      for (const path of run.paths) if (!edited.some((seen) => seen === path || seen.endsWith(`/${path}`))) edited.push(path);
+    }
+    return [check.toolId, edited.filter((path) => !isDocPath(path) && editAffectsCheck(check, path))] as const;
+  }));
   const staleIds = new Set(checks.filter((check) => (staleEdits.get(check.toolId)?.length ?? 0) > 0).map((check) => check.toolId));
   const editedAfter = [...new Set(checks.flatMap((check) => staleEdits.get(check.toolId) ?? []))];
   const shown = expanded ? files : files.slice(0, PREVIEW_ROWS);
@@ -143,6 +152,19 @@ export const TurnChanges = memo(function TurnChanges({ items }: { items: ChatIte
     </div>
   );
 });
+
+/// 每条命令用命令改掉的文件（见 filesModifiedByRun），带上命令在 items 里的位置。
+function runEditsOf(items: ChatItem[]): { at: number; id: string; paths: string[] }[] {
+  const results = new Map<string, ToolResultItem>();
+  for (const item of items) if (item.type === "tool_result" && item.tool_use_id) results.set(item.tool_use_id, item);
+  const runs: { at: number; id: string; paths: string[] }[] = [];
+  items.forEach((item, at) => {
+    if (item.type !== "tool_use") return;
+    const paths = filesModifiedByRun(item, results.get(item.id));
+    if (paths.length > 0) runs.push({ at, id: item.id, paths });
+  });
+  return runs;
+}
 
 /// 某个位置之后又改了哪些文件（相对路径，去重，按首次出现）。
 function editedAfterIndex(items: ChatItem[], after: number, cwd: string | null): string[] {

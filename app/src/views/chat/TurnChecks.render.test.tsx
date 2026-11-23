@@ -61,6 +61,99 @@ describe("本轮结果卡的检查段", () => {
     expect(screen.getByText(zh.chat.checkStale(["类型检查"], ["CloudBalancePage.test.tsx", "feeCenter.test.ts"]))).toBeTruthy();
   });
 
+  // 实拍同一轮：`eslint --fix balance.tsx` 通过之后，又用 `sed -i` 改了 balance.tsx。Edit 工具没记下，
+  // 只有 Claude 回执末尾的提示知道。
+  it("用命令改的文件（sed -i）也算检查之后又改了；git 一来一回、格式化、项目外的临时文件不算", () => {
+    const note = (paths: string) => `\n[This command modified 1 file you've previously read: ${paths}. Call Read before editing.]`;
+    render(<TurnChanges items={[
+      edit("e1", "front/src/pages/cloud-host/balance.tsx"), ok("e1"),
+      // 检查自己里头的 --fix 改了文件：先改后查，不算。
+      run("c1", "cd front && npx eslint --fix src/pages/cloud-host/balance.tsx"), ok("c1", note("src\\pages\\cloud-host\\balance.tsx")),
+      run("c2", "cd front && npx vitest run src/pages/cloud-host 2>&1 | tail -3"), ok("c2", " Tests  5 passed (5)"),
+      // 先 stash 掉看测试会不会失败、再 pop 回来：改了又改回来，不算。
+      run("g1", "git stash -q; npx vitest run src/x.test.ts; git stash pop -q"), ok("g1", note("src\\pages\\cloud-host\\balance.tsx")),
+      // 写到临时目录里的日志：项目外，不算。
+      run("s1", "node shoot.mjs > ../../tmp/dev.log"), ok("s1", "\n[This command modified 2 files you've previously read: ..\\..\\tmp\\dev.log, ..\\..\\tmp\\shoot.sh. Call Read before editing.]"),
+    ]} />);
+    expect(document.querySelectorAll(".chat-turn-check.is-stale")).toHaveLength(0);
+    cleanup();
+    render(<TurnChanges items={[
+      edit("e1", "front/src/pages/cloud-host/balance.tsx"), ok("e1"),
+      run("c1", "cd front && npx eslint --fix src/pages/cloud-host/balance.tsx"), ok("c1"),
+      run("c2", "cd front && npx eslint src/pages/cloud-host/other.tsx"), ok("c2"),
+      run("s1", "cd front && sed -i 's/a/b/' src/pages/cloud-host/balance.tsx && cat src/pages/cloud-host/balance.tsx"), ok("s1", note("src\\pages\\cloud-host\\balance.tsx")),
+    ]} />);
+    const rows = [...document.querySelectorAll(".chat-turn-check")];
+    // 改到的是第一条 lint 查过的文件；第二条查的是别的文件，不受影响。
+    expect(rows.map((row) => row.querySelector(".chat-turn-check-result")?.textContent)).toEqual(["通过 · 已过时", "通过"]);
+    expect(screen.getByText(zh.chat.checkStale(["代码检查"], ["balance.tsx"]))).toBeTruthy();
+  });
+
+  // 实拍：先通过，再 `git stash` 藏掉修复跑一遍确认用例会失败，再 pop 回来。卡片写「1 个没过」，用户让 AI 去修。
+  it("夹在 git stash 和 stash pop 之间跑的检查（反证）不算这一轮的结果", () => {
+    const cmd = "bunx vitest run src/views/chat/TurnChecks.render.test.tsx 2>&1";
+    render(<TurnChanges items={[
+      edit("e1", "src/a.ts"), ok("e1"),
+      run("c1", cmd), ok("c1", " Tests  16 passed (16)"),
+      run("c2", `git stash push -q src/a.ts; ${cmd} | Select-Object -Last 6; git stash pop -q; git status --short`), ok("c2", " Tests  1 failed | 15 passed (16)"),
+    ]} />);
+    const rows = [...document.querySelectorAll(".chat-turn-check")];
+    expect(rows.map((row) => row.querySelector(".chat-turn-check-result")?.textContent)).toEqual(["16 个通过"]);
+    expect(screen.queryByText(zh.chat.checkFix)).toBeNull();
+  });
+
+  it("stash 和 pop 分成几条命令跑也认；藏掉后一直没放回的照常算", () => {
+    const cmd = "bunx vitest run src/a.test.ts";
+    render(<TurnChanges items={[
+      edit("e1", "src/a.ts"), ok("e1"),
+      run("c1", cmd), ok("c1", " Tests  3 passed (3)"),
+      run("s1", "git stash push -q src/a.ts"), ok("s1"),
+      run("c2", cmd), ok("c2", " Tests  1 failed | 2 passed (3)"),
+      run("s2", "git stash pop -q && git status --short"), ok("s2"),
+    ]} />);
+    expect([...document.querySelectorAll(".chat-turn-check-result")].map((el) => el.textContent)).toEqual(["3 个通过"]);
+    cleanup();
+    render(<TurnChanges items={[
+      edit("e1", "src/a.ts"), ok("e1"),
+      run("s1", "git stash"), ok("s1"),
+      run("c2", cmd), ok("c2", " Tests  1 failed | 2 passed (3)"),
+    ]} />);
+    expect([...document.querySelectorAll(".chat-turn-check-result")].map((el) => el.textContent)).toEqual(["1 个失败"]);
+  });
+
+  // 本机记录重放：AI 常把 tsc、eslint、构建接上 `| tail`、或用 ; 串几条，退出码就落不到它们身上，卡片一半以上是「?」。
+  it("过了不吭声的工具（tsc、eslint、构建）只被截头尾、输出里没有一点出错的字眼：算通过", () => {
+    render(<TurnChanges items={[
+      edit("e1", "src/a.ts"), ok("e1"),
+      run("c1", "npx tsc --noEmit 2>&1 | tail -5; npx eslint src/a.ts 2>&1 | head -20; bun run build 2>&1 | tail -2"), ok("c1", "dist/assets/index.js  234.29 kB\n✓ built in 437ms"),
+    ]} />);
+    expect([...document.querySelectorAll(".chat-turn-check-result")].map((el) => el.textContent)).toEqual(["通过"]);
+  });
+
+  it("挑行的过滤（grep）、输出里有出错字眼、前面 && 的一步可能没过：照旧写看不出", () => {
+    render(<TurnChanges items={[
+      edit("e1", "src/a.ts"), ok("e1"),
+      run("c1", "npx tsc --noEmit 2>&1 | grep -E \"src/a\" | head"), ok("c1", ""),
+      run("c2", "npx eslint src/a.ts | tail -3; echo done"), ok("c2", "  3:1  warning  Unexpected console statement\ndone"),
+      run("c3", "node gen.mjs && npx tsc -p app | tail -3; echo done"), ok("c3", "done"),
+    ]} />);
+    expect([...document.querySelectorAll(".chat-turn-check-result")].map((el) => el.textContent)).toEqual(["看不出结果", "看不出结果", "看不出结果"]);
+  });
+
+  it("heredoc 正文里的命令字样不算跑过检查；喂给 bash 的照算", () => {
+    render(<TurnChanges items={[
+      edit("e1", "src/a.ts"), ok("e1"),
+      run("c1", "python - <<'EOF'\nopen('CONTRIBUTING.md','w').write('''run bun run build, then cargo clippy -- -D warnings; don't skip''')\nEOF\nnpx tsc --noEmit | tail -3"), ok("c1", ""),
+    ]} />);
+    expect([...document.querySelectorAll(".chat-turn-check")].map((row) => row.querySelector(".chat-turn-check-kind")?.textContent)).toEqual(["类型检查"]);
+    cleanup();
+    render(<TurnChanges items={[
+      edit("e1", "src/a.ts"), ok("e1"),
+      run("c1", "bash <<'EOF'\nnpx eslint src/a.ts\nEOF"), ok("c1", ""),
+    ]} />);
+    expect([...document.querySelectorAll(".chat-turn-check-kind")].map((el) => el.textContent)).toEqual(["代码检查"]);
+  });
+
   it("lint 查过的文件之后又改了：照样标过时；没认出是哪个文件出问题的失败照样留着", () => {
     render(<TurnChanges items={[
       edit("e1", "src/a.ts"), ok("e1"),

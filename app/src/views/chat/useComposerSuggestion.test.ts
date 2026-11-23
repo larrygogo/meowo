@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import sharedFrames from "../../test/fixtures/composer-frames.json";
 import type { ComposerIo, ComposerSpec } from "./composer";
-import { SUGGESTION_POLL_MS, SUGGESTION_RECHECK_MS, useComposerSuggestion } from "./useComposerSuggestion";
+import { SUGGESTION_POLL_MS, SUGGESTION_RECHECK_MS, SUGGESTION_SETTLE_MS, useComposerSuggestion } from "./useComposerSuggestion";
 
 afterEach(() => vi.useRealTimers());
 
@@ -78,6 +78,35 @@ describe("建议回复：从终端输入框读出 Claude 的预测下一句", ()
     rerender({ idle: false });
     rerender({ idle: true });
     await advance(SUGGESTION_POLL_MS);
+    expect(result.current[0]).toBe("加个测试跑一下");
+  });
+
+  // 用户：「这个显示不是很及时」。原来只靠每 1.5 秒读一次，还要等第一拍。
+  it("终端一有输出（Claude 画出建议）就读，不等下一次定时读；输出不计入定时读的上限", async () => {
+    vi.useFakeTimers();
+    let current = EMPTY;
+    let reads = 0;
+    const io: ComposerIo = { frame: async () => { reads += 1; return current; }, write: async () => {} };
+    let emit = () => {};
+    const subscribe = (onOutput: () => void) => { emit = onOutput; return () => { emit = () => {}; }; };
+    const { result } = renderHook(() => useComposerSuggestion(7, specs.claude, true, io, subscribe));
+    await advance(SUGGESTION_POLL_MS);
+    expect(result.current[0]).toBeNull();
+    // 0.3 秒后 Claude 画出建议：一阵输出，停下 250ms 后读，不用等到 1.5 秒那一拍。
+    await advance(300);
+    current = SUGGEST;
+    act(() => { emit(); emit(); emit(); });
+    await advance(SUGGESTION_SETTLE_MS);
+    expect(result.current[0]).toBe("加个测试跑一下");
+    expect(reads).toBe(2);
+    // 定时读用完以后，终端输出照样能把后来才出现的建议读出来。
+    current = EMPTY;
+    await advance(SUGGESTION_RECHECK_MS + SUGGESTION_POLL_MS * 2);
+    expect(result.current[0]).toBeNull();
+    await advance(SUGGESTION_POLL_MS * 40);
+    current = SUGGEST;
+    act(() => emit());
+    await advance(SUGGESTION_SETTLE_MS);
     expect(result.current[0]).toBe("加个测试跑一下");
   });
 
