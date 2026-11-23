@@ -145,7 +145,21 @@ function lintFailedFiles(output: string): string[] {
   return [...files];
 }
 
-const KIND_ORDER: CheckKind[] = ["typecheck", "test", "lint", "build"];
+/** 测试输出里没过的测试文件：vitest / jest 的 `FAIL  路径` 行（vitest 每个没过的用例一行，按文件去重）。
+ *  只在能确认列全时返回：个数要等于汇总里没过的文件数（vitest `Test Files  1 failed`，jest `Test Suites: 1 failed`）。
+ *  输出被 head / grep 截掉一部分、或只剩汇总时认不全，返回空，不拿残缺的名单去撤红。 */
+function testFailedFiles(output: string): string[] {
+  const text = output.replace(/\x1b\[[0-9;]*m/g, "");
+  const files = new Set<string>();
+  for (const line of text.split(/\r?\n/)) {
+    const match = /^\s*FAIL\s+(\S+\.[cm]?[jt]sx?)(?=\s|$)/.exec(line);
+    if (match) files.add(match[1].replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase());
+  }
+  const total = /Test Files\s+(\d+) failed/.exec(text) ?? /Test Suites:\s+(\d+) failed/.exec(text);
+  return total && Number(total[1]) === files.size ? [...files] : [];
+}
+
+const KIND_ORDER: CheckKind[] =["typecheck", "test", "lint", "build"];
 
 // 段开头（规范化之后，见 headOf）按「开头是什么」认类别。只看开头：`grep vitest`、`cat tsconfig.json`、
 // `git log --grep=test` 都不是检查。包管理器的 `-C dir`、`--filter x`、`workspace x` 等先在 headOf 里去掉。
@@ -786,6 +800,8 @@ export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
   const all: TurnCheck[] = [];
   // 没过的 lint 命令输出里点名的文件（按 tool_use id）：之后同一工具把这些文件都查过、通过了，这一行就不再挂着红。
   const lintFailures = new Map<string, string[]>();
+  // 没过的测试命令输出里列全了的失败测试文件：之后同一工具把它们都单独重跑、通过了，这一行同样不再挂红。
+  const testFailures = new Map<string, string[]>();
   const stashedAll = stashedSegments(items);
   items.forEach((item, at) => {
     if (item.type !== "tool_use" || item.kind !== "run") return;
@@ -837,6 +853,10 @@ export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
         const files = lintFailedFiles(result.text);
         if (files.length > 0) lintFailures.set(item.id, files);
       }
+      if (result && group.verdict.status === "fail" && group.kinds.every((kind) => kind === "test")) {
+        const files = testFailedFiles(result.text);
+        if (files.length > 0) testFailures.set(item.id, files);
+      }
     }
   });
   // 同一工具、同样范围（或之后跑了全量）只留最后一次：倒着走，某行的键全被更晚的行盖过就丢掉；部分被盖过的只留没被盖的。
@@ -853,7 +873,22 @@ export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
   }
   // lint 没过、出问题的文件之后被同一工具单独查过且通过（实拍：`eslint a b c` 报 a 有 1 个问题，接着
   // `eslint --fix a` 通过）：问题已经修掉，这一行不再显示红色的「1 个问题」。认不出是哪个文件出的问题就留着。
+  // 测试同理（实拍：全套 vitest 报 a11yStyles.test.ts 没过，修好后 `vitest run src/a11yStyles.test.ts` 通过，
+  // 检查卡仍挂着全套的红，用户以为还没修）。复跑要点名路径：`-t 名字` 这类筛选认不出跑了哪些文件，不算。
   return kept.filter((check) => {
+    const files = testFailures.get(check.toolId);
+    if (check.status !== "fail" || !files) return true;
+    const families = new Set(check.keys.map((key) => key.split("|")[1]));
+    const fixed = files.every((file) => kept.some((later) => later.at > check.at && later.status === "pass"
+      && later.keys.some((key) => {
+        const [kind, family, scopeText] = key.split("|");
+        if (kind !== "test" || !families.has(family)) return false;
+        if (!scopeText) return true;
+        const scope = scopePaths(key);
+        return !!scope && inScope(file, scope);
+      })));
+    return !fixed;
+  }).filter((check) => {
     const files = lintFailures.get(check.toolId);
     if (check.status !== "fail" || !files) return true;
     const families = new Set(check.keys.map((key) => key.split("|")[1]));
