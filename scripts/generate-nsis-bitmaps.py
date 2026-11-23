@@ -165,19 +165,32 @@ def make_oneclick_bg():
     （主底 / 卡片 / 输入框）就配哪块的色，才不会露接缝。文字（多语言）一律不烙图。
     2026-11-20 重做：原 780x512 窗口内容挤在上半、角落圆弧像脏块、展开区是系统白底控件（leader：「还是很丑」）。
     """
-    base = Image.new("RGB", (_px(ONECLICK_W), _px(ONECLICK_H)), BG_BASE)
-    _brand(base)
-    base.save(OUT_DIR / "nsis-oneclick-bg.bmp", "BMP")
-    _button(base)
-    base.save(OUT_DIR / "nsis-oneclick-bg-btn.bmp", "BMP")
+    global SCALE
+    # 先按 4 倍再画（8x），LANCZOS 缩回 2x：PIL 画圆角不抗锯齿，直接画在 2x 上胶囊两头就是台阶
+    # （leader 2026-11-23：「好多锯齿」）。安装器再用 HALFTONE 平滑缩到 client 尺寸。
+    out_scale, k = SCALE, 4
+    SCALE = out_scale * k
 
-    tall = Image.new("RGB", (_px(ONECLICK_W), _px(ONECLICK_H + ONECLICK_EXPAND)), BG_BASE)
-    _brand(tall)
-    _button(tall)
-    draw = ImageDraw.Draw(tall)
-    _rounded(draw, CARD_X, CARD_Y, CARD_W, CARD_H, 12, CARD_FILL, CARD_LINE)
-    _rounded(draw, FIELD_X, FIELD_Y, FIELD_W, FIELD_H, 8, FIELD_FILL, FIELD_LINE)
-    tall.save(OUT_DIR / "nsis-oneclick-bg-expanded.bmp", "BMP")
+    # 按面积平均缩（BOX）：LANCZOS 在青柠和深底的硬边上会过冲，胶囊外沿多出一圈更黑的细线。
+    def save(img, name):
+        img.resize((img.width // k, img.height // k), Image.BOX).save(OUT_DIR / name, "BMP")
+
+    try:
+        base = Image.new("RGB", (_px(ONECLICK_W), _px(ONECLICK_H)), BG_BASE)
+        _brand(base)
+        save(base, "nsis-oneclick-bg.bmp")
+        _button(base)
+        save(base, "nsis-oneclick-bg-btn.bmp")
+
+        tall = Image.new("RGB", (_px(ONECLICK_W), _px(ONECLICK_H + ONECLICK_EXPAND)), BG_BASE)
+        _brand(tall)
+        _button(tall)
+        draw = ImageDraw.Draw(tall)
+        _rounded(draw, CARD_X, CARD_Y, CARD_W, CARD_H, 12, CARD_FILL, CARD_LINE)
+        _rounded(draw, FIELD_X, FIELD_Y, FIELD_W, FIELD_H, 8, FIELD_FILL, FIELD_LINE)
+        save(tall, "nsis-oneclick-bg-expanded.bmp")
+    finally:
+        SCALE = out_scale
 
 
 def make_toggles():

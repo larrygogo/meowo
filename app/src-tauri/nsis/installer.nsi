@@ -220,7 +220,7 @@ Var MeowoDesktopLnk   ; 1/0：「创建桌面快捷方式」勾选
 Var MeowoExpanded     ; 0/1：自定义安装选项是否展开
 Var MeowoPage         ; 当前自绘页（nsDialogs 对话框）
 Var MeowoBgCtl        ; 当前自绘页的背景位图控件
-Var MeowoBgHandle     ; 背景 HBITMAP（NSD_SetStretchedImage 管理）
+Var MeowoBgHandle     ; 背景 HBITMAP（MeowoSetBg 管理，换图时释放旧的）
 Var MeowoDirLabel
 Var MeowoDirText
 Var MeowoChangeLink
@@ -421,6 +421,71 @@ Function MeowoSetClientHeight
   System::Call "user32::SetWindowPos(p $HWNDPARENT, p 0, i 0, i 0, i r0, i r1, i 0x16)"
   Call MeowoFitClient
 FunctionEnd
+
+; 背景位图按 client 尺寸重新采样，结果是新的 HBITMAP（调用方负责 DeleteObject）。
+; 不用 LoadImage 自带的缩放（NSD_SetStretchedImage 走的就是它）：那是最近邻取点，2x 底图缩到 150%
+; 时胶囊两头、图标圆角全是台阶（leader 2026-11-23 实拍「好多锯齿」）。GDI 的 HALFTONE 也不行：
+; 实拍边缘平滑了，但整圈胶囊外沿多出一道近黑的描边（它的缩放会锐化）。这里用 GDI+ 的
+; HighQualityBilinear：按面积取平均、不锐化。GDI+ 是系统自带的 gdiplus.dll。
+; 入栈：位图路径、原图高度（物理 px）。出栈：HBITMAP。
+Function MeowoScaledBg
+  Exch $1
+  Exch
+  Exch $0
+  Push $2
+  Push $3
+  Push $4
+  Push $5
+  Push $6
+  Push $7
+  ; GdiplusStartupInput { GdiplusVersion=1, DebugEventCallback, SuppressBackgroundThread, SuppressExternalCodecs }
+  System::Call "*(i 1, p 0, i 0, i 0) p .r2"
+  System::Call "gdiplus::GdiplusStartup(*p .r3, p r2, p 0)"
+  System::Free $2
+  System::Call "user32::GetDC(p 0) p .r4"
+  System::Call "gdi32::CreateCompatibleDC(p r4) p .r5"
+  System::Call "gdi32::CreateCompatibleBitmap(p r4, i $MeowoW, i $MeowoH) p .r6"
+  System::Call "user32::ReleaseDC(p 0, p r4)"
+  System::Call "gdi32::SelectObject(p r5, p r6) p .r7"
+  System::Call "gdiplus::GdipCreateFromHDC(p r5, *p .r4)"
+  ; 先铺底色：缩放时图的外沿会和「图外」混色，不铺就是一圈黑边。与 BG_BASE（#17171a）同色。
+  System::Call "gdiplus::GdipGraphicsClear(p r4, i 0xFF17171A)"
+  ; InterpolationModeHighQualityBilinear = 6；PixelOffsetModeHalf = 4（不偏半个像素）。
+  System::Call "gdiplus::GdipSetInterpolationMode(p r4, i 6)"
+  System::Call "gdiplus::GdipSetPixelOffsetMode(p r4, i 4)"
+  System::Call "gdiplus::GdipCreateBitmapFromFile(w r0, *p .r2)"
+  System::Call "gdiplus::GdipDrawImageRectI(p r4, p r2, i 0, i 0, i $MeowoW, i $MeowoH)"
+  System::Call "gdiplus::GdipDisposeImage(p r2)"
+  System::Call "gdiplus::GdipDeleteGraphics(p r4)"
+  System::Call "gdiplus::GdiplusShutdown(p r3)"
+  System::Call "gdi32::SelectObject(p r5, p r7)"
+  System::Call "gdi32::DeleteDC(p r5)"
+  StrCpy $0 $6
+  Pop $7
+  Pop $6
+  Pop $5
+  Pop $4
+  Pop $3
+  Pop $2
+  Exch $0
+  Exch
+  Pop $1
+FunctionEnd
+
+; 换背景：释放旧图、按当前 client 尺寸平滑缩放新图、贴到背景控件上。srcH = 原图高度（逻辑 px）。
+!macro MeowoSetBg path srcH
+  ${If} $MeowoBgHandle != ""
+    System::Call "gdi32::DeleteObject(p $MeowoBgHandle)"
+  ${EndIf}
+  Push "${path}"
+  Push ${srcH}
+  Exch $0
+  IntOp $0 $0 * 2
+  Exch $0
+  Call MeowoScaledBg
+  Pop $MeowoBgHandle
+  SendMessage $MeowoBgCtl 0x172 0 $MeowoBgHandle
+!macroend
 
 ; 背景位图控件补 WS_CLIPSIBLINGS（0x04000000）：它在 z 序最底，但没有这个样式时重绘（换图、
 ; 窗口长高）会把压在上面的文字控件整块盖掉，而文字控件不会跟着重画（实拍：展开后标语、
@@ -684,7 +749,8 @@ Function MeowoMainPage
   ${NSD_CreateBitmap} 0 0 100% 100% ""
   Pop $MeowoBgCtl
   Call MeowoClipBg
-  ${NSD_SetStretchedImage} $MeowoBgCtl "$PLUGINSDIR\meowo-bg-btn.bmp" $MeowoBgHandle
+  StrCpy $MeowoBgHandle ""
+  !insertmacro MeowoSetBg "$PLUGINSDIR\meowo-bg-btn.bmp" ${MEOWO_H}
 
   nsDialogs::Show
   ; 页面销毁后句柄失效，别让后面的 MeowoFitClient 去挪已不存在的窗口。
@@ -714,8 +780,8 @@ Function MeowoOnToggleCustom
     StrCpy $MeowoExpanded 1
     IntOp $0 ${MEOWO_H} + ${MEOWO_EXPAND}
     Call MeowoSetClientHeight
-    ${NSD_FreeImage} $MeowoBgHandle
-    ${NSD_SetStretchedImage} $MeowoBgCtl "$PLUGINSDIR\meowo-bg-expanded.bmp" $MeowoBgHandle
+    IntOp $0 ${MEOWO_H} + ${MEOWO_EXPAND}
+    !insertmacro MeowoSetBg "$PLUGINSDIR\meowo-bg-expanded.bmp" $0
     ${NSD_SetText} $MeowoCustomLink "$(meowoCustomClose)"
     ShowWindow $MeowoVersionLabel ${SW_HIDE}
     StrCpy $1 ${SW_SHOW}
@@ -725,8 +791,7 @@ Function MeowoOnToggleCustom
     Call MeowoShowOptions
     StrCpy $0 ${MEOWO_H}
     Call MeowoSetClientHeight
-    ${NSD_FreeImage} $MeowoBgHandle
-    ${NSD_SetStretchedImage} $MeowoBgCtl "$PLUGINSDIR\meowo-bg-btn.bmp" $MeowoBgHandle
+    !insertmacro MeowoSetBg "$PLUGINSDIR\meowo-bg-btn.bmp" ${MEOWO_H}
     ${NSD_SetText} $MeowoCustomLink "$(meowoCustomOpen)"
     ShowWindow $MeowoVersionLabel ${SW_SHOW}
     StrCpy $1 ${SW_HIDE}
@@ -864,7 +929,11 @@ Function MeowoInstFilesShow
   ; LR_LOADFROMFILE=0x10 按 client 尺寸缩放加载，SetWindowPos 压到 HWND_BOTTOM。
   ; WS_CLIPSIBLINGS 不能省：没有它，背景重绘时会把压在上面的状态行整块盖掉（状态行只在文字
   ; 变化时重绘，实拍进度页一直看不到状态行）。
-  System::Call "user32::LoadImage(p 0, t '$PLUGINSDIR\meowo-bg.bmp', i 0, i $MeowoW, i $MeowoH, i 0x10) p .r6"
+  Push "$PLUGINSDIR\meowo-bg.bmp"
+  IntOp $6 ${MEOWO_H} * 2
+  Push $6
+  Call MeowoScaledBg
+  Pop $6
   System::Call "user32::CreateWindowEx(i 0, t 'STATIC', t '', i 0x5400000E, i 0, i 0, i $MeowoW, i $MeowoH, p $1, p 0, p 0, p 0) p .r7"
   SendMessage $7 0x172 0 $6 ; STM_SETIMAGE(IMAGE_BITMAP)
   System::Call "user32::SetWindowPos(p r7, p 1, i 0, i 0, i 0, i 0, i 0x13)"
@@ -908,7 +977,8 @@ Function MeowoDonePage
   ${NSD_CreateBitmap} 0 0 100% 100% ""
   Pop $MeowoBgCtl
   Call MeowoClipBg
-  ${NSD_SetStretchedImage} $MeowoBgCtl "$PLUGINSDIR\meowo-bg-btn.bmp" $MeowoBgHandle
+  StrCpy $MeowoBgHandle ""
+  !insertmacro MeowoSetBg "$PLUGINSDIR\meowo-bg-btn.bmp" ${MEOWO_H}
 
   nsDialogs::Show
   StrCpy $MeowoPage ""
