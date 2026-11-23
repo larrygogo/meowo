@@ -327,7 +327,9 @@ const THROTTLE: Duration = Duration::from_secs(60);
 const THROTTLE_NEEDS_YOU: Duration = Duration::from_secs(15);
 const MESSAGE_MAX: usize = 300;
 
-static LAST_NOTIFY: Mutex<Option<HashMap<i64, Instant>>> = Mutex::new(None);
+/// 每个会话、每一档各记一次时间：「需要你决定」只和上一条「需要你决定」比，前面刚发过一条「做完了」
+/// 不能把它合并掉（要人做决定的提醒不能被藏起来，独立审查复核发现）。
+static LAST_NOTIFY: Mutex<Option<HashMap<(i64, bool), Instant>>> = Mutex::new(None);
 
 /// 纯判定（单测用）。toast_enabled = 通知总开关且这一类勾着（与 watch.rs notify_kind_enabled 同一判据）。
 /// 与 watch.rs liveness 同一套：总开关与种类开关只管电脑系统通知，Bark 只看它自己的暂停；
@@ -374,6 +376,24 @@ pub(crate) fn receipt(decision: Decision, push: Option<crate::push::PushOutcome>
     }
 }
 
+/// 判定并记账（调用方持锁）：按「会话 × 是否需要你决定」各自计时，放行的才记时间。
+fn admit(
+    last: &mut HashMap<(i64, bool), Instant>,
+    session_id: i64,
+    level: Level,
+    toast_enabled: bool,
+    viewing: bool,
+    now: Instant,
+) -> Decision {
+    let key = (session_id, level == Level::NeedsYou);
+    let since_last = last.get(&key).map(|at| now.duration_since(*at));
+    let decision = decide(level, toast_enabled, viewing, since_last);
+    if matches!(decision, Decision::Deliver { .. }) {
+        last.insert(key, now);
+    }
+    decision
+}
+
 pub(crate) fn notify_user(app: &tauri::AppHandle, session_id: i64, args: &Value) -> Result<Value, String> {
     use tauri::Manager;
     let message: String = args
@@ -404,13 +424,7 @@ pub(crate) fn notify_user(app: &tauri::AppHandle, session_id: i64, args: &Value)
     // 判定与记账在同一把锁里：两条提醒同时到也只放过一条。
     let decision = {
         let mut guard = LAST_NOTIFY.lock().unwrap_or_else(|e| e.into_inner());
-        let map = guard.get_or_insert_with(HashMap::new);
-        let since_last = map.get(&session_id).map(|at| now.duration_since(*at));
-        let decision = decide(level, toast_enabled, viewing, since_last);
-        if matches!(decision, Decision::Deliver { .. }) {
-            map.insert(session_id, now);
-        }
-        decision
+        admit(guard.get_or_insert_with(HashMap::new), session_id, level, toast_enabled, viewing, now)
     };
     let push = match decision {
         Decision::Deliver { toast } => Some(crate::watch::show_agent_notification(
@@ -552,6 +566,26 @@ mod tests {
     /// 回执不说没做到的事：手机推送没设置、暂停、刚推过都写明；两路都没送到时卡片上是 disabled。
     #[test]
     fn notify_receipts_say_what_actually_happened() {
+        notify_receipts_cases();
+    }
+
+    /// 刚发过一条「做完了」，10 秒后的「需要你决定」照发；同档连发才合并；别的会话互不影响。
+    #[test]
+    fn needs_you_is_not_swallowed_by_a_recent_done() {
+        let mut last = HashMap::new();
+        let t0 = Instant::now();
+        assert_eq!(admit(&mut last, 1, Level::Done, true, false, t0), Decision::Deliver { toast: true });
+        let t10 = t0 + Duration::from_secs(10);
+        assert_eq!(admit(&mut last, 1, Level::NeedsYou, true, false, t10), Decision::Deliver { toast: true });
+        assert_eq!(admit(&mut last, 1, Level::NeedsYou, true, false, t10 + Duration::from_secs(5)), Decision::Throttled);
+        assert_eq!(admit(&mut last, 1, Level::Done, true, false, t10), Decision::Throttled);
+        assert_eq!(admit(&mut last, 2, Level::Done, true, false, t10), Decision::Deliver { toast: true });
+        // 被合并、被「正在看」挡下的不记时间：之后那条不会因此被延后。
+        assert_eq!(admit(&mut last, 3, Level::Info, true, true, t0), Decision::Viewing);
+        assert_eq!(admit(&mut last, 3, Level::Info, true, false, t0 + Duration::from_secs(1)), Decision::Deliver { toast: true });
+    }
+
+    fn notify_receipts_cases() {
         use crate::push::PushOutcome;
         let (text, outcome) = receipt(Decision::Deliver { toast: false }, Some(PushOutcome::Queued));
         assert!(text.contains("关了这类电脑通知") && text.contains("已交给手机推送"), "{text}");

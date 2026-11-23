@@ -48,7 +48,7 @@ describe("回执解析", () => {
   });
 
   it("提醒：级别、内容、去向；认不得的级别按「做完了」", () => {
-    expect(parseNotifyReceipt(notifyReceipt("viewing", "needs_you"))).toEqual({ level: "needs_you", message: "打包好了，装上试试", outcome: "viewing" });
+    expect(parseNotifyReceipt(notifyReceipt("viewing", "info"))).toEqual({ level: "info", message: "打包好了，装上试试", outcome: "viewing" });
     expect(parseNotifyReceipt(notifyReceipt("shown", "bogus"))?.level).toBe("done");
   });
 
