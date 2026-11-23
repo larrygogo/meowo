@@ -649,7 +649,7 @@ export const en: Dict = {
         : note.kind === "interrupted" ? "Interrupted" : note.kind === "background" ? "Running in background" : note.kind === "missing" ? "No result" : note.kind === "notRun" ? "Didn't finish" : note.kind === "oneFailed" ? "One of these failed" : "Result unclear",
     checkJump: "Jump to this command",
     checkStale: (kinds: string[], names: string[]) => `${names.length === 1 ? names[0] : `${names.length} files (${names.slice(0, 3).join(", ")}${names.length > 3 ? ", …" : ""})`} changed after the ${kinds.join(", ").toLowerCase()} ran; ${names.length === 1 ? "that change hasn't" : "those changes haven't"} been checked yet`,
-    checkStaleTag: "before later edits",
+    checkStaleTag: "outdated",
     checkNone: "Code changed this turn, but no tests, type check, lint or build ran",
     revealInChanges: "View in Changes",
     revealNoChange: "This file has no uncommitted changes now",

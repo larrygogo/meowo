@@ -25,14 +25,14 @@ describe("本轮结果卡的检查段", () => {
     ]} />);
     const rows = [...document.querySelectorAll(".chat-turn-check")];
     expect(rows.map((row) => [row.className, row.querySelector(".chat-turn-check-kind")?.textContent, row.querySelector(".chat-turn-check-result")?.textContent])).toEqual([
-      ["chat-turn-check is-pass is-stale", "类型检查", "通过 · 改动前跑的"],
-      ["chat-turn-check is-pass is-stale", "测试", "162 个通过 · 改动前跑的"],
+      ["chat-turn-check is-pass is-stale", "类型检查", "通过 · 已过时"],
+      ["chat-turn-check is-pass is-stale", "测试", "162 个通过 · 已过时"],
     ]);
     // README 是文档，不算「检查之后又改了」。
     expect(screen.getByText(zh.chat.checkStale(["类型检查", "测试"], ["Row.tsx"]))).toBeTruthy();
   });
 
-  it("类型检查之后改了文件、只重跑了测试：类型检查那一行标「改动前跑的」，测试不标", () => {
+  it("类型检查之后改了文件、只重跑了测试：类型检查那一行标「已过时」，测试不标", () => {
     render(<TurnChanges items={[
       edit("e1", "src/a.ts"), ok("e1"),
       run("c1", "bunx tsc --noEmit"), ok("c1"),
@@ -40,7 +40,7 @@ describe("本轮结果卡的检查段", () => {
       run("c2", "bunx vitest run"), ok("c2", "Tests  5 passed (5)"),
     ]} />);
     const rows = [...document.querySelectorAll(".chat-turn-check")];
-    expect(rows.map((row) => row.querySelector(".chat-turn-check-result")?.textContent)).toEqual(["通过 · 改动前跑的", "5 个通过"]);
+    expect(rows.map((row) => row.querySelector(".chat-turn-check-result")?.textContent)).toEqual(["通过 · 已过时", "5 个通过"]);
     expect(screen.getByText(zh.chat.checkStale(["类型检查"], ["b.ts"]))).toBeTruthy();
   });
 

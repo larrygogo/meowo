@@ -764,7 +764,7 @@ export const zh = {
         : note.kind === "interrupted" ? "被打断" : note.kind === "background" ? "在后台运行" : note.kind === "missing" ? "没有结果" : note.kind === "notRun" ? "没跑完" : note.kind === "oneFailed" ? "其中一项没过" : "看不出结果",
     checkJump: "跳到这条命令",
     checkStale: (kinds: string[], names: string[]) => `${kinds.join("、")}跑完后又改了 ${names.length === 1 ? names[0] : `${names.length} 个文件（${names.slice(0, 3).join("、")}${names.length > 3 ? " 等" : ""}）`}，${names.length === 1 ? "这处改动" : "这些改动"}还没验证过`,
-    checkStaleTag: "改动前跑的",
+    checkStaleTag: "已过时",
     checkNone: "这一轮改了代码，没有跑测试、类型检查、代码检查或构建",
     revealInChanges: "在「更改」中查看",
     revealNoChange: "这个文件现在没有未提交的改动",
