@@ -1515,6 +1515,7 @@ export const en: Dict = {
     formListSep: ", ",
     formOther: "Other…",
     formOtherPlaceholder: "Type your answer",
+    formOtherPrefix: (text) => `Other: ${text}`,
     formMissing: (n) => (n === 1 ? "1 field still needs an answer" : `${n} fields still need an answer`),
     formSubmit: "Submit",
     formDecline: "Skip",

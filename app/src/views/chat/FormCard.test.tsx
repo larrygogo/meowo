@@ -153,10 +153,29 @@ describe("表单卡", () => {
     fireEvent.click(screen.getByRole("button", { name: zh.chat.formSubmit }));
     expect(sendText).not.toHaveBeenCalled();
     expect(screen.getByRole("alert").textContent).toBe(zh.chat.formMissing(1));
+    // 复验：焦点给「其他」的输入框，而不是第一个选项。
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: `渠道 · ${zh.chat.formOther}` }));
     fireEvent.change(screen.getByRole("textbox", { name: `渠道 · ${zh.chat.formOther}` }), { target: { value: "内测群" } });
-    fireEvent.change(screen.getByRole("textbox", { name: `平台 · ${zh.chat.formOther}` }), { target: { value: "鸿蒙" } });
+    fireEvent.change(screen.getByRole("textbox", { name: `平台 · ${zh.chat.formOther}` }), { target: { value: "鸿蒙、HarmonyOS" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: zh.chat.formSubmit })); });
-    expect(sendText).toHaveBeenCalledWith("填好了表单「其他测试」\n- 渠道：内测群\n- 平台：macOS、鸿蒙");
+    // 复验：多选里「其他」填的字标上「其他：」，自带的「、」不会和选项混在一起。
+    expect(sendText).toHaveBeenCalledWith("填好了表单「其他测试」\n- 渠道：内测群\n- 平台：macOS、其他：鸿蒙、HarmonyOS");
+  });
+
+  it("复验：单选有默认值，打开再关掉「其他」，默认值还在", async () => {
+    const fields = [field("渠道", "choice", { options: ["正式版", "测试版"], default: "正式版", allow_other: true })];
+    const sendText = vi.fn(async () => true);
+    const id = `p${(seq += 1)}`;
+    render(
+      <ChatActionsContext.Provider value={{ sendText }}>
+        <FormMessage item={call(id)} result={result(id, receipt(fields, "默认测试"))} followUps={[]} sessionId={1} />
+      </ChatActionsContext.Provider>,
+    );
+    fireEvent.click(screen.getByRole("radio", { name: zh.chat.formOther }));
+    fireEvent.click(screen.getByRole("radio", { name: zh.chat.formOther }));
+    expect(screen.getByRole("radio", { name: "正式版" }).getAttribute("aria-checked")).toBe("true");
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: zh.chat.formSubmit })); });
+    expect(sendText).toHaveBeenCalledWith("填好了表单「默认测试」\n- 渠道：正式版");
   });
 
   it("审查：切会话后卡片重新挂载，填了一半的字段和「不填了」写的那句都还在，发出后不会再发", async () => {

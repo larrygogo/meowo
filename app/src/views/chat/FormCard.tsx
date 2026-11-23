@@ -178,10 +178,12 @@ function FormCard({ cardId, receipt, followUps }: { cardId: string; receipt: For
     const value = values[index];
     const other = others[index]?.on ? others[index].text.trim() : "";
     if (field.type === "yes_no") return value === null ? null : value ? t.chat.formYes : t.chat.formNo;
-    if (field.type === "choice") return other || (typeof value === "string" ? value : null);
+    // 单选开着「其他」就只认填的字（没写算没填）；关掉「其他」，原来选的那项还在。
+    if (field.type === "choice") return others[index]?.on ? other || null : typeof value === "string" ? value : null;
     if (field.type === "multi_choice") {
       const picked = Array.isArray(value) ? field.options.filter((option) => value.includes(option)) : [];
-      const all = other ? [...picked, other] : picked;
+      // 「其他」填的字可能自带「、」：标上「其他：」，AI 分得清哪段是自己填的（复验 2026-11-23）。
+      const all = other ? [...picked, t.chat.formOtherPrefix(other)] : picked;
       return all.length > 0 ? all.join(t.chat.formListSep) : null;
     }
     return isBlank(value) ? null : String(value).trim();
@@ -201,7 +203,9 @@ function FormCard({ cardId, receipt, followUps }: { cardId: string; receipt: For
     setMissing(absent);
     if (absent.length > 0) {
       // 焦点落到第一项没填的：屏幕阅读器读到它的标签与「必填」，键盘用户直接接着填。
-      rootRef.current?.querySelector<HTMLElement>(`[data-form-field="${absent[0]}"] :is(input, textarea, button)`)?.focus();
+      // 「其他」开着却没写字时，焦点给它的输入框（复验 2026-11-23）。
+      const block = rootRef.current?.querySelector<HTMLElement>(`[data-form-field="${absent[0]}"]`);
+      (block?.querySelector<HTMLElement>("[data-form-other]") ?? block?.querySelector<HTMLElement>("input, textarea, button"))?.focus();
       return;
     }
     void send({ kind: "filled", values: answers });
@@ -326,10 +330,8 @@ function FormFieldBlock({ index, field, value, other, missing, onChange, onOther
     if (field.allowOther) {
       options.push({
         key: "\u0000other", label: t.chat.formOther, on: other.on,
-        pick: () => {
-          if (!multi && !other.on) onChange(null);
-          onOther({ ...other, on: !other.on });
-        },
+        // 不清掉单选原来的值：关掉「其他」时它回来（复验 2026-11-23：曾把默认值弄丢）。
+        pick: () => onOther({ ...other, on: !other.on }),
       });
     }
     control = (
@@ -344,7 +346,7 @@ function FormFieldBlock({ index, field, value, other, missing, onChange, onOther
           ))}
         </div>
         {other.on && (
-          <input className="chat-form-input" value={other.text} autoFocus placeholder={t.chat.formOtherPlaceholder} aria-label={`${field.label} · ${t.chat.formOther}`}
+          <input className="chat-form-input" data-form-other="" value={other.text} autoFocus placeholder={t.chat.formOtherPlaceholder} aria-label={`${field.label} · ${t.chat.formOther}`}
             aria-invalid={missing || undefined} onChange={(event) => onOther({ on: true, text: event.target.value })} />
         )}
       </>
