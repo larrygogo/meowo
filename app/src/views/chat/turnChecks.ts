@@ -490,14 +490,55 @@ function quietPass(segments: Segment[], index: number, output: string, verdicts:
   const segment = segments[index];
   if (segment.background || !QUIET_ON_PASS.test(headOf(segment.text))) return false;
   if (!segment.filters.every((filter) => KEEPS_FAILURES.test(filter.replace(/^\d?>&\d\s*/, "").trim()))) return false;
-  // 一定跑到了：前面每一段，要么和这段之间隔着 ;（不管成败都会跑到这里），要么是切目录这类不会失败的、或已判通过的。
+  return surelyRan(segments, index, verdicts) && !TROUBLE.test(output.replace(/\x1b\[[0-9;]*m/g, ""));
+}
+
+/** 这段一定跑到了：前面每一段，要么和这段之间隔着 ;（不管成败都会跑到这里），要么是切目录这类不会失败的、或已判通过的。 */
+function surelyRan(segments: Segment[], index: number, verdicts: (Verdict | null)[]): boolean {
   for (let at = 0; at < index; at += 1) {
     const between = segments.slice(at, index);
     if (between.some((seg) => seg.next === ";")) continue;
     if (between.some((seg) => seg.next === "||")) return false;
     if (!SETUP.test(headOf(segments[at].text)) && verdicts[at]?.status !== "pass") return false;
   }
-  return !TROUBLE.test(output.replace(/\x1b\[[0-9;]*m/g, ""));
+  return true;
+}
+
+const EXIT_VAR = /(\$\?|\$\{\?\}|\$LASTEXITCODE\b)/i;
+const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * 检查后面紧跟着把退出码打出来：`tsc --noEmit; echo "tsc=$?"`、PowerShell 的 `bunx tsc; "TSC_EXIT=$LASTEXITCODE"`。
+ * 输出里那一行就是这段自己的退出码，比从输出文字推更直接（本机记录里重放，约 60 行因此写成「看不出」）。
+ * 这段被管道接走时 `$?` 是管道最后一节的（`tsc | tail; echo $?` 是 tail 的），不认；单引号里不展开，不认。
+ */
+function echoedExit(segments: Segment[], index: number, output: string, verdicts: (Verdict | null)[]): number | null {
+  const segment = segments[index];
+  const next = segments[index + 1];
+  if (!next || segment.piped || segment.background || segment.next !== ";") return null;
+  const raw = next.text.trim();
+  const arg = /^(?:echo|printf|write-output|write-host)\s+([\s\S]+)$/i.exec(raw)?.[1].trim() ?? (raw.startsWith('"') ? raw : null);
+  if (!arg || arg.startsWith("'") || !EXIT_VAR.test(arg)) return null;
+  if (!surelyRan(segments, index, verdicts)) return null;
+  const text = arg.replace(/^"([\s\S]*)"$/, "$1").replace(/\\n$/, "");
+  let pattern = "";
+  let captured = false;
+  for (const part of text.split(EXIT_VAR)) {
+    if (new RegExp(`^${EXIT_VAR.source}$`, "i").test(part)) {
+      pattern += captured ? "-?\\d+" : "(-?\\d+)";
+      captured = true;
+      continue;
+    }
+    // 别的变量（`$name`、`${x}`、`$(cmd)`）展开成什么不知道，当任意字。
+    pattern += part.split(/\$\{[^}]*\}|\$\([^)]*\)|\$\w+/).map(escapeRe).join(".*?");
+  }
+  const line = new RegExp(`^\\s*${pattern}\\s*$`);
+  const lines = output.replace(/\x1b\[[0-9;]*m/g, "").split(/\r?\n/);
+  for (let at = lines.length - 1; at >= 0; at -= 1) {
+    const match = line.exec(lines[at]);
+    if (match) return Number(match[1]);
+  }
+  return null;
 }
 
 /**
@@ -541,6 +582,14 @@ function judgeCommand(segments: Segment[], kindsBySegment: CheckKind[][], result
     const segment = segments[index];
     if (segment.background) {
       verdicts[index] = { status: "unknown", note: { kind: "background" } };
+      continue;
+    }
+    // 退出码直接打在输出里：照它判。
+    const echoed = echoedExit(segments, index, result.text, verdicts);
+    if (echoed !== null) {
+      const tests = (own.get(index) ?? []).find((marker) => marker.failed === 0 && marker.unit === "tests");
+      verdicts[index] = echoed === 0 ? { status: "pass", note: { kind: "passed", count: tests?.passed ?? null } }
+        : { status: "fail", note: { kind: "failed", count: null, unit: null } };
       continue;
     }
     if (failing.some((f) => f < index && chainedAnd(segments, f, index))) {

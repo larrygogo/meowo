@@ -110,6 +110,30 @@ describe("这一轮的检查", () => {
     ]);
   });
 
+  // 本机记录重放：`tsc; echo "tsc=$?"` 这类把退出码打出来的，原来照样写「看不出」。
+  it("检查后面紧跟着把退出码打出来：照打出来的退出码判", () => {
+    const checks = collectTurnChecks([
+      ...run(`npx tsc --noEmit -p .; echo "tsc=$?"; npx vitest run 2>&1 | tail -3`, { text: "src/a.ts(1,1): warning-ish noise\ntsc=0\n Tests  3 passed (3)" }),
+      ...run("cargo clippy -- -D warnings; echo clippy-exit=$?", { text: "clippy-exit=101" }),
+      ...run(`bunx tsc --noEmit -p ui; "TSC_EXIT=$LASTEXITCODE"; bun run build 2>&1 | Select-Object -Last 2; "BUILD_EXIT=$LASTEXITCODE"`, { text: "✓ built in 385ms\nTSC_EXIT=2\nBUILD_EXIT=0" }),
+    ]);
+    expect(checks.map((c) => [c.kinds, c.status])).toEqual([
+      [["typecheck", "test"], "pass"],
+      [["lint"], "fail"],
+      [["typecheck"], "fail"],
+      [["build"], "pass"],
+    ]);
+  });
+
+  it("打出来的退出码不是这段的就不认：被管道接走、单引号不展开、前面 && 的一步可能没过", () => {
+    const checks = collectTurnChecks([
+      ...run(`npx tsc --noEmit 2>&1 | tail -15; echo "tsc exit=$?"`, { text: "src/a.ts(1,1): error TS2304: Cannot find name\ntsc exit=0" }),
+      ...run(`npx eslint src; echo 'exit=$?'`, { text: "  1:1  warning  x\nexit=$?" }),
+      ...run(`node gen.mjs && npx tsc -p app; echo "exit=$?"`, { text: "boom\nexit=1" }),
+    ]);
+    expect(checks.map((c) => [c.kinds[0], c.status])).toEqual([["typecheck", "fail"], ["lint", "unknown"], ["typecheck", "unknown"]]);
+  });
+
   // 没过一定会报出来的工具（clippy、tsc），输出里一点出错的字眼都没有：退出码落不到它身上也算通过。
   it("|| true、; echo 之后，过了不吭声的工具输出干净：算通过", () => {
     const checks = collectTurnChecks([...run("cargo clippy || true"), ...run("bunx tsc --noEmit; echo done", { text: "done" })]);
