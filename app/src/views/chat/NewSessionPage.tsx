@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
-import { type AgentId, type LiveSession, type QueuedPromptDto, agentName, getSessionAdminPage, listSubdirectories, promptQueueOrphans, promptQueueRestoreOrphan, savePastedAttachment } from "../../api";
+import { type AgentId, type LiveSession, type QueuedPromptDto, agentName, getSessionAdminPage, listSubdirectories, pinWorkspace, promptQueueOrphans, promptQueueRestoreOrphan, savePastedAttachment } from "../../api";
 import { formatBackendError } from "../../i18n/errors";
 import { type Attachment, attachmentOf, base64OfBuffer } from "./drafts";
 import { prepareUploadQueued, UploadPrepareError } from "./prepareUpload";
@@ -20,6 +20,7 @@ import { useT } from "../../i18n";
 import { imeComposing } from "../../ime";
 import { useNewSessionForm } from "../useNewSessionForm";
 import { WorkspacePicker } from "./WorkspacePicker";
+import { useSettingsEffect } from "../../hooks/useSettings";
 import { WorktreeOption } from "../WorktreeOption";
 import { Icon } from "../../icons/Icon";
 import { icArrowUp, icShield } from "../../icons/glyphs.chat";
@@ -140,6 +141,9 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
   };
 
   // 预填的目录（卡片菜单「在此工作区新建」）可能不在最近列表里，补在最前面。
+  // 固定的常用工作区：下拉里单列「已固定」一节；固定 / 取消后 settings-changed 广播回来即刷新。
+  const [pinnedWorkspaces, setPinnedWorkspaces] = useState<readonly string[]>([]);
+  useSettingsEffect((s) => setPinnedWorkspaces(s.pinned_workspaces ?? []));
   const dirs = cwd && !recent.some((dir) => pathKey(dir) === pathKey(cwd)) ? [cwd, ...recent] : recent;
 
   return (
@@ -159,6 +163,8 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
         <WorkspacePicker
           cwd={cwd}
           dirs={dirs}
+          pinned={pinnedWorkspaces}
+          onTogglePin={(dir, pin) => void pinWorkspace(dir, pin).catch(() => {})}
           onPick={(dir) => { setCwd(dir); setError(null); }}
           onPickFolder={() => void pickFolder()}
         />

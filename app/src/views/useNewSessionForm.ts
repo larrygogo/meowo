@@ -150,7 +150,11 @@ export function useNewSessionForm(startCwd: string, startProvider: AgentId | nul
         .then((s) => setProvider(s.default_agent))
         .catch(() => {});
     }
-    recentCwds(8)
+    // 固定的工作区由后端排在最前、占 limit 的名额：按固定个数放宽，最近用过的仍有 8 个。
+    Promise.resolve()
+      .then(() => getSettings())
+      .catch(() => null)
+      .then((s) => recentCwds(8 + (s?.pinned_workspaces?.length ?? 0)))
       .then((list) => {
         // 后端按原始字符串去重；同一目录可能因历史数据斜杠方向不同而重复。
         // 前端 normalize 后再按大小写不敏感（Windows）去重一次。

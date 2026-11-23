@@ -368,6 +368,7 @@ export const QA_SHOTS = [
   // 矮窗口里勾上 worktree：内容比窗口高。整列垂直居中时图标会被裁到滚动区上方、滚不回来（2026-11-12 用户实拍 2000×855@2x）。
   { name: "qa-nsp-wt-short", scene: "newsession-page-wt", size: [1280, 560], sel: ".wt-opt-body" },
   { name: "qa-nsp-wt-short-1000", scene: "newsession-page-wt", size: [1000, 428], sel: ".wt-opt-body" },
+  { name: "qa-nsp-ws-pin", scene: "newsession-page", steps: [["click", ".nsp-ws-btn"], ["hover", ".nsp-ws-row >> nth=1"], ["tick", 200]] },
   // ── 灵动岛：缩放 150%、悬停 ──
   { name: "qa-island-panel-ui150", scene: "island-panel", params: "ui=1.5", size: [1000, 460], sel: ".island-shell", langs: ["zh", "en"], themes: ["dark"] },
   { name: "qa-island-usage-ui150", scene: "island-usage", params: "ui=1.5", size: [1000, 460], sel: ".island-shell", themes: ["dark"] },
