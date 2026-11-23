@@ -11,6 +11,7 @@
    "tail_rows": 0,
    "tail_pattern": null,
    "empty_pattern": "^(?:Type your message or @path/to/file|Press 'Esc' for NORMAL mode\\.|Press 'i' for INSERT mode\\.)?$",
+   "suggestion_placeholder": false,
    "send_requires_recognition": true,
    "stash": null,
    "clear_inputs": [
@@ -53,6 +54,7 @@
    "tail_rows": 0,
    "tail_pattern": null,
    "empty_pattern": "^$",
+   "suggestion_placeholder": false,
    "send_requires_recognition": true,
    "stash": null,
    "clear_inputs": [
@@ -80,6 +82,7 @@
    "tail_rows": 0,
    "tail_pattern": null,
    "empty_pattern": "^(?:Ask Codex to do anything)?$",
+   "suggestion_placeholder": false,
    "send_requires_recognition": true,
    "stash": null,
    "clear_inputs": [
@@ -107,6 +110,7 @@
    "tail_rows": 2,
    "tail_pattern": "^\\s*┃\\s+\\S.* · .+$",
    "empty_pattern": "^(?:Ask\\s+anything…(?:\\s+\"[^\"]*\")?)?$",
+   "suggestion_placeholder": false,
    "send_requires_recognition": true,
    "stash": null,
    "clear_inputs": [
@@ -134,6 +138,7 @@
    "tail_rows": 0,
    "tail_pattern": null,
    "empty_pattern": "^(?:Try \"[^\"\\r\\n]*\")?$",
+   "suggestion_placeholder": true,
    "send_requires_recognition": false,
    "stash": {
     "input": "\u0013",
@@ -26505,6 +26510,52 @@
     "complete": false,
     "why": "overflow"
    }
+  },
+  {
+   "name": "claude-2.1.330-suggestion-zh",
+   "provider": "claude",
+   "version": "2.1.330",
+   "source": "2026-11-23 winpty+pyte 实拍：回合结束约 5~10 秒后输入框里暗色画出预测的下一句（SGR 2，光标停在列 2）",
+   "lines": [
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯ 加个测试跑一下",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  Opus 5.5 · 5% ctx",
+    "  ⏵⏵ auto mode on (shift+tab to cycle)"
+   ],
+   "expect": "empty",
+   "cursor": {
+    "row": 2,
+    "col": 2,
+    "visible": true,
+    "dim": true
+   },
+   "cols": 120,
+   "suggestion": "加个测试跑一下"
+  },
+  {
+   "name": "claude-2.1.330-suggestion-en",
+   "provider": "claude",
+   "version": "2.1.330",
+   "source": "2026-11-23 winpty+pyte 实拍：回合结束约 5~10 秒后输入框里暗色画出预测的下一句（SGR 2，光标停在列 2）",
+   "lines": [
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯ Add multiply and divide functions too.",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  Opus 5.5 · 5% ctx",
+    "  ⏵⏵ auto mode on (shift+tab to cycle)"
+   ],
+   "expect": "empty",
+   "cursor": {
+    "row": 2,
+    "col": 2,
+    "visible": true,
+    "dim": true
+   },
+   "cols": 120,
+   "suggestion": "Add multiply and divide functions too."
   }
  ]
 }

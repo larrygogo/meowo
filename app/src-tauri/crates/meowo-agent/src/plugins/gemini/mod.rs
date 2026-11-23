@@ -347,6 +347,7 @@ impl AgentPlugin for Gemini {
             tail_rows: 0,
             tail_pattern: None,
             empty_pattern: r"^(?:Type your message or @path/to/file|Press 'Esc' for NORMAL mode\.|Press 'i' for INSERT mode\.)?$",
+            suggestion_placeholder: false,
             send_requires_recognition: true,
             stash: None,
             clear_inputs: &["\x0b", "\x15", "\x7f"],

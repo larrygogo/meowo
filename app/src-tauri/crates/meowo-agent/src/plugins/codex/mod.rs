@@ -409,6 +409,7 @@ impl AgentPlugin for Codex {
             tail_rows: 0,
             tail_pattern: None,
             empty_pattern: r"^(?:Ask Codex to do anything)?$",
+            suggestion_placeholder: false,
             send_requires_recognition: true,
             stash: None,
             clear_inputs: &["\x03"],

@@ -129,6 +129,7 @@ import { REMOTE_PREFS_EVENT, remoteTurnFolding } from "../remotePrefs";
 import { RemoteSessionList } from "../mobile/RemoteSessionList";
 import { performUndo, typedUndoTarget, undoConfirmMessage } from "./chat/undoTerminal";
 import { useOutgoingUpkeep } from "./chat/useOutgoingUpkeep";
+import { useComposerSuggestion } from "./chat/useComposerSuggestion";
 import { useQuestionFormProbe } from "./chat/useQuestionFormProbe";
 import { SessionAdmin } from "./chat/SessionAdmin";
 import { NewSessionPage } from "./chat/NewSessionPage";
@@ -920,6 +921,9 @@ export function ChatWindow() {
   // 按 provider+cwd 查询——换会话、换项目都重取，装了新命令下次打开就见。
   // 未知 provider / 查询未回时为空：不补全、不给菜单，宁缺毋滥。
   const [chatUi, setChatUi] = useState<ChatUi | null>(null);
+  // 建议回复：Claude 回合结束后在终端输入框里画的「预测的下一句」，读出来放到输入框上方（只填不发）。
+  // 只在主回合停下、终端由 Meowo 托管、没有待答的终端交互时读。
+  const composerSuggestion = useComposerSuggestion(sessionId, chatUi?.composer, tone !== "running" && history?.ptyManaged === true && !terminalReview);
   // 往终端写东西之前收拾它的输入框（有草稿就收起或搬进对话页，见 chat/nativeDraft）。
   const nativeDraft = useNativeDraft({
     scope: sessionScope, sessionId, spec: chatUi?.composer, newline: chatUi?.newline_input, setPrompt,
@@ -1617,6 +1621,16 @@ export function ChatWindow() {
       el.setSelectionRange(next.length, next.length);
     });
   }, []);
+  // 建议回复：填进输入框、光标放到末尾接着改，不发。
+  const acceptSuggestion = (text: string) => {
+    setPrompt(text);
+    requestAnimationFrame(() => {
+      const el = promptInputRef.current;
+      if (!el) return;
+      el.focus({ preventScroll: true });
+      el.setSelectionRange(text.length, text.length);
+    });
+  };
   // 「更改」面板的「交给 agent」（冲突、拉取冲突）：把现成的一句话放进输入框，用户看过再发。
   const insertPanelPrompt = useCallback((text: string) => insertIntoPromptRef.current(text), []);
   const pickStarter = (text: string) => {
@@ -5496,6 +5510,17 @@ export function ChatWindow() {
             <button type="button" className="chat-deferred-cancel" onClick={() => void sessionSettings.cancelDeferred()}>{t.chat.settingsDeferredCancel}</button>
           </div>
         ) : <div className="chat-send-error" role="status"><span>{sessionSettings.notice}</span></div>)}
+        {composerSuggestion && !prompt.trim() && !composerGated && supersededTo == null && (
+          // 对照 Claude 终端的灰字建议：那边按 Tab 接受；这里点按钮或在空输入框按 Tab，都只填不发。
+          <div className="chat-suggest">
+            <button type="button" className="chat-suggest-chip" data-tip={t.chat.suggestTip}
+              onClick={() => acceptSuggestion(composerSuggestion)}>
+              <span className="chat-suggest-label">{t.chat.suggestLabel}</span>
+              <span className="chat-suggest-text">{composerSuggestion}</span>
+              {!compactChrome && <kbd className="chat-suggest-key">Tab</kbd>}
+            </button>
+          </div>
+        )}
         <textarea
           ref={promptInputRef}
           value={prompt}
@@ -5557,6 +5582,12 @@ export function ChatWindow() {
             void pasteAttachments(files);
           }}
           onKeyDown={(event) => {
+            // 输入框空着、有建议回复时 Tab 接受（同 Claude 终端）：只填不发。
+            if (event.key === "Tab" && !event.shiftKey && composerSuggestion && !prompt.trim()) {
+              event.preventDefault();
+              acceptSuggestion(composerSuggestion);
+              return;
+            }
             // 补全菜单开着时按键先归菜单：↑↓ 移动高亮，Enter/Tab 把高亮项写进输入框
             // （不是发送——此前菜单展开时 Enter 直接把半截命令发出去了），Esc 收起。
             if (slashMatches.length > 0) {

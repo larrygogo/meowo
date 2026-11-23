@@ -652,6 +652,8 @@ export const en: Dict = {
     checkStaleTag: "outdated",
     checkNone: "Code changed this turn, but no tests, type check, lint or build ran",
     checkRerun: "Ask AI to rerun",
+    suggestLabel: "Suggested",
+    suggestTip: "Claude's guess at your next message. Click or press Tab to put it in the box; you review before sending",
     checkRunNow: "Ask AI to run checks",
     checkFailed: (kinds: string[]) => `${kinds.join(", ")} failed, and no code changed afterwards`,
     checkFix: "Ask AI to fix",

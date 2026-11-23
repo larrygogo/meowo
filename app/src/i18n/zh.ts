@@ -767,6 +767,8 @@ export const zh = {
     checkStaleTag: "已过时",
     checkNone: "这一轮改了代码，没有跑测试、类型检查、代码检查或构建",
     checkRerun: "让 AI 重跑",
+    suggestLabel: "建议",
+    suggestTip: "Claude 猜你下一句想说的。点一下或按 Tab 填进输入框，你看过再发",
     checkRunNow: "让 AI 跑检查",
     checkFailed: (kinds: string[]) => `${kinds.join("、")}没过，之后也没再改代码`,
     checkFix: "让 AI 修",

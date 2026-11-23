@@ -781,6 +781,7 @@ impl AgentPlugin for Kimi {
             tail_rows: 0,
             tail_pattern: None,
             empty_pattern: r"^$",
+            suggestion_placeholder: false,
             send_requires_recognition: true,
             stash: None,
             clear_inputs: &["\x03"],

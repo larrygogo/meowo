@@ -4571,6 +4571,13 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-turn-checks-note { margin: 0; padding: var(--sp-8) var(--sp-14); border-top: var(--hairline) solid var(--cc-border); font-size: var(--text-xs); color: var(--cc-text-faint); }
 .chat-turn-changes > .chat-turn-checks-note:first-child { border-top: 0; }
 .chat-turn-checks-note.is-warn { color: var(--cc-warn-text); }
+/* 建议回复：输入框上方一颗按钮，像一句没发出的话；不抢眼，只填不发。 */
+.chat-suggest { display: flex; padding: 0 var(--sp-4) var(--sp-6); min-width: 0; }
+.chat-suggest-chip { display: inline-flex; align-items: center; gap: var(--sp-8); max-width: 100%; min-width: 0; padding: var(--sp-4) var(--sp-10); border: var(--hairline) dashed var(--cc-border); border-radius: var(--radius-sm); background: none; font: inherit; font-size: var(--text-sm); color: var(--cc-text-dim); cursor: pointer; text-align: left; }
+.chat-suggest-chip:hover { border-style: solid; background: var(--fill-hover); color: var(--cc-text); }
+.chat-suggest-label { flex: none; font-size: var(--text-xs); color: var(--cc-text-faint); }
+.chat-suggest-text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.chat-suggest-key { flex: none; padding: 0 var(--sp-4); border: var(--hairline) solid var(--cc-border); border-radius: 4px; font-family: var(--cc-mono); font-size: var(--text-xs); color: var(--cc-text-faint); }
 .chat-turn-checks-note.is-err { color: var(--cc-err-text); }
 .chat-turn-checks-note:has(.chat-turn-checks-fill) { display: flex; align-items: center; gap: var(--sp-8); }
 .chat-turn-checks-text { flex: 1 1 auto; min-width: 0; }
