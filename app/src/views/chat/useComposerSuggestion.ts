@@ -12,6 +12,12 @@ export const SUGGESTION_POLL_TRIES = 30;
 /// 读到以后低频复核：用户在终端页打字、或终端里建议没了，对话页跟着收（独立审查第 2 条）。
 export const SUGGESTION_RECHECK_MS = 5000;
 export const SUGGESTION_RECHECK_TRIES = 120;
+/// 终端一有输出就读（用户：「这个显示不是很及时」）：Claude 画建议是一阵输出，等它停 250ms、光标亮回来再读。
+/// 上面的定时读降为兜底（事件在窗口重挂间隙会丢）。
+export const SUGGESTION_SETTLE_MS = 250;
+
+/// 订阅这个会话的终端输出：每来一帧回调一次，返回取消订阅。
+export type TerminalOutputSubscribe = (onOutput: () => void) => () => void;
 
 /// 主回合停下（不在跑）且这一家会画建议时，隔一会儿读一次终端输入框。读到后转为低频复核。
 /// 回合又跑起来、换会话、这一家不画建议时清掉。`dismiss` 在发送时调用：这一句用过了，
@@ -21,6 +27,7 @@ export function useComposerSuggestion(
   spec: ComposerSpec | null | undefined,
   idle: boolean,
   io?: ComposerIo,
+  subscribe?: TerminalOutputSubscribe,
 ): [string | null, () => void] {
   const [suggestion, setSuggestion] = useState<string | null>(null);
   const usedRef = useRef<string | null>(null);
@@ -28,6 +35,8 @@ export function useComposerSuggestion(
   // 规格对象可能随会话信息刷新换引用：经 ref 取，换引用不该把已读到的建议清掉、重新读一遍。
   const specRef = useRef(spec);
   specRef.current = spec;
+  const subscribeRef = useRef(subscribe);
+  subscribeRef.current = subscribe;
   useEffect(() => {
     setSuggestion(null);
     const spec = specRef.current;
@@ -39,8 +48,15 @@ export function useComposerSuggestion(
     let shown: string | null = null;
     let missed = false;
     let timer: number | undefined;
-    const tick = async () => {
+    let settle: number | undefined;
+    let reading = false;
+    // counted：定时读计入上限；终端输出触发的读不计（不然一阵输出就把 30 次用光），读完照旧排下一次定时读。
+    const tick = async (counted = true) => {
+      if (reading) return;
+      reading = true;
+      window.clearTimeout(timer);
       const frame = await terminal.frame().catch(() => null);
+      reading = false;
       if (cancelled) return;
       let found = composerSuggestion(readComposerFrame(frame, spec), spec);
       if (found && found === usedRef.current) found = null;
@@ -57,15 +73,22 @@ export function useComposerSuggestion(
         setSuggestion(found);
       }
       if (shown) {
-        if ((rechecks += 1) < SUGGESTION_RECHECK_TRIES) timer = window.setTimeout(() => void tick(), SUGGESTION_RECHECK_MS);
-      } else if ((tries += 1) < SUGGESTION_POLL_TRIES) {
+        if (!counted || (rechecks += 1) < SUGGESTION_RECHECK_TRIES) timer = window.setTimeout(() => void tick(), SUGGESTION_RECHECK_MS);
+      } else if (!counted || (tries += 1) < SUGGESTION_POLL_TRIES) {
         timer = window.setTimeout(() => void tick(), SUGGESTION_POLL_MS);
       }
     };
     timer = window.setTimeout(() => void tick(), SUGGESTION_POLL_MS);
+    const unsubscribe = subscribeRef.current?.(() => {
+      if (cancelled) return;
+      window.clearTimeout(settle);
+      settle = window.setTimeout(() => void tick(false), SUGGESTION_SETTLE_MS);
+    });
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
+      window.clearTimeout(settle);
+      unsubscribe?.();
     };
   }, [enabled, sessionId, io]);
   // 新一轮跑起来以后，上一句「用过的」作废：下一轮 Claude 可能又猜出同一句，那时该照常显示。

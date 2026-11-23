@@ -924,7 +924,14 @@ export function ChatWindow() {
   const [chatUi, setChatUi] = useState<ChatUi | null>(null);
   // 建议回复：Claude 回合结束后在终端输入框里画的「预测的下一句」，读出来放到输入框上方（只填不发）。
   // 只在主回合停下、终端由 Meowo 托管、没有待答的终端交互时读。
-  const [composerSuggestion, dismissSuggestion] = useComposerSuggestion(sessionId, chatUi?.composer, tone !== "running" && history?.ptyManaged === true && !terminalReview);
+  // 终端一有输出就让建议回复去读一次（见下方 pty-output 监听），不用干等定时读。
+  const ptyOutputListenersRef = useRef(new Set<() => void>());
+  const subscribePtyOutput = useCallback((onOutput: () => void) => {
+    const listeners = ptyOutputListenersRef.current;
+    listeners.add(onOutput);
+    return () => void listeners.delete(onOutput);
+  }, []);
+  const [composerSuggestion, dismissSuggestion] = useComposerSuggestion(sessionId, chatUi?.composer, tone !== "running" && history?.ptyManaged === true && !terminalReview, undefined, subscribePtyOutput);
   // 所有往终端提交消息的路径（输入框、出错卡「继续」、方案卡、排队、侧问）都经这里：真写进终端那一刻，
   // 那句建议就过期了，别在回合跑起来之前又冒出来、Tab 又填回去。放在写终端处而不是发送入口：
   // 被拦下没发的不算（独立审查第 1 条与复验第 1、2 条）。
@@ -2339,6 +2346,7 @@ export function ChatWindow() {
   useTauriEvent<{ sessionId: number }>("pty-output", (event) => {
     if (event.payload.sessionId !== activeSessionRef.current) return;
     scheduleEventRefresh();
+    for (const onOutput of ptyOutputListenersRef.current) onOutput();
   });
   useTauriEvent<{ sessionId: number }>("chat-transcript", (event) => {
     if (event.payload.sessionId !== activeSessionRef.current) return;
