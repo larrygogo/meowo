@@ -1513,6 +1513,8 @@ export const en: Dict = {
     formYes: "Yes",
     formNo: "No",
     formListSep: ", ",
+    formOther: "Other…",
+    formOtherPlaceholder: "Type your answer",
     formMissing: (n) => (n === 1 ? "1 field still needs an answer" : `${n} fields still need an answer`),
     formSubmit: "Submit",
     formDecline: "Skip",

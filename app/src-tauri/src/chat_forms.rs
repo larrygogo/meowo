@@ -5,7 +5,6 @@
 //! 消息送达。不用 MCP 规范的 elicitation：那个弹框由 CLI 画在终端里，手机看不到，各家支持也不一
 //! （.lead/20261123-agent-abilities/research/landscape.md 第 3 节）。
 
-use meowo_agent::images::{ImageError, ImageErrorCode};
 use serde_json::{json, Value};
 
 const MAX_FIELDS: usize = 8;
@@ -22,11 +21,13 @@ const DEFAULT_TEXT_MAX: usize = 2000;
 const TYPES: [&str; 5] = ["text", "long_text", "choice", "multi_choice", "yes_no"];
 
 pub(crate) fn ask_form(args: &Value) -> Result<Value, String> {
-    form_receipt(args).map(|text| json!({ "text": text })).map_err(|e| e.receipt())
+    form_receipt(args).map(|text| json!({ "text": text }))
 }
 
-fn invalid(message: impl Into<String>) -> ImageError {
-    ImageError::new(ImageErrorCode::NotFound, message)
+/// 参数错误：直接一句话告诉 agent 怎么改。不借图片工具的 `[Image error: …]` 前缀（审查 2026-11-23：
+/// agent 会以为是图片出了问题）。
+fn invalid(message: impl Into<String>) -> String {
+    format!("表单没发出去：{}", message.into())
 }
 
 /// 单行文字：换行与连续空白压成一个空格，按字符截到上限。标题、标签、选项要压：卡片替用户发的消息
@@ -42,7 +43,7 @@ fn block_field(value: Option<&Value>, max: usize) -> Option<String> {
     (!text.is_empty()).then(|| text.chars().take(max).collect())
 }
 
-fn field_of(index: usize, raw: &Value, seen: &mut Vec<String>) -> Result<Value, ImageError> {
+fn field_of(index: usize, raw: &Value, seen: &mut Vec<String>) -> Result<Value, String> {
     let number = index + 1;
     let label = line_field(raw.get("label"), LABEL_MAX)
         .ok_or_else(|| invalid(format!("第 {number} 个字段缺少 label：写一句短问题，比如「部署到哪个环境」")))?;
@@ -82,34 +83,51 @@ fn field_of(index: usize, raw: &Value, seen: &mut Vec<String>) -> Result<Value, 
     } else {
         None
     };
-    let default = match (kind, raw.get("default")) {
-        (_, None | Some(Value::Null)) => Value::Null,
-        ("yes_no", Some(Value::Bool(value))) => json!(value),
-        ("yes_no", Some(_)) => return Err(invalid(format!("「{label}」是 yes_no，default 要是 true 或 false"))),
-        ("choice", Some(value)) => {
-            let picked = line_field(Some(value), OPTION_MAX);
-            match picked {
+    // 预填答案按类型分两个参数（审查 2026-11-23）：default 一律是文字，多选用 defaults（文字数组）。
+    // schema 里不留无类型参数，免得哪家 CLI 把它补成字符串类型。旧写法（布尔、数组塞进 default）照收。
+    let fallback = raw.get("default").filter(|v| !v.is_null());
+    let list = raw.get("defaults").filter(|v| !v.is_null()).or_else(|| fallback.filter(|v| v.is_array()));
+    let default = match kind {
+        "yes_no" => match fallback {
+            None => Value::Null,
+            Some(Value::Bool(value)) => json!(value),
+            Some(Value::String(text)) => match text.trim().to_lowercase().as_str() {
+                "true" | "yes" | "是" => json!(true),
+                "false" | "no" | "否" => json!(false),
+                _ => return Err(invalid(format!("「{label}」是 yes_no，default 要是 true 或 false"))),
+            },
+            Some(_) => return Err(invalid(format!("「{label}」是 yes_no，default 要是 true 或 false"))),
+        },
+        "choice" => match fallback {
+            None => Value::Null,
+            Some(value) => match line_field(Some(value), OPTION_MAX) {
                 Some(picked) if options.as_ref().is_some_and(|o| o.contains(&picked)) => json!(picked),
                 _ => return Err(invalid(format!("「{label}」的 default 要是 options 里的一项"))),
+            },
+        },
+        "multi_choice" => match list {
+            None if fallback.is_some() => {
+                return Err(invalid(format!("「{label}」是 multi_choice，预选项写在 defaults 里（选项数组）")))
             }
-        }
-        ("multi_choice", Some(Value::Array(values))) => {
-            let mut picked: Vec<String> = Vec::new();
-            for value in values {
-                match line_field(Some(value), OPTION_MAX) {
-                    Some(v) if options.as_ref().is_some_and(|o| o.contains(&v)) => {
-                        if !picked.contains(&v) {
-                            picked.push(v);
+            None => Value::Null,
+            Some(Value::Array(values)) => {
+                let mut picked: Vec<String> = Vec::new();
+                for value in values {
+                    match line_field(Some(value), OPTION_MAX) {
+                        Some(v) if options.as_ref().is_some_and(|o| o.contains(&v)) => {
+                            if !picked.contains(&v) {
+                                picked.push(v);
+                            }
                         }
+                        _ => return Err(invalid(format!("「{label}」的 defaults 要是 options 里的几项"))),
                     }
-                    _ => return Err(invalid(format!("「{label}」的 default 要是 options 里的几项"))),
                 }
+                json!(picked)
             }
-            json!(picked)
-        }
-        ("multi_choice", Some(_)) => return Err(invalid(format!("「{label}」是 multi_choice，default 要是选项数组"))),
-        ("long_text", Some(value)) => json!(block_field(Some(value), DEFAULT_TEXT_MAX)),
-        (_, Some(value)) => json!(line_field(Some(value), DEFAULT_TEXT_MAX)),
+            Some(_) => return Err(invalid(format!("「{label}」的 defaults 要是选项数组"))),
+        },
+        "long_text" => json!(block_field(fallback, DEFAULT_TEXT_MAX)),
+        _ => json!(line_field(fallback, DEFAULT_TEXT_MAX)),
     };
     Ok(json!({
         "label": label,
@@ -119,10 +137,12 @@ fn field_of(index: usize, raw: &Value, seen: &mut Vec<String>) -> Result<Value, 
         "placeholder": if choice || kind == "yes_no" { None } else { line_field(raw.get("placeholder"), PLACEHOLDER_MAX) },
         "default": default,
         "optional": raw.get("optional").and_then(Value::as_bool).unwrap_or(false),
+        // 单选 / 多选可以多一个「其他」让用户自己填（对照 Claude Code 的 AskUserQuestion，审查 2026-11-23 补上）。
+        "allow_other": choice && raw.get("allow_other").and_then(Value::as_bool).unwrap_or(false),
     }))
 }
 
-pub(crate) fn form_receipt(args: &Value) -> Result<String, ImageError> {
+pub(crate) fn form_receipt(args: &Value) -> Result<String, String> {
     let title = line_field(args.get("title"), TITLE_MAX)
         .ok_or_else(|| invalid("缺少 title 参数：给表单起个短标题，比如「部署配置」"))?;
     let raw = args
@@ -167,8 +187,8 @@ mod tests {
             "intro": "开工前\n确认几件事",
             "fields": [
                 { "label": "环境", "type": "choice", "options": ["预发", "生产"], "default": "预发" },
-                { "label": "通知谁", "type": "multi_choice", "options": ["运维", "我", "测试"], "default": ["我", "我"], "optional": true },
-                { "label": "顺带迁移数据", "type": "yes_no", "default": false, "help": "迁移要停服 5 分钟" },
+                { "label": "通知谁", "type": "multi_choice", "options": ["运维", "我", "测试"], "defaults": ["我", "我"], "optional": true, "allow_other": true },
+                { "label": "顺带迁移数据", "type": "yes_no", "default": "false", "help": "迁移要停服 5 分钟" },
                 { "label": "版本号", "placeholder": "比如 0.9.0" },
                 { "label": "备注", "type": "long_text", "default": "第一行\n第二行", "optional": true },
             ]
@@ -179,8 +199,9 @@ mod tests {
         assert_eq!(sum["title"], "部署配置");
         assert_eq!(sum["intro"], "开工前 确认几件事");
         let fields = sum["fields"].as_array().unwrap();
-        assert_eq!(fields[0], json!({ "label": "环境", "type": "choice", "help": null, "options": ["预发", "生产"], "placeholder": null, "default": "预发", "optional": false }));
+        assert_eq!(fields[0], json!({ "label": "环境", "type": "choice", "help": null, "options": ["预发", "生产"], "placeholder": null, "default": "预发", "optional": false, "allow_other": false }));
         assert_eq!(fields[1]["default"], json!(["我"]));
+        assert_eq!(fields[1]["allow_other"], true);
         assert_eq!(fields[1]["optional"], true);
         assert_eq!(fields[2]["default"], false);
         assert_eq!(fields[2]["help"], "迁移要停服 5 分钟");
@@ -204,14 +225,29 @@ mod tests {
             (json!({ "title": "t", "fields": [{ "label": "a", "type": "choice", "options": ["x"] }] }), "2~8"),
             (json!({ "title": "t", "fields": [{ "label": "a", "type": "choice", "options": ["x", "x"] }] }), "重复"),
             (json!({ "title": "t", "fields": [{ "label": "a", "type": "choice", "options": ["x", "y"], "default": "z" }] }), "default"),
-            (json!({ "title": "t", "fields": [{ "label": "a", "type": "multi_choice", "options": ["x", "y"], "default": "x" }] }), "数组"),
-            (json!({ "title": "t", "fields": [{ "label": "a", "type": "yes_no", "default": "是" }] }), "true"),
+            (json!({ "title": "t", "fields": [{ "label": "a", "type": "multi_choice", "options": ["x", "y"], "default": "x" }] }), "defaults"),
+            (json!({ "title": "t", "fields": [{ "label": "a", "type": "multi_choice", "options": ["x", "y"], "defaults": ["z"] }] }), "defaults"),
+            (json!({ "title": "t", "fields": [{ "label": "a", "type": "yes_no", "default": "也许" }] }), "true"),
         ];
         for (args, hint) in cases {
-            let err = form_receipt(&args).unwrap_err().receipt();
-            assert!(err.starts_with(meowo_agent::images::ERROR_PREFIX), "{args}");
+            let err = form_receipt(&args).unwrap_err();
+            // 不借图片工具的错误前缀：agent 一看就知道是表单参数的事。
+            assert!(err.starts_with("表单没发出去：") && !err.contains("[Image error"), "{args} → {err}");
             assert!(err.contains(hint), "{args} → {err}");
         }
+    }
+
+    /// 旧写法（布尔、数组直接放进 default）照收；「其他」只给单选 / 多选。
+    #[test]
+    fn legacy_defaults_and_other_only_for_choices() {
+        let sum = summary(&form_receipt(&json!({ "title": "t", "fields": [
+            { "label": "a", "type": "yes_no", "default": true },
+            { "label": "b", "type": "multi_choice", "options": ["x", "y"], "default": ["y"] },
+            { "label": "c", "type": "text", "allow_other": true },
+        ] })).unwrap());
+        assert_eq!(sum["fields"][0]["default"], true);
+        assert_eq!(sum["fields"][1]["default"], json!(["y"]));
+        assert_eq!(sum["fields"][2]["allow_other"], false);
     }
 
     #[test]

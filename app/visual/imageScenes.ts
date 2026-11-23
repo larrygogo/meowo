@@ -325,7 +325,7 @@ export function imageSceneItems(part: string, lang: Lang): { items: ChatItem[]; 
         formCall("q1", 200),
         receipt("q1", at(199), form(zh ? "发版配置" : "Release setup", zh ? "这几项定了我就开始打包，大约 10 分钟。" : "Once these are set I'll start packaging; about 10 minutes.", [
           field(zh ? "版本号" : "Version", "text", { placeholder: zh ? "比如 0.9.0" : "e.g. 0.9.0", default: "0.9.0" }),
-          field(zh ? "发到哪个渠道" : "Channel", "choice", { options: zh ? ["正式版", "测试版", "只打包不发布"] : ["Stable", "Beta", "Build only"] }),
+          field(zh ? "发到哪个渠道" : "Channel", "choice", { options: zh ? ["正式版", "测试版", "只打包不发布"] : ["Stable", "Beta", "Build only"], allow_other: true }),
           field(zh ? "要打哪些平台" : "Platforms", "multi_choice", { options: ["Windows x64", "macOS arm64", "macOS x64", "Linux"], default: ["Windows x64", "macOS arm64"] }),
           field(zh ? "顺带清理旧的草稿版本" : "Delete old draft releases too", "yes_no", { help: zh ? "会删掉 GitHub 上 3 个旧草稿，删了找不回。" : "Removes 3 old drafts on GitHub; this can't be undone." }),
           field(zh ? "更新说明里额外写什么" : "Anything extra for the release notes", "long_text", { optional: true, placeholder: zh ? "不写就按提交记录生成" : "Leave empty to generate from commits" }),

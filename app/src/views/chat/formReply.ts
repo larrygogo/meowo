@@ -83,8 +83,14 @@ export function parseFormAnswer(text: string, card: FormCardText): FormAnswer | 
         // 先认多行：中文的分隔符「：」后面没有空格，多行的头一行也以单行的前缀开头。
         row += 1;
         const block: string[] = [];
-        // 回答里的空行发出去是两个空格，记录里可能被去掉行尾空白成了空行：后面还接着缩进行就照算。
-        while (row < lines.length && (lines[row].startsWith("  ") || (!lines[row].trim() && (lines[row + 1] ?? "").startsWith("  ")))) {
+        // 回答里的空行发出去是两个空格，记录里可能被去掉行尾空白成了空行：只要空行之后（隔几行都行）
+        // 还接着缩进行，就照算这一项的（审查 2026-11-23：连续两个空行时曾断开，卡片又变回可填）。
+        const continues = (at: number) => {
+          let next = at;
+          while (next < lines.length && !lines[next].trim()) next += 1;
+          return next < lines.length && lines[next].startsWith("  ");
+        };
+        while (row < lines.length && (lines[row].startsWith("  ") || (!lines[row].trim() && continues(row)))) {
           block.push(lines[row].slice(2));
           row += 1;
         }
@@ -113,7 +119,9 @@ export function looksLikeFormReply(text: string): boolean {
     return !tail.trim() || LOCALES.some((copy) => tail.startsWith(copy.note));
   }
   if (!FILLED_HEAD.some((re) => re.test(head))) return false;
-  return lines.slice(1).every((line) => line.startsWith("- ") || line.startsWith("  ") || !line.trim());
+  // 表单至少一个字段：只有一行表头的是用户手打的，算「直接回复」（审查 2026-11-23：曾让卡片一直悬着）。
+  const body = lines.slice(1);
+  return body.some((line) => line.startsWith("- ")) && body.every((line) => line.startsWith("- ") || line.startsWith("  ") || !line.trim());
 }
 
 /** 卡片之后的用户消息里，像不像某张卡（方案卡或表单）替用户发的：同一轮几张卡的回复互不挡，

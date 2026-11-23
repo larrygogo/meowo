@@ -78,6 +78,19 @@ describe("表单替用户发的消息", () => {
     expect(looksLikeCardReply("填好了表单「x」\n另外说一句")).toBe(false);
   });
 
+  it("审查：长回答里连着几个空行、记录去掉了行尾空白，回放照样认得", () => {
+    for (const locale of ["zh", "en"]) {
+      const values = ["1", "正式版", "Linux", "是", "a\n\n\nb\n\n\n\nc"];
+      const stripped = formatFormAnswer({ kind: "filled", values }, CARD, locale).split("\n").map((line) => line.trimEnd()).join("\n");
+      expect(parseFormAnswer(stripped, CARD)).toEqual({ kind: "filled", values });
+    }
+  });
+
+  it("审查：只手打一行表头（没有任何字段）算用户直接回复，卡片不会一直悬着", () => {
+    expect(looksLikeCardReply("填好了表单「发版配置」")).toBe(false);
+    expect(formFollowUps([call("f9"), { type: "user_text", id: "u", timestamp: null, text: "填好了表单「发版配置」" }] as ChatItem[], 0, CARD).settled).toBe(true);
+  });
+
   it("方案卡与表单同一轮：一张卡的回复不会让另一张当成用户自己打的话", () => {
     const items = [
       call("c1"),
@@ -120,6 +133,64 @@ describe("表单卡", () => {
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: zh.chat.formDeclineSend })); });
     expect(sendText).toHaveBeenCalledTimes(2);
     expect(screen.getByText(zh.chat.formDeclined("发版配置"))).toBeTruthy();
+  });
+
+  it("「其他」：单选点了它就取消原选项、答案是自己填的；多选和选项一起发；勾了没写字算没填", async () => {
+    const fields = [
+      field("渠道", "choice", { options: ["正式版", "测试版"], default: "正式版", allow_other: true }),
+      field("平台", "multi_choice", { options: ["Windows", "macOS"], default: ["macOS"], allow_other: true }),
+    ];
+    const sendText = vi.fn(async () => true);
+    const id = `o${(seq += 1)}`;
+    render(
+      <ChatActionsContext.Provider value={{ sendText }}>
+        <FormMessage item={call(id)} result={result(id, receipt(fields, "其他测试"))} followUps={[]} sessionId={1} />
+      </ChatActionsContext.Provider>,
+    );
+    fireEvent.click(screen.getByRole("radio", { name: zh.chat.formOther }));
+    expect(screen.getByRole("radio", { name: "正式版" }).getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(screen.getByRole("checkbox", { name: zh.chat.formOther }));
+    fireEvent.click(screen.getByRole("button", { name: zh.chat.formSubmit }));
+    expect(sendText).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert").textContent).toBe(zh.chat.formMissing(1));
+    fireEvent.change(screen.getByRole("textbox", { name: `渠道 · ${zh.chat.formOther}` }), { target: { value: "内测群" } });
+    fireEvent.change(screen.getByRole("textbox", { name: `平台 · ${zh.chat.formOther}` }), { target: { value: "鸿蒙" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: zh.chat.formSubmit })); });
+    expect(sendText).toHaveBeenCalledWith("填好了表单「其他测试」\n- 渠道：内测群\n- 平台：macOS、鸿蒙");
+  });
+
+  it("审查：切会话后卡片重新挂载，填了一半的字段和「不填了」写的那句都还在，发出后不会再发", async () => {
+    const sendText = vi.fn(async () => true);
+    const id = `d${(seq += 1)}`;
+    const node = (
+      <ChatActionsContext.Provider value={{ sendText }}>
+        <FormMessage item={{ ...call(id), timestamp: "fixed" }} result={result(id, receipt())} followUps={[]} sessionId={7} />
+      </ChatActionsContext.Provider>
+    );
+    const first = render(node);
+    fireEvent.click(screen.getByRole("radio", { name: "测试版" }));
+    fireEvent.click(screen.getByRole("button", { name: zh.chat.formDecline }));
+    fireEvent.change(screen.getByRole("textbox", { name: zh.chat.formDeclinePlaceholder }), { target: { value: "等等再说" } });
+    first.unmount();
+    const second = render(node);
+    expect((screen.getByRole("textbox", { name: zh.chat.formDeclinePlaceholder }) as HTMLInputElement).value).toBe("等等再说");
+    fireEvent.click(screen.getByRole("button", { name: zh.chat.formBack }));
+    expect(screen.getByRole("radio", { name: "测试版" }).getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: zh.chat.formDecline }));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: zh.chat.formDeclineSend })); });
+    second.unmount();
+    render(node);
+    expect(screen.getByText(zh.chat.formDeclined("发版配置"))).toBeTruthy();
+    expect(sendText).toHaveBeenCalledTimes(1);
+  });
+
+  it("参数错误：显示后端那句原因；旧版本带图片错误前缀的也去掉前缀", () => {
+    for (const text of ["表单没发出去：缺少 title 参数", "[Image error: not_found] 缺少 title 参数"]) {
+      const id = `e${(seq += 1)}`;
+      render(<FormMessage item={call(id)} result={result(id, text, true)} followUps={[]} />);
+      expect(screen.getByText(text.replace(/^\[Image error: [^\]]*\]\s*/, ""))).toBeTruthy();
+      cleanup();
+    }
   });
 
   it("回放：之后的消息是这张表单的答案就收起、能展开看；用户直接打字的显示「没在表单里填」", () => {

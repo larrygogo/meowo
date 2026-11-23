@@ -1738,6 +1738,8 @@ export const zh = {
     formYes: "是",
     formNo: "否",
     formListSep: "、",
+    formOther: "其他…",
+    formOtherPlaceholder: "写你的答案",
     formMissing: (n: number) => `还有 ${n} 项没填`,
     formSubmit: "提交",
     formDecline: "不填了",

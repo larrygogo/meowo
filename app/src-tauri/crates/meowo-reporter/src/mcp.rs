@@ -396,7 +396,9 @@ fn ask_form_tool() -> Value {
             "options": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 8, "description": "choice / multi_choice 必填：2~8 个选项" },
             "help": { "type": "string", "description": "可选。问题下面的一句说明，比如选了会有什么后果" },
             "placeholder": { "type": "string", "description": "可选。text / long_text 输入框里的提示，比如「比如 0.9.0」" },
-            "default": { "description": "可选。预先填好的答案：text / long_text 给文字，choice 给其中一项，multi_choice 给选项数组，yes_no 给 true / false" },
+            "default": { "type": "string", "description": "可选。预先填好的答案：text / long_text 给文字，choice 给其中一项，yes_no 给 \"true\" 或 \"false\"。multi_choice 不用这个，用 defaults" },
+            "defaults": { "type": "array", "items": { "type": "string" }, "description": "可选，只给 multi_choice：预先勾上的几项" },
+            "allow_other": { "type": "boolean", "description": "可选，只给 choice / multi_choice：多一个「其他」，用户可以填选项以外的答案" },
             "optional": { "type": "boolean", "description": "可选，默认 false（必填）。true 表示用户可以不填" }
         },
         "required": ["label"]
