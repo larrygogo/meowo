@@ -124,11 +124,14 @@ describe("提醒行", () => {
     expect(line.textContent).not.toContain("没弹");
   });
 
-  it("没弹出来的写明为什么；等你决定的单独标出", () => {
-    render(<ToolActivity item={call("n2", "mcp__meowo__notify_user")} result={result("n2", notifyReceipt("viewing", "needs_you"))} />);
+  it("没弹出来的写明为什么；需要你决定的单独标出", () => {
+    render(<ToolActivity item={call("n2", "mcp__meowo__notify_user")} result={result("n2", notifyReceipt("viewing", "done"))} />);
+    expect(screen.getByTestId("notify-line").textContent).toContain("你正在看，没弹通知");
+    cleanup();
+    render(<ToolActivity item={call("n3", "mcp__meowo__notify_user")} result={result("n3", notifyReceipt("shown", "needs_you"))} />);
     const line = screen.getByTestId("notify-line");
     expect(line.getAttribute("data-level")).toBe("needs_you");
     expect(line.textContent).toContain("需要你决定");
-    expect(line.textContent).toContain("你正在看，没弹通知");
+    expect(line.textContent).not.toContain("没弹");
   });
 });

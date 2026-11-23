@@ -902,16 +902,17 @@ pub(crate) fn show_session_notification(
     });
 }
 
-/// agent 主动提醒（MCP 工具 notify_user，chat_files.rs）：系统通知 + 灵动岛 + Bark（若设置了）。
-/// 是否该弹（总开关、正在看、限频）由调用方判定；这里只管按会话拼文案、发出去。
-/// 「等你决定」用决策版 toast（长驻 + 打开会话按钮）与 Bark 加急，同待审批。
+/// agent 主动提醒（MCP 工具 notify_user，chat_files.rs）：灵动岛 + Bark + 系统通知，三路各自由调用方决定发不发
+/// （与上面 liveness 循环同一套：灵动岛与 Bark 只看「正在看」，系统通知另外过按种类的开关）。
+/// 「需要你决定」用决策版 toast（长驻 + 打开会话按钮）与 Bark 加急，同待审批。返回 Bark 这一路的去向。
 pub(crate) fn show_agent_notification(
     app: &tauri::AppHandle,
     settings: &crate::settings::Settings,
     session_id: i64,
     needs_you: bool,
     message: &str,
-) {
+    toast: bool,
+) -> crate::push::PushOutcome {
     let lang = ui_lang(settings);
     let header = Store::open(crate::db_path())
         .ok()
@@ -938,7 +939,7 @@ pub(crate) fn show_agent_notification(
         &project,
         Some(message.to_string()),
     );
-    crate::push::push_session(
+    let pushed = crate::push::push_session(
         settings,
         crate::push::PushMessage {
             title: title.clone(),
@@ -947,20 +948,23 @@ pub(crate) fn show_agent_notification(
             urgent: needs_you,
         },
     );
-    show_session_notification(
-        app,
-        title,
-        message.to_string(),
-        session_id,
-        pid,
-        display_title,
-        cwd,
-        None,
-        false,
-        if needs_you { NotifyKind::Blocked } else { NotifyKind::Waiting },
-        lang.to_string(),
-        settings.notification_sound,
-    );
+    if toast {
+        show_session_notification(
+            app,
+            title,
+            message.to_string(),
+            session_id,
+            pid,
+            display_title,
+            cwd,
+            None,
+            false,
+            if needs_you { NotifyKind::Blocked } else { NotifyKind::Waiting },
+            lang.to_string(),
+            settings.notification_sound,
+        );
+    }
+    pushed
 }
 
 /// 从"通知中心"移除本应用（按 AUMID）所有已投递的 toast。tauri-winrt-notification 不暴露单条

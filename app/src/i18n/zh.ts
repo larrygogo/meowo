@@ -1668,7 +1668,7 @@ export const zh = {
     fileSaveAs: "另存为…",
     fileSaved: "已保存",
     fileDownload: "下载",
-    fileMissing: "已清理：这份文件超过了保存期限，让 AI 重新交一次",
+    fileMissing: "已清理：交付的文件攒多了，较早的这份被清掉了。让 AI 重新交一次",
     fileKinds: {
       installer: "安装包",
       archive: "压缩包",

@@ -12,7 +12,7 @@ import { useT } from "../../i18n";
 import type { Dict } from "../../i18n/zh";
 import { formatBackendError } from "../../i18n/errors";
 import { Icon } from "../../icons/Icon";
-import { icFile } from "../../icons/glyphs.chat";
+import { icFile, icFileText, icFileZip, icImage, icPackage, icTerminalBox } from "../../icons/glyphs.chat";
 import { icBell, icDownload, icFolderOpen } from "../../icons/glyphs";
 import { remoteUi } from "../../remoteMode";
 import { useFlash } from "../../hooks/useFlash";
@@ -80,6 +80,18 @@ const KIND_BY_EXT: [RegExp, FileKind][] = [
   [/^(mp4|mov|webm|mkv|mp3|wav|m4a|flac|ogg)$/, "media"],
   [/^(log)$/, "log"],
 ];
+
+/** 类型图标：一眼分出安装包、压缩包、文档；认不出的用普通文件。 */
+const KIND_ICON: Partial<Record<FileKind, typeof icFile>> = {
+  installer: icPackage,
+  archive: icFileZip,
+  pdf: icFileText,
+  document: icFileText,
+  sheet: icFileText,
+  slides: icFileText,
+  image: icImage,
+  log: icTerminalBox,
+};
 
 export function fileKind(name: string): FileKind {
   const ext = /\.([a-z0-9]+)$/i.exec(name)?.[1]?.toLowerCase() ?? "";
@@ -172,7 +184,7 @@ export function FileCard({ file }: { file: DeliveredFile }) {
   return (
     <div className="chat-file" data-missing={missing || undefined} data-testid="file-card">
       <div className="chat-file-icon" data-kind={kind} aria-hidden="true">
-        <Icon glyph={icFile} size={20} />
+        <Icon glyph={KIND_ICON[kind] ?? icFile} size={20} />
       </div>
       <div className="chat-file-body">
         <span className="chat-file-name" title={file.name}>{file.name}</span>

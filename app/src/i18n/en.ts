@@ -1446,7 +1446,7 @@ export const en: Dict = {
     fileSaveAs: "Save as…",
     fileSaved: "Saved",
     fileDownload: "Download",
-    fileMissing: "Cleaned up: this copy is past its keep limit. Ask the AI to send it again",
+    fileMissing: "Cleaned up: older deliveries were cleared to save space. Ask the AI to send it again",
     fileKinds: {
       installer: "Installer",
       archive: "Archive",

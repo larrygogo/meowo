@@ -274,7 +274,7 @@ export function imageSceneItems(part: string, lang: Lang): { items: ChatItem[]; 
   }
   if (part === "deliver") {
     // AI 交文件（send_file）与主动提醒（notify_user）：一个刚交的安装包、一份已被清理的旧日志包、两条提醒
-    // （一条弹出来了，一条因为用户正看着没弹）。任务 20261123-agent-abilities。
+    // （做完了：用户正看着所以没弹；需要你决定：正看着也弹）。任务 20261123-agent-abilities。
     const toolCall = (id: string, s: number, name: string) => ({ type: "tool_use", id, timestamp: at(s), name, kind: "other", summary: "" }) as unknown as ChatItem;
     const file = (name: string, size: number, dir: string, caption: string | null) => {
       const path = ["C:", "Users", "me", ".meowo", "files", "sent", dir, name].join("\\");
@@ -293,9 +293,9 @@ export function imageSceneItems(part: string, lang: Lang): { items: ChatItem[]; 
         toolCall("f1", 190, "mcp__meowo__send_file"),
         receipt("f1", at(189), file("Meowo_0.8.6_x64-setup.exe", 22_246_679, "0123456789abcdef", zh ? "装好后在 Claude 会话里按一次 Tab，看输入框还有没有直角框。" : "After installing, press Tab once in a Claude session and check the input box.")),
         toolCall("n1", 180, "mcp__meowo__notify_user"),
-        receipt("n1", at(179), notify("done", zh ? "安装包打好了，在对话里，装上试试。" : "The installer is in the chat. Install and try it.", "shown")),
+        receipt("n1", at(179), notify("done", zh ? "安装包打好了，在对话里，装上试试。" : "The installer is in the chat. Install and try it.", "viewing")),
         toolCall("n2", 120, "mcp__meowo__notify_user"),
-        receipt("n2", at(119), notify("needs_you", zh ? "要不要顺便把 0.8.6 草稿发布？这步要你点头。" : "Publish the 0.8.6 draft too? I need your go-ahead.", "viewing")),
+        receipt("n2", at(119), notify("needs_you", zh ? "要不要顺便把 0.8.6 草稿发布？这步要你点头。" : "Publish the 0.8.6 draft too? I need your go-ahead.", "shown")),
       ],
     };
   }

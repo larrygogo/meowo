@@ -44,10 +44,16 @@ fn send_into(root: &Path, args: &Value) -> Result<String, String> {
     if raw.contains("://") {
         return Err("send_file 只交本机文件，不接受网址。要交网上的文件，先用你自己的下载工具存到本地".into());
     }
-    let source = PathBuf::from(raw);
-    if !source.is_absolute() {
-        return Err(format!("路径要是绝对路径：{raw}"));
+    // 网络共享路径（UNC）在碰文件系统之前就拒：send_file 免逐次确认，若它肯读 UNC，网页里一句提示注入
+    // 就能让 agent 不弹确认地发起一次 SMB 连接、带出 NTLM 凭据（与 send_image 的 local_source 同一条线）。
+    // 只认本机盘上的绝对路径（与前端 assetSrc、send_image 共用 is_local_absolute 规则）。
+    if !meowo_agent::images::is_local_absolute(raw) {
+        if raw.starts_with("\\\\") || raw.starts_with("//") {
+            return Err(format!("send_file 只交本机磁盘上的文件，不接受网络共享路径：{raw}"));
+        }
+        return Err(format!("路径要是本机的绝对路径：{raw}"));
     }
+    let source = PathBuf::from(raw);
     let meta = std::fs::metadata(&source).map_err(|_| format!("找不到这个文件：{raw}"))?;
     if meta.is_dir() {
         return Err(format!(
@@ -68,7 +74,7 @@ fn send_into(root: &Path, args: &Value) -> Result<String, String> {
         .ok_or_else(|| format!("认不出文件名：{raw}"))?;
     std::fs::create_dir_all(root).map_err(|e| format!("建交付目录失败：{e}"))?;
     let (snapshot, size, digest) = snapshot_into(root, &source, &name)?;
-    prune(root, TOTAL_CAP, snapshot.parent());
+    prune(root, TOTAL_CAP, Some(&root.join(&digest)));
     let caption = args
         .get("caption")
         .and_then(Value::as_str)
@@ -88,7 +94,8 @@ fn send_into(root: &Path, args: &Value) -> Result<String, String> {
     ))
 }
 
-/// 边复制边算指纹：先写进交付目录里的临时文件，算完再挪到 `<指纹>/<文件名>`。同内容已交过就
+/// 边复制边算指纹：先写进交付目录里的临时文件，算完再挪到 `<指纹>/f/<文件名>`（文件单放一层，
+/// 不会和同目录的「最近交付」标记重名：交一个叫 `delivered` 的文件也不会被覆盖）。同内容已交过就
 /// 只刷新时间（回收按它算新旧），不再存第二份。
 fn snapshot_into(root: &Path, source: &Path, name: &str) -> Result<(PathBuf, u64, String), String> {
     let mut input = std::fs::File::open(source).map_err(|e| format!("读不了这个文件：{e}"))?;
@@ -122,11 +129,11 @@ fn snapshot_into(root: &Path, source: &Path, name: &str) -> Result<(PathBuf, u64
         }
     };
     let dir = root.join(&digest);
-    let target = dir.join(name);
+    let target = dir.join("f").join(name);
     if target.is_file() {
         let _ = std::fs::remove_file(&temp);
     } else {
-        std::fs::create_dir_all(&dir).map_err(|e| format!("建交付目录失败：{e}"))?;
+        std::fs::create_dir_all(dir.join("f")).map_err(|e| format!("建交付目录失败：{e}"))?;
         if let Err(error) = std::fs::rename(&temp, &target) {
             let _ = std::fs::remove_file(&temp);
             return Err(format!("存快照失败：{error}"));
@@ -145,12 +152,12 @@ fn nanos() -> u128 {
 
 /// 刷新目录时间：回收按「最近一次交付」排新旧。
 fn touch(dir: &Path) {
-    let marker = dir.join(".delivered");
+    let marker = dir.join("delivered");
     let _ = std::fs::write(&marker, nanos().to_string());
 }
 
 fn delivered_at(dir: &Path) -> std::time::SystemTime {
-    std::fs::metadata(dir.join(".delivered"))
+    std::fs::metadata(dir.join("delivered"))
         .and_then(|m| m.modified())
         .or_else(|_| std::fs::metadata(dir).and_then(|m| m.modified()))
         .unwrap_or(std::time::UNIX_EPOCH)
@@ -161,9 +168,11 @@ fn dir_size(dir: &Path) -> u64 {
         .map(|entries| {
             entries
                 .flatten()
-                .filter_map(|e| e.metadata().ok())
-                .filter(|m| m.is_file())
-                .map(|m| m.len())
+                .map(|e| match e.metadata() {
+                    Ok(m) if m.is_dir() => dir_size(&e.path()),
+                    Ok(m) if m.is_file() => m.len(),
+                    _ => 0,
+                })
                 .sum()
         })
         .unwrap_or(0)
@@ -301,33 +310,68 @@ impl Level {
     }
 }
 
-/// 这次提醒的去向。回执按它如实写给 agent。
+/// 这次提醒怎么处理。回执按它（加上各路的实际去向）如实写给 agent。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Outcome {
-    Shown,
-    Viewing,
-    Disabled,
+pub(crate) enum Decision {
+    /// 同一会话刚提醒过：合并，哪一路都不发。
     Throttled,
+    /// 用户正看着这个会话（只对「做完了 / 消息」）：哪一路都不发，话照样显示在对话里。
+    Viewing,
+    /// 发：灵动岛与 Bark 照发；系统通知看用户按种类的开关（toast）。
+    Deliver { toast: bool },
 }
 
-/// 同一会话两次提醒的最短间隔：再密就合并（只留第一条）。等你决定的不受限：卡住了就该叫到人。
+/// 同一会话两次提醒的最短间隔：再密就合并。「需要你决定」的窗口短一些（卡住了就该叫到人），
+/// 但不是不限：agent 进了循环或被注入「每步都 needs_you」，也不能每次弹一条长驻通知、推一条加急。
 const THROTTLE: Duration = Duration::from_secs(60);
+const THROTTLE_NEEDS_YOU: Duration = Duration::from_secs(15);
 const MESSAGE_MAX: usize = 300;
 
 static LAST_NOTIFY: Mutex<Option<HashMap<i64, Instant>>> = Mutex::new(None);
 
-/// 纯判定（单测用）：通知开着吗、用户正看着吗、离上一条多久。
-pub(crate) fn decide(level: Level, enabled: bool, viewing: bool, since_last: Option<Duration>) -> Outcome {
-    if !enabled {
-        return Outcome::Disabled;
+/// 纯判定（单测用）。toast_enabled = 通知总开关且这一类勾着（与 watch.rs notify_kind_enabled 同一判据）。
+/// 与 watch.rs liveness 同一套：总开关与种类开关只管电脑系统通知，Bark 只看它自己的暂停；
+/// 「正在看」抑制做完了 / 消息，不抑制需要你决定（suppressed_by_viewing 的非对称纪律）。
+pub(crate) fn decide(level: Level, toast_enabled: bool, viewing: bool, since_last: Option<Duration>) -> Decision {
+    let window = if level == Level::NeedsYou { THROTTLE_NEEDS_YOU } else { THROTTLE };
+    if since_last.is_some_and(|d| d < window) {
+        return Decision::Throttled;
     }
     if viewing && level != Level::NeedsYou {
-        return Outcome::Viewing;
+        return Decision::Viewing;
     }
-    if level != Level::NeedsYou && since_last.is_some_and(|d| d < THROTTLE) {
-        return Outcome::Throttled;
+    Decision::Deliver { toast: toast_enabled }
+}
+
+/// 回执正文与对话卡片上的去向（shown / viewing / disabled / throttled）。不说没做到的事：
+/// Bark 没设置、暂停了、刚推过同样内容都写明；网络发送结果拿不到，只说「已交给手机推送」。
+pub(crate) fn receipt(decision: Decision, push: Option<crate::push::PushOutcome>) -> (String, &'static str) {
+    use crate::push::PushOutcome;
+    match decision {
+        Decision::Throttled => (
+            "同一会话刚提醒过，这条合并了，哪一路都没有再发。不要频繁提醒。".into(),
+            "throttled",
+        ),
+        Decision::Viewing => (
+            "用户正在看这个会话，没有弹通知、也没推手机；你的话会显示在对话里。".into(),
+            "viewing",
+        ),
+        Decision::Deliver { toast } => {
+            let desktop = if toast {
+                "已弹出电脑系统通知"
+            } else {
+                "用户关了这类电脑通知，没有弹"
+            };
+            let phone = match push {
+                Some(PushOutcome::Queued) => "已交给手机推送（Bark）发送，能不能送到取决于网络",
+                Some(PushOutcome::Duplicate) => "手机推送刚发过同样的内容，这次没有再推",
+                Some(PushOutcome::Paused) => "用户暂停了手机推送，没有推",
+                Some(PushOutcome::NotSet) | None => "用户没设置手机推送",
+            };
+            let reached = toast || push == Some(PushOutcome::Queued);
+            (format!("{desktop}；{phone}。"), if reached { "shown" } else { "disabled" })
+        }
     }
-    Outcome::Shown
 }
 
 pub(crate) fn notify_user(app: &tauri::AppHandle, session_id: i64, args: &Value) -> Result<Value, String> {
@@ -354,42 +398,39 @@ pub(crate) fn notify_user(app: &tauri::AppHandle, session_id: i64, args: &Value)
         .map(|state| state.ptys.viewed_session_ids())
         .unwrap_or_default();
     let viewing = crate::watch::is_viewing_session(chat_focused, &viewed, session_id);
+    let toast_enabled =
+        crate::settings::notify_kind_enabled(&settings, if level == Level::NeedsYou { "blocked" } else { "waiting" });
     let now = Instant::now();
-    let since_last = {
-        let guard = LAST_NOTIFY.lock().ok();
-        guard
-            .as_ref()
-            .and_then(|map| map.as_ref())
-            .and_then(|map| map.get(&session_id))
-            .map(|at| now.duration_since(*at))
-    };
-    let outcome = decide(level, settings.notifications_enabled, viewing, since_last);
-    if outcome == Outcome::Shown {
-        if let Ok(mut guard) = LAST_NOTIFY.lock() {
-            guard.get_or_insert_with(HashMap::new).insert(session_id, now);
+    // 判定与记账在同一把锁里：两条提醒同时到也只放过一条。
+    let decision = {
+        let mut guard = LAST_NOTIFY.lock().unwrap_or_else(|e| e.into_inner());
+        let map = guard.get_or_insert_with(HashMap::new);
+        let since_last = map.get(&session_id).map(|at| now.duration_since(*at));
+        let decision = decide(level, toast_enabled, viewing, since_last);
+        if matches!(decision, Decision::Deliver { .. }) {
+            map.insert(session_id, now);
         }
-        crate::watch::show_agent_notification(app, &settings, session_id, level == Level::NeedsYou, &message);
-    }
-    let text = match outcome {
-        Outcome::Shown => "已提醒用户（系统通知；设置了 Bark 的话手机也会收到）。",
-        Outcome::Viewing => "用户正在看这个会话，没有弹通知；你的话会显示在对话里。",
-        Outcome::Disabled => "用户在 Meowo 里关了通知，这条没有弹出来；你的话会显示在对话里。",
-        Outcome::Throttled => "一分钟内刚提醒过，这条合并了，没有再弹。不要频繁提醒。",
+        decision
     };
+    let push = match decision {
+        Decision::Deliver { toast } => Some(crate::watch::show_agent_notification(
+            app,
+            &settings,
+            session_id,
+            level == Level::NeedsYou,
+            &message,
+            toast,
+        )),
+        _ => None,
+    };
+    let (text, outcome) = receipt(decision, push);
     let level_name = match level {
         Level::NeedsYou => "needs_you",
         Level::Done => "done",
         Level::Info => "info",
     };
-    let outcome_name = match outcome {
-        Outcome::Shown => "shown",
-        Outcome::Viewing => "viewing",
-        Outcome::Disabled => "disabled",
-        Outcome::Throttled => "throttled",
-    };
-    let card = json!({ "level": level_name, "message": message, "outcome": outcome_name });
-    Ok(json!({ "text": format!("{text}
-{NOTIFY_MARKER}{card}]") }))
+    let card = json!({ "level": level_name, "message": message, "outcome": outcome });
+    Ok(json!({ "text": format!("{text}\n{NOTIFY_MARKER}{card}]") }))
 }
 
 #[cfg(test)]
@@ -438,6 +479,10 @@ mod tests {
         assert!(err(json!({ "path": work.join("nope.zip").to_string_lossy() })).contains("找不到"));
         assert!(err(json!({ "path": "https://example.com/a.zip" })).contains("网址"));
         assert!(err(json!({ "path": "a.zip" })).contains("绝对路径"));
+        // 网络共享路径：在碰文件系统之前就拒（不发起 SMB 连接）。
+        for unc in [r"\\attacker.example\s\a.txt", "//attacker.example/s/a.txt", r"\\?\UNC\host\s\a.txt"] {
+            assert!(err(json!({ "path": unc })).contains("网络共享"), "{unc}");
+        }
         assert!(err(json!({})).contains("path"));
     }
 
@@ -458,6 +503,19 @@ mod tests {
         assert!(delivered_in(&root, &root.to_string_lossy()).is_none());
     }
 
+    /// 交一个叫 delivered 的文件：快照内容不会被「最近交付」标记覆盖。
+    #[test]
+    fn a_file_named_like_the_marker_keeps_its_content() {
+        let work = temp_dir("work5");
+        let root = temp_dir("root5");
+        for name in ["delivered", ".delivered"] {
+            let source = work.join(name);
+            std::fs::write(&source, b"payload").unwrap();
+            let card = card_of(&send_into(&root, &json!({ "path": source.to_string_lossy() })).unwrap());
+            assert_eq!(std::fs::read(card["path"].as_str().unwrap()).unwrap(), b"payload", "{name}");
+        }
+    }
+
     #[test]
     fn prune_drops_the_oldest_delivery_but_keeps_the_new_one() {
         let root = temp_dir("root3");
@@ -476,15 +534,36 @@ mod tests {
 
     #[test]
     fn notify_decisions_follow_settings_viewing_and_throttle() {
-        assert_eq!(decide(Level::Done, false, false, None), Outcome::Disabled);
-        assert_eq!(decide(Level::Done, true, true, None), Outcome::Viewing);
-        assert_eq!(decide(Level::Info, true, true, None), Outcome::Viewing);
-        // 等你决定：正看着也弹，也不限频。
-        assert_eq!(decide(Level::NeedsYou, true, true, Some(Duration::from_secs(1))), Outcome::Shown);
-        assert_eq!(decide(Level::Done, true, false, Some(Duration::from_secs(10))), Outcome::Throttled);
-        assert_eq!(decide(Level::Done, true, false, Some(Duration::from_secs(61))), Outcome::Shown);
+        // 种类开关只管电脑通知：关了照样发（Bark、灵动岛），只是不弹 toast。
+        assert_eq!(decide(Level::Done, false, false, None), Decision::Deliver { toast: false });
+        assert_eq!(decide(Level::Done, true, false, None), Decision::Deliver { toast: true });
+        assert_eq!(decide(Level::Done, true, true, None), Decision::Viewing);
+        assert_eq!(decide(Level::Info, true, true, None), Decision::Viewing);
+        // 需要你决定：正看着也发；限频窗口短一些，但不是不限。
+        assert_eq!(decide(Level::NeedsYou, true, true, None), Decision::Deliver { toast: true });
+        assert_eq!(decide(Level::NeedsYou, true, false, Some(Duration::from_secs(1))), Decision::Throttled);
+        assert_eq!(decide(Level::NeedsYou, true, false, Some(Duration::from_secs(16))), Decision::Deliver { toast: true });
+        assert_eq!(decide(Level::Done, true, false, Some(Duration::from_secs(10))), Decision::Throttled);
+        assert_eq!(decide(Level::Done, true, false, Some(Duration::from_secs(61))), Decision::Deliver { toast: true });
         assert_eq!(Level::parse(Some("needs_you")), Level::NeedsYou);
         assert_eq!(Level::parse(Some("whatever")), Level::Done);
+    }
+
+    /// 回执不说没做到的事：手机推送没设置、暂停、刚推过都写明；两路都没送到时卡片上是 disabled。
+    #[test]
+    fn notify_receipts_say_what_actually_happened() {
+        use crate::push::PushOutcome;
+        let (text, outcome) = receipt(Decision::Deliver { toast: false }, Some(PushOutcome::Queued));
+        assert!(text.contains("关了这类电脑通知") && text.contains("已交给手机推送"), "{text}");
+        assert_eq!(outcome, "shown");
+        let (text, outcome) = receipt(Decision::Deliver { toast: false }, Some(PushOutcome::NotSet));
+        assert!(text.contains("没设置手机推送"), "{text}");
+        assert_eq!(outcome, "disabled");
+        let (text, _) = receipt(Decision::Deliver { toast: true }, Some(PushOutcome::Duplicate));
+        assert!(text.contains("已弹出电脑系统通知") && text.contains("刚发过同样的内容"), "{text}");
+        assert!(!text.contains("手机也会收到"));
+        assert_eq!(receipt(Decision::Throttled, None).1, "throttled");
+        assert_eq!(receipt(Decision::Viewing, None).1, "viewing");
     }
 
     #[test]
