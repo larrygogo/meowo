@@ -441,6 +441,8 @@ pub(crate) fn tr(lang: &str, key: &str) -> &'static str {
     match (lang, key) {
         ("en", "notify.open") => "Open session",
         ("en", "notify.pushTest") => "Phone push is working",
+        ("en", "notify.agentNeedsYou") => "AI needs you",
+        ("en", "notify.agentSays") => "Message from AI",
         ("en", "tray.chat") => "Open chat window",
         ("en", "tray.recall") => "Recall sticker",
         ("en", "tray.guide") => "Getting started",
@@ -475,6 +477,8 @@ pub(crate) fn tr(lang: &str, key: &str) -> &'static str {
         ("en", "menu.close") => "Close Window",
         (_, "notify.open") => "打开会话",
         (_, "notify.pushTest") => "手机推送已接通",
+        (_, "notify.agentNeedsYou") => "AI 需要你决定",
+        (_, "notify.agentSays") => "AI 提醒你",
         (_, "tray.chat") => "打开对话窗口",
         (_, "tray.recall") => "找回贴纸",
         (_, "tray.guide") => "使用引导",

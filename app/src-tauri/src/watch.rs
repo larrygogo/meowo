@@ -902,6 +902,67 @@ pub(crate) fn show_session_notification(
     });
 }
 
+/// agent 主动提醒（MCP 工具 notify_user，chat_files.rs）：系统通知 + 灵动岛 + Bark（若设置了）。
+/// 是否该弹（总开关、正在看、限频）由调用方判定；这里只管按会话拼文案、发出去。
+/// 「等你决定」用决策版 toast（长驻 + 打开会话按钮）与 Bark 加急，同待审批。
+pub(crate) fn show_agent_notification(
+    app: &tauri::AppHandle,
+    settings: &crate::settings::Settings,
+    session_id: i64,
+    needs_you: bool,
+    message: &str,
+) {
+    let lang = ui_lang(settings);
+    let header = Store::open(crate::db_path())
+        .ok()
+        .and_then(|store| store.session_header(session_id).ok());
+    let cwd = header.as_ref().and_then(|h| h.cwd.clone());
+    let project = cwd
+        .as_deref()
+        .and_then(|dir| std::path::Path::new(dir).file_name())
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "Meowo".to_string());
+    let display_title = header
+        .as_ref()
+        .and_then(|h| h.title.clone())
+        .filter(|t| !t.trim().is_empty())
+        .unwrap_or_else(|| project.clone());
+    let pid = header.as_ref().and_then(|h| h.pid).unwrap_or(0);
+    let label = tr(lang, if needs_you { "notify.agentNeedsYou" } else { "notify.agentSays" });
+    let title = format!("{project} · {label}");
+    emit_island_alert(
+        app,
+        session_id,
+        if needs_you { "blocked" } else { "waiting" },
+        &display_title,
+        &project,
+        Some(message.to_string()),
+    );
+    crate::push::push_session(
+        settings,
+        crate::push::PushMessage {
+            title: title.clone(),
+            body: message.to_string(),
+            session_id,
+            urgent: needs_you,
+        },
+    );
+    show_session_notification(
+        app,
+        title,
+        message.to_string(),
+        session_id,
+        pid,
+        display_title,
+        cwd,
+        None,
+        false,
+        if needs_you { NotifyKind::Blocked } else { NotifyKind::Waiting },
+        lang.to_string(),
+        settings.notification_sound,
+    );
+}
+
 /// 从"通知中心"移除本应用（按 AUMID）所有已投递的 toast。tauri-winrt-notification 不暴露单条
 /// 移除/tag，故只能整体清空——对"会话等待/出错"这类瞬时提醒正合适。失败静默（非安装版 AUMID
 /// 未注册时会 Err）。

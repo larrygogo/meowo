@@ -27,8 +27,8 @@ import { useEscClose } from "../hooks/useEscClose";
 import { displayKeys, KeyCombos, shortcutGroups } from "./chat/WindowModals";
 import { SETTINGS_SECTION_KEY } from "../settingsNav";
 import { Icon } from "../icons/Icon";
-import { icClose, icContrast, icSearch, icSettings } from "../icons/glyphs";
-import { icBell, icBot, icCards, icGitPr, icInfo, icKeyboard, icSmartphone } from "../icons/glyphs.settings";
+import { icBell, icClose, icContrast, icSearch, icSettings } from "../icons/glyphs";
+import { icBot, icCards, icGitPr, icInfo, icKeyboard, icSmartphone } from "../icons/glyphs.settings";
 import { busyProps } from "../busyButton";
 
 const REPO = "github.com/larrygogo/meowo";

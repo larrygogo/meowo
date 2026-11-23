@@ -98,6 +98,8 @@ encoding_rs = "0.8"
 ureq = { version = "2", features = ["json", "socks-proxy"] }
 # 直下安装要校验二进制的 SHA-256（Phase 3 曾随 codex setup 迁走，现因 run_direct_install 复用）
 sha2 = "0.10"
+# /download 流式下载：mpsc 接收端实现 Stream（axum 已间接依赖，不新增下载量）。
+futures-core = "0.3"
 # 系统语言检测（Settings.language = auto 时解析界面/通知语言）。
 sys-locale = "0.3"
 portable-pty = "0.9.0"

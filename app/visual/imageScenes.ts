@@ -272,6 +272,33 @@ export function imageSceneItems(part: string, lang: Lang): { items: ChatItem[]; 
       ],
     };
   }
+  if (part === "deliver") {
+    // AI 交文件（send_file）与主动提醒（notify_user）：一个刚交的安装包、一份已被清理的旧日志包、两条提醒
+    // （一条弹出来了，一条因为用户正看着没弹）。任务 20261123-agent-abilities。
+    const toolCall = (id: string, s: number, name: string) => ({ type: "tool_use", id, timestamp: at(s), name, kind: "other", summary: "" }) as unknown as ChatItem;
+    const file = (name: string, size: number, dir: string, caption: string | null) => {
+      const path = ["C:", "Users", "me", ".meowo", "files", "sent", dir, name].join("\\");
+      return [`文件已交给用户：${name}。`, `[File: ${JSON.stringify({ name, size, path, sha256: dir, caption })}]`].join("\n");
+    };
+    const notify = (level: string, message: string, outcome: string) =>
+      [`已提醒用户。`, `[Notify: ${JSON.stringify({ level, message, outcome })}]`].join("\n");
+    return {
+      running: false,
+      items: [
+        user("u1", 900, zh ? "把昨天的日志打个包给我。" : "Zip yesterday's logs for me."),
+        toolCall("f0", 890, "mcp__meowo__send_file"),
+        receipt("f0", at(889), file("logs-2026-11-22.zip", 3_481_233, "old0000000000000", null)),
+        user("u2", 300, zh ? "打个安装包我试试，打好叫我。" : "Build an installer for me to try, ping me when it's ready."),
+        say("a1", 200, zh ? "安装包打好了，基于 c113ea29。" : "The installer is ready, built from c113ea29."),
+        toolCall("f1", 190, "mcp__meowo__send_file"),
+        receipt("f1", at(189), file("Meowo_0.8.6_x64-setup.exe", 22_246_679, "0123456789abcdef", zh ? "装好后在 Claude 会话里按一次 Tab，看输入框还有没有直角框。" : "After installing, press Tab once in a Claude session and check the input box.")),
+        toolCall("n1", 180, "mcp__meowo__notify_user"),
+        receipt("n1", at(179), notify("done", zh ? "安装包打好了，在对话里，装上试试。" : "The installer is in the chat. Install and try it.", "shown")),
+        toolCall("n2", 120, "mcp__meowo__notify_user"),
+        receipt("n2", at(119), notify("needs_you", zh ? "要不要顺便把 0.8.6 草稿发布？这步要你点头。" : "Publish the 0.8.6 draft too? I need your go-ahead.", "viewing")),
+      ],
+    };
+  }
   if (part === "choices") {
     const choicesCall = (id: string, s: number) => ({
       type: "tool_use", id, timestamp: at(s), name: "mcp__meowo__offer_choices", kind: "other", summary: "",
@@ -385,6 +412,8 @@ export function imageSceneMock(part: string, lang: Lang, chat: (cmd: string) => 
       return { ...base, ...(real ? { provider: real } : {}), cwd: real ? REAL_CWD : "C:\\dev\\web-app", items, todos: [], pendingReview: null, status: running ? "running" : "waiting", ...(part === "suggest" ? { ptyManaged: true } : {}) };
     }
     if (cmd === "pending_interaction") return { approval: null, question: null };
+    // 交文件：old 开头的那份快照已被回收（卡片显示「已清理」）。
+    if (cmd === "delivered_file_exists") return !((args as { path?: string }).path ?? "").includes("old000");
     // 建议回复：Claude 回合结束后终端输入框里的暗色建议（2.1.330 实拍帧，见 composer-frames.json）。
     if (part === "suggest" && cmd === "agent_chat_ui") return { ...(chat(cmd) as Record<string, unknown>), composer: composerFrames.specs.claude };
     if (part === "suggest" && cmd === "managed_terminal_frame") {
