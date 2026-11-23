@@ -640,6 +640,37 @@ export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
   });
 }
 
+// Claude 在命令改了它读过的文件时，会在回执末尾附一句（2.1.330 实拍，本机记录里 1400 多次）：
+// `[This command modified 2 files you've previously read: src\a.ts, src\b.ts. Call Read before editing.]`
+const MODIFIED_NOTE = /\[This command modified \d+ files? you've previously read: ([\s\S]+?)\. Call Read before editing\.\]/g;
+// 这些命令改了文件也不算「检查之后又改了代码」：git（stash 一来一回、切分支，改了又改回来，实拍常见于
+// 「先 stash 掉修复看测试会不会失败」）和格式化、lint --fix（只动格式）。宁可漏报，不让「已过时」又多起来。
+const NOT_A_CODE_EDIT = /^(?:git|prettier|eslint|oxlint|biome|dprint|black|ruff|isort|gofmt|rustfmt|clang-format|cargo fmt|cargo clippy|go fmt|deno fmt|dotnet format|script:(?:format|fmt|lint|prettier)\S*)$/;
+
+/**
+ * 用命令改掉的文件（`sed -i`、python 脚本写文件这类），从 Claude 回执末尾那句提示里读。不出现在「改了哪些文件」
+ * 的清单里（没有 diff 可看），只用来判断检查是不是过时了。路径相对命令当时所在的目录，原样给（正斜杠）。
+ * 其余几家没有这句提示，读不到就是空。
+ */
+export function filesModifiedByRun(item: ChatItem, result: ToolResultItem | undefined): string[] {
+  if (item.type !== "tool_use" || item.kind !== "run" || !result || result.interrupted) return [];
+  const text = result.text;
+  if (!text.includes("[This command modified")) return [];
+  const unwrapped = unwrapShell(commandOf(item).trim());
+  const families = splitCommand(unwrapped.text.trim(), unwrapped.cmd).map((segment) => segmentKey(segment.text).split("|")[0]);
+  if (families.some((family) => NOT_A_CODE_EDIT.test(family))) return [];
+  const files: string[] = [];
+  for (const match of text.matchAll(MODIFIED_NOTE)) {
+    for (const raw of match[1].split(", ")) {
+      const path = raw.trim().replace(/\\/g, "/").replace(/^\.\//, "");
+      // 项目外的文件（临时目录里的日志、脚本）：`..` 开头或绝对路径，不算。
+      if (!path || path.startsWith("../") || /^(?:[A-Za-z]:|\/)/.test(path)) continue;
+      files.push(path);
+    }
+  }
+  return files;
+}
+
 /** 文档、图片这类改了也不需要跑检查的文件。`.txt` 不算：requirements.txt、CMakeLists.txt 都会影响构建。 */
 export function isDocPath(path: string): boolean {
   return /\.(?:md|mdx|markdown|rst|adoc|png|jpe?g|gif|webp|ico)$/i.test(path) || /(?:^|\/)\.lead\//.test(path) || /(?:^|\/)(?:LICENSE|CHANGELOG|AUTHORS)(?:\.\w+)?$/i.test(path);
