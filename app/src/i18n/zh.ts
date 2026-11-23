@@ -763,8 +763,8 @@ export const zh = {
         : note.kind === "failed" ? (note.count ? `${note.count} 个${note.unit === "errors" ? "错误" : note.unit === "problems" ? "问题" : "失败"}` : "失败")
         : note.kind === "interrupted" ? "被打断" : note.kind === "background" ? "在后台运行" : note.kind === "missing" ? "没有结果" : note.kind === "notRun" ? "没跑完" : note.kind === "oneFailed" ? "其中一项没过" : "看不出结果",
     checkJump: "跳到这条命令",
-    checkStale: (count: number, names: string[]) => `检查之后又改了 ${count} 个文件（${names.slice(0, 3).join("、")}${count > 3 ? " 等" : ""}），标「之后改过」的结果不含这些改动`,
-    checkStaleTag: "之后改过",
+    checkStale: (kinds: string[], names: string[]) => `${kinds.join("、")}跑完后又改了 ${names.length === 1 ? names[0] : `${names.length} 个文件（${names.slice(0, 3).join("、")}${names.length > 3 ? " 等" : ""}）`}，${names.length === 1 ? "这处改动" : "这些改动"}还没验证过`,
+    checkStaleTag: "已过时",
     checkNone: "这一轮改了代码，没有跑测试、类型检查、代码检查或构建",
     revealInChanges: "在「更改」中查看",
     revealNoChange: "这个文件现在没有未提交的改动",

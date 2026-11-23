@@ -146,6 +146,14 @@ function editedAfterIndex(items: ChatItem[], after: number, cwd: string | null):
 
 const KIND_LABEL = (t: ReturnType<typeof useT>, kind: CheckKind) => t.chat.checkKind[kind];
 
+/// 提示里点名「哪些检查跑完后又改了代码」：过时行的类别，去掉之后又重跑过的（还有新鲜一行的类别不点名）。
+function staleKinds(t: ReturnType<typeof useT>, checks: TurnCheck[], staleIds: Set<string>): string[] {
+  const stale = new Set(checks.filter((check) => staleIds.has(check.toolId)).flatMap((check) => check.kinds));
+  const fresh = new Set(checks.filter((check) => !staleIds.has(check.toolId)).flatMap((check) => check.kinds));
+  const named = [...stale].filter((kind) => !fresh.has(kind));
+  return (named.length ? named : [...stale]).map((kind) => KIND_LABEL(t, kind));
+}
+
 /// 检查段（对照 GitHub PR 底部的检查区）：一行一项，状态、类别、命令原文、结果。数据全部来自会话记录。
 /// 点一行跳回过程里的那次命令：展开回合折叠和那一行，滚过去，看完整输出。
 function TurnChecks({ checks, replyId, editedAfter, staleIds, codeChanged }: { checks: TurnCheck[]; replyId: string | null; editedAfter: string[]; staleIds: Set<string>; codeChanged: boolean }) {
@@ -199,9 +207,9 @@ function TurnChecks({ checks, replyId, editedAfter, staleIds, codeChanged }: { c
             <li key={`${check.toolId}:${check.keys.join()}`}>
               <button type="button" className={`chat-turn-check is-${check.status}` + (stale ? " is-stale" : "")} data-tip={check.command}
                 aria-label={`${label} ${result} · ${t.chat.checkJump}`} onClick={(event) => jump(check.toolId, event.currentTarget)}>
-                <span className="chat-turn-check-icon" aria-hidden="true">{check.status === "pass" ? "✓" : check.status === "fail" ? "✕" : "?"}</span>
+                <span className="chat-turn-check-icon" aria-hidden="true">{stale && check.status === "pass" ? "!" : check.status === "pass" ? "✓" : check.status === "fail" ? "✕" : "?"}</span>
                 <span className="chat-turn-check-kind">{label}</span>
-                <code className="chat-turn-check-cmd">{check.command.split(/\r?\n/)[0]}</code>
+                <code className="chat-turn-check-cmd">{check.shown}</code>
                 <span className="chat-turn-check-result">{result}</span>
               </button>
             </li>
@@ -209,7 +217,7 @@ function TurnChecks({ checks, replyId, editedAfter, staleIds, codeChanged }: { c
         })}
       </ul>
       {editedAfter.length > 0 && (
-        <p className="chat-turn-checks-note is-warn">{t.chat.checkStale(editedAfter.length, editedAfter.map((path) => path.slice(path.lastIndexOf("/") + 1)))}</p>
+        <p className="chat-turn-checks-note is-warn">{t.chat.checkStale(staleKinds(t, checks, staleIds), editedAfter.map((path) => path.slice(path.lastIndexOf("/") + 1)))}</p>
       )}
     </>
   );
