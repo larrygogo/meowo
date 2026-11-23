@@ -51,6 +51,8 @@ export const store: Store = {
     remote_access_token: "",
     bark_url: "",
     workspace_order: [],
+    // 演示：固定了一个常用工作区（工作区页签标图钉、分组头标图钉）。
+    pinned_workspaces: ["C:\\Users\\demo\\workspace\\web-app"],
     keep_awake_while_running: true,
     keep_awake_for_lead_gate: true,
     notification_sound: true,

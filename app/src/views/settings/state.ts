@@ -48,6 +48,7 @@ export const SETTINGS_DEFAULTS: Settings = {
   remote_access_token: "",
   bark_url: "",
   workspace_order: [],
+  pinned_workspaces: [],
   keep_awake_while_running: true,
   keep_awake_for_lead_gate: true,
   notification_sound: true,

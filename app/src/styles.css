@@ -4401,6 +4401,11 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-ws-dir-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .chat-ws-dir-icon { flex: 0 0 16px; color: var(--cc-text-faint); }
 .chat-ws-dir-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; color: var(--cc-text); font-size: var(--text-sm); font-weight: var(--fw-regular); -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); }
+/* 固定的常用工作区：名字后一枚小图钉（中性灰，不抢名字）。工作区页签的行与侧栏分组头同一种。 */
+.chat-ws-dir-pin, .chat-workspace-pin { flex: none; display: inline-flex; align-items: center; color: var(--cc-text-faint); }
+.chat-workspace-pin { margin-left: var(--sp-4); }
+/* 行尾的图钉与悬停才出现的「⋯」同一个位置：悬停、键盘聚焦、菜单开着时让给「⋯」。 */
+.chat-ws-dir:hover .chat-ws-dir-pin, .chat-ws-dir:focus-within .chat-ws-dir-pin, .chat-ws-dir.is-menu-open .chat-ws-dir-pin { visibility: hidden; }
 .chat-ws-dir-sub { margin: var(--sp-3) 0 0 calc(16px + 6px); overflow: hidden; white-space: nowrap; color: var(--cc-text-faint); font-size: var(--text-xs); }
 .chat-ws-dir:hover .chat-ws-dir-name, .chat-ws-dir:hover .chat-ws-dir-sub, .chat-ws-dir.is-menu-open .chat-ws-dir-name { margin-right: calc(var(--icon-button-xs) + var(--sp-4)); }
 .chat-ws-dir-act { position: absolute; top: 0; bottom: 0; right: var(--sp-4); display: inline-flex; align-items: center; }

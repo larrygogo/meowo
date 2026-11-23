@@ -597,9 +597,13 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
   // 远程钉死 button 档:桌面设置若是 context(仅右键),触屏根本够不着菜单。
   // 工作区组的手动顺序（设置里的 workspace_order）：桌面 / 手机拖分组头写入，两端读同一份。
   const [workspaceOrder, setWorkspaceOrder] = useState<readonly string[]>([]);
+  // 固定的常用工作区（设置里的 pinned_workspaces）：工作区页签标图钉，按工作区分组时这些组排最前。
+  const [pinnedWorkspaces, setPinnedWorkspaces] = useState<readonly string[]>([]);
+  const pinnedKeys = useMemo(() => new Set(pinnedWorkspaces.map(pathKey)), [pinnedWorkspaces]);
   useSettingsEffect((s) => {
     setMenuMode(remoteUi() ? "button" : (s.card_menu_mode ?? "button"));
     setWorkspaceOrder(s.workspace_order ?? []);
+    setPinnedWorkspaces(s.pinned_workspaces ?? []);
   });
   // 菜单内容按 id 现查:刷新后置顶/归档态自动跟上,会话消失则菜单自然收起。
   const ctxItem = ctxMenu ? (sessions ?? []).find((s) => s.session.id === ctxMenu.sid) ?? null : null;
@@ -828,8 +832,8 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
 
   const groups = useMemo(() => {
     if (!ordered || groupMode !== "dir") return null;
-    return sidebarDirGroups(ordered, sortMode, workspaceOrder);
-  }, [groupMode, ordered, sortMode, workspaceOrder]);
+    return sidebarDirGroups(ordered, sortMode, workspaceOrder, pinnedWorkspaces);
+  }, [groupMode, ordered, sortMode, workspaceOrder, pinnedWorkspaces]);
   // 拖分组头调整工作区顺序（手动排序、按工作区分组、非多选态；手机长按后拖）。落下即本地先排，
   // 再把整份顺序写进设置；写失败报错并回到设置里原来的顺序。
   const groupKeys = useMemo(() => (groups ?? []).map((group) => group.key), [groups]);
@@ -1470,6 +1474,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
         <nav id={sidebarTabs.panelId} className="chat-sidebar-list" aria-label={t.chat.sidebarTabWorkspaces}>
           <WorkspaceDirectory
             options={workspaceOptions}
+            pinned={pinnedWorkspaces}
             onFilter={(cwd) => { setDirFilter(cwd); setArchivedView(false); setWorkspacesView(false); }}
             onHidden={refreshDirs}
           />
@@ -1590,6 +1595,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
                       }
                       summary={groupDot}
                       onFilter={setDirFilter}
+                      pinned={pinnedKeys.has(group.key)}
                     />
                   {shown.map(renderItem)}
                   {/* 未运行的会话默认收起：一个跑了一阵的目录里，历史会话能堆到几十条，

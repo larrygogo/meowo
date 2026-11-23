@@ -150,11 +150,16 @@ pub(crate) async fn recent_cwds(
         if include_hidden.unwrap_or(false) {
             return store.recent_cwds(limit).map_err(|error| error.to_string());
         }
-        let hidden = crate::settings::load_settings().hidden_workspaces;
+        let settings = crate::settings::load_settings();
+        let hidden = settings.hidden_workspaces;
         let rows = store
             .recent_cwds_with_last(limit.saturating_add(hidden.len()))
             .map_err(|error| error.to_string())?;
-        Ok(visible_workspaces(rows, &hidden, limit))
+        Ok(with_pinned_first(
+            &settings.pinned_workspaces,
+            visible_workspaces(rows, &hidden, limit),
+            limit,
+        ))
     })
     .await
     .map_err(|error| error.to_string())?
@@ -166,6 +171,49 @@ pub(crate) fn workspace_key(cwd: &str) -> String {
         .replace('\\', "/")
         .trim_end_matches('/')
         .to_lowercase()
+}
+
+/// 固定的工作区排在最前（按固定的先后），久不用、不在最近清单里的也照样列出；其余按最近活跃接在后面，
+/// 同一目录（斜杠、大小写不同）只出现一次。固定的都列出，总数超过 limit 时只截后面那段。纯函数便于单测。
+fn with_pinned_first(pinned: &[String], recent: Vec<String>, limit: usize) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out: Vec<String> = Vec::new();
+    for cwd in pinned {
+        if !cwd.trim().is_empty() && seen.insert(workspace_key(cwd)) {
+            out.push(cwd.clone());
+        }
+    }
+    let room = limit.saturating_sub(out.len());
+    out.extend(recent.into_iter().filter(|cwd| seen.insert(workspace_key(cwd))).take(room));
+    out
+}
+
+/// 固定 / 取消固定一个常用工作区（侧栏工作区菜单）。固定的同时取消「从列表中移除」：
+/// 用户明确要常用它。固定上限 50 个，防手机端往设置里无限写。
+#[tauri::command]
+pub(crate) async fn pin_workspace(app: tauri::AppHandle, cwd: String, pinned: bool) -> Result<(), String> {
+    let key = workspace_key(&cwd);
+    if key.is_empty() {
+        return Err("目录为空".into());
+    }
+    // 经 patch_settings 写：写完广播 settings-changed，桌面与手机的侧栏立刻标上 / 摘掉图钉。
+    crate::settings::patch_settings(app, move |settings| {
+        set_workspace_pinned(&mut settings.pinned_workspaces, &cwd, pinned);
+        if pinned {
+            settings.hidden_workspaces.remove(&key);
+        }
+    })
+    .await
+}
+
+const PINNED_MAX: usize = 50;
+
+fn set_workspace_pinned(list: &mut Vec<String>, cwd: &str, pin: bool) {
+    let key = workspace_key(cwd);
+    list.retain(|entry| workspace_key(entry) != key);
+    if pin && list.len() < PINNED_MAX {
+        list.push(cwd.trim().to_string());
+    }
 }
 
 /// 去掉移除之后再没用过的目录：最近一次活跃不晚于移除时刻就不显示。纯函数便于单测。
@@ -196,6 +244,10 @@ pub(crate) async fn hide_workspace(cwd: String, restore: Option<bool>) -> Result
     let restore = restore.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || {
         crate::settings::update_settings(|settings| {
+            // 从列表中移除一个固定的工作区：一并取消固定（不然它照样排在最前，移除等于没做）。
+            if !restore {
+                settings.pinned_workspaces.retain(|entry| workspace_key(entry) != key);
+            }
             set_workspace_hidden(&mut settings.hidden_workspaces, key, !restore);
             Ok(())
         })
@@ -223,6 +275,31 @@ mod restore_workspace_tests;
 #[cfg(test)]
 mod hidden_workspace_tests {
     use super::*;
+
+    #[test]
+    fn pinned_workspaces_come_first_even_when_not_recent() {
+        let pinned = vec![r"D:\Old\Tool".to_string(), "C:/Work/App".to_string()];
+        let recent = vec![r"C:\work\app\".to_string(), "C:/Work/Web".to_string(), "C:/Work/Api".to_string()];
+        // 固定的按固定先后排前；最近清单里同一目录（斜杠、大小写不同）不再重复；limit 只截后面那段。
+        assert_eq!(
+            with_pinned_first(&pinned, recent.clone(), 3),
+            vec![r"D:\Old\Tool", "C:/Work/App", "C:/Work/Web"]
+        );
+        assert_eq!(with_pinned_first(&[], recent.clone(), 2), vec![r"C:\work\app\", "C:/Work/Web"]);
+        // 固定的比 limit 还多：固定的都列出。
+        assert_eq!(with_pinned_first(&pinned, recent, 1).len(), 2);
+    }
+
+    #[test]
+    fn pinning_is_deduped_and_unpinning_removes_every_spelling() {
+        let mut list = Vec::new();
+        set_workspace_pinned(&mut list, "C:/Work/App", true);
+        set_workspace_pinned(&mut list, r"c:\work\app\", true);
+        assert_eq!(list, vec![r"c:\work\app\"]);
+        set_workspace_pinned(&mut list, "D:/Other", true);
+        set_workspace_pinned(&mut list, "C:/WORK/APP", false);
+        assert_eq!(list, vec!["D:/Other"]);
+    }
 
     #[test]
     fn hidden_workspace_stays_hidden_until_used_again() {

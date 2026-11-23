@@ -309,6 +309,10 @@ pub(crate) struct Settings {
     /// 桌面拖、手机长按拖分组头时经 set_workspace_order 写入，两端按同一顺序显示。空 = 没排过，组序随组内会话位置。
     #[serde(default)]
     pub(crate) workspace_order: Vec<String>,
+    /// 固定的常用工作区（原样路径，按固定的先后）。工作区清单把它们排在最前、久不用也照样列出；
+    /// 侧栏按工作区分组时这些组也排在最前。由 pin_workspace 单独维护（2026-11-23 用户要求）。
+    #[serde(default)]
+    pub(crate) pinned_workspaces: Vec<String>,
     /// 有会话在跑时防止电脑休眠（对照 Kimi「防止休眠」：电脑睡过去，跑到一半的 agent 就停了）。
     /// 只拦系统休眠、不拦息屏；没有会话在跑立刻交还系统的休眠策略。见 power.rs。
     #[serde(default = "default_true")]
@@ -379,6 +383,7 @@ impl Default for Settings {
             bark_url: String::new(),
             bark_paused: false,
             workspace_order: Vec::new(),
+            pinned_workspaces: Vec::new(),
             keep_awake_while_running: true,
             keep_awake_for_lead_gate: true,
             notification_sound: true,
@@ -762,7 +767,7 @@ pub(crate) async fn set_push_paused(app: tauri::AppHandle, paused: bool) -> Resu
 
 /// 只改设置里的个别字段（手机也调得到的那几个窄口子共用）：落盘后发 settings-changed，
 /// 桌面各窗立刻跟上，手机靠轮询 get_settings 跟上。
-async fn patch_settings(
+pub(crate) async fn patch_settings(
     app: tauri::AppHandle,
     patch: impl FnOnce(&mut Settings) + Send + 'static,
 ) -> Result<(), String> {
@@ -850,6 +855,8 @@ fn preserve_independently_managed_fields(incoming: &mut Settings, current: &Sett
     incoming.sticker_window = current.sticker_window.clone();
     // 隐藏的工作空间由 hide_workspace 独立维护，设置窗的旧快照不得把它盖掉。
     incoming.hidden_workspaces = current.hidden_workspaces.clone();
+    // 固定的工作区由 pin_workspace 独立维护，同理不让设置窗的旧快照盖掉。
+    incoming.pinned_workspaces = current.pinned_workspaces.clone();
     // setup 信任记录由 worktree_setup_trust 独立维护：设置窗打开期间刚点的信任不能被旧快照抹掉。
     incoming.worktree.trusted = current.worktree.trusted.clone();
 }
