@@ -4254,19 +4254,32 @@ export function ChatWindow() {
   // 不在了（卡片过期：用户在终端里答过、或框自己关了，识别还没跟上）。这时的回车会落到输入框，
   // Claude 会把那句建议直接发出去（空框有建议时 Enter 即提交）——不按，收卡，说一句。
   // 只在这一家画建议、按键里有回车时才多读这一帧；读不到画面照常按（不比以前更差）。
-  const writeAttentionKeys = async (input: string): Promise<true | "gone"> => {
+  // 经这里的按键排成一条队按点击顺序落：多选连勾的「方向键+回车」是相对上一次焦点算的，先读帧再写
+  // 会让读得快的那次插到前面，勾错项（独立审查：第 1 次读帧 80ms、第 2 次 5ms 时实测乱序）。
+  const attentionKeysQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const writeAttentionKeys = (input: string): Promise<true | "gone"> => {
     const spec = chatUi?.composer;
-    if (spec?.suggestion_placeholder && /[\r\n]/.test(input)) {
-      const frame = await terminalComposerIo(sessionId).frame().catch(() => null);
-      if (suggestionOnScreen(readComposerFrame(frame, spec), spec) !== null) {
-        logChatEvent(sessionId, { kind: "card_unrecognized", reason: "attention_gone_suggestion_shown", detail: { what: "terminal_keys" } });
-        setTerminalAttention(null);
-        setSendError(t.chat.attentionGone, { terminal: true });
-        return "gone";
+    const target = sessionId;
+    const run = async (): Promise<true | "gone"> => {
+      if (spec?.suggestion_placeholder && /[\r\n]/.test(input)) {
+        const frame = await terminalComposerIo(target).frame().catch(() => null);
+        if (suggestionOnScreen(readComposerFrame(frame, spec), spec) !== null) {
+          logChatEvent(target, { kind: "card_unrecognized", reason: "attention_gone_suggestion_shown", detail: { what: "terminal_keys" } });
+          setTerminalAttention(null);
+          // 菜单类卡片（/model）过期时也把菜单识别的状态复位，否则按钮会停在「菜单开着」。
+          terminalMenuOpenRef.current = false;
+          terminalMenuSeenRef.current = false;
+          setTerminalMenuOpen(false);
+          setSendError(t.chat.attentionGone, { terminal: true });
+          return "gone";
+        }
       }
-    }
-    await writeManagedTerminal(sessionId, input);
-    return true;
+      await writeManagedTerminal(target, input);
+      return true;
+    };
+    const next = attentionKeysQueue.current.then(run, run);
+    attentionKeysQueue.current = next.catch(() => {});
+    return next;
   };
   const chooseTerminalOption = (option: { input: string; pointer?: boolean; label?: string } | undefined, responseReady = terminalResponseReady) => {
     if (!option || !responseReady || optionResolvingRef.current) return;

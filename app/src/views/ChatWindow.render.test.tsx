@@ -732,7 +732,8 @@ describe("ChatWindow", () => {
     fireEvent.click(screen.getByRole("button", { name: "终端" }));
     fireEvent.click(await screen.findByRole("button", { name: "Yes, continue" }));
     // 光标已停在第一项：相对移动为 0，直接回车确认，不再盲按上键绕圈。
-    expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 14, data: "\r" });
+    // 替用户按的键排队按点击顺序落（见 ChatWindow 的 writeAttentionKeys），写入晚一拍。
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 14, data: "\r" }));
   });
 
   it("shows a managed PTY startup choice when the conversation opens without visiting Terminal", async () => {
