@@ -42,9 +42,27 @@ describe("建议回复：从终端输入框读出 Claude 的预测下一句", ()
     const { result } = renderHook(() => useComposerSuggestion(7, specs.claude, true, io));
     await advance(SUGGESTION_POLL_MS);
     expect(result.current[0]).toBe("加个测试跑一下");
+    // 一次没读到（可能正读在重画中间）先不收；隔 1.5 秒再没有才收。
     current = EMPTY;
     await advance(SUGGESTION_RECHECK_MS);
+    expect(result.current[0]).toBe("加个测试跑一下");
+    await advance(SUGGESTION_POLL_MS);
     expect(result.current[0]).toBeNull();
+  });
+
+  it("只有一次读在重画中间（光标藏着）：按钮不闪", async () => {
+    vi.useFakeTimers();
+    const midRender = { ...SUGGEST, cursorVisible: false };
+    let reads = 0;
+    const io: ComposerIo = { frame: async () => (++reads === 2 ? midRender : SUGGEST), write: async () => {} };
+    const { result } = renderHook(() => useComposerSuggestion(7, specs.claude, true, io));
+    await advance(SUGGESTION_POLL_MS);
+    expect(result.current[0]).toBe("加个测试跑一下");
+    await advance(SUGGESTION_RECHECK_MS);
+    expect(result.current[0]).toBe("加个测试跑一下");
+    await advance(SUGGESTION_POLL_MS);
+    expect(result.current[0]).toBe("加个测试跑一下");
+    expect(reads).toBe(3);
   });
 
   it("发送后（dismiss）这一句不再冒出来，哪怕终端还没反应过来；下一轮跑完照常显示", async () => {

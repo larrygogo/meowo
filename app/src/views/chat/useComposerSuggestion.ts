@@ -37,12 +37,21 @@ export function useComposerSuggestion(
     let tries = 0;
     let rechecks = 0;
     let shown: string | null = null;
+    let missed = false;
     let timer: number | undefined;
     const tick = async () => {
       const frame = await terminal.frame().catch(() => null);
       if (cancelled) return;
       let found = composerSuggestion(readComposerFrame(frame, spec), spec);
       if (found && found === usedRef.current) found = null;
+      // 已显示的建议一次没读到先不收：Claude 每次重画先藏光标、画完再显示（2.1.330 原始字节经 vt100
+      // 重放核对），恰好读在重画中间会认成草稿。隔 1.5 秒再读一次仍没有才收，免得按钮闪一下。
+      if (shown && !found && !missed && usedRef.current !== shown) {
+        missed = true;
+        timer = window.setTimeout(() => void tick(), SUGGESTION_POLL_MS);
+        return;
+      }
+      missed = false;
       if (found !== shown) {
         shown = found;
         setSuggestion(found);
