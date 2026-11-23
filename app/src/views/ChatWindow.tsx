@@ -130,6 +130,7 @@ import { RemoteSessionList } from "../mobile/RemoteSessionList";
 import { performUndo, typedUndoTarget, undoConfirmMessage } from "./chat/undoTerminal";
 import { useOutgoingUpkeep } from "./chat/useOutgoingUpkeep";
 import { useComposerSuggestion } from "./chat/useComposerSuggestion";
+import { composerSuggestion as suggestionOnScreen, readComposerFrame, terminalComposerIo } from "./chat/composer";
 import { useQuestionFormProbe } from "./chat/useQuestionFormProbe";
 import { SessionAdmin } from "./chat/SessionAdmin";
 import { NewSessionPage } from "./chat/NewSessionPage";
@@ -4249,6 +4250,24 @@ export function ChatWindow() {
   // 到卡片随 .then 收起之间有窗口,期间极快双击会把 option.input 落键两次——命令审批场景
   // 等于替用户答两次。只锁**会收卡的终止动作**,多选勾选(卡片留驻)的连点不受影响。
   const optionResolvingRef = useRef(false);
+  // 替用户在终端选择框里按键（带回车）之前现读一帧：Claude 输入框正显示着建议回复，说明选择框已经
+  // 不在了（卡片过期：用户在终端里答过、或框自己关了，识别还没跟上）。这时的回车会落到输入框，
+  // Claude 会把那句建议直接发出去（空框有建议时 Enter 即提交）——不按，收卡，说一句。
+  // 只在这一家画建议、按键里有回车时才多读这一帧；读不到画面照常按（不比以前更差）。
+  const writeAttentionKeys = async (input: string): Promise<true | "gone"> => {
+    const spec = chatUi?.composer;
+    if (spec?.suggestion_placeholder && /[\r\n]/.test(input)) {
+      const frame = await terminalComposerIo(sessionId).frame().catch(() => null);
+      if (suggestionOnScreen(readComposerFrame(frame, spec), spec) !== null) {
+        logChatEvent(sessionId, { kind: "card_unrecognized", reason: "attention_gone_suggestion_shown", detail: { what: "terminal_keys" } });
+        setTerminalAttention(null);
+        setSendError(t.chat.attentionGone, { terminal: true });
+        return "gone";
+      }
+    }
+    await writeManagedTerminal(sessionId, input);
+    return true;
+  };
   const chooseTerminalOption = (option: { input: string; pointer?: boolean; label?: string } | undefined, responseReady = terminalResponseReady) => {
     if (!option || !responseReady || optionResolvingRef.current) return;
     // 选完这次菜单就结束了：关掉识别窗口，否则按钮会一直停在「收起」态。
@@ -4260,10 +4279,10 @@ export function ChatWindow() {
     // 要用鼠标点的选项（横排选项行，焦点在屏幕文字里看不出）：现读屏幕定位再点，找不到就什么都不发（见 chat/terminalPointer）。
     const answered = option.pointer && option.label
       ? clickOptionInTerminal(sessionId, option.label)
-      : writeManagedTerminal(sessionId, option.input).then(() => true);
+      : writeAttentionKeys(option.input);
     void answered
       .then((sent) => {
-        if (!isCurrentOperation()) return;
+        if (!isCurrentOperation() || sent === "gone") return;
         if (!sent) { setSendError(t.chat.optionNotFound, { terminal: true }); return; }
         terminalMenuOpenRef.current = false;
         terminalMenuSeenRef.current = false;
@@ -4444,7 +4463,7 @@ export function ChatWindow() {
     // 收卡的终止动作(提交/直答/单选即答)才上在途锁;多选勾选留驻,连勾自由。
     const terminates = option.kind === "submit" || option.kind === "chat" || soleChoice;
     if (terminates) optionResolvingRef.current = true;
-    void writeManagedTerminal(sessionId, option.input)
+    void writeAttentionKeys(option.input)
       .then(() => { if (terminates) setTerminalAttention(null); })
       .catch((error) => setSendError(formatBackendError(error, t.locale)))
       .finally(() => { if (terminates) optionResolvingRef.current = false; });
@@ -4531,8 +4550,8 @@ export function ChatWindow() {
         .finally(() => { optionResolvingRef.current = false; });
       return;
     }
-    void writeManagedTerminal(sessionId, option.input + value + "\r")
-      .then(() => setQuestionCustomText(""))
+    void writeAttentionKeys(option.input + value + "\r")
+      .then((sent) => { if (sent === true) setQuestionCustomText(""); })
       .catch((error) => setSendError(formatBackendError(error, t.locale)));
   };
 
@@ -5079,7 +5098,7 @@ export function ChatWindow() {
         // 选完后主动刷新模型（`/model` 切换不产生 Stop hook，不刷就一直显示旧值）。
         onChoose={chooseTerminalOption}
         onKey={(input) => {
-          void writeManagedTerminal(sessionId, input)
+          void writeAttentionKeys(input)
             .then(() => setTerminalAttention(null))
             .catch((error) => setSendError(formatBackendError(error, t.locale)));
         }}

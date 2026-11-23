@@ -777,6 +777,7 @@ export const en: Dict = {
     },
     optionExitsSession: "This ends the session",
     optionNotFound: "Option not found in the terminal. Try again",
+    attentionGone: "The prompt in the terminal has already closed, so no keys were sent",
     questionTitle: "Agent is waiting for your answer",
     questionPending: vocab.request.question,
     questionFormLoading: "Pick an answer; it will be applied once the terminal form is ready",

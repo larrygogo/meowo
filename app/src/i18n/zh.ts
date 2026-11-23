@@ -920,6 +920,7 @@ export const zh = {
     optionExitsSession: "选它会结束这个会话",
     // 要用鼠标点的终端选项（opencode 权限框）：屏幕上没找到它，什么都没发。
     optionNotFound: "终端里没找到这个选项，请重试",
+    attentionGone: "终端里的选择框已经关了，这次没有替你按键",
     questionTitle: "Agent 正在等待你的回答",
     questionPending: vocab.request.question,
     questionFormLoading: "点选答案，终端表单就绪后自动作答",

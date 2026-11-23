@@ -1030,9 +1030,10 @@ describe("ChatWindow", () => {
     expect(screen.getByRole("button", { name: "提交选择" })).toBeTruthy();
     fireEvent.click(firstChoice);
     expect(firstChoice.className).toContain("is-selected");
-    expect(invoke).toHaveBeenCalledWith("write_managed_terminal", {
+    // 按键前先现读一帧（卡片过期、输入框里正显示着建议回复时不按），写入因此是异步的。
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", {
       sessionId: 46, data: "\r",
-    });
+    }));
     expect(screen.queryByRole("button", { name: "上一项 ↑" })).toBeNull();
     expect(screen.queryByText("Meowo 正在从托管终端读取 Agent 的选项…")).toBeNull();
   });
