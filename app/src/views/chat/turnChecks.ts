@@ -481,6 +481,23 @@ const QUIET_ON_PASS = /^(?:(?:npx|bunx|pnpx|pnpm\s+(?:exec|dlx)|yarn\s+(?:exec|d
 const KEEPS_FAILURES = /^(?:(?:tail|head)(?:\s+-n)?(?:\s+-?\d+)?|select-object\s+-(?:last|first)\s+\d+|out-string|cat)$/i;
 // 输出里有任何一点像出错的字眼就不推：宁可「看不出」，不把没通过的写成通过。
 const TROUBLE = /error|✖|problem|warning|not recogni[sz]ed|not found|cannot find|can't find|no such file|ERR!|exited with|panicked|exception|fail|denied|killed|timed? ?out|abort|fatal|traceback|无法|找不到|错误/i;
+// 带出错字眼、却跟检查过没过无关的行（本机记录重放里最常挡住判断的几种）：git 的换行符提示、rustfmt 在稳定版上
+// 的提示、node/npm 的配置提示。「0 failed」「0 errors」这类说的是没有失败，也去掉。
+const NOISE_LINES = [
+  /^warning: in the working copy of .*(?:LF|CRLF) will be replaced by (?:CRLF|LF)/i,
+  /^warning: can't set `[^`]+`, unstable features are only available in nightly/i,
+  /^\(node:\d+\) \w*Warning:/,
+  /^\(Use `node --trace-warnings/,
+  /^npm warn (?:Unknown (?:project|user|env) config|config)/i,
+];
+const ZERO_TROUBLE = /\b0 (?:failed|failures?|errors?|warnings?|problems?)\b/gi;
+
+function withoutNoise(output: string): string {
+  return output.replace(/\x1b\[[0-9;]*m/g, "").split(/\r?\n/)
+    .filter((line) => !NOISE_LINES.some((noise) => noise.test(line.trim())))
+    .join("\n")
+    .replace(ZERO_TROUBLE, "");
+}
 
 /**
  * 整条命令成功、退出码却落不到这一段（`tsc | tail -5; vitest …`）时，最后再推一次：本机记录里重放，这类占「看不出结果」
@@ -490,7 +507,7 @@ function quietPass(segments: Segment[], index: number, output: string, verdicts:
   const segment = segments[index];
   if (segment.background || !QUIET_ON_PASS.test(headOf(segment.text))) return false;
   if (!segment.filters.every((filter) => KEEPS_FAILURES.test(filter.replace(/^\d?>&\d\s*/, "").trim()))) return false;
-  return surelyRan(segments, index, verdicts) && !TROUBLE.test(output.replace(/\x1b\[[0-9;]*m/g, ""));
+  return surelyRan(segments, index, verdicts) && !TROUBLE.test(withoutNoise(output));
 }
 
 /** 这段一定跑到了：前面每一段，要么和这段之间隔着 ;（不管成败都会跑到这里），要么是切目录这类不会失败的、或已判通过的。 */

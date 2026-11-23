@@ -110,6 +110,26 @@ describe("这一轮的检查", () => {
     ]);
   });
 
+  // 本机记录重放：「看不出」里最常见的是被这些无关的行挡住。
+  it("git 换行符提示、rustfmt/node/npm 的配置提示、「0 failed」不算出错字眼", () => {
+    const noisy = [
+      "warning: in the working copy of 'app/src/a.ts', LF will be replaced by CRLF the next time Git touches it",
+      "Warning: can't set `imports_granularity = Crate`, unstable features are only available in nightly channel.",
+      "(node:123) ExperimentalWarning: localStorage is not available",
+      "(Use `node --trace-warnings ...` to show where the warning was created)",
+      "npm warn Unknown project config \"shamefully-hoist\".",
+      "test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s",
+    ].join("\n");
+    const [clean] = collectTurnChecks(run("npx tsc --noEmit 2>&1 | tail -5; cargo test 2>&1 | tail -3", { text: noisy }));
+    expect([clean.kinds, clean.status]).toEqual([["typecheck", "test"], "pass"]);
+    // 真出错的照旧挡住：eslint 配置报错、1 failed。
+    const [real] = collectTurnChecks(run("npx tsc --noEmit 2>&1 | tail -5; echo done", { text: "If you still have problems after following the migration guide\ndone" }));
+    expect(real.status).toBe("unknown");
+    const [one] = collectTurnChecks(run("npx tsc --noEmit | tail -3; cargo test 2>&1 | tail -1", { text: "test result: FAILED. 11 passed; 1 failed" }));
+    expect(one.kinds).toEqual(["typecheck"]);
+    expect(one.status).toBe("unknown");
+  });
+
   // 本机记录重放：`tsc; echo "tsc=$?"` 这类把退出码打出来的，原来照样写「看不出」。
   it("检查后面紧跟着把退出码打出来：照打出来的退出码判", () => {
     const checks = collectTurnChecks([
