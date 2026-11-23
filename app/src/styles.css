@@ -2549,8 +2549,9 @@ button.stab {
 .provider-card-title-row {
   min-width: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--sp-8);
+  gap: var(--sp-4) var(--sp-8);
 }
 .provider-card-title .provider-name {
   /* 名字不参与收缩也不折行：徽章一多「Claude Code」会被挤成两行（实拍），该让的是徽章。 */
@@ -2592,6 +2593,7 @@ button.stab {
    （完整值走 data-tip）。不能 capitalize：邮箱会被改成「Valougalinier125@Gmail.Com」（实拍）。 */
 .provider-badge-profile {
   flex: 0 1 auto;
+  /* 标题行可折行：放不下先整枚折到下一行，不再被挤成只剩「账…」（实拍）；独占一行仍放不下才省略。 */
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;

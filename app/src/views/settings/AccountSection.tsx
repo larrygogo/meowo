@@ -79,6 +79,21 @@ function displayVersion(raw: string): string {
   return raw.match(/\d+\.\d+(?:\.\d+)?(?:[-+][\w.]+)?/)?.[0] ?? raw.trim();
 }
 
+/** 账号名和下面那行邮箱指的是不是同一个邮箱。大小写不计；Gmail 不认本地部分的点和 `+后缀`
+ *  （`ar.b@gmail.com` 与 `arb@gmail.com` 是同一个收件箱），按 Gmail 的规则比。
+ *  实拍：账号名起成 `ar.xxx@gmail.com`、登录邮箱是 `arxxx@gmail.com`，徽章重复一遍还被挤成「账…」。 */
+export function sameAccountName(name: string, email: string): boolean {
+  const norm = (raw: string) => {
+    const s = raw.trim().toLowerCase();
+    const at = s.lastIndexOf("@");
+    if (at <= 0) return s;
+    const domain = s.slice(at + 1);
+    if (domain !== "gmail.com" && domain !== "googlemail.com") return s;
+    return s.slice(0, at).split("+")[0].replace(/\./g, "") + "@gmail.com";
+  };
+  return norm(name) === norm(email);
+}
+
 function fmtResetIn(iso: string, t: Dict): string {
   const ts = Date.parse(iso);
   if (Number.isNaN(ts)) return "";
@@ -576,8 +591,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
             {/* 活跃账号持续可见：切到过自定义账号就一直挂着这个徽章，防「切过一次就忘了」。
                 默认账号（active_profile_name 为空）不显示——没建过账号的用户零感知。
                 账号名就是下面那行邮箱时也不显示：同一串字挂两遍纯属噪音（用户要求隐藏）。 */}
-            {!relayEnabled && payload?.active_profile_name &&
-              payload.active_profile_name.trim().toLowerCase() !== desc.trim().toLowerCase() && (
+            {!relayEnabled && payload?.active_profile_name && !sameAccountName(payload.active_profile_name, desc) && (
               <span
                 className="provider-badge provider-badge-profile"
                 data-testid={"agent-profile-" + provider}
