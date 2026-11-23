@@ -207,7 +207,7 @@ function TurnChecks({ checks, replyId, editedAfter, staleIds, codeChanged }: { c
             <li key={`${check.toolId}:${check.keys.join()}`}>
               <button type="button" className={`chat-turn-check is-${check.status}` + (stale ? " is-stale" : "")} data-tip={check.command}
                 aria-label={`${label} ${result} · ${t.chat.checkJump}`} onClick={(event) => jump(check.toolId, event.currentTarget)}>
-                <span className="chat-turn-check-icon" aria-hidden="true">{check.status === "pass" ? "✓" : check.status === "fail" ? "✕" : "?"}</span>
+                <span className="chat-turn-check-icon" aria-hidden="true">{stale && check.status === "pass" ? "!" : check.status === "pass" ? "✓" : check.status === "fail" ? "✕" : "?"}</span>
                 <span className="chat-turn-check-kind">{label}</span>
                 <code className="chat-turn-check-cmd">{check.shown}</code>
                 <span className="chat-turn-check-result">{result}</span>

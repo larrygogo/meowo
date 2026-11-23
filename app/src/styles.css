@@ -4566,6 +4566,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-turn-check.is-fail .chat-turn-check-result { color: var(--cc-err-text); }
 /* 通过之后又改过代码：结果改用提醒色，和下面那行提示同色，读者知道这个「通过」不含后来的改动。 */
 .chat-turn-check.is-pass.is-stale .chat-turn-check-result { color: var(--cc-warn-text); }
+/* 测完又改了代码：这次通过管不到最后的代码，不给绿勾，和「没跑」一样看待。 */
+.chat-turn-check.is-pass.is-stale .chat-turn-check-icon { background: color-mix(in srgb, var(--cc-warn) 18%, transparent); color: var(--cc-warn-text); }
 .chat-turn-checks-note { margin: 0; padding: var(--sp-8) var(--sp-14); border-top: var(--hairline) solid var(--cc-border); font-size: var(--text-xs); color: var(--cc-text-faint); }
 .chat-turn-changes > .chat-turn-checks-note:first-child { border-top: 0; }
 .chat-turn-checks-note.is-warn { color: var(--cc-warn-text); }
