@@ -26,6 +26,8 @@ export type TurnCheck = {
   status: CheckStatus;
   note: CheckNote;
   command: string;
+  /** 行里显示的那一段：这几类检查所在的那段命令，去掉开头的变量赋值（整条命令可能先 `SP=... ;` 设一堆变量）。 */
+  shown: string;
   /** 对应的 tool_use id：点这一行跳回过程里的那次命令。 */
   toolId: string;
   /** 在 items 里的位置：和之后的改动比先后。 */
@@ -502,6 +504,9 @@ function judgeCommand(segments: Segment[], kindsBySegment: CheckKind[][], result
  * 换了命令的各留各的，旧的失败不被别的命令的通过盖掉。
  * 一条命令里结论相同的几类合成一行，结论不同的分行（`tsc && vitest`：类型检查失败、测试没跑到）。
  */
+// 命令开头的变量赋值（`FOO=1 BAR="a b" vitest run`）：显示时去掉，留下真正跑的工具。
+const ASSIGNS = /^(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|\S*)\s+)+/;
+
 export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
   const results = new Map<string, ToolResultItem>();
   for (const item of items) {
@@ -523,22 +528,22 @@ export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
       : null;
     const verdicts = whole ? kindsBySegment.map((kinds) => (kinds.length > 0 ? whole : null)) : judgeCommand(segments, kindsBySegment, result!);
     // 按在命令里出现的先后排；同一段命令出现几次取最后一次的结论。
-    const found = new Map<string, { kind: CheckKind; verdict: Verdict }>();
+    const found = new Map<string, { kind: CheckKind; verdict: Verdict; index: number }>();
     kindsBySegment.forEach((kinds, index) => {
       for (const kind of kinds) {
         const key = `${kind}|${segmentKey(segments[index].text)}`;
         found.delete(key);
-        found.set(key, { kind, verdict: verdicts[index]! });
+        found.set(key, { kind, verdict: verdicts[index]!, index });
       }
     });
     // 结论相同的几类合成一行：都通过的合成一行，其余结论完全相同才合。同一类出现两次（pytest; vitest）不合，分行。
-    const groups: { kinds: CheckKind[]; keys: string[]; verdict: Verdict }[] = [];
-    for (const [key, { kind, verdict }] of found) {
+    const groups: { kinds: CheckKind[]; keys: string[]; verdict: Verdict; index: number }[] = [];
+    for (const [key, { kind, verdict, index }] of found) {
       // 「其中一项没过」本来就是对一组说的，同类也合（`cargo test -p a && cargo test -p b`）。
       const same = groups.find((group) => (verdict.note.kind === "oneFailed" || !group.kinds.includes(kind))
         && ((group.verdict.status === "pass" && verdict.status === "pass") || JSON.stringify(group.verdict) === JSON.stringify(verdict)));
       if (!same) {
-        groups.push({ kinds: [kind], keys: [key], verdict });
+        groups.push({ kinds: [kind], keys: [key], verdict, index });
         continue;
       }
       same.kinds.push(kind);
@@ -546,7 +551,10 @@ export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
       // 几类合成的通过行不带计数：「类型检查 + 测试 162 个通过」会让人以为 162 是两类加起来的。
       if (same.verdict.status === "pass") same.verdict = PASSED;
     }
-    for (const group of groups) all.push({ kinds: group.kinds, keys: group.keys, ...group.verdict, command, toolId: item.id, at });
+    for (const group of groups) {
+      const shown = segments[group.index].text.replace(ASSIGNS, "").split(/\r?\n/)[0];
+      all.push({ kinds: group.kinds, keys: group.keys, ...group.verdict, command, shown, toolId: item.id, at });
+    }
   });
   // 同一工具、同样范围（或之后跑了全量）只留最后一次：倒着走，某行的键全被更晚的行盖过就丢掉；部分被盖过的只留没被盖的。
   const later: string[] = [];

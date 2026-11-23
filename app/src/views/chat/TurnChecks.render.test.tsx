@@ -25,14 +25,14 @@ describe("本轮结果卡的检查段", () => {
     ]} />);
     const rows = [...document.querySelectorAll(".chat-turn-check")];
     expect(rows.map((row) => [row.className, row.querySelector(".chat-turn-check-kind")?.textContent, row.querySelector(".chat-turn-check-result")?.textContent])).toEqual([
-      ["chat-turn-check is-pass is-stale", "类型检查", "通过 · 之后改过"],
-      ["chat-turn-check is-pass is-stale", "测试", "162 个通过 · 之后改过"],
+      ["chat-turn-check is-pass is-stale", "类型检查", "通过 · 改动前跑的"],
+      ["chat-turn-check is-pass is-stale", "测试", "162 个通过 · 改动前跑的"],
     ]);
     // README 是文档，不算「检查之后又改了」。
-    expect(screen.getByText(zh.chat.checkStale(1, ["Row.tsx"]))).toBeTruthy();
+    expect(screen.getByText(zh.chat.checkStale(["类型检查", "测试"], ["Row.tsx"]))).toBeTruthy();
   });
 
-  it("类型检查之后改了文件、只重跑了测试：类型检查那一行标「之后改过」，测试不标", () => {
+  it("类型检查之后改了文件、只重跑了测试：类型检查那一行标「改动前跑的」，测试不标", () => {
     render(<TurnChanges items={[
       edit("e1", "src/a.ts"), ok("e1"),
       run("c1", "bunx tsc --noEmit"), ok("c1"),
@@ -40,8 +40,18 @@ describe("本轮结果卡的检查段", () => {
       run("c2", "bunx vitest run"), ok("c2", "Tests  5 passed (5)"),
     ]} />);
     const rows = [...document.querySelectorAll(".chat-turn-check")];
-    expect(rows.map((row) => row.querySelector(".chat-turn-check-result")?.textContent)).toEqual(["通过 · 之后改过", "5 个通过"]);
-    expect(screen.getByText(zh.chat.checkStale(1, ["b.ts"]))).toBeTruthy();
+    expect(rows.map((row) => row.querySelector(".chat-turn-check-result")?.textContent)).toEqual(["通过 · 改动前跑的", "5 个通过"]);
+    expect(screen.getByText(zh.chat.checkStale(["类型检查"], ["b.ts"]))).toBeTruthy();
+  });
+
+  it("提示写成人话：哪项检查之后改了哪个文件；命令显示真正跑检查的那段，不显示开头的变量赋值", () => {
+    render(<TurnChanges items={[
+      edit("e1", "src/a.ts"), ok("e1"),
+      run("c1", 'SP="C:/Users/x/Temp/claude/abc"; cd app && FORCE_COLOR=0 bunx vitest run src/derive'), ok("c1", "Tests  1 passed (1)"),
+      edit("e2", "src/derive.ts"), ok("e2"),
+    ]} />);
+    expect(document.querySelector(".chat-turn-check-cmd")?.textContent).toBe("bunx vitest run src/derive");
+    expect(document.querySelector(".chat-turn-checks-note")?.textContent).toBe("测试跑完后又改了 derive.ts，这处改动还没验证过");
   });
 
   it("改了代码却没跑检查：如实写；只改文档：不提", () => {
