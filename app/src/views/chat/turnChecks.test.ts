@@ -436,3 +436,40 @@ describe("文档类文件", () => {
     expect(isDocPath(path)).toBe(doc);
   });
 });
+
+describe("全套测试没过、失败的文件单独复跑通过", () => {
+  const ESC = String.fromCharCode(27);
+  // 实拍：vitest 带颜色，每个没过的用例一行 FAIL，汇总里写没过的文件数。
+  const fullFail = [
+    `${ESC}[41m${ESC}[1m FAIL ${ESC}[22m${ESC}[49m src/a11yStyles.test.ts${ESC}[2m > ${ESC}[22m对话窗焦点环`,
+    `${ESC}[2m Test Files ${ESC}[22m ${ESC}[1m${ESC}[31m1 failed${ESC}[39m${ESC}[22m${ESC}[2m | ${ESC}[22m${ESC}[1m${ESC}[32m302 passed${ESC}[39m`,
+    `${ESC}[2m      Tests ${ESC}[22m ${ESC}[1m${ESC}[31m1 failed${ESC}[39m${ESC}[22m | 4887 passed`,
+  ].join("\n");
+  const pass = (n: number) => ({ text: ` Test Files  1 passed (1)\n      Tests  ${n} passed (${n})` });
+
+  it("列全了的失败文件都复跑通过：全套那一行不再挂红", () => {
+    const checks = collectTurnChecks([
+      ...run("bunx vitest run 2>&1 | grep -E \"Test Files|Tests |FAIL\"", { text: fullFail }),
+      ...run("bunx vitest run src/a11yStyles.test.ts 2>&1 | grep \"Tests \"", pass(6)),
+    ]);
+    expect(checks.map((check) => check.status)).toEqual(["pass"]);
+  });
+
+  it("复跑的是别的文件、或用 -t 筛选：红色留着", () => {
+    for (const rerun of ["bunx vitest run src/other.test.ts", "bunx vitest run -t 焦点环"]) {
+      const checks = collectTurnChecks([...run("bunx vitest run", { text: fullFail }), ...run(rerun, pass(6))]);
+      expect(checks.map((check) => check.status)).toContain("fail");
+    }
+  });
+
+  it("FAIL 行没列全（汇总说 2 个文件没过、只看到 1 个）：不撤红", () => {
+    const partial = fullFail.replace("1 failed", "2 failed");
+    const checks = collectTurnChecks([...run("bunx vitest run", { text: partial }), ...run("bunx vitest run src/a11yStyles.test.ts", pass(6))]);
+    expect(checks.map((check) => check.status)).toContain("fail");
+  });
+
+  it("复跑没过：红色留着", () => {
+    const checks = collectTurnChecks([...run("bunx vitest run", { text: fullFail }), ...run("bunx vitest run src/a11yStyles.test.ts", { is_error: true, text: fullFail.replace("302 passed", "0 passed") })]);
+    expect(checks.every((check) => check.status === "fail")).toBe(true);
+  });
+});

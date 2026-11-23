@@ -9,18 +9,24 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useT } from "../../i18n";
-import { hideWorkspace, openNewSessionWindow, openProjectDir, restoreWorkspace } from "../../api";
+import { hideWorkspace, openNewSessionWindow, openProjectDir, pinWorkspace, restoreWorkspace } from "../../api";
 import { remoteUi } from "../../remoteMode";
-import { tildePath } from "../../paths";
+import { pathKey, tildePath } from "../../paths";
 import { useMenuPopup } from "../menu";
 import { Icon } from "../../icons/Icon";
 import { icFolderPlus } from "../../icons/glyphs.chat";
-import { icFolder, icMore } from "../../icons/glyphs";
+import { icFolder, icMore, icPin } from "../../icons/glyphs";
 
 /// 工作区菜单：工作区页签的目录行与会话列表的分组头共用。「⋯」按钮在按钮下方打开，右键
 /// 在鼠标处打开（对照 Kimi 的 onContextmenu）。关闭（点外 / Esc / 滚动）走 useMenuPopup 的
 /// useDismissable，与其它弹层同一套。
-export function useWorkspaceMenu(cwd: string | null, onFilter: ((cwd: string) => void) | null, onHide: ((cwd: string) => void) | null = null) {
+export function useWorkspaceMenu(
+  cwd: string | null,
+  onFilter: ((cwd: string) => void) | null,
+  onHide: ((cwd: string) => void) | null = null,
+  /// 固定常用工作区：pinned 为当前是否固定；null = 这里不给固定入口。
+  pin: { pinned: boolean; onChange?: () => void } | null = null,
+) {
   const t = useT();
   const { open, setOpen, pos, ref, btnRef, menuRef, toggle, onKeyDown } = useMenuPopup({});
   // 右键打开时的鼠标位置；null = 从「⋯」按钮打开，用 hook 按按钮算的坐标。
@@ -57,6 +63,15 @@ export function useWorkspaceMenu(cwd: string | null, onFilter: ((cwd: string) =>
           style={at ? { position: "fixed", left: Math.max(6, at.x), top: Math.max(6, at.y) } : { position: "fixed", top: pos.top, bottom: pos.bottom, right: pos.right }}
         >
           <button type="button" role="menuitem" className="dd-item" onClick={() => pick(create)}>{t.chat.wsNewHere}</button>
+          {pin && (
+            <button
+              type="button"
+              role="menuitem"
+              className="dd-item"
+              data-tip={pin.pinned ? undefined : t.chat.wsPinTip}
+              onClick={() => pick(() => void pinWorkspace(cwd, !pin.pinned).then(() => pin.onChange?.()).catch(() => {}))}
+            >{pin.pinned ? t.chat.wsUnpin : t.chat.wsPin}</button>
+          )}
           {onFilter && (
             <button type="button" role="menuitem" className="dd-item" onClick={() => pick(() => onFilter(cwd))}>{t.chat.wsShowSessions}</button>
           )}
@@ -75,8 +90,16 @@ export function useWorkspaceMenu(cwd: string | null, onFilter: ((cwd: string) =>
 
 const MORE = <Icon glyph={icMore} size={14} />;
 
-function WorkspaceRow({ cwd, label, onFilter, onHide }: { cwd: string; label: string; onFilter: (cwd: string) => void; onHide: (cwd: string) => void }) {
-  const menu = useWorkspaceMenu(cwd, onFilter, onHide);
+function WorkspaceRow({ cwd, label, pinned, onFilter, onHide, onPinChange }: {
+  cwd: string;
+  label: string;
+  pinned: boolean;
+  onFilter: (cwd: string) => void;
+  onHide: (cwd: string) => void;
+  onPinChange?: () => void;
+}) {
+  const t = useT();
+  const menu = useWorkspaceMenu(cwd, onFilter, onHide, { pinned, onChange: onPinChange });
   const create = () => void openNewSessionWindow({ cwd }).catch(() => {});
   return (
     <div
@@ -94,6 +117,7 @@ function WorkspaceRow({ cwd, label, onFilter, onHide }: { cwd: string; label: st
       <div className="chat-ws-dir-row">
         <Icon glyph={icFolder} size={16} className="chat-ws-dir-icon" />
         <span className="chat-ws-dir-name">{label}</span>
+        {pinned && <span className="chat-ws-dir-pin" role="img" aria-label={t.chat.wsPinned} data-tip={t.chat.wsPinned}><Icon glyph={icPin} size={12} /></span>}
       </div>
       {/* 尾部优先：同一 monorepo 下有区分度的是路径末尾（shell #10）。path-tail 用 rtl 让省略号落在开头，
           bdi 保住路径本身的书写顺序；完整路径进 tip。 */}
@@ -116,9 +140,11 @@ async function addWorkspace() {
   if (typeof picked === "string") void openNewSessionWindow({ cwd: picked }).catch(() => {});
 }
 
-export function WorkspaceDirectory({ options, onFilter, onHidden }: {
-  /// 工作区（侧栏筛选同一份清单：已按路径归一去重，同名目录带上一级消歧）。
+export function WorkspaceDirectory({ options, pinned = [], onFilter, onHidden }: {
+  /// 工作区（侧栏筛选同一份清单：已按路径归一去重，同名目录带上一级消歧）。后端已把固定的排在最前。
   options: readonly { value: string; label: string }[];
+  /// 固定的常用工作区（设置里的 pinned_workspaces，原样路径）：行上标图钉，菜单给「取消固定」。
+  pinned?: readonly string[];
   /// 「只看这个工作区的会话」：切回进行中并按它筛选。
   onFilter: (cwd: string) => void;
   /// 移除成功后让上层重拉清单。
@@ -150,6 +176,7 @@ export function WorkspaceDirectory({ options, onFilter, onHidden }: {
     restoreWorkspace(cwd).then(() => onHidden?.()).catch(() => {});
   };
   const shown = options.filter((option) => !gone.has(option.value));
+  const pinnedKeys = new Set(pinned.map(pathKey));
   return (
     <>
       <button type="button" className="chat-ws-add" onClick={() => void addWorkspace()}>
@@ -158,7 +185,17 @@ export function WorkspaceDirectory({ options, onFilter, onHidden }: {
       </button>
       {shown.length === 0
         ? <div className="chat-sidebar-empty">{t.chat.wsEmpty}</div>
-        : shown.map((option) => <WorkspaceRow key={option.value} cwd={option.value} label={option.label} onFilter={onFilter} onHide={hide} />)}
+        : shown.map((option) => (
+          <WorkspaceRow
+            key={option.value}
+            cwd={option.value}
+            label={option.label}
+            pinned={pinnedKeys.has(pathKey(option.value))}
+            onFilter={onFilter}
+            onHide={hide}
+            onPinChange={onHidden}
+          />
+        ))}
       {undo && (
         <div className="chat-sidebar-error is-undo chat-ws-undo" role="status">
           <span>{t.chat.wsHidden(options.find((o) => o.value === undo)?.label ?? undo)}</span>

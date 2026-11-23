@@ -73,6 +73,7 @@ import type { GitRepoArgs } from "./generated/contracts/bridge/GitRepoArgs";
 import type { GitDiscardUndoArgs } from "./generated/contracts/bridge/GitDiscardUndoArgs";
 import type { GitSetIdentityArgs } from "./generated/contracts/bridge/GitSetIdentityArgs";
 import type { HideWorkspaceArgs } from "./generated/contracts/bridge/HideWorkspaceArgs";
+import type { PinWorkspaceArgs } from "./generated/contracts/bridge/PinWorkspaceArgs";
 import type { LeadTaskSnapshotArgs } from "./generated/contracts/bridge/LeadTaskSnapshotArgs";
 import type { ListSubdirectoriesArgs } from "./generated/contracts/bridge/ListSubdirectoriesArgs";
 import type { ManagedTerminalSnapshotArgs } from "./generated/contracts/bridge/ManagedTerminalSnapshotArgs";
@@ -1391,6 +1392,8 @@ export type Settings = {
   bark_paused?: boolean;
   /** 侧栏工作区组的手动顺序（路径）。空 = 没排过。桌面拖、手机长按拖分组头写入。 */
   workspace_order: string[];
+  /** 固定的常用工作区（路径，按固定先后）。工作区清单与按工作区分组都排在最前。pin_workspace 写入。 */
+  pinned_workspaces?: string[];
   /** 有会话在跑时防止电脑休眠（只拦系统休眠，不拦息屏）。 */
   keep_awake_while_running: boolean;
   /** 有 Lead 关卡待拍板时也防止休眠（默认开）。 */
@@ -1785,6 +1788,11 @@ export function hideWorkspace(cwd: string): Promise<void> {
 /// 撤销刚才的移除（侧栏 5 秒撤销条）。
 export function restoreWorkspace(cwd: string): Promise<void> {
   return invoke("hide_workspace", { cwd, restore: true } satisfies HideWorkspaceArgs);
+}
+
+/** 固定 / 取消固定一个常用工作区：固定的排在工作区清单最前、久不用也不掉出去（远程桥 PinWorkspaceArgs 同形）。 */
+export function pinWorkspace(cwd: string, pinned: boolean): Promise<void> {
+  return invoke("pin_workspace", { cwd, pinned } satisfies PinWorkspaceArgs);
 }
 
 /// includeHidden：连「从列表里移除」过的也要（会话管理页按工作区筛会话用）。

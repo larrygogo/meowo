@@ -256,6 +256,9 @@ export const QA_SHOTS = [
   { name: "qa-side-error", scene: "flow-side-error", sel: ".chat-sidebar-empty.is-error" },
   { name: "qa-side-done", scene: "pop-idle", sel: ".chat-sidebar-cleanbar", steps: [["click", ".chat-sidebar-tabs button >> nth=1"], ["click", ".chat-sidebar-cleanbar button"]] },
   { name: "qa-side-ws", scene: "flow-plain", sel: ".chat-sidebar-tabs", steps: [["click", ".chat-sidebar-tabs button >> nth=2"]] },
+  // 固定常用工作区：工作区页签里固定的那行标图钉；右键第一行看「取消固定」，右键第二行看「固定」。
+  { name: "qa-side-ws-pin", scene: "flow-plain", sel: ".chat-sidebar-tabs", steps: [["click", ".chat-sidebar-tabs button >> nth=2"], ["rclick", ".chat-ws-dir-row >> nth=0"], ["tick", 200]] },
+  { name: "qa-side-ws-pin2", scene: "flow-plain", sel: ".chat-sidebar-tabs", steps: [["click", ".chat-sidebar-tabs button >> nth=2"], ["rclick", ".chat-ws-dir-row >> nth=1"], ["tick", 200]] },
   { name: "qa-side-ws-undo", scene: "flow-plain", sel: ".chat-sidebar-tabs", steps: [["click", ".chat-sidebar-tabs button >> nth=2"], ["hover", ".chat-ws-dir-row >> nth=1"], ["rclick", ".chat-ws-dir-row >> nth=1"]] },
   { name: "qa-side-filter", scene: "pop-idle", sel: ".sf-menu", steps: [["click", ".chat-sidebar-filter"]] },
   { name: "qa-admin", scene: "flow-plain", params: "admin=done", sel: ".session-admin", langs: ["zh", "en"] },
@@ -365,6 +368,7 @@ export const QA_SHOTS = [
   // 矮窗口里勾上 worktree：内容比窗口高。整列垂直居中时图标会被裁到滚动区上方、滚不回来（2026-11-12 用户实拍 2000×855@2x）。
   { name: "qa-nsp-wt-short", scene: "newsession-page-wt", size: [1280, 560], sel: ".wt-opt-body" },
   { name: "qa-nsp-wt-short-1000", scene: "newsession-page-wt", size: [1000, 428], sel: ".wt-opt-body" },
+  { name: "qa-nsp-ws-pin", scene: "newsession-page", steps: [["click", ".nsp-ws-btn"], ["hover", ".nsp-ws-row >> nth=1"], ["tick", 200]] },
   // ── 灵动岛：缩放 150%、悬停 ──
   { name: "qa-island-panel-ui150", scene: "island-panel", params: "ui=1.5", size: [1000, 460], sel: ".island-shell", langs: ["zh", "en"], themes: ["dark"] },
   { name: "qa-island-usage-ui150", scene: "island-usage", params: "ui=1.5", size: [1000, 460], sel: ".island-shell", themes: ["dark"] },

@@ -97,6 +97,12 @@ bridged_args!(HideWorkspaceArgs {
     restore: Option<bool>
 });
 
+// 固定常用工作区（侧栏工作区菜单「固定」）：固定的排在工作区清单最前，久不用也不掉出去。
+bridged_args!(PinWorkspaceArgs {
+    cwd: String,
+    pinned: bool
+});
+
 bridged_args!(GitDiffSummaryArgs { cwd: String });
 
 // 侧栏会话行的 PR / CI 与改动数（UI 优化 #54）：一次带上可见会话的全部工作目录（去重后）。

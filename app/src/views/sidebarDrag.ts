@@ -307,7 +307,17 @@ export function sidebarDirGroups<T extends { cwd: string | null; origin_root?: s
   ordered: readonly T[],
   sortMode: "manual" | "recent",
   workspaceOrder: readonly string[],
+  pinned: readonly string[] = [],
 ): DirGroup<T>[] {
   const groups = groupByDir(ordered);
-  return sortMode === "manual" ? applyGroupOrder(groups, workspaceOrder, (group) => orderKey(group.key)) : groups;
+  const sorted = sortMode === "manual" ? applyGroupOrder(groups, workspaceOrder, (group) => orderKey(group.key)) : groups;
+  return pinnedFirst(sorted, pinned);
+}
+
+/** 固定的常用工作区（设置里的 pinned_workspaces）排在最前，按固定的先后；其余保持原来的相对顺序。 */
+export function pinnedFirst<T extends { key: string }>(groups: readonly T[], pinned: readonly string[]): T[] {
+  if (pinned.length === 0) return [...groups];
+  const rank = new Map(pinned.map((cwd, index) => [pathKey(cwd), index]));
+  const top = groups.filter((group) => rank.has(group.key)).sort((a, b) => rank.get(a.key)! - rank.get(b.key)!);
+  return [...top, ...groups.filter((group) => !rank.has(group.key))];
 }

@@ -3892,6 +3892,17 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 .path-tail { direction: rtl; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .path-tail > bdi { direction: ltr; unicode-bidi: isolate; }
 .nsp-ws-check { flex: none; color: var(--cc-text-dim); }
+/* 行尾图钉（固定常用工作区）：悬停 / 聚焦才露；已固定的常亮。选项按钮右侧让出图钉的位置。 */
+.nsp-ws-row { position: relative; }
+.nsp-ws-item.has-pin { padding-right: calc(var(--sp-10) + 24px); }
+.nsp-ws-pin { position: absolute; top: 50%; right: var(--sp-6); transform: translateY(-50%); display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--radius-sm); color: var(--cc-text-faint); background: transparent; cursor: pointer; opacity: 0; transition: opacity var(--dur-fast) var(--ease-in-out), background var(--dur-fast) var(--ease-in-out); }
+.nsp-ws-row:hover .nsp-ws-pin, .nsp-ws-pin:focus-visible, .nsp-ws-row.is-pinned .nsp-ws-pin { opacity: 1; }
+.nsp-ws-pin:hover { color: var(--cc-text); background: var(--fill-selected); }
+.nsp-ws-pin:focus-visible { outline: none; }
+:root[data-im="kbd"] .nsp-ws-pin:focus-visible { box-shadow: var(--focus-ring); }
+.nsp-ws-row.is-pinned .nsp-ws-pin { color: var(--cc-text-dim); }
+.nsp-ws-row.is-pinned .nsp-ws-pin svg { fill: currentColor; }
+@media (hover: none) { .nsp-ws-pin { opacity: 1; } }
 .nsp-ws-sep { height: var(--hairline); margin: var(--sp-4) var(--sp-10); background: var(--cc-border); flex: none; }
 .nsp-ws-item.is-action .nsp-ws-item-name { color: var(--cc-text-dim); }
 .nsp-ws-item.is-action:hover .nsp-ws-item-name { color: var(--cc-text); }
@@ -4401,6 +4412,11 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-ws-dir-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .chat-ws-dir-icon { flex: 0 0 16px; color: var(--cc-text-faint); }
 .chat-ws-dir-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; color: var(--cc-text); font-size: var(--text-sm); font-weight: var(--fw-regular); -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); }
+/* 固定的常用工作区：名字后一枚小图钉（中性灰，不抢名字）。工作区页签的行与侧栏分组头同一种。 */
+.chat-ws-dir-pin, .chat-workspace-pin { flex: none; display: inline-flex; align-items: center; color: var(--cc-text-faint); }
+.chat-workspace-pin { margin-left: var(--sp-4); }
+/* 行尾的图钉与悬停才出现的「⋯」同一个位置：悬停、键盘聚焦、菜单开着时让给「⋯」。 */
+.chat-ws-dir:hover .chat-ws-dir-pin, .chat-ws-dir:focus-within .chat-ws-dir-pin, .chat-ws-dir.is-menu-open .chat-ws-dir-pin { visibility: hidden; }
 .chat-ws-dir-sub { margin: var(--sp-3) 0 0 calc(16px + 6px); overflow: hidden; white-space: nowrap; color: var(--cc-text-faint); font-size: var(--text-xs); }
 .chat-ws-dir:hover .chat-ws-dir-name, .chat-ws-dir:hover .chat-ws-dir-sub, .chat-ws-dir.is-menu-open .chat-ws-dir-name { margin-right: calc(var(--icon-button-xs) + var(--sp-4)); }
 .chat-ws-dir-act { position: absolute; top: 0; bottom: 0; right: var(--sp-4); display: inline-flex; align-items: center; }

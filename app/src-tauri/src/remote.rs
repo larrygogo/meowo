@@ -127,6 +127,7 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "search_chat_transcripts",
     "recent_cwds",
     "hide_workspace",
+    "pin_workspace",
     "rename_session",
     "set_archived",
     // 已合并 worktree 的清理（2026-11-09 用户决定手机端同样提供）：只收会话 id 不收路径，
@@ -1009,6 +1010,14 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                 return reply::<()>(Err(e));
             }
             reply(crate::session_query::hide_workspace(a.cwd, a.restore).await)
+        }
+        "pin_workspace" => {
+            let a = args!(PinWorkspaceArgs);
+            // 同 hide_workspace：只许固定会话用过的目录，手机端不能往设置里写任意串。
+            if let Err(e) = ensure_session_dir(app, &a.cwd).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::session_query::pin_workspace(app.clone(), a.cwd, a.pinned).await)
         }
         "get_session_admin_page" => {
             let a = args!(GetSessionAdminPageArgs);
@@ -2830,6 +2839,7 @@ mod tests {
             // api.ts:946
             "recent_cwds" => parse::<RecentCwdsArgs>(br#"{"limit":8,"includeHidden":true}"#).map(|_| ()),
             "hide_workspace" => parse::<HideWorkspaceArgs>(br#"{"cwd":"C:/repo"}"#).map(|_| ()),
+            "pin_workspace" => parse::<PinWorkspaceArgs>(br#"{"cwd":"C:/repo","pinned":true}"#).map(|_| ()),
             // api.ts getSessionAdminPage：五个键恒发，status / updatedBeforeDays 空值发 null。
             "get_session_admin_page" => parse::<GetSessionAdminPageArgs>(
                 br#"{"workspaces":["C:/repo"],"status":"open","updatedBeforeDays":7,"page":0,"pageSize":20}"#,

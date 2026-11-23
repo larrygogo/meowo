@@ -115,7 +115,7 @@ use session_command::is_safe_id;
 use session_command::{move_session_rank, rename_session, set_archived};
 use session_command::{session_launch_selections, set_session_launch_selection};
 use session_query::{
-    get_live_sessions_counts, get_live_sessions_page, get_session_admin_page, hide_workspace,
+    get_live_sessions_counts, get_live_sessions_page, get_session_admin_page, hide_workspace, pin_workspace,
     recent_cwds,
 };
 #[cfg(test)]
@@ -1762,6 +1762,7 @@ pub fn run() {
             open_install_log,
             recent_cwds,
             hide_workspace,
+            pin_workspace,
             open_new_session_window,
             window::open_session_admin,
             open_latest_chat

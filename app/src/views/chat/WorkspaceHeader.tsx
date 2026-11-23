@@ -5,11 +5,11 @@ import { openProjectDir, openNewSessionWindow } from "../../api";
 import { remoteUi } from "../../remoteMode";
 import { useWorkspaceMenu } from "./WorkspaceDirectory";
 import { Icon } from "../../icons/Icon";
-import { icFolder, icPlus } from "../../icons/glyphs";
+import { icFolder, icPin, icPlus } from "../../icons/glyphs";
 
 /// 工作区分组头（对照 Kimi 的 WorkspaceHome）：工作区名 + 主目录 +
 /// 操作入口（打开目录、新建会话）。
-export const WorkspaceHeader = memo(function WorkspaceHeader({ cwd, attention = 0, folded, onToggle, leading, summary, trailing, onFilter }: {
+export const WorkspaceHeader = memo(function WorkspaceHeader({ cwd, attention = 0, folded, onToggle, leading, summary, trailing, onFilter, pinned = false }: {
   cwd: string | null;
   /// 组内会话数。对照 Kimi 的分组头不显示，调用方仍传着，留作以后的读屏标签。
   count: number;
@@ -24,16 +24,19 @@ export const WorkspaceHeader = memo(function WorkspaceHeader({ cwd, attention = 
   trailing?: ReactNode;
   /// 右键菜单里的「只看这个工作区的会话」（侧栏的工作区筛选）。传稳定引用：组件是 memo 的。
   onFilter?: (cwd: string) => void;
+  /// 这个工作区是否固定（设置里的 pinned_workspaces）：组名后标图钉，右键菜单给固定 / 取消固定。
+  pinned?: boolean;
 }) {
   const t = useT();
   const name = folderName(cwd);
   // 右键组头出工作区菜单（对照 Kimi 分组头的 onContextmenu），与工作空间页签同一个菜单。
-  const menu = useWorkspaceMenu(cwd, onFilter ?? null);
+  const menu = useWorkspaceMenu(cwd, onFilter ?? null, null, { pinned });
   return (
     <div className={"chat-workspace-head" + (menu.open ? " is-menu-open" : "")} onContextMenu={menu.onContextMenu}>
       <button type="button" className="chat-sidebar-group-head" aria-expanded={!folded} data-tip={cwd ?? undefined} onClick={onToggle}>
         {leading}
         <span className="chat-workspace-name">{name || t.chat.sidebarNoDir}</span>
+        {pinned && <span className="chat-workspace-pin" role="img" aria-label={t.chat.wsPinned}><Icon glyph={icPin} size={12} /></span>}
         {summary}
         {attention > 0 && <span className="chat-workspace-attention">{t.chat.groupAttention(attention)}</span>}
       </button>
