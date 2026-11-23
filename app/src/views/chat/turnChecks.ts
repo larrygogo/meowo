@@ -561,17 +561,23 @@ const STASH_BACK = /^git\s+stash\s+(?:pop|apply)\b/i;
  * 测的不是现在的代码，失败了也不是问题（实拍：`git stash push x; vitest run …; git stash pop`，卡片照实写
  * 「1 个没过」，用户让 AI 去修，其实什么都没坏）。
  */
-function stashedSegments(segments: Segment[]): Set<number> {
-  const inside = new Set<number>();
-  let open = -1;
-  segments.forEach((segment, index) => {
-    const text = segment.text.trim();
-    if (STASH_AWAY.test(text)) open = index;
-    else if (STASH_BACK.test(text) && open >= 0) {
-      for (let k = open + 1; k < index; k += 1) inside.add(k);
-      open = -1;
-    }
-  });
+/// 跨命令也认：`git stash` 和 `stash pop` 常分成几条命令跑（藏掉 → 跑测试 → 放回）。返回「tool_use id → 段号」。
+/// 藏掉以后一直没放回的不算：那时工作区就是藏掉后的样子，检查测的就是现在的代码。
+function stashedSegments(items: ChatItem[]): Map<string, Set<number>> {
+  const inside = new Map<string, Set<number>>();
+  let pending: [string, number][] | null = null;
+  for (const item of items) {
+    if (item.type !== "tool_use" || item.kind !== "run") continue;
+    const unwrapped = unwrapShell(commandOf(item).trim());
+    splitCommand(unwrapped.text.trim(), unwrapped.cmd).forEach((segment, index) => {
+      const text = segment.text.trim();
+      if (STASH_AWAY.test(text)) pending = [];
+      else if (STASH_BACK.test(text)) {
+        for (const [id, at] of pending ?? []) inside.set(id, (inside.get(id) ?? new Set()).add(at));
+        pending = null;
+      } else pending?.push([item.id, index]);
+    });
+  }
   return inside;
 }
 
@@ -583,14 +589,15 @@ export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
   const all: TurnCheck[] = [];
   // 没过的 lint 命令输出里点名的文件（按 tool_use id）：之后同一工具把这些文件都查过、通过了，这一行就不再挂着红。
   const lintFailures = new Map<string, string[]>();
+  const stashedAll = stashedSegments(items);
   items.forEach((item, at) => {
     if (item.type !== "tool_use" || item.kind !== "run") return;
     const unwrapped = unwrapShell(commandOf(item).trim());
     const command = unwrapped.text.trim();
     if (!command) return;
     const segments = splitCommand(command, unwrapped.cmd);
-    const stashed = stashedSegments(segments);
-    const kindsBySegment = segments.map((segment, index) => (stashed.has(index) ? [] : checkKindsOf(segment.text)));
+    const stashed = stashedAll.get(item.id);
+    const kindsBySegment = segments.map((segment, index) => (stashed?.has(index) ? [] : checkKindsOf(segment.text)));
     if (kindsBySegment.every((kinds) => kinds.length === 0)) return;
     const result = results.get(item.id);
     const whole: Verdict | null = !result ? { status: "unknown", note: { kind: "missing" } }

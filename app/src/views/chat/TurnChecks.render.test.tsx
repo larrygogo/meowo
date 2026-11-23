@@ -102,6 +102,25 @@ describe("本轮结果卡的检查段", () => {
     expect(screen.queryByText(zh.chat.checkFix)).toBeNull();
   });
 
+  it("stash 和 pop 分成几条命令跑也认；藏掉后一直没放回的照常算", () => {
+    const cmd = "bunx vitest run src/a.test.ts";
+    render(<TurnChanges items={[
+      edit("e1", "src/a.ts"), ok("e1"),
+      run("c1", cmd), ok("c1", " Tests  3 passed (3)"),
+      run("s1", "git stash push -q src/a.ts"), ok("s1"),
+      run("c2", cmd), ok("c2", " Tests  1 failed | 2 passed (3)"),
+      run("s2", "git stash pop -q && git status --short"), ok("s2"),
+    ]} />);
+    expect([...document.querySelectorAll(".chat-turn-check-result")].map((el) => el.textContent)).toEqual(["3 个通过"]);
+    cleanup();
+    render(<TurnChanges items={[
+      edit("e1", "src/a.ts"), ok("e1"),
+      run("s1", "git stash"), ok("s1"),
+      run("c2", cmd), ok("c2", " Tests  1 failed | 2 passed (3)"),
+    ]} />);
+    expect([...document.querySelectorAll(".chat-turn-check-result")].map((el) => el.textContent)).toEqual(["1 个失败"]);
+  });
+
   it("lint 查过的文件之后又改了：照样标过时；没认出是哪个文件出问题的失败照样留着", () => {
     render(<TurnChanges items={[
       edit("e1", "src/a.ts"), ok("e1"),
