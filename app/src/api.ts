@@ -393,6 +393,21 @@ export function exportChatImage(path: string, dest: string): Promise<void> {
   return invoke("export_chat_image", { path, dest });
 }
 
+/// AI 用 send_file 交来的文件（快照在 ~/.meowo/files/sent）：桌面上打开、在文件夹中显示、另存为、问还在不在。
+/// 源路径只认交付目录。手机端不走这些，下载走 /download（assetSrc.deliveredDownloadSrc）。
+export function openDeliveredFile(path: string): Promise<void> {
+  return invoke("open_delivered_file", { path });
+}
+export function revealDeliveredFile(path: string): Promise<void> {
+  return invoke("reveal_delivered_file", { path });
+}
+export function saveDeliveredFile(path: string, dest: string): Promise<void> {
+  return invoke("save_delivered_file", { path, dest });
+}
+export function deliveredFileExists(path: string): Promise<boolean> {
+  return invoke("delivered_file_exists", { path });
+}
+
 export function savePastedAttachment(fileName: string, dataBase64: string): Promise<string> {
   return invoke("save_pasted_attachment", { fileName, dataBase64 } satisfies SavePastedAttachmentArgs);
 }

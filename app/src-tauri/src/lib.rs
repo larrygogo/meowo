@@ -9,6 +9,7 @@ mod browser_pane;
 mod browser_permission;
 mod chat;
 mod chat_choices;
+mod chat_files;
 mod chat_images;
 mod checkpoints;
 mod confirm;
@@ -1525,6 +1526,10 @@ pub fn run() {
             allow_image_preview,
             chat_images::resolve_chat_image,
             chat_images::export_chat_image,
+            chat_files::open_delivered_file,
+            chat_files::reveal_delivered_file,
+            chat_files::save_delivered_file,
+            chat_files::delivered_file_exists,
             clipboard_set_image,
             capture_screen_region,
             clipboard_restore,

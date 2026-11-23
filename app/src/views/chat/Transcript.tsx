@@ -26,7 +26,8 @@ import { FoldScopeContext, foldScope } from "./foldMemory";
 import { isSubagentDelegation, type ToolResultItem } from "./shared";
 import { liveTurnStart, SessionAliveContext, TurnLiveContext, type TurnActivity } from "./toolState";
 import { markEntering, trackEntering, type EnterTrack } from "./enterMotion";
-import { isChoicesTool, isCompareTool, isImageMessage } from "./imageTools";
+import { isChoicesTool, isCompareTool, isFileTool, isImageMessage, isNotifyTool } from "./imageTools";
+import { FileMessage, NotifyMessage } from "./FileCard";
 import { ChoiceMessage, parseChoicesReceipt } from "./ChoiceCard";
 import { looksLikeChoiceReply, parseChoiceAnswer, type ChoiceCardText } from "./choiceReply";
 import { CompareMessage } from "./CompareCard";
@@ -401,6 +402,10 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
               ? <ChoiceMessage item={entry} result={results.get(entry.id)} followUps={choiceFollowUp(entry)} sessionId={sessionId} />
               : isCompareTool(entry)
               ? <CompareMessage item={entry} result={results.get(entry.id)} />
+              : isFileTool(entry)
+              ? <FileMessage item={entry} result={results.get(entry.id)} />
+              : isNotifyTool(entry)
+              ? <NotifyMessage item={entry} result={results.get(entry.id)} />
               : <SentImageMessage item={entry} result={results.get(entry.id)} />}
           </TurnLiveContext.Provider>,
         );

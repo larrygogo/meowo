@@ -32,7 +32,17 @@ const COMPARE_IMAGES: &str = "compare_images";
 /// 方案卡工具名。同样不走浏览器、不受浏览器开关约束。
 const OFFER_CHOICES: &str = "offer_choices";
 
+/// 交文件、主动提醒：同样不走浏览器、不受浏览器开关约束。
+const SEND_FILE: &str = meowo_agent::images::SEND_FILE;
+const NOTIFY_USER: &str = meowo_agent::images::NOTIFY_USER;
+
+/// 不受浏览器开关约束的那组（发图、对照、方案卡、交文件、提醒）。
 fn is_image_tool(name: &str) -> bool {
+    meowo_agent::images::IMAGE_TOOLS.contains(&name)
+}
+
+/// 失败回执要带 `[Image error: …]` 前缀的：只有图片三件套（前端按这个前缀画「图片发送失败」）。
+fn wants_image_error(name: &str) -> bool {
     name == SEND_IMAGE || name == COMPARE_IMAGES || name == OFFER_CHOICES
 }
 
@@ -137,6 +147,10 @@ const SEND_IMAGE_HINT: &str = concat!(
     "改界面（样式、布局、组件）时，动手前先截一张当前画面，改完在同样的页面和窗口大小下再截一张，用 compare_images 把两张发给用户：Meowo 会算出哪里变了，给用户看改前、改后和差异图，你也会拿到变化比例和变化范围。范围超出你想改的地方，说明顺手改坏了别处，先查清楚再汇报。",
     "\n\n",
     "要用户拍板、而且看了才能比的取舍（布局、配色、交互方式），先把 2~4 个方案各做出来截图，再用 offer_choices 发一张方案卡让用户点一个，不要写几段文字让用户去想象。调用后先结束这一轮，用户的选择会作为下一条消息发给你。小决定自己定。",
+    "
+
+",
+    "交付物（安装包、报告、导出的表格或 PDF、日志压缩包）用 send_file 交给用户，不要在回复里贴长路径让用户自己找。长任务做完、或者你卡住了需要用户决定时，用 notify_user 提醒用户；平常的每一步不要提醒。",
 );
 
 const INSTRUCTIONS_IMAGES_ONLY: &str = SEND_IMAGE_HINT;
@@ -149,12 +163,16 @@ const INSTRUCTIONS_WITH_BROWSER: &str = concat!(
     "改界面（样式、布局、组件）时，动手前先截一张当前画面，改完在同样的页面和窗口大小下再截一张，用 compare_images 把两张发给用户：Meowo 会算出哪里变了，给用户看改前、改后和差异图，你也会拿到变化比例和变化范围。范围超出你想改的地方，说明顺手改坏了别处，先查清楚再汇报。browser_screenshot 的结果里有截图存下的本地路径，直接拿来用。",
     "\n\n",
     "要用户拍板、而且看了才能比的取舍（布局、配色、交互方式），先把 2~4 个方案各做出来截图，再用 offer_choices 发一张方案卡让用户点一个，不要写几段文字让用户去想象。调用后先结束这一轮，用户的选择会作为下一条消息发给你。小决定自己定。",
+    "
+
+",
+    "交付物（安装包、报告、导出的表格或 PDF、日志压缩包）用 send_file 交给用户，不要在回复里贴长路径让用户自己找。长任务做完、或者你卡住了需要用户决定时，用 notify_user 提醒用户；平常的每一步不要提醒。",
 );
 
 /// 发图失败的回执固定以 `[Image error: <code>] ` 开头（contract.md）：app 侧的失败已带前缀，
 /// 这里补上连不上 Meowo 这类通道层失败，前端只认一种形态。
 fn error_text(tool: &str, error: String) -> String {
-    if !is_image_tool(tool) || error.starts_with(meowo_agent::images::ERROR_PREFIX) {
+    if !wants_image_error(tool) || error.starts_with(meowo_agent::images::ERROR_PREFIX) {
         return error;
     }
     meowo_agent::images::ImageError::new(meowo_agent::images::ImageErrorCode::Forbidden, error)
@@ -181,6 +199,7 @@ fn prepare_args(tool: &str, mut args: Value) -> Value {
     let keys: &[&str] = match tool {
         SEND_IMAGE => &["source"],
         COMPARE_IMAGES => &["before", "after"],
+        SEND_FILE => &["path"],
         _ => return args,
     };
     let cwd = std::env::current_dir().ok();
@@ -335,8 +354,32 @@ fn offer_choices_tool() -> Value {
     )
 }
 
+fn send_file_tool() -> Value {
+    tool(
+        SEND_FILE,
+        "把本机一个文件交给用户：Meowo 复制一份快照，在用户的对话里显示成一张文件卡（名字、大小、说明），电脑上可以打开、在文件夹中显示、另存为，手机上可以直接下载。交付物都用它：打好的安装包、导出的报告/表格/PDF、日志压缩包、生成的配置文件。不要再在回复里贴一长串路径让用户自己去找。交的是调用那一刻的内容，之后你再改原文件，用户手里的不会跟着变，改完要重新交。只接受单个本地文件，不接受文件夹（先打成 zip）和网址；单个不超过 512MB。调用后你会收到一句确认，文件内容不会回传给你。",
+        json!({
+            "path": { "type": "string", "description": "文件的本地路径（绝对路径，或相对当前工作目录）" },
+            "caption": { "type": "string", "description": "可选。随文件卡显示给用户的一句说明，比如这是什么、怎么用" }
+        }),
+        &["path"],
+    )
+}
+
+fn notify_user_tool() -> Value {
+    tool(
+        NOTIFY_USER,
+        "主动提醒用户：走用户在 Meowo 里设置好的通知（电脑系统通知，设置了 Bark 的话手机也会收到），点通知会打开这个会话。只在用户值得放下手头的事来看时用：长任务做完了（done），或者你卡住了、需要用户决定才能继续（needs_you）。平常的每一步、能自己决定的事不要提醒，提醒多了用户会把通知关掉。用户正看着这个会话时，done 和 info 不会弹出来，needs_you 照弹；同一会话一分钟内重复的提醒会被合并。你会收到实际结果：提醒到了、用户正在看所以没弹、用户关了通知，或者太频繁被合并。",
+        json!({
+            "message": { "type": "string", "description": "提醒的内容，一两句话，说清发生了什么、要用户做什么" },
+            "level": { "type": "string", "enum": ["needs_you", "done", "info"], "description": "可选，默认 done。needs_you：卡住了、等用户决定；done：做完了；info：普通消息" }
+        }),
+        &["message"],
+    )
+}
+
 fn tools(options: Options) -> Vec<Value> {
-    let mut list = vec![send_image_tool(), compare_images_tool(), offer_choices_tool()];
+    let mut list = vec![send_image_tool(), compare_images_tool(), offer_choices_tool(), send_file_tool(), notify_user_tool()];
     if options.browser {
         list.extend(browser_tools());
     }
@@ -501,7 +544,10 @@ mod tests {
             IMAGES_ONLY,
         )
         .unwrap();
-        assert_eq!(names(&list), vec!["send_image".to_string(), "compare_images".to_string(), "offer_choices".to_string()]);
+        assert_eq!(
+            names(&list),
+            ["send_image", "compare_images", "offer_choices", "send_file", "notify_user"].map(String::from).to_vec()
+        );
         let reply = respond(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "browser_snapshot" } }), Some(&channel), IMAGES_ONLY).unwrap();
         assert_eq!(reply["result"]["isError"], true);
         let init = respond(&json!({ "jsonrpc": "2.0", "id": 3, "method": "initialize", "params": {} }), Some(&channel), IMAGES_ONLY).unwrap();

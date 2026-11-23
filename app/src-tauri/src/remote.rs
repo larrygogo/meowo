@@ -821,6 +821,7 @@ fn build_router(app: tauri::AppHandle, token: String, file_token: String) -> Rou
     Router::new()
         .merge(rpc)
         .route("/file", get(file_handler))
+        .route("/download", get(download_handler))
         .fallback(get(static_handler))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(ctx)
@@ -1828,6 +1829,106 @@ async fn file_handler(State(ctx): State<Ctx>, Query(q): Query<FileQuery>) -> Res
     }
 }
 
+/// 手机下载 AI 交来的文件（send_file，chat_files.rs）。与 /file 的区别：只认交付目录；按块流式发，
+/// 几百 MB 的安装包不整个读进内存；带 attachment，浏览器直接存，不在页面里打开。
+async fn download_handler(State(ctx): State<Ctx>, Query(q): Query<FileQuery>) -> Response {
+    if !token_matches(&ctx.token, &q.token) && !token_matches(&ctx.file_token, &q.token) {
+        return err_status(StatusCode::UNAUTHORIZED, "remote/unauthorized");
+    }
+    let path = q.path.clone();
+    let found = tauri::async_runtime::spawn_blocking(move || {
+        let file = crate::chat_files::delivered_file(&path)?;
+        let len = std::fs::metadata(&file).ok()?.len();
+        Some((file, len))
+    })
+    .await
+    .ok()
+    .flatten();
+    let Some((file, len)) = found else {
+        return err_status(StatusCode::NOT_FOUND, "delivered/missing");
+    };
+    let name = file
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "download".into());
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(4);
+    std::thread::spawn(move || {
+        use std::io::Read;
+        let mut input = match std::fs::File::open(&file) {
+            Ok(input) => input,
+            Err(error) => {
+                let _ = tx.blocking_send(Err(error));
+                return;
+            }
+        };
+        loop {
+            let mut chunk = vec![0u8; 256 * 1024];
+            match input.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(read) => {
+                    chunk.truncate(read);
+                    // 手机断开时接收端没了，send 失败就停。
+                    if tx.blocking_send(Ok(chunk)).is_err() {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    let _ = tx.blocking_send(Err(error));
+                    break;
+                }
+            }
+        }
+    });
+    let body = axum::body::Body::from_stream(ChunkStream(rx));
+    let headers = [
+        ("content-type", "application/octet-stream".to_string()),
+        ("content-length", len.to_string()),
+        ("content-disposition", content_disposition(&name)),
+        ("cache-control", "no-store".to_string()),
+        ("x-content-type-options", "nosniff".to_string()),
+        ("content-security-policy", "default-src 'none'; sandbox".to_string()),
+    ];
+    let mut response = body.into_response();
+    for (key, value) in headers {
+        if let Ok(value) = HeaderValue::from_str(&value) {
+            response.headers_mut().insert(key, value);
+        }
+    }
+    response
+}
+
+/// 文件名给浏览器：ASCII 兜底名（非 ASCII 换成 _）+ RFC 5987 的 UTF-8 原名（中文名在手机上照常显示）。
+fn content_disposition(name: &str) -> String {
+    let ascii: String = name
+        .chars()
+        .map(|c| if (c.is_ascii_graphic() && c != '"' && c != '\\') || c == ' ' { c } else { '_' })
+        .collect();
+    let encoded: String = name
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect();
+    format!("attachment; filename=\"{ascii}\"; filename*=UTF-8''{encoded}")
+}
+
+/// mpsc 接收端当成 Body 要的流（不为这一处引 tokio-stream）。
+struct ChunkStream(tokio::sync::mpsc::Receiver<Result<Vec<u8>, std::io::Error>>);
+
+impl futures_core::Stream for ChunkStream {
+    type Item = Result<Vec<u8>, std::io::Error>;
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.0.poll_recv(cx)
+    }
+}
+
 /// 图片按内容嗅探而非扩展名：附件落盘名来自用户文件名，改错扩展名不该导致渲染失败。
 /// 只认前端会渲染的几种位图/矢量，其余按二进制流。先走图片目录同一套嗅探（认带 BOM、
 /// XML 声明、注释开头的 SVG），认不出再按老规则（首字节 `<` 当 SVG，兼容旧附件）。
@@ -2113,6 +2214,10 @@ mod tests {
             // 在宿主上开窗。
             "open_session_admin",
             "reveal_path_in_file_manager",
+            // AI 交给用户的文件：在宿主上打开、定位、另存为都是宿主执行类，手机端走 /download。
+            "open_delivered_file",
+            "reveal_delivered_file",
+            "save_delivered_file",
             // 终端路径定位不限 cwd，更不能让手机端触发。
             "reveal_terminal_path",
             "open_attached_terminal",
@@ -2345,6 +2450,14 @@ mod tests {
 
     /// 带 BOM（或前导空白、XML 声明）的 SVG 也按 image/svg+xml 回：此前只认首字节 `<`，
     /// 带 BOM 的 SVG 落成 application/octet-stream，手机上显示成裂图。
+    #[test]
+    fn download_name_keeps_chinese_and_quotes_safely() {
+        let header = content_disposition("报告 \"v2\".zip");
+        assert!(header.starts_with("attachment; filename=\"__ _v2_.zip\""), "{header}");
+        assert!(header.ends_with("filename*=UTF-8''%E6%8A%A5%E5%91%8A%20%22v2%22.zip"), "{header}");
+        assert_eq!(content_disposition("a.exe"), "attachment; filename=\"a.exe\"; filename*=UTF-8''a.exe");
+    }
+
     #[test]
     fn file_sniff_accepts_svg_with_bom() {
         assert_eq!(sniff_image_ext(b"\xEF\xBB\xBF<svg xmlns='http://www.w3.org/2000/svg'/>"), "svg");

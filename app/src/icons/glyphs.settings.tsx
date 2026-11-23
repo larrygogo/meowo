@@ -5,7 +5,6 @@
 import type { Glyph } from "./Icon";
 
 // 铃铛：设置 › 通知（2026-11-19 新分区，扩展并进 Agent 页后拼图块不再用）。
-export const icBell: Glyph = { body: <><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></> };
 export const icBot: Glyph = { body: <><path d="M12 8V4H8" /><rect x="4" y="8" width="16" height="12" rx="2.5" /><path d="M2 14h2" /><path d="M20 14h2" /><path d="M9 13.5v2" /><path d="M15 13.5v2" /></> };
 export const icCards: Glyph = { body: <><rect x="3" y="3" width="13" height="13" rx="2.5" /><path d="M8 21h10.5a2.5 2.5 0 0 0 2.5-2.5V8" /></> };
 export const icGitPr: Glyph = { body: <><circle cx="18" cy="18" r="2.5" /><circle cx="6" cy="6" r="2.5" /><path d="M13 6h3a2 2 0 0 1 2 2v7.5" /><line x1="6" y1="8.5" x2="6" y2="21" /></> };

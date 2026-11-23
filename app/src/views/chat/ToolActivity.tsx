@@ -177,7 +177,8 @@ export function editOutcome(item: import("./shared").ToolUseItem, result?: impor
 
 import { ChatCwdContext } from "./chatCwd";
 import { CompareMessage } from "./CompareCard";
-import { isChoicesTool, isCompareTool } from "./imageTools";
+import { isChoicesTool, isCompareTool, isFileTool, isNotifyTool } from "./imageTools";
+import { FileMessage, NotifyMessage } from "./FileCard";
 import { ChoiceMessage } from "./ChoiceCard";
 export { ChatCwdContext };
 
@@ -325,6 +326,8 @@ export const ToolActivity = memo(function ToolActivity({ item, result }: { item:
   if (isCompareTool(item)) return <CompareMessage item={item} result={result} />;
   // 子任务记录等单独渲染工具行的地方：没有后续消息可对，按只读显示（卡片拿不到对话窗动作时也不出按钮）。
   if (isChoicesTool(item)) return <ChoiceMessage item={item} result={result} />;
+  if (isFileTool(item)) return <FileMessage item={item} result={result} />;
+  if (isNotifyTool(item)) return <NotifyMessage item={item} result={result} />;
   const row = (() => {
     switch (item.kind) {
       case "run": return <BashTool item={item} result={media.result} />;

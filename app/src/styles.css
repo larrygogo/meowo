@@ -4736,6 +4736,31 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 触屏没有悬停：保存放在灯箱里。 */
 @media (hover: none) { .chat-sent-actions { display: none; } }
 .chat-sent-caption { max-width: min(520px, 100%); color: var(--cc-text); font-size: var(--text-base); line-height: var(--leading-normal); white-space: pre-wrap; overflow-wrap: anywhere; }
+/* AI 交来的文件（send_file，FileCard.tsx）：一行卡片，左边类型图标，中间名字和「类型 · 大小」，右边动作。
+   中性灰底，不上品牌色（品牌色只给主按钮级强调，这里「打开」用中性按钮，避免一屏多个青柠块）。 */
+.chat-file { display: flex; align-items: center; gap: var(--sp-12); width: min(440px, 100%); padding: var(--sp-10) var(--sp-12); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-lg); background: var(--fill-selected); }
+.chat-file-icon { flex: none; width: 40px; height: 40px; display: grid; place-items: center; border-radius: var(--radius-md); background: var(--fill-hover); color: var(--cc-text-dim); }
+.chat-file-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.chat-file-name { overflow: hidden; color: var(--cc-text); font-size: var(--text-base); font-weight: var(--fw-medium); line-height: var(--leading-normal); white-space: nowrap; text-overflow: ellipsis; }
+.chat-file-meta { color: var(--cc-text-faint); font-size: var(--text-xs); }
+.chat-file-error { color: var(--cc-fail-text); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.chat-file-actions { flex: none; display: flex; align-items: center; gap: var(--sp-2); }
+.chat-file-btn { height: 28px; display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-4); padding: 0 var(--sp-10); border: 0; border-radius: var(--radius-sm); background: var(--fill-hover); color: var(--cc-text); font-size: var(--text-sm); text-decoration: none; cursor: pointer; }
+.chat-file-btn:hover { background: var(--fill-selected); box-shadow: inset 0 0 0 var(--hairline) var(--cc-border); }
+.chat-file-btn.is-icon { width: 28px; padding: 0; background: transparent; color: var(--cc-text-dim); }
+.chat-file-btn.is-icon:hover { background: var(--fill-hover); box-shadow: none; color: var(--cc-text); }
+.chat-file[data-missing] .chat-file-name, .chat-file[data-missing] .chat-file-icon { color: var(--cc-text-faint); }
+.chat-file-pending { height: 62px; width: min(440px, 100%); }
+/* AI 主动提醒（notify_user）：对话里一行，铃铛 + 「提醒了你 · 级别 · 没弹出的原因」+ 内容。
+   「等你决定」铃铛用警示色，其余中性。 */
+.chat-notify { display: flex; align-items: flex-start; gap: var(--sp-8); max-width: min(520px, 100%); padding: var(--sp-8) var(--sp-12); border-radius: var(--radius-lg); background: var(--fill-selected); }
+.chat-notify-icon { flex: none; display: grid; place-items: center; margin-top: 2px; color: var(--cc-text-dim); }
+.chat-notify[data-level="needs_you"] .chat-notify-icon { color: var(--cc-warn); }
+.chat-notify-body { min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.chat-notify-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--sp-6); color: var(--cc-text-faint); font-size: var(--text-xs); }
+.chat-notify-title { color: var(--cc-text-dim); font-weight: var(--fw-medium); }
+.chat-notify-level::before, .chat-notify-note::before { content: "·"; margin-right: var(--sp-6); }
+.chat-notify-text { color: var(--cc-text); font-size: var(--text-base); line-height: var(--leading-normal); overflow-wrap: anywhere; }
 .chat-sent-pending { display: flex; align-items: center; justify-content: center; gap: var(--sp-8); width: 240px; max-width: 100%; height: 120px; border-radius: var(--radius-lg); background: var(--fill-selected); color: var(--cc-text-faint); font-size: var(--text-sm); }
 .chat-sent-failed { display: flex; align-items: flex-start; gap: var(--sp-9); width: fit-content; max-width: min(360px, 100%); padding: var(--sp-10) var(--sp-14) var(--sp-10) var(--sp-12); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-lg); color: var(--cc-text-dim); }
 .chat-sent-failed > svg { flex: 0 0 auto; margin-top: 1px; color: var(--cc-warn-text); }

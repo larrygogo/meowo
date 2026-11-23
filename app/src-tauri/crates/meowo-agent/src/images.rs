@@ -137,9 +137,13 @@ pub const SEND_IMAGE: &str = "send_image";
 pub const COMPARE_IMAGES: &str = "compare_images";
 /// 「点一个」方案卡：2~4 个方案（可带截图）显示给用户，用户点选后卡片替用户发一条消息（chat_choices.rs）。
 pub const OFFER_CHOICES: &str = "offer_choices";
-/// 只把内容显示给用户、不改用户任何东西的工具（发图、对照、方案卡）：五家都免逐次审批，
-/// 也不受浏览器开关约束。方案卡的「回复」是用户自己点的，工具本身不替用户做任何事。
-pub const IMAGE_TOOLS: &[&str] = &[SEND_IMAGE, COMPARE_IMAGES, OFFER_CHOICES];
+/// 交文件：把本机一个文件复制一份快照，在对话里显示成文件卡（桌面可打开、手机可下载，chat_files.rs）。
+pub const SEND_FILE: &str = "send_file";
+/// 主动提醒：走用户已有的通知通道（系统通知、Bark），用户正看这个会话时不弹（chat_files.rs）。
+pub const NOTIFY_USER: &str = "notify_user";
+/// 只把内容交给用户、不改用户任何东西、不对外发送的工具（发图、对照、方案卡、交文件、提醒）：
+/// 五家都免逐次审批，也不受浏览器开关约束。方案卡的「回复」是用户自己点的，工具本身不替用户做任何事。
+pub const IMAGE_TOOLS: &[&str] = &[SEND_IMAGE, COMPARE_IMAGES, OFFER_CHOICES, SEND_FILE, NOTIFY_USER];
 
 /// Meowo 自己的 MCP 工具（发图、浏览器）在对话页上统一叫 `mcp__meowo__<工具>`：claude、kimi
 /// 原样就是这个形态，codex 的命名空间形态由插件拼成它。gemini（`mcp_meowo_<工具>`）与 opencode

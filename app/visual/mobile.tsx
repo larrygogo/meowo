@@ -137,6 +137,16 @@ setExtraMock((cmd, args) => {
 });
 installMocks("chat");
 if (imageScene !== null) imageSceneBoot();
+// 真手机页（transport.ts）把 convertFileSrc 改指 /file?path=&token=，交文件卡的「下载」由它换成 /download。
+// 这里没有远程桥，只对交付目录里的文件照样改一次，让手机截图里看得到「下载」。
+{
+  const internals = (window as unknown as { __TAURI_INTERNALS__?: { convertFileSrc?: (path: string, protocol?: string) => string } }).__TAURI_INTERNALS__;
+  const original = internals?.convertFileSrc;
+  if (internals && original) {
+    internals.convertFileSrc = (path: string, protocol?: string) =>
+      /[\\/]files[\\/]sent[\\/]/.test(path) ? `/file?path=${encodeURIComponent(path)}&token=demo` : original(path, protocol);
+  }
+}
 store.settings.language = lang;
 store.settings.theme = theme;
 // ?on=1：设置屏的开关全拍成「开」（消息自动折叠、防休眠、手机推送）。

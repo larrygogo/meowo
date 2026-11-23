@@ -130,6 +130,26 @@ describe("这一轮的检查", () => {
     expect(one.status).toBe("unknown");
   });
 
+  // 本机记录重放：「看不出」里一半是 grep 过的；其中多数挑的正是出错的行。
+  it("grep 挑的是没过时一定有的那一行、输出里没有出错字眼：算通过", () => {
+    const checks = collectTurnChecks([
+      ...run(`npx tsc --noEmit 2>&1 | grep -E "error TS|warning" | head -5; echo done`, { text: "done" }),
+      ...run(`cd src-tauri && cargo clippy --all-targets -- -D warnings 2>&1 | grep -E "^(warning|error)" | head`, { text: "" }),
+      ...run(`bun run build 2>&1 | Select-String "error"`, { text: "" }),
+    ]);
+    expect(checks.map((c) => [c.kinds[0], c.status])).toEqual([["typecheck", "pass"], ["lint", "pass"], ["build", "pass"]]);
+  });
+
+  it("grep 挑的不是出错的那一行（按文件名、反选、只数行数、大小写对不上）：照旧看不出", () => {
+    const checks = collectTurnChecks([
+      ...run(`npx tsc --noEmit 2>&1 | grep "cloud-host"`, { text: "" }),
+      ...run(`npx eslint src | grep -v "warning"`, { text: "" }),
+      ...run(`cargo build 2>&1 | grep -c "^error"`, { text: "3" }),
+      ...run(`npx tsc -p app | grep "ERROR"`, { text: "" }),
+    ]);
+    expect(checks.map((c) => c.status)).toEqual(["unknown", "unknown", "unknown", "unknown"]);
+  });
+
   // 本机记录重放：`tsc; echo "tsc=$?"` 这类把退出码打出来的，原来照样写「看不出」。
   it("检查后面紧跟着把退出码打出来：照打出来的退出码判", () => {
     const checks = collectTurnChecks([

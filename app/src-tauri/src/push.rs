@@ -101,17 +101,34 @@ fn should_push(session_id: i64, fingerprint: &str, now: Instant) -> bool {
     true
 }
 
+/// 这次推送的去向（同步能判断的部分）。AI 主动提醒（chat_files.rs notify_user）按它如实写回执；
+/// 网络发送在后台线程里，成败拿不到，只能说「已交给推送服务」。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PushOutcome {
+    /// 没填 Bark 地址，或地址认不出来。
+    NotSet,
+    /// 用户在设置里暂停了手机推送。
+    Paused,
+    /// 同会话同内容刚推过（去重窗口内）。
+    Duplicate,
+    /// 已交给推送服务（后台线程发送）。
+    Queued,
+}
+
 /// watch.rs 通知判定命中时调用。没填地址或暂停了就什么都不做；发送在独立线程里，失败只打日志——
 /// 通知循环不能被网络卡住。
-pub(crate) fn push_session(settings: &crate::settings::Settings, message: PushMessage) {
-    if settings.bark_url.trim().is_empty() || settings.bark_paused {
-        return;
+pub(crate) fn push_session(settings: &crate::settings::Settings, message: PushMessage) -> PushOutcome {
+    if settings.bark_url.trim().is_empty() {
+        return PushOutcome::NotSet;
+    }
+    if settings.bark_paused {
+        return PushOutcome::Paused;
     }
     let Ok(url) = normalize_bark_url(&settings.bark_url) else {
-        return;
+        return PushOutcome::NotSet;
     };
     if !should_push(message.session_id, &format!("{}\n{}", message.title, message.body), Instant::now()) {
-        return;
+        return PushOutcome::Duplicate;
     }
     let settings = settings.clone();
     std::thread::spawn(move || {
@@ -122,6 +139,7 @@ pub(crate) fn push_session(settings: &crate::settings::Settings, message: PushMe
             eprintln!("[push] {error}");
         }
     });
+    PushOutcome::Queued
 }
 
 /// 设置页「发一条测试」：用输入框里的地址（还没保存也能测），同步返回成败给界面。

@@ -51,3 +51,11 @@ export function safeFileSrc(path: string): string | null {
 export function downloadFileSrc(path: string): string | null {
   return isRemotePath(path) ? null : convertFileSrc(path);
 }
+
+/** 手机端下载 AI 交来的文件（send_file）：/file 换成 /download——只认交付目录、按块流式、带 attachment。
+ *  桌面上没有这个地址（返回 null，走「另存为」）。 */
+export function deliveredDownloadSrc(path: string): string | null {
+  if (isRemotePath(path)) return null;
+  const src = convertFileSrc(path);
+  return src.startsWith("/file?") ? `/download?${src.slice("/file?".length)}` : null;
+}

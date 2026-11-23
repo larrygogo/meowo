@@ -479,6 +479,88 @@ function chainedAnd(segments: Segment[], from: number, to: number): boolean {
 const QUIET_ON_PASS = /^(?:(?:npx|bunx|pnpx|pnpm\s+(?:exec|dlx)|yarn\s+(?:exec|dlx)|bun\s+x)\s+)?(?:tsc|vue-tsc|tsgo|eslint|oxlint|(?:vite|tauri|next|astro|nuxt|webpack|rollup)\s+build)(?![\w-])|^cargo\s+(?:\+\S+\s+)?(?:check|clippy|build)\b|^cargo\s+tauri\s+build\b|^(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:lint|typecheck|type-check|tsc|check-types|types|build(?::\S+)?)(?:\s|$)/i;
 // 只截头尾、不挑行的过滤：没过时的报错一定还在输出里（开头几行或末尾几行）。grep 这类挑行的不算。
 const KEEPS_FAILURES = /^(?:(?:tail|head)(?:\s+-n)?(?:\s+-?\d+)?|select-object\s+-(?:last|first)\s+\d+|out-string|cat)$/i;
+
+// 各工具没过时一定会打的那一行（任一行一定出现）。grep 挑的条件对得上其中一行，没过时那行就会留在输出里。
+// 文件名、报错内容、规则名、脚本名每次都不一样，用「Ω」占位：按文件名挑（`grep cloud-host`）的不能算数。
+const FAILURE_LINES: [RegExp, string[]][] = [
+  [/(?:^|\s)(?:tsc|vue-tsc|tsgo)(?![\w-])/i, ["Ω.ts(1,7): error TS2322: Ω"]],
+  [/(?:^|\s)eslint(?![\w-])/i, ["  1:7  error  Ω  Ω", "✖ 1 problem (1 error, 0 warnings)"]],
+  [/(?:^|\s)oxlint(?![\w-])/i, ["Found 0 warnings and 1 error."]],
+  [/^cargo\s+(?:\+\S+\s+)?(?:check|clippy|build)\b/i, ["error: could not compile `Ω` (lib) due to 1 previous error"]],
+  [/(?:^|\s)vite\s+build\b/i, ["error during build:"]],
+  [/^bun\s/i, ['error: script "Ω" exited with code 1']],
+  [/^npm\s/i, ["npm error Lifecycle script `Ω` failed with error:", "npm ERR! Lifecycle script `Ω` failed with error:"]],
+  [/^pnpm\s/i, [" ELIFECYCLE  Command failed with exit code 1."]],
+  [/^yarn\s/i, ["error Command failed with exit code 1."]],
+];
+
+/** grep 的条件转成 JS 正则：-E/-P 原样，-F 转义，基本正则把 `\|` `\(` `\)` `\+` `\?` 换成元字符、裸的当普通字。 */
+function grepRegex(pattern: string, mode: "basic" | "extended" | "fixed", ignoreCase: boolean): RegExp | null {
+  let source = pattern;
+  if (mode === "fixed") source = escapeRe(pattern);
+  else if (mode === "basic") {
+    source = pattern.replace(/\\([|()+?{}])|([|()+?{}])/g, (_whole, escaped: string | undefined, bare: string | undefined) => (escaped ?? `\\${bare}`));
+  }
+  try {
+    return new RegExp(source, ignoreCase ? "i" : "");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 接在这段后面的 grep / Select-String 挑的是不是「没过时一定会有的那一行」：`cargo build | grep -E "error|warning"`、
+ * `tsc | grep "error TS"`。是的话，没过时那行一定还在输出里，输出里没有出错字眼就是过了（本机记录重放，
+ * 「看不出」里一半是 grep 过的）。反选（-v）、只数行数（-c）、只列文件（-l）、不输出（-q）的不算。
+ */
+function grepKeepsFailures(filter: string, head: string): boolean {
+  const samples = FAILURE_LINES.find(([tool]) => tool.test(head))?.[1];
+  if (!samples) return false;
+  const tokens = filter.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
+  const command = (tokens[0] ?? "").toLowerCase();
+  const unquote = (token: string) => token.replace(/^(["'])([\s\S]*)\1$/, "$2");
+  const patterns: string[] = [];
+  let mode: "basic" | "extended" | "fixed" = "basic";
+  let ignoreCase = false;
+  if (command === "grep" || command === "egrep") {
+    if (command === "egrep") mode = "extended";
+    for (let at = 1; at < tokens.length; at += 1) {
+      const token = tokens[at];
+      if (token === "-e") { patterns.push(unquote(tokens[(at += 1)] ?? "")); continue; }
+      if (/^-[A-Za-z]+$/.test(token)) {
+        if (/[vclqLZ]/.test(token)) return false;
+        if (/[EP]/.test(token)) mode = "extended";
+        if (token.includes("F")) mode = "fixed";
+        if (token.includes("i")) ignoreCase = true;
+        if (/[ABCm]$/.test(token)) at += 1;
+        continue;
+      }
+      if (token.startsWith("--")) {
+        if (/^--(?:invert-match|count|files-with-matches|files-without-match|quiet|silent)$/.test(token)) return false;
+        continue;
+      }
+      if (patterns.length === 0) patterns.push(unquote(token));
+    }
+  } else if (command === "select-string" || command === "sls") {
+    // PowerShell 的 Select-String 默认不分大小写，条件是 .NET 正则。
+    mode = "extended";
+    ignoreCase = true;
+    for (let at = 1; at < tokens.length; at += 1) {
+      const token = tokens[at];
+      if (/^-notmatch$|^-quiet$|^-list$/i.test(token)) return false;
+      if (/^-casesensitive$/i.test(token)) { ignoreCase = false; continue; }
+      if (/^-simplematch$/i.test(token)) { mode = "fixed"; continue; }
+      if (/^-pattern$/i.test(token)) { patterns.push(unquote(tokens[(at += 1)] ?? "")); continue; }
+      if (token.startsWith("-")) continue;
+      if (patterns.length === 0) patterns.push(unquote(token));
+    }
+  } else return false;
+  if (patterns.length === 0) return false;
+  return patterns.some((pattern) => {
+    const re = grepRegex(pattern, mode, ignoreCase);
+    return !!re && samples.some((line) => re.test(line));
+  });
+}
 // 输出里有任何一点像出错的字眼就不推：宁可「看不出」，不把没通过的写成通过。
 const TROUBLE = /error|✖|problem|warning|not recogni[sz]ed|not found|cannot find|can't find|no such file|ERR!|exited with|panicked|exception|fail|denied|killed|timed? ?out|abort|fatal|traceback|无法|找不到|错误/i;
 // 带出错字眼、却跟检查过没过无关的行（本机记录重放里最常挡住判断的几种）：git 的换行符提示、rustfmt 在稳定版上
@@ -506,7 +588,11 @@ function withoutNoise(output: string): string {
 function quietPass(segments: Segment[], index: number, output: string, verdicts: (Verdict | null)[]): boolean {
   const segment = segments[index];
   if (segment.background || !QUIET_ON_PASS.test(headOf(segment.text))) return false;
-  if (!segment.filters.every((filter) => KEEPS_FAILURES.test(filter.replace(/^\d?>&\d\s*/, "").trim()))) return false;
+  const head = headOf(segment.text);
+  if (!segment.filters.every((raw) => {
+    const filter = raw.replace(/^\d?>&\d\s*/, "").trim();
+    return KEEPS_FAILURES.test(filter) || grepKeepsFailures(filter, head);
+  })) return false;
   return surelyRan(segments, index, verdicts) && !TROUBLE.test(withoutNoise(output));
 }
 

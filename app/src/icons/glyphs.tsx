@@ -11,6 +11,8 @@ export const icChevronDown: Glyph = { body: <path d="M6 9l6 6 6-6" /> };
 export const icCircleCheck: Glyph = { body: <><circle cx="12" cy="12" r="9" /><path d="m8.5 12 2.5 2.5 4.5-5" /></> };
 export const icClose: Glyph = { body: <path d="M6 6l12 12M18 6L6 18" /> };
 export const icContrast: Glyph = { body: <><circle cx="12" cy="12" r="9" /><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" stroke="none" /></> };
+/** 铃铛：设置页的通知分区、对话里 AI 的主动提醒（notify_user）共用，放基础注册表。 */
+export const icBell: Glyph = { body: <><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></> };
 export const icDownload: Glyph = { body: <><path d="M12 4v11" /><path d="M7 10l5 5 5-5" /><path d="M5 20h14" /></> };
 export const icExclamation: Glyph = { body: <path d="M12 7v6M12 16.5v.1" /> };
 export const icFolder: Glyph = { body: <path d="M3.5 7v10a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2V9.5a2 2 0 0 0-2-2h-6l-2-2.5h-5a2 2 0 0 0-2 2z" /> };

@@ -20,6 +20,10 @@ export const icCollapse: Glyph = { body: <path d="M4 14h6v6M20 10h-6V4M14 10l7-7
 export const icCopy: Glyph = { body: <><rect x="8" y="8" width="11" height="12" rx="2" /><path d="M15 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h2" /></> };
 export const icExpand: Glyph = { body: <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /> };
 export const icFile: Glyph = { body: <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></> };
+/** AI 交来的文件卡按类型换图标（FileCard.tsx）：文档类、压缩包、安装包。 */
+export const icFileText: Glyph = { body: <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /><path d="M9 13h6M9 17h4" /></> };
+export const icFileZip: Glyph = { body: <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /><path d="M10 5h1M10 8h1M10 11h1" /><path d="M9.5 14h2v3.5h-2z" /></> };
+export const icPackage: Glyph = { body: <><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" /><path d="M4 7.5l8 4.5 8-4.5" /><path d="M12 12v9" /></> };
 export const icFilter: Glyph = { body: <><path d="M8 4v3.2M8 12.4v7.6M16 4v7.6M16 16.8V20" /><circle cx="8" cy="9.8" r="2.2" /><circle cx="16" cy="14.2" r="2.2" /></> };
 export const icFlag: Glyph = { body: <path d="M4 21V4h11l-1.5 4L15 12H4" /> };
 export const icFolderPlus: Glyph = { body: <><path d="M3.5 7v10a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2V9.5a2 2 0 0 0-2-2h-6l-2-2.5h-5a2 2 0 0 0-2 2z" /><path d="M12 11v5M9.5 13.5h5" /></> };
