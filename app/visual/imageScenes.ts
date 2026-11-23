@@ -299,6 +299,40 @@ export function imageSceneItems(part: string, lang: Lang): { items: ChatItem[]; 
       ],
     };
   }
+  if (part === "form") {
+    // 小表单（ask_form）：前一张已填（收成一行），后一张五种字段都有、等你填。
+    const formCall = (id: string, s: number) => ({
+      type: "tool_use", id, timestamp: at(s), name: "mcp__meowo__ask_form", kind: "other", summary: "",
+    }) as unknown as ChatItem;
+    const form = (title: string, intro: string | null, fields: unknown[]) => [
+      zh ? "表单已显示给用户。" : "Form shown to the user.",
+      `[Form: ${JSON.stringify({ title, intro, fields })}]`,
+    ].join("\n");
+    const field = (label: string, type: string, extra: Record<string, unknown> = {}) => ({ label, type, help: null, options: null, placeholder: null, default: null, optional: false, ...extra });
+    return {
+      running: false,
+      items: [
+        user("u1", 900, zh ? "给仓库加个 CI。" : "Add CI to the repo."),
+        formCall("q0", 890),
+        receipt("q0", at(889), form(zh ? "CI 配置" : "CI setup", null, [
+          field(zh ? "用哪个平台" : "Platform", "choice", { options: ["GitHub Actions", "GitLab CI"] }),
+          field(zh ? "要跑哪些检查" : "Checks to run", "multi_choice", { options: zh ? ["单测", "类型检查", "lint"] : ["Tests", "Typecheck", "Lint"] }),
+        ])),
+        user("u2", 860, zh ? "填好了表单「CI 配置」\n- 用哪个平台：GitHub Actions\n- 要跑哪些检查：单测、类型检查、lint" : "Filled in form \"CI setup\"\n- Platform: GitHub Actions\n- Checks to run: Tests, Typecheck, Lint"),
+        say("a1", 850, zh ? "CI 加好了，三项检查都在 GitHub Actions 上跑。" : "CI is in place; all three checks run on GitHub Actions."),
+        user("u3", 300, zh ? "发个新版本。" : "Cut a new release."),
+        say("a2", 210, zh ? "发版前有几件事要你定一下。" : "A few things to settle before the release."),
+        formCall("q1", 200),
+        receipt("q1", at(199), form(zh ? "发版配置" : "Release setup", zh ? "这几项定了我就开始打包，大约 10 分钟。" : "Once these are set I'll start packaging; about 10 minutes.", [
+          field(zh ? "版本号" : "Version", "text", { placeholder: zh ? "比如 0.9.0" : "e.g. 0.9.0", default: "0.9.0" }),
+          field(zh ? "发到哪个渠道" : "Channel", "choice", { options: zh ? ["正式版", "测试版", "只打包不发布"] : ["Stable", "Beta", "Build only"], allow_other: true }),
+          field(zh ? "要打哪些平台" : "Platforms", "multi_choice", { options: ["Windows x64", "macOS arm64", "macOS x64", "Linux"], default: ["Windows x64", "macOS arm64"] }),
+          field(zh ? "顺带清理旧的草稿版本" : "Delete old draft releases too", "yes_no", { help: zh ? "会删掉 GitHub 上 3 个旧草稿，删了找不回。" : "Removes 3 old drafts on GitHub; this can't be undone." }),
+          field(zh ? "更新说明里额外写什么" : "Anything extra for the release notes", "long_text", { optional: true, placeholder: zh ? "不写就按提交记录生成" : "Leave empty to generate from commits" }),
+        ])),
+      ],
+    };
+  }
   if (part === "choices") {
     const choicesCall = (id: string, s: number) => ({
       type: "tool_use", id, timestamp: at(s), name: "mcp__meowo__offer_choices", kind: "other", summary: "",

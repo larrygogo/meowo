@@ -20,6 +20,7 @@ import { setHostOsUnknown } from "../platform";
 import "../fonts";
 import "../styles.css";
 import "./mobile.css";
+import { keepFormFieldInView } from "./formFieldInView";
 
 markRemoteUi();
 installRemoteTransport();
@@ -43,6 +44,7 @@ if (viewport) {
     if (viewport.scale > 1.01) return;
     document.documentElement.style.setProperty("--app-height", `${Math.round(viewport.height)}px`);
     window.scrollTo(0, 0);
+    keepFormFieldInView();
   };
   viewport.addEventListener("resize", syncAppHeight);
   syncAppHeight();

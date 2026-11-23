@@ -1055,6 +1055,26 @@ body.remote-ui .chat-window.is-remote-compact .chat-dock:has(> .lead-gate-card) 
    用 visibility 不用 display，停靠栏高度不变，弹层不跟着跳。 */
 body.remote-ui .chat-window.is-remote-compact .chat-dock:has(#chat-at-listbox, .chat-slash-menu) .dock-workbar { visibility: hidden; }
 
+/* 在表单里打字时把底部输入框整块收起（用户 2026-11-24 反馈）：键盘弹起后可视高度只剩四百多，
+   输入框连同工具行要占 150px，表单被挤在顶栏和输入框之间一条缝里（qa-m-form-kbd 改前实拍）。
+   这时用户在填表，不会同时去打消息；收起后表单拿到顶栏以下的整块高度。只认文字框获得焦点：
+   点选项按钮不弹键盘，那时收起输入框只会让页面跳一下。焦点一离开表单，输入框原样回来。
+   同时把「不填了 / 提交」那一排钉在可视区底边，填到哪一项都不用滚回去找按钮；
+   sticky 只在表单盒子内生效，表单整块在屏里时它就待在原位。 */
+body.remote-ui .chat-window.is-remote-compact:has(.chat-form :is(input, textarea):focus) :is(.chat-dock, .chat-jump-latest) { display: none; }
+/* 聚焦时浏览器把输入框滚进视野，会连 overflow:hidden 的 .chat-main 也滚上去一个顶栏高（实测 scrollTop 44），
+   底下空出一条、表单整体上移。clip 不是滚动容器，滚不动，也把已经滚上去的位置归零。 */
+body.remote-ui .chat-window.is-remote-compact .chat-main:has(.chat-form :is(input, textarea):focus) { overflow: clip; }
+body.remote-ui .chat-window.is-remote-compact .chat-form:has(:is(input, textarea):focus) .chat-form-foot {
+  position: sticky;
+  /* sticky 贴的是滚动区内容盒下沿，滚动区还有一截底部留白：抵掉它，按钮栏才贴到可视区底边。 */
+  bottom: calc(-1 * var(--chat-section-gap));
+  z-index: var(--z-raised);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  /* 表单底色是半透明的 --fill-selected，钉住后底下有字滚过，垫一层窗口底色再叠同一层，颜色和表单接得上。 */
+  background: linear-gradient(var(--fill-selected), var(--fill-selected)), var(--cc-window-bg);
+}
+
 /* 新建会话浮层:桌面是独立窗口,远程改全屏 sheet 盖在会话列表上。
    注意 .ns-window 桌面态是 100vw/100vh 填满自己的 OS 窗,在这里必须双双改掉——
    之前只覆宽不覆高,sheet 恒撑 100vh(比手机可视区还高),底部按钮直接出屏。 */

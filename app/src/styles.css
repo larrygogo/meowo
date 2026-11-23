@@ -4865,6 +4865,38 @@ button.chat-choice-pick:focus-visible { outline: none; box-shadow: inset 0 0 0 2
 .chat-choices-result-meta { color: var(--cc-text-faint); font-size: var(--text-xs); overflow-wrap: anywhere; }
 .chat-choices-toggle { flex: 0 0 auto; height: 26px; padding: 0 var(--sp-8); border: 0; border-radius: var(--radius-md); background: none; color: var(--cc-text-dim); font: inherit; font-size: var(--text-xs); white-space: nowrap; cursor: pointer; }
 .chat-choices-toggle:hover { background: var(--fill-hover); color: var(--cc-text); }
+/* 小表单（ask_form，FormCard.tsx）：与方案卡同一个外框和页脚；单列，标签在上、控件在下。 */
+.chat-form { width: min(560px, 100%); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-lg); background: var(--fill-selected); outline: none; }
+.chat-form-title { padding: var(--sp-4) var(--sp-12) 0; color: var(--cc-text); font-size: var(--text-base); font-weight: var(--fw-semibold); line-height: var(--leading-normal); overflow-wrap: anywhere; }
+.chat-form-intro { padding: var(--sp-2) var(--sp-12) 0; color: var(--cc-text-dim); font-size: var(--text-sm); line-height: var(--leading-normal); overflow-wrap: anywhere; }
+.chat-form-fields { display: flex; flex-direction: column; gap: var(--sp-12); padding: var(--sp-12); }
+.chat-form-field { display: flex; flex-direction: column; gap: var(--sp-6); min-width: 0; }
+.chat-form-label { display: flex; align-items: baseline; gap: var(--sp-6); color: var(--cc-text); font-size: var(--text-sm); font-weight: var(--fw-medium); overflow-wrap: anywhere; }
+.chat-form-optional, .chat-form-required { flex: none; font-size: var(--text-2xs); font-weight: var(--fw-regular); }
+.chat-form-optional { color: var(--cc-text-faint); }
+.chat-form-required { color: var(--cc-err-text); }
+.chat-form-help { margin-top: calc(-1 * var(--sp-2)); color: var(--cc-text-faint); font-size: var(--text-xs); line-height: var(--leading-normal); overflow-wrap: anywhere; }
+.chat-form-input { width: 100%; min-width: 0; height: 32px; padding: 0 var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: var(--cc-panel-raised); color: var(--cc-text); font: inherit; font-size: var(--text-sm); transition: border-color var(--dur-fast) var(--ease-in-out); }
+.chat-form-input.is-long { height: auto; min-height: 72px; padding: var(--sp-6) var(--sp-10); line-height: var(--leading-normal); resize: vertical; }
+.chat-form-input::placeholder { color: var(--cc-text-faint); }
+.chat-form-input:focus { outline: none; border-color: var(--cc-accent); }
+.chat-form-options { display: flex; flex-wrap: wrap; gap: var(--sp-6); }
+.chat-form-option { display: inline-flex; align-items: center; gap: var(--sp-6); min-height: 30px; max-width: 100%; padding: var(--sp-4) var(--sp-12); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: var(--cc-panel-raised); color: var(--cc-text); font: inherit; font-size: var(--text-sm); text-align: left; overflow-wrap: anywhere; cursor: pointer; transition: border-color var(--dur-fast) var(--ease-in-out), background var(--dur-fast) var(--ease-in-out); }
+.chat-form-option:hover { border-color: var(--cc-text-faint); }
+.chat-form-option.is-on { border-color: var(--cc-accent-text); background: var(--cc-accent-soft); color: var(--cc-accent-text); }
+/* 手机没有键盘快捷键：「Ctrl+Enter 提交」不出。 */
+@media (hover: none) { .chat-form .chat-choices-hint { display: none; } }
+.chat-form-check { display: grid; place-items: center; flex: none; width: 14px; height: 14px; border: var(--hairline) solid var(--cc-text-faint); border-radius: 4px; font-size: 10px; line-height: 1; }
+.chat-form-option.is-on .chat-form-check { border-color: var(--cc-accent); background: var(--cc-accent); color: var(--cc-on-accent); }
+.chat-form-field.is-missing .chat-form-input, .chat-form-field.is-missing .chat-form-option { border-color: var(--cc-err-text); }
+.chat-form-missing { padding: 0 var(--sp-12) var(--sp-8); color: var(--cc-err-text); font-size: var(--text-xs); }
+.chat-form-foot-gap { flex: 1; }
+.chat-form-glyph { display: grid; place-items: center; flex: none; width: 24px; height: 24px; border-radius: var(--radius-full); background: var(--cc-accent-soft); color: var(--cc-accent-text); font-size: var(--text-xs); }
+.chat-form-answers { display: flex; flex-direction: column; gap: var(--sp-8); margin: 0; padding: var(--sp-4) var(--sp-12) var(--sp-12) calc(var(--sp-12) + 24px + var(--sp-10) - var(--sp-2)); }
+.chat-form-answer { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
+.chat-form-answer dt { color: var(--cc-text-faint); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.chat-form-answer dd { margin: 0; color: var(--cc-text); font-size: var(--text-sm); line-height: var(--leading-normal); white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-form-answer dd.is-blank { color: var(--cc-text-faint); }
 .chat-lightbox-action.is-pick { background: var(--cc-accent); color: var(--cc-on-accent); }
 /* 选中 AI 回复里的一段后浮出的「引用」（QuoteSelection.tsx）：贴着选区，fixed 定位，随选区算位置。 */
 .chat-quote-button { position: fixed; z-index: var(--z-float); height: 30px; padding: 0 var(--sp-12); border: 0; border-radius: var(--radius-full); background: var(--cc-panel-raised); box-shadow: var(--edge-float), var(--shadow-md); color: var(--cc-text); font: inherit; font-size: var(--text-sm); white-space: nowrap; cursor: pointer; }

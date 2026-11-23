@@ -35,8 +35,9 @@ const OFFER_CHOICES: &str = "offer_choices";
 /// 交文件、主动提醒：同样不走浏览器、不受浏览器开关约束。
 const SEND_FILE: &str = meowo_agent::images::SEND_FILE;
 const NOTIFY_USER: &str = meowo_agent::images::NOTIFY_USER;
+const ASK_FORM: &str = meowo_agent::images::ASK_FORM;
 
-/// 不受浏览器开关约束的那组（发图、对照、方案卡、交文件、提醒）。
+/// 不受浏览器开关约束的那组（发图、对照、方案卡、交文件、提醒、表单）。
 fn is_image_tool(name: &str) -> bool {
     meowo_agent::images::IMAGE_TOOLS.contains(&name)
 }
@@ -151,6 +152,10 @@ const SEND_IMAGE_HINT: &str = concat!(
 
 ",
     "交付物（安装包、报告、导出的表格或 PDF、日志压缩包）用 send_file 交给用户，不要在回复里贴长路径让用户自己找。长任务做完、或者你卡住了需要用户决定时，用 notify_user 提醒用户；平常的每一步不要提醒。",
+    "
+
+",
+    "开工前要用户一次答清几件事（部署到哪、版本号、要不要顺带做某事）时，用 ask_form 发一张小表单，不要在正文里列一串问题让用户逐条手打。调用后先结束这一轮，用户填好的答案会作为下一条消息发给你。只有一个二选一的问题就直接问；要看截图才能比的方案用 offer_choices。",
 );
 
 const INSTRUCTIONS_IMAGES_ONLY: &str = SEND_IMAGE_HINT;
@@ -167,6 +172,10 @@ const INSTRUCTIONS_WITH_BROWSER: &str = concat!(
 
 ",
     "交付物（安装包、报告、导出的表格或 PDF、日志压缩包）用 send_file 交给用户，不要在回复里贴长路径让用户自己找。长任务做完、或者你卡住了需要用户决定时，用 notify_user 提醒用户；平常的每一步不要提醒。",
+    "
+
+",
+    "开工前要用户一次答清几件事（部署到哪、版本号、要不要顺带做某事）时，用 ask_form 发一张小表单，不要在正文里列一串问题让用户逐条手打。调用后先结束这一轮，用户填好的答案会作为下一条消息发给你。只有一个二选一的问题就直接问；要看截图才能比的方案用 offer_choices。",
 );
 
 /// 发图失败的回执固定以 `[Image error: <code>] ` 开头（contract.md）：app 侧的失败已带前缀，
@@ -378,8 +387,36 @@ fn notify_user_tool() -> Value {
     )
 }
 
+fn ask_form_tool() -> Value {
+    let field = json!({
+        "type": "object",
+        "properties": {
+            "label": { "type": "string", "description": "问题，一句短话，比如「部署到哪个环境」。表单内不重名" },
+            "type": { "type": "string", "enum": ["text", "long_text", "choice", "multi_choice", "yes_no"], "description": "可选，默认 text。text 一行文字；long_text 多行文字；choice 单选；multi_choice 多选；yes_no 是或否" },
+            "options": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 8, "description": "choice / multi_choice 必填：2~8 个选项" },
+            "help": { "type": "string", "description": "可选。问题下面的一句说明，比如选了会有什么后果" },
+            "placeholder": { "type": "string", "description": "可选。text / long_text 输入框里的提示，比如「比如 0.9.0」" },
+            "default": { "type": "string", "description": "可选。预先填好的答案：text / long_text 给文字，choice 给其中一项，yes_no 给 \"true\" 或 \"false\"。multi_choice 不用这个，用 defaults" },
+            "defaults": { "type": "array", "items": { "type": "string" }, "description": "可选，只给 multi_choice：预先勾上的几项" },
+            "allow_other": { "type": "boolean", "description": "可选，只给 choice / multi_choice：多一个「其他」，用户可以填选项以外的答案" },
+            "optional": { "type": "boolean", "description": "可选，默认 false（必填）。true 表示用户可以不填" }
+        },
+        "required": ["label"]
+    });
+    tool(
+        ASK_FORM,
+        "请用户一次填好几件事：Meowo 在对话里显示一张小表单（手机上也能填），用户填好提交后，卡片会以用户的身份发一条消息，逐项列出答案（「- 问题：回答」，多行回答缩进两格），也可能不填。用在开工前要用户答清的几件事上：部署到哪个环境、版本号、要不要顺带迁移数据、用哪几个账号测。不要在正文里列一串问题让用户逐条手打。只有一个二选一的问题就直接问；要看截图才能比的方案用 offer_choices。一次 1~8 个字段，先问开工必需的。调用后立即返回，不会等用户：收到确认后先结束这一轮，等用户的答案到了再接着做。",
+        json!({
+            "title": { "type": "string", "description": "表单标题，几个字，比如「部署配置」" },
+            "intro": { "type": "string", "description": "可选。标题下的一句说明，比如为什么要问这些" },
+            "fields": { "type": "array", "minItems": 1, "maxItems": 8, "description": "1~8 个字段，按要用户填的顺序排", "items": field }
+        }),
+        &["title", "fields"],
+    )
+}
+
 fn tools(options: Options) -> Vec<Value> {
-    let mut list = vec![send_image_tool(), compare_images_tool(), offer_choices_tool(), send_file_tool(), notify_user_tool()];
+    let mut list = vec![send_image_tool(), compare_images_tool(), offer_choices_tool(), send_file_tool(), notify_user_tool(), ask_form_tool()];
     if options.browser {
         list.extend(browser_tools());
     }
@@ -546,7 +583,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             names(&list),
-            ["send_image", "compare_images", "offer_choices", "send_file", "notify_user"].map(String::from).to_vec()
+            ["send_image", "compare_images", "offer_choices", "send_file", "notify_user", "ask_form"].map(String::from).to_vec()
         );
         let reply = respond(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "browser_snapshot" } }), Some(&channel), IMAGES_ONLY).unwrap();
         assert_eq!(reply["result"]["isError"], true);

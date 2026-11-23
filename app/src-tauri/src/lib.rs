@@ -9,6 +9,7 @@ mod browser_pane;
 mod browser_permission;
 mod chat;
 mod chat_choices;
+mod chat_forms;
 mod chat_files;
 mod chat_images;
 mod checkpoints;

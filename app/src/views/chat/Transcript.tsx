@@ -26,10 +26,12 @@ import { FoldScopeContext, foldScope } from "./foldMemory";
 import { isSubagentDelegation, type ToolResultItem } from "./shared";
 import { liveTurnStart, SessionAliveContext, TurnLiveContext, type TurnActivity } from "./toolState";
 import { markEntering, trackEntering, type EnterTrack } from "./enterMotion";
-import { isChoicesTool, isCompareTool, isFileTool, isImageMessage, isNotifyTool } from "./imageTools";
+import { isChoicesTool, isCompareTool, isFileTool, isFormTool, isImageMessage, isNotifyTool } from "./imageTools";
 import { FileMessage, NotifyMessage } from "./FileCard";
 import { ChoiceMessage, parseChoicesReceipt } from "./ChoiceCard";
-import { looksLikeChoiceReply, parseChoiceAnswer, type ChoiceCardText } from "./choiceReply";
+import { FormMessage, parseFormReceipt } from "./FormCard";
+import { looksLikeCardReply, parseFormAnswer, type FormCardText } from "./formReply";
+import { parseChoiceAnswer, type ChoiceCardText } from "./choiceReply";
 import { CompareMessage } from "./CompareCard";
 
 type SubagentOutcomeInfo = NonNullable<ToolResultItem["subagent"]>;
@@ -391,6 +393,14 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
       if (!settled) record.awaitsReply = true;
       return texts;
     };
+    const formFollowUp = (entry: ChatItem) => {
+      const receipt = results.get(entry.id);
+      const parsed = receipt && !receipt.is_error ? parseFormReceipt(receipt.text) : null;
+      const card = parsed ? { title: parsed.title, fields: parsed.fields.map((field) => ({ label: field.label, type: field.type })) } : null;
+      const { texts, settled } = formFollowUps(items, items.indexOf(entry), card);
+      if (!settled) record.awaitsReply = true;
+      return texts;
+    };
     for (const entry of bodyItems) {
       // 出错卡只有在它就是时间线末尾时才给「继续」（后面已有新内容的旧错误不必再续）。
       const latest = entry.type === "turn_error" && next >= items.length && entry === bodyItems[bodyItems.length - 1];
@@ -400,6 +410,8 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
           <TurnLiveContext.Provider key={entry.id} value={blockActivity}>
             {isChoicesTool(entry)
               ? <ChoiceMessage item={entry} result={results.get(entry.id)} followUps={choiceFollowUp(entry)} sessionId={sessionId} />
+              : isFormTool(entry)
+              ? <FormMessage item={entry} result={results.get(entry.id)} followUps={formFollowUp(entry)} sessionId={sessionId} />
               : isCompareTool(entry)
               ? <CompareMessage item={entry} result={results.get(entry.id)} />
               : isFileTool(entry)
@@ -501,7 +513,19 @@ export function choiceFollowUps(items: readonly ChatItem[], index: number, card:
     const entry = items[i];
     if (entry.type !== "user_text") continue;
     texts.push(entry.text);
-    if ((card && parseChoiceAnswer(entry.text, card)) || !looksLikeChoiceReply(entry.text)) return { texts, settled: true };
+    if ((card && parseChoiceAnswer(entry.text, card)) || !looksLikeCardReply(entry.text)) return { texts, settled: true };
+  }
+  return { texts, settled: false };
+}
+
+/** 表单之后的用户消息：同 choiceFollowUps，收到这张表单自己的答案、或一条用户自己打的话为止。 */
+export function formFollowUps(items: readonly ChatItem[], index: number, card: FormCardText | null = null): { texts: string[]; settled: boolean } {
+  const texts: string[] = [];
+  for (let i = index + 1; i < items.length; i += 1) {
+    const entry = items[i];
+    if (entry.type !== "user_text") continue;
+    texts.push(entry.text);
+    if ((card && parseFormAnswer(entry.text, card)) || !looksLikeCardReply(entry.text)) return { texts, settled: true };
   }
   return { texts, settled: false };
 }

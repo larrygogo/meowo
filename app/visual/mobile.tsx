@@ -28,6 +28,7 @@ import { CHAT_SESSION_ID, DIR_GONE_HISTORY, FIXED_NOW, goneSessions, leadTask, m
 import "../src/fonts";
 import "../src/styles.css";
 import "../src/mobile/mobile.css";
+import { keepFormFieldInView } from "../src/mobile/formFieldInView";
 
 const q = new URLSearchParams(location.search);
 const lang: "zh" | "en" = q.get("lang") === "en" ? "en" : "zh";
@@ -162,6 +163,7 @@ if (viewport) {
     if (viewport.scale > 1.01) return;
     document.documentElement.style.setProperty("--app-height", `${Math.round(viewport.height)}px`);
     window.scrollTo(0, 0);
+    keepFormFieldInView();
   };
   viewport.addEventListener("resize", sync);
   sync();
