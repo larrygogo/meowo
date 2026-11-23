@@ -148,6 +148,8 @@ function editedAfterIndex(items: ChatItem[], after: number, cwd: string | null):
 }
 
 const KIND_LABEL = (t: ReturnType<typeof useT>, kind: CheckKind) => t.chat.checkKind[kind];
+/// 这几行检查各自跑的命令（去重，按出现先后）：「重跑 / 修」的要求里逐条列出。
+const commandsOf = (checks: TurnCheck[]) => [...new Set(checks.flatMap((check) => check.parts))];
 
 /// 提示里点名「哪些检查跑完后又改了代码」：过时行的类别，去掉之后又重跑过的（还有新鲜一行的类别不点名）。
 function staleKinds(t: ReturnType<typeof useT>, checks: TurnCheck[], staleIds: Set<string>): string[] {
@@ -176,7 +178,7 @@ function TurnChecks({ checks, replyId, editedAfter, staleIds, codeChanged }: { c
     ) : null;
   }
   const staleNames = editedAfter.map((path) => path.slice(path.lastIndexOf("/") + 1));
-  const staleCommands = [...new Set(checks.filter((check) => staleIds.has(check.toolId)).map((check) => check.shown))];
+  const staleCommands = commandsOf(checks.filter((check) => staleIds.has(check.toolId)));
   // 没过、之后也没再改代码的检查：肯定还没修。没过但之后改过的可能已经修了，归到上面的「重跑」里。
   const failed = checks.filter((check) => check.status === "fail" && !staleIds.has(check.toolId));
   const failedKinds = [...new Set(failed.flatMap((check) => check.kinds))].map((kind) => KIND_LABEL(t, kind));
@@ -227,7 +229,8 @@ function TurnChecks({ checks, replyId, editedAfter, staleIds, codeChanged }: { c
                 aria-label={`${label} ${result} · ${t.chat.checkJump}`} onClick={(event) => jump(check.toolId, event.currentTarget)}>
                 <span className="chat-turn-check-icon" aria-hidden="true">{stale && check.status === "pass" ? "!" : check.status === "pass" ? "✓" : check.status === "fail" ? "✕" : "?"}</span>
                 <span className="chat-turn-check-kind">{label}</span>
-                <code className="chat-turn-check-cmd">{check.shown}</code>
+                {/* 几段分开列，不拼成 `a && b`：原命令里可能是 `;` 或 `||`，拼错了反而误导。 */}
+                <code className="chat-turn-check-cmd">{[...new Set(check.parts)].join(" · ")}</code>
                 <span className="chat-turn-check-result">{result}</span>
               </button>
             </li>
@@ -237,7 +240,7 @@ function TurnChecks({ checks, replyId, editedAfter, staleIds, codeChanged }: { c
       {failed.length > 0 && fill && (
         <div className="chat-turn-checks-note is-err">
           <span className="chat-turn-checks-text">{t.chat.checkFailed(failedKinds)}</span>
-          {fillButton(t.chat.checkFix, t.chat.checkFixPrompt([...new Set(failed.map((check) => check.shown))]))}
+          {fillButton(t.chat.checkFix, t.chat.checkFixPrompt(commandsOf(failed)))}
         </div>
       )}
       {editedAfter.length > 0 && (

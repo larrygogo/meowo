@@ -26,8 +26,8 @@ export type TurnCheck = {
   status: CheckStatus;
   note: CheckNote;
   command: string;
-  /** 行里显示的那几段（合成一行的几类各自所在的段，用 && 连起来）：这几类检查所在的命令，去掉开头的变量赋值（整条命令可能先 `SP=... ;` 设一堆变量）。 */
-  shown: string;
+  /** 与 keys 一一对应：每类检查所在的那段命令（显示与「重跑」要求用）。被更晚的运行盖过的类别连同它那段一起去掉（独立审查第 4 条）。这几类检查所在的命令，去掉开头的变量赋值（整条命令可能先 `SP=... ;` 设一堆变量）。 */
+  parts: string[];
   /** 对应的 tool_use id：点这一行跳回过程里的那次命令。 */
   toolId: string;
   /** 在 items 里的位置：和之后的改动比先后。 */
@@ -553,8 +553,11 @@ export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
       if (same.verdict.status === "pass") same.verdict = PASSED;
     }
     for (const group of groups) {
-      const shown = group.indexes.map((at) => segments[at].text.replace(ASSIGNS, "").split(/\r?\n/)[0]).join(" && ");
-      all.push({ kinds: group.kinds, keys: group.keys, ...group.verdict, command, shown, toolId: item.id, at });
+      const parts = group.keys.map((key) => {
+        const at = found.get(key)!.index;
+        return segments[at].text.replace(ASSIGNS, "").split(/\r?\n/)[0];
+      });
+      all.push({ kinds: group.kinds, keys: group.keys, ...group.verdict, command, parts, toolId: item.id, at });
     }
   });
   // 同一工具、同样范围（或之后跑了全量）只留最后一次：倒着走，某行的键全被更晚的行盖过就丢掉；部分被盖过的只留没被盖的。
@@ -567,7 +570,7 @@ export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
     later.push(...check.keys);
     // 「其中一项没过」是对整组说的：拆掉一部分类别后就不成立了，改写成看不出。
     const note = check.note.kind === "oneFailed" && fresh.length < check.kinds.length ? UNCLEAR : null;
-    kept.unshift({ ...check, kinds: fresh.map((at) => check.kinds[at]), keys: fresh.map((at) => check.keys[at]), ...(note ?? {}) });
+    kept.unshift({ ...check, kinds: fresh.map((at) => check.kinds[at]), keys: fresh.map((at) => check.keys[at]), parts: fresh.map((at) => check.parts[at]), ...(note ?? {}) });
   }
   return kept;
 }

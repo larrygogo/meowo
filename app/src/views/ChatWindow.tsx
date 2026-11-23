@@ -923,7 +923,7 @@ export function ChatWindow() {
   const [chatUi, setChatUi] = useState<ChatUi | null>(null);
   // 建议回复：Claude 回合结束后在终端输入框里画的「预测的下一句」，读出来放到输入框上方（只填不发）。
   // 只在主回合停下、终端由 Meowo 托管、没有待答的终端交互时读。
-  const composerSuggestion = useComposerSuggestion(sessionId, chatUi?.composer, tone !== "running" && history?.ptyManaged === true && !terminalReview);
+  const [composerSuggestion, dismissSuggestion] = useComposerSuggestion(sessionId, chatUi?.composer, tone !== "running" && history?.ptyManaged === true && !terminalReview);
   // 往终端写东西之前收拾它的输入框（有草稿就收起或搬进对话页，见 chat/nativeDraft）。
   const nativeDraft = useNativeDraft({
     scope: sessionScope, sessionId, spec: chatUi?.composer, newline: chatUi?.newline_input, setPrompt,
@@ -1631,6 +1631,18 @@ export function ChatWindow() {
       el.setSelectionRange(text.length, text.length);
     });
   };
+  // 检查卡的「让 AI 重跑 / 修」：输入框空着就整句放进去；已经有这句就不再重复；有别的草稿就接在后面另起一段。
+  const fillPromptText = useCallback((text: string) => {
+    const current = promptRef.current;
+    const next = current.includes(text) ? current : current.trim() ? `${current.replace(/\s+$/, "")}\n\n${text}` : text;
+    setPrompt(next);
+    requestAnimationFrame(() => {
+      const el = promptInputRef.current;
+      if (!el) return;
+      el.focus({ preventScroll: true });
+      el.setSelectionRange(next.length, next.length);
+    });
+  }, []);
   // 「更改」面板的「交给 agent」（冲突、拉取冲突）：把现成的一句话放进输入框，用户看过再发。
   const insertPanelPrompt = useCallback((text: string) => insertIntoPromptRef.current(text), []);
   const pickStarter = (text: string) => {
@@ -2926,8 +2938,8 @@ export function ChatWindow() {
     undoableIds,
     newSession: () => void openNewSessionWindow({ cwd: dirGone ? dirGoneOrigin : cwd, provider }).catch(() => {}),
     undoRejected: rejectedUndo ? () => void undoFromRef.current(rejectedUndo.id, rejectedUndo.text) : undefined,
-    fillPrompt: insertPanelPrompt,
-  }), [insertPanelPrompt, undoableIds, cwd, provider, rejectedUndo, dirGone, dirGoneOrigin]);
+    fillPrompt: fillPromptText,
+  }), [fillPromptText, undoableIds, cwd, provider, rejectedUndo, dirGone, dirGoneOrigin]);
   /// 原生图片附加：逐张把附件写进系统剪贴板 → 发插件声明的粘贴键（claude 的 Ctrl-V、
   /// kimi 在 Windows 上的 Alt+V——发 Ctrl-V 会被它的 composer 无视，真机实拍）让 TUI
   /// 自己读（claude 的 `[Image #N]`、kimi 的 `[image #N (W×H)]`）→ 等第 N 个占位符出现
@@ -3319,6 +3331,8 @@ export function ChatWindow() {
     const { prompt, attachments } = override ?? composerDraft;
     if ((!prompt.trim() && attachments.length === 0) || sending || !isCurrentOperation()
       || sendLockRef.current || interruptLockRef.current) return;
+    // 发出去了：终端那句建议这就过期，别在回合跑起来之前又冒出来（独立审查第 1 条）。
+    dismissSuggestion();
     // 重发（override）同样走这里：输入框里若正是这段原文（失败后被退回的），一并清掉。
     const clearSubmittedDraft = () => {
       if (!isCurrentOperation()) return;
@@ -5510,7 +5524,7 @@ export function ChatWindow() {
             <button type="button" className="chat-deferred-cancel" onClick={() => void sessionSettings.cancelDeferred()}>{t.chat.settingsDeferredCancel}</button>
           </div>
         ) : <div className="chat-send-error" role="status"><span>{sessionSettings.notice}</span></div>)}
-        {composerSuggestion && !prompt.trim() && !composerGated && supersededTo == null && (
+        {composerSuggestion && tone !== "running" && !prompt.trim() && !composerGated && supersededTo == null && (
           // 对照 Claude 终端的灰字建议：那边按 Tab 接受；这里点按钮或在空输入框按 Tab，都只填不发。
           <div className="chat-suggest">
             <button type="button" className="chat-suggest-chip" data-tip={t.chat.suggestTip}
@@ -5583,7 +5597,9 @@ export function ChatWindow() {
           }}
           onKeyDown={(event) => {
             // 输入框空着、有建议回复时 Tab 接受（同 Claude 终端）：只填不发。
-            if (event.key === "Tab" && !event.shiftKey && composerSuggestion && !prompt.trim()) {
+            // 带修饰键的 Tab（Ctrl+Tab 切面板页签等）不算；输入法组字中也不算（独立审查第 3 条）。
+            if (event.key === "Tab" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && !imeComposing(event)
+              && composerSuggestion && tone !== "running" && !prompt.trim()) {
               event.preventDefault();
               acceptSuggestion(composerSuggestion);
               return;

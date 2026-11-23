@@ -64,7 +64,7 @@ describe("本轮结果卡的检查段", () => {
       edit("e2", "src/derive.ts"), ok("e2"),
     ]} /></ChatActionsContext.Provider>);
     fireEvent.click(screen.getByText(zh.chat.checkRerun));
-    expect(filled).toEqual([zh.chat.checkRerunPrompt(["src/derive.ts"], ["bunx tsc --noEmit && bunx vitest run"])]);
+    expect(filled).toEqual([zh.chat.checkRerunPrompt(["src/derive.ts"], ["bunx tsc --noEmit", "bunx vitest run"])]);
     cleanup();
     render(<ChatActionsContext.Provider value={actions}><TurnChanges items={[edit("e1", "src/a.ts"), ok("e1")]} /></ChatActionsContext.Provider>);
     fireEvent.click(screen.getByText(zh.chat.checkRunNow));
@@ -87,6 +87,19 @@ describe("本轮结果卡的检查段", () => {
     ]} /></ChatActionsContext.Provider>);
     expect(screen.queryByText(zh.chat.checkFix)).toBeNull();
     expect(screen.getByText(zh.chat.checkRerun)).toBeTruthy();
+  });
+
+  it("合成一行的类型检查 + 测试，之后只重跑了测试：这一行只剩类型检查，重跑要求只列 tsc", () => {
+    const filled: string[] = [];
+    const actions = { sendText: async () => true, fillPrompt: (text: string) => { filled.push(text); } };
+    render(<ChatActionsContext.Provider value={actions}><TurnChanges items={[
+      run("c1", "bunx tsc --noEmit && bunx vitest run"), ok("c1", "Tests  3 passed (3)"),
+      edit("e1", "src/b.ts"), ok("e1"),
+      run("c2", "bunx vitest run"), ok("c2", "Tests  3 passed (3)"),
+    ]} /></ChatActionsContext.Provider>);
+    expect([...document.querySelectorAll(".chat-turn-check-cmd")].map((node) => node.textContent)).toEqual(["bunx tsc --noEmit", "bunx vitest run"]);
+    fireEvent.click(screen.getByText(zh.chat.checkRerun));
+    expect(filled).toEqual([zh.chat.checkRerunPrompt(["src/b.ts"], ["bunx tsc --noEmit"])]);
   });
 
   it("对话窗之外（没提供 fillPrompt）不出按钮", () => {
