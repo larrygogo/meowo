@@ -178,6 +178,11 @@ export const QA_SHOTS = [
   { name: "qa-choices-zoom", scene: "flow-images-choices", size: [1100, 800], sel: ".chat-choices", steps: [["tick", 600], ["hover", ".chat-choice >> nth=1"], ["click", ".chat-choice-zoom >> nth=1"], ["tick", 400]] },
   { name: "qa-choices-expanded", scene: "flow-images-choices", size: [1100, 1000], sel: ".chat-choices", steps: [["tick", 600], ["click", ".chat-choices-toggle"], ["tick", 200]] },
   { name: "qa-m-choices", page: "mobile", scene: "mobile-images-choices", size: PHONE, sel: ".chat-choices", steps: [["tick", 600]] },
+  // 小表单（ask_form，FormCard.tsx）：前一张已填（收成一行，可展开）、后一张五种字段等你填；漏填必填项提交；手机。
+  { name: "qa-form", scene: "flow-images-form", size: [1100, 1100], sel: ".chat-form", langs: ["zh", "en"], steps: [["tick", 600], ["eval", "[...document.querySelectorAll('.chat-form')].pop().scrollIntoView({ block: 'center' })"], ["tick", 200]] },
+  { name: "qa-form-missing", scene: "flow-images-form", size: [1100, 1100], sel: ".chat-form", steps: [["tick", 600], ["eval", "[...document.querySelectorAll('.chat-form')].pop().scrollIntoView({ block: 'center' })"], ["click", ".chat-form-option >> nth=1"], ["click", "button.chat-choices-send"], ["tick", 200]] },
+  { name: "qa-form-filled", scene: "flow-images-form", size: [1100, 900], sel: ".chat-form", steps: [["tick", 600], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["click", ".chat-form.is-settled .chat-choices-toggle"], ["tick", 200]] },
+  { name: "qa-m-form", page: "mobile", scene: "mobile-images-form", size: PHONE, sel: ".chat-form", langs: ["zh", "en"], steps: [["tick", 600], ["eval", "[...document.querySelectorAll('.chat-form')].pop().scrollIntoView({ block: 'start' })"], ["tick", 200]] },
   // AI 交文件 + 主动提醒（FileCard.tsx）：桌面看文件卡的三个动作和「已清理」，手机看「下载」。
   { name: "qa-deliver", scene: "flow-images-deliver", size: [1100, 900], sel: ".chat-file", steps: [["tick", 600], ["eval", "[...document.querySelectorAll('.chat-file')].pop().scrollIntoView({ block: 'center' })"], ["tick", 200]] },
   { name: "qa-deliver-hover", scene: "flow-images-deliver", size: [1100, 900], sel: ".chat-file", steps: [["tick", 600], ["eval", "[...document.querySelectorAll('.chat-file')].pop().scrollIntoView({ block: 'center' })"], ["tick", 200], ["hover", ".chat-file-btn.is-icon >> nth=-1"], ["tick", 400]] },

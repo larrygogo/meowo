@@ -3693,7 +3693,7 @@ impl PtyBroker {
         let session_id = self.binding(owner).unwrap_or(owner);
         // 操作可能要等页面加载十几秒；连接已认证，放开读超时。
         stream.set_read_timeout(None).ok();
-        // 发图、对照、方案卡、交文件、提醒不是浏览器操作：不受「允许 agent 操作面板浏览器」开关约束，也不碰面板。
+        // 发图、对照、方案卡、交文件、提醒、表单不是浏览器操作：不受「允许 agent 操作面板浏览器」开关约束，也不碰面板。
         let outcome = if tool == "send_image" {
             crate::chat_images::send_image(args)
         } else if tool == "compare_images" {
@@ -3702,6 +3702,8 @@ impl PtyBroker {
             crate::chat_choices::offer_choices(args)
         } else if tool == "send_file" {
             crate::chat_files::send_file(args)
+        } else if tool == "ask_form" {
+            crate::chat_forms::ask_form(args)
         } else if tool == "notify_user" {
             match self.attach.app.lock().ok().and_then(|app| app.clone()) {
                 Some(app) => crate::chat_files::notify_user(&app, session_id, args),

@@ -75,7 +75,9 @@ describe("U2 断行", () => {
       ".chat-diff-text > .chat-diff-cmt", ".pr-comment p, .pr-event p", ".pr-confirm-body", ".chat-text", ".chat-reasoning div",
       ".chat-tool-out", ".chat-approval-prewrap", ".chat-side-answer-body", ".up-notes-body",
       // 发图时 agent 附的那句说明（ChatImage.tsx）：是 agent 说的话，保留它的换行。
-      ".chat-sent-caption"]);
+      ".chat-sent-caption",
+      // 小表单收起后展开看的回答（FormCard.tsx）：用户自己填的多行文字。
+      ".chat-form-answer dd"]);
     // 规则写在这些元素或它们的后代上，已由退回列表覆盖（text-wrap-style 继承）。
     const covered = (selector: string) => /(^|[\s>(,])(pre|code)\b/.test(selector)
       || reset.some((sel) => sel.startsWith(".") && selector.includes(sel))

@@ -12,7 +12,8 @@ import { busyProps } from "../../busyButton";
 import { imeComposing } from "../../ime";
 import { ChatActionsContext } from "./chatActions";
 import { fileNameOf, ImageFailure, imageErrorText, sentImageReceipt, useImageLoad } from "./ChatImage";
-import { formatChoiceAnswer, looksLikeChoiceReply, parseChoiceAnswer, type ChoiceAnswer } from "./choiceReply";
+import { formatChoiceAnswer, parseChoiceAnswer, type ChoiceAnswer } from "./choiceReply";
+import { looksLikeCardReply } from "./formReply";
 import { Lightbox, type GalleryItem } from "./Lightbox";
 import { useToolRunState } from "./toolState";
 import type { ToolResultItem, ToolUseItem } from "./shared";
@@ -124,7 +125,7 @@ function ChoiceCard({ cardId, receipt, followUps }: { cardId: string; receipt: C
   for (const text of followUps) {
     recorded = parseChoiceAnswer(text, card);
     if (recorded) break;
-    if (!looksLikeChoiceReply(text)) {
+    if (!looksLikeCardReply(text)) {
       skipped = true;
       break;
     }
