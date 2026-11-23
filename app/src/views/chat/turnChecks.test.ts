@@ -100,14 +100,20 @@ describe("这一轮的检查", () => {
   it("管道、|| true、; echo：退出码不算数，从输出认，认不出写看不出", () => {
     const checks = collectTurnChecks([
       ...run("bunx vitest run 2>&1 | tail -3", { text: "Tests  2 failed | 10 passed (12)" }),
-      ...run("cargo clippy || true"),
-      ...run("bunx tsc --noEmit; echo done"),
+      ...run("cargo clippy || true", { text: "warning: unused variable: `x`" }),
+      ...run("bunx tsc --noEmit; echo done", { text: "src/a.ts(1,7): error TS2322: Type 'string' is not assignable\ndone" }),
     ]);
     expect(checks.map((c) => [c.kinds[0], c.status, c.note.kind])).toEqual([
       ["test", "fail", "failed"],
       ["lint", "unknown", "unclear"],
-      ["typecheck", "unknown", "unclear"],
+      ["typecheck", "fail", "failed"],
     ]);
+  });
+
+  // 没过一定会报出来的工具（clippy、tsc），输出里一点出错的字眼都没有：退出码落不到它身上也算通过。
+  it("|| true、; echo 之后，过了不吭声的工具输出干净：算通过", () => {
+    const checks = collectTurnChecks([...run("cargo clippy || true"), ...run("bunx tsc --noEmit; echo done", { text: "done" })]);
+    expect(checks.map((c) => [c.kinds[0], c.status])).toEqual([["lint", "pass"], ["typecheck", "pass"]]);
   });
 
   it("输出显示有失败时，哪怕退出码是 0 也算失败", () => {
@@ -173,9 +179,11 @@ describe("这一轮的检查", () => {
     expect(later.map((c) => [c.kinds, c.status])).toEqual([[["test"], "unknown"], [["typecheck"], "pass"]]);
   });
 
-  it("PowerShell 用 ; 串起来：认出汇总的测试照样算通过，类型检查看不出", () => {
+  it("PowerShell 用 ; 串起来：认出汇总的测试照样算通过；类型检查输出里没有报错也算通过，有可疑字眼就看不出", () => {
     const checks = collectTurnChecks(run("cd app; bunx tsc --noEmit; bunx vitest run", { text: "Tests  5 passed (5)" }));
-    expect(checks.map((c) => [c.kinds, c.status])).toEqual([[["typecheck"], "unknown"], [["test"], "pass"]]);
+    expect(checks.map((c) => [c.kinds, c.status])).toEqual([[["typecheck", "test"], "pass"]]);
+    const noisy = collectTurnChecks(run("cd app; bunx tsc --noEmit; bunx vitest run", { text: "stderr | warning: act(...)\nTests  5 passed (5)" }));
+    expect(noisy.map((c) => [c.kinds, c.status])).toEqual([[["typecheck"], "unknown"], [["test"], "pass"]]);
   });
 
   it("做空第二轮：-v 是详细输出不是版本，照样认", () => {
@@ -243,7 +251,8 @@ describe("这一轮的检查", () => {
     expect(collectTurnChecks(run(`bash -c "npm run build" ; echo "exit=$?"`, {}))).toEqual([]);
     expect(collectTurnChecks(run(`bash -lc "npm run build" || echo "build failed"`, {}))).toEqual([]);
     const cmd = collectTurnChecks(run(`cmd /c "npm run build & echo done"`, {}));
-    expect(cmd.map((c) => [c.kinds, c.status])).toEqual([[["build"], "unknown"]]);
+    // 退出码是 echo 的；输出里没有一点报错，构建失败一定会报出来，算通过。
+    expect(cmd.map((c) => [c.kinds, c.status])).toEqual([[["build"], "pass"]]);
     expect(collectTurnChecks(run("npm run build & echo started", {}))[0].note.kind).toBe("background");
     expect(collectTurnChecks(run("npx vitest run 2>&1", {}))[0].status).toBe("pass");
   });

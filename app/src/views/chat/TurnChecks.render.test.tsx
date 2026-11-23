@@ -121,6 +121,39 @@ describe("本轮结果卡的检查段", () => {
     expect([...document.querySelectorAll(".chat-turn-check-result")].map((el) => el.textContent)).toEqual(["1 个失败"]);
   });
 
+  // 本机记录重放：AI 常把 tsc、eslint、构建接上 `| tail`、或用 ; 串几条，退出码就落不到它们身上，卡片一半以上是「?」。
+  it("过了不吭声的工具（tsc、eslint、构建）只被截头尾、输出里没有一点出错的字眼：算通过", () => {
+    render(<TurnChanges items={[
+      edit("e1", "src/a.ts"), ok("e1"),
+      run("c1", "npx tsc --noEmit 2>&1 | tail -5; npx eslint src/a.ts 2>&1 | head -20; bun run build 2>&1 | tail -2"), ok("c1", "dist/assets/index.js  234.29 kB\n✓ built in 437ms"),
+    ]} />);
+    expect([...document.querySelectorAll(".chat-turn-check-result")].map((el) => el.textContent)).toEqual(["通过"]);
+  });
+
+  it("挑行的过滤（grep）、输出里有出错字眼、前面 && 的一步可能没过：照旧写看不出", () => {
+    render(<TurnChanges items={[
+      edit("e1", "src/a.ts"), ok("e1"),
+      run("c1", "npx tsc --noEmit 2>&1 | grep -E \"src/a\" | head"), ok("c1", ""),
+      run("c2", "npx eslint src/a.ts | tail -3; echo done"), ok("c2", "  3:1  warning  Unexpected console statement\ndone"),
+      run("c3", "node gen.mjs && npx tsc -p app | tail -3; echo done"), ok("c3", "done"),
+    ]} />);
+    expect([...document.querySelectorAll(".chat-turn-check-result")].map((el) => el.textContent)).toEqual(["看不出结果", "看不出结果", "看不出结果"]);
+  });
+
+  it("heredoc 正文里的命令字样不算跑过检查；喂给 bash 的照算", () => {
+    render(<TurnChanges items={[
+      edit("e1", "src/a.ts"), ok("e1"),
+      run("c1", "python - <<'EOF'\nopen('CONTRIBUTING.md','w').write('''run bun run build, then cargo clippy -- -D warnings; don't skip''')\nEOF\nnpx tsc --noEmit | tail -3"), ok("c1", ""),
+    ]} />);
+    expect([...document.querySelectorAll(".chat-turn-check")].map((row) => row.querySelector(".chat-turn-check-kind")?.textContent)).toEqual(["类型检查"]);
+    cleanup();
+    render(<TurnChanges items={[
+      edit("e1", "src/a.ts"), ok("e1"),
+      run("c1", "bash <<'EOF'\nnpx eslint src/a.ts\nEOF"), ok("c1", ""),
+    ]} />);
+    expect([...document.querySelectorAll(".chat-turn-check-kind")].map((el) => el.textContent)).toEqual(["代码检查"]);
+  });
+
   it("lint 查过的文件之后又改了：照样标过时；没认出是哪个文件出问题的失败照样留着", () => {
     render(<TurnChanges items={[
       edit("e1", "src/a.ts"), ok("e1"),

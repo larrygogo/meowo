@@ -194,11 +194,28 @@ const VERSION_V = /^(?:\S+\s+)*?(?:tsc|vue-tsc|tsgo|eslint|oxlint|biome|vitest|j
 const SETUP = /^(?:(?:cd|pushd|popd|push-location|pop-location|set-location|sl|export|set|setlocal|echo|printf|true|write-host|write-output)\b|:$|\$env:\w+\s*=|\$ErrorActionPreference\s*=|\w+=\S*$)/i;
 
 type Connector = "&&" | "||" | ";" | null;
-type Segment = { text: string; piped: boolean; background: boolean; next: Connector; prev: Connector };
+/** filters：管道接走它的那几节（`tail -5`、`grep x`），按先后。 */
+type Segment = { text: string; piped: boolean; filters: string[]; background: boolean; next: Connector; prev: Connector };
+
+/**
+ * 去掉 heredoc 和 PowerShell here-string 的正文：那是喂给脚本的文字，不是命令。本机记录里重放，`python - <<'EOF'`
+ * 写 CONTRIBUTING.md，正文里的 `bun run build`、`cargo clippy` 被当成跑了构建和 lint；正文里的撇号还会被当成开引号，
+ * 把后面真跑的命令整段吞掉。`<<'EOF' && tsc` 这种同一行后半截的命令留着。
+ */
+function stripHeredocs(command: string): string {
+  return command
+    .replace(/<<-?[ \t]*(['"]?)([A-Za-z_]\w*)\1([^\n]*)\n[\s\S]*?\n[ \t]*\2[ \t]*(?=\r?\n|$)/g, (whole, _q, tag: string, rest: string, offset: number) => {
+      // `bash <<'EOF'` 喂给 shell 的正文就是命令，留着。
+      const before = command.slice(command.lastIndexOf("\n", offset) + 1, offset);
+      return /(?:^|[\s;&|(])(?:ba|z|da)?sh(?:\s+-\S+)*\s*$/.test(before) ? whole : `<<${tag}${rest}`;
+    })
+    .replace(/@(['"])[ \t]*\r?\n[\s\S]*?\r?\n\1@/g, "''");
+}
 
 /** 把一条命令切成段：记下每段前后的连接符、有没有被管道接走、有没有丢到后台。引号里的符号不切。
  *  sequentialAmp：cmd 里单独的 `&` 是「依次执行」，bash 里是「丢到后台」。 */
-export function splitCommand(command: string, sequentialAmp = false): Segment[] {
+export function splitCommand(raw: string, sequentialAmp = false): Segment[] {
+  const command = stripHeredocs(raw);
   const parts: { text: string; sep: "&&" | "||" | ";" | "|" | "&" | null }[] = [];
   let buf = "";
   let quote: string | null = null;
@@ -252,7 +269,8 @@ export function splitCommand(command: string, sequentialAmp = false): Segment[] 
   let prev: Connector = null;
   let current: Segment | null = null;
   for (const part of parts) {
-    if (!current) current = { text: part.text.trim(), piped: false, background: false, next: null, prev };
+    if (!current) current = { text: part.text.trim(), piped: false, filters: [], background: false, next: null, prev };
+    else current.filters.push(part.text.trim());
     if (part.sep === "|") {
       current.piped = true;
       continue;
@@ -456,6 +474,32 @@ function chainedAnd(segments: Segment[], from: number, to: number): boolean {
   return true;
 }
 
+// 没过一定说出来的工具：类型检查、lint、构建（vite、tauri、cargo 的编译类子命令），以及叫这些名字的包管理器脚本
+// （没过时包管理器自己也会报 `ERR!`、`exited with code`）。测试不在里头：测试过了会打汇总，靠汇总认。
+const QUIET_ON_PASS = /^(?:(?:npx|bunx|pnpx|pnpm\s+(?:exec|dlx)|yarn\s+(?:exec|dlx)|bun\s+x)\s+)?(?:tsc|vue-tsc|tsgo|eslint|oxlint|(?:vite|tauri|next|astro|nuxt|webpack|rollup)\s+build)(?![\w-])|^cargo\s+(?:\+\S+\s+)?(?:check|clippy|build)\b|^cargo\s+tauri\s+build\b|^(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:lint|typecheck|type-check|tsc|check-types|types|build(?::\S+)?)(?:\s|$)/i;
+// 只截头尾、不挑行的过滤：没过时的报错一定还在输出里（开头几行或末尾几行）。grep 这类挑行的不算。
+const KEEPS_FAILURES = /^(?:(?:tail|head)(?:\s+-n)?(?:\s+-?\d+)?|select-object\s+-(?:last|first)\s+\d+|out-string|cat)$/i;
+// 输出里有任何一点像出错的字眼就不推：宁可「看不出」，不把没通过的写成通过。
+const TROUBLE = /error|✖|problem|warning|not recogni[sz]ed|not found|cannot find|can't find|no such file|ERR!|exited with|panicked|exception|fail|denied|killed|timed? ?out|abort|fatal|traceback|无法|找不到|错误/i;
+
+/**
+ * 整条命令成功、退出码却落不到这一段（`tsc | tail -5; vitest …`）时，最后再推一次：本机记录里重放，这类占「看不出结果」
+ * 的大半。这段是过了不吭声的工具、只被截头尾、一定跑到了，而整份输出里没有一点出错的字眼，那它就是过了。
+ */
+function quietPass(segments: Segment[], index: number, output: string, verdicts: (Verdict | null)[]): boolean {
+  const segment = segments[index];
+  if (segment.background || !QUIET_ON_PASS.test(headOf(segment.text))) return false;
+  if (!segment.filters.every((filter) => KEEPS_FAILURES.test(filter.replace(/^\d?>&\d\s*/, "").trim()))) return false;
+  // 一定跑到了：前面每一段，要么和这段之间隔着 ;（不管成败都会跑到这里），要么是切目录这类不会失败的、或已判通过的。
+  for (let at = 0; at < index; at += 1) {
+    const between = segments.slice(at, index);
+    if (between.some((seg) => seg.next === ";")) continue;
+    if (between.some((seg) => seg.next === "||")) return false;
+    if (!SETUP.test(headOf(segments[at].text)) && verdicts[at]?.status !== "pass") return false;
+  }
+  return !TROUBLE.test(output.replace(/\x1b\[[0-9;]*m/g, ""));
+}
+
 /**
  * 一条命令里各检查段的结论（非检查段为 null）。
  *
@@ -518,6 +562,7 @@ function judgeCommand(segments: Segment[], kindsBySegment: CheckKind[][], result
       if (ownsExit && exitFromHere(index)) verdicts[index] = { status: "pass", note: { kind: "passed", count: summary?.passed ?? null } };
       // 退出码不算数，但输出里认出了这段独占的「0 个失败」测试汇总：照输出算通过。
       else if (summary) verdicts[index] = { status: "pass", note: { kind: "passed", count: summary.passed } };
+      else if (quietPass(segments, index, result.text, verdicts)) verdicts[index] = PASSED;
       else verdicts[index] = UNCLEAR;
       continue;
     }
