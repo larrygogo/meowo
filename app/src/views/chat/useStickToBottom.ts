@@ -52,6 +52,9 @@ export function countsAsUnseen(item: ChatItem): boolean {
   return item.type === "user_text" || item.type === "assistant_text" || item.type === "turn_error";
 }
 
+/** 派发到滚动区上：关掉自动跟随（见下面的监听）。 */
+export const RELEASE_FOLLOW_EVENT = "chat-release-follow";
+
 export function useStickToBottom({ scrollRef, visible, timelineItems, contentCount }: {
   scrollRef: RefObject<HTMLElement | null>;
   /** 对话视图在显示（终端视图时滚动区是 display:none）。 */
@@ -212,6 +215,19 @@ export function useStickToBottom({ scrollRef, visible, timelineItems, contentCou
     };
     el.addEventListener("wheel", onWheelCapture, { passive: true });
     return () => el.removeEventListener("wheel", onWheelCapture);
+  }, [scrollRef]);
+
+  // 对话里有地方要把人带到上面某处（回复末尾的检查行跳回那条命令）：先关掉自动跟随，
+  // 不然展开折叠引起的尺寸变化会触发吸底，把刚滚上去的视口又钉回底部（做空第一轮实测）。
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const release = () => {
+      followRef.current = false;
+      if (awayCountRef.current === null) awayCountRef.current = contentCountRef.current;
+    };
+    el.addEventListener(RELEASE_FOLLOW_EVENT, release);
+    return () => el.removeEventListener(RELEASE_FOLLOW_EVENT, release);
   }, [scrollRef]);
 
   /// 「在不在底部」的唯一量法：量一次滚动区，更新悬浮钮的显隐。主区滚动（onScroll）与

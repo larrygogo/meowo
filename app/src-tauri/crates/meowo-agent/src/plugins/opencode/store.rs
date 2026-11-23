@@ -29,7 +29,8 @@ const DB_SUBDIR: &str = "opencode";
 const DB_FILE: &str = "opencode.db";
 
 /// 缓存格式版本进目录名：行结构一变，旧缓存整体作废，不必写迁移。
-const CACHE_REL: &str = "cache/opencode/v1";
+/// v2：工具回执多留了命令退出码（metadata.exit）。v1 的行没有它，失败的命令会被当成通过。
+const CACHE_REL: &str = "cache/opencode/v2";
 
 /// 工具输出的落盘上限（字符）。bash/read 的输出动辄几十 KB，对话页只做预览。
 const TOOL_OUTPUT_MAX_CHARS: usize = 16_000;
@@ -522,6 +523,15 @@ fn slim_part(part: Value) -> Value {
             // 起止时刻：回执用结束时刻，工具耗时才算得出来。
             "time": field("time"),
             "attachments": slim_attachments(state.and_then(|s| s.get("attachments"))),
+            // metadata 只留命令的退出码（bash 工具的 `metadata.exit`）：命令跑完状态都是 completed，
+            // 退出码是唯一能看出「测试没过」的地方（本机 47 条 bash 实测有 0 和 1）。
+            "metadata": {
+                "exit": state
+                    .and_then(|s| s.pointer("/metadata/exit"))
+                    .filter(|v| v.is_i64())
+                    .cloned()
+                    .unwrap_or(Value::Null),
+            },
         },
     })
 }
@@ -868,7 +878,11 @@ mod tests {
         let big = "x".repeat(TOOL_OUTPUT_MAX_CHARS + 10);
         let slim = slim_part(json!({"type": "tool", "tool": "edit", "callID": "c",
             "state": {"status": "completed", "input": {}, "output": big, "metadata": {"diff": "…"}}}));
-        assert!(slim.pointer("/state/metadata").is_none());
+        // diff 这类大字段丢掉，只留退出码（这里没有，留空）。
+        assert_eq!(
+            slim.pointer("/state/metadata"),
+            Some(&json!({"exit": null}))
+        );
         let out = slim
             .pointer("/state/output")
             .and_then(Value::as_str)

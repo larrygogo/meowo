@@ -108,7 +108,7 @@ export const TurnFold = memo(function TurnFold({ id, items, results, durationMs,
   const cwd = useContext(ChatCwdContext);
   // 在跑和在等人都算「这一段还在进行」：等审批时收起并写成完成态，等于说它已经做完了。
   const running = activity !== "idle";
-  const [open, setOpen] = useRememberedOpen(`fold:${id}`, running);
+  const [open, setOpen] = useRememberedOpen(`fold:${id}`, running, (target) => items.some((item) => item.id === target));
   const wasRunning = useRef(running);
   // Kimi 的开合规则：进入进行态展开，结束后自动收起（用户中途手动收/开不影响下一次转换）。
   useEffect(() => {

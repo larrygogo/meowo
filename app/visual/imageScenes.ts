@@ -239,6 +239,38 @@ export function imageSceneItems(part: string, lang: Lang): { items: ChatItem[]; 
       ],
     };
   }
+  if (part === "checks") {
+    // 回复末尾的「本轮结果」：①改了 4 个文件、类型检查和单测通过后又改了一个文件；②只跑了测试、3 个失败；
+    // ③改了代码没跑检查。过程收进回合折叠，点检查行要能展开并跳回那条命令。
+    const edit = (id: string, s: number, path: string, add: number) => ({
+      type: "tool_use", id, timestamp: at(s), name: "Edit", kind: "edit", summary: path,
+      detail: { kind: "edit", path, old: "a", new: Array.from({ length: add }, (_, i) => `line ${i}`).join("\n"), replace_all: false, truncated: false },
+    }) as unknown as ChatItem;
+    const cmd = (id: string, s: number, command: string) => ({
+      type: "tool_use", id, timestamp: at(s), name: "Bash", kind: "run", summary: command, detail: { kind: "command", command, description: null },
+    }) as unknown as ChatItem;
+    return {
+      running: false,
+      items: [
+        user("u1", 900, zh ? "设置页做得好看一点。" : "Make the settings page look nicer."),
+        edit("e1", 880, "src/views/settings/General.tsx", 42), receipt("e1", at(879), "ok"),
+        edit("e2", 870, "src/styles.css", 31), receipt("e2", at(869), "ok"),
+        edit("e3", 860, "src/views/settings/Section.tsx", 4), receipt("e3", at(859), "ok"),
+        cmd("c1", 850, "cd app && bunx tsc --noEmit"), receipt("c1", at(840), ""),
+        cmd("c2", 830, "bunx vitest run src/views/settings"), receipt("c2", at(800), " Test Files  12 passed (12)\n      Tests  162 passed (162)"),
+        edit("e4", 790, "src/views/settings/Row.tsx", 9), receipt("e4", at(789), "ok"),
+        say("a1", 780, zh ? "设置页改好了：分组标题加粗，开关对齐到右侧，间距统一成 12px。" : "Settings page updated: bold group titles, switches aligned right, 12px spacing throughout."),
+        user("u2", 600, zh ? "跑一下后端测试。" : "Run the backend tests."),
+        cmd("c3", 590, "cargo test -p meowo-agent"), receipt("c3", at(560), "test result: ok. 120 passed; 0 failed;\ntest result: FAILED. 37 passed; 3 failed;", true),
+        // 同一类两行：后端测试失败、前端测试通过，各留一行（做空第五轮要的截图）。
+        cmd("c6", 558, "cd app && bunx vitest run"), receipt("c6", at(552), "      Tests  4832 passed (4832)"),
+        say("a2", 550, zh ? "有 3 个测试没过，都在 codex 的回执解析里。" : "3 tests failed, all in the codex receipt parser."),
+        user("u3", 400, zh ? "按钮圆角改成 8px。" : "Make the button radius 8px."),
+        edit("e5", 390, "src/components/Button.tsx", 2), receipt("e5", at(389), "ok"),
+        say("a3", 380, zh ? "按钮圆角改成 8px 了。" : "Button radius is now 8px."),
+      ],
+    };
+  }
   if (part === "choices") {
     const choicesCall = (id: string, s: number) => ({
       type: "tool_use", id, timestamp: at(s), name: "mcp__meowo__offer_choices", kind: "other", summary: "",

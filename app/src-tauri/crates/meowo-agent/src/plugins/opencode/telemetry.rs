@@ -392,6 +392,12 @@ fn tool_events(key: &str, part: &Value, timestamp: Option<String>) -> Vec<Transc
             patch: None,
             facts: ToolFacts {
                 interrupted,
+                // 命令的退出码（store::slim_part 留下的 `metadata.exit`）：状态 completed 不等于成功，
+                // 非零退出码由前端标出来（回复末尾的检查段据此判「没通过」）。
+                exit_code: state
+                    .and_then(|s| s.pointer("/metadata/exit"))
+                    .and_then(Value::as_i64)
+                    .map(|code| code.clamp(i32::MIN as i64, i32::MAX as i64) as i32),
                 ..ToolFacts::default()
             },
         },
@@ -738,6 +744,23 @@ mod tests {
         let summary = json!({"kind": "part", "msg": "m", "key": "p", "summary": true,
             "part": {"type": "text", "text": "压缩摘要"}});
         assert!(parse_chat_items(&summary.to_string()).is_empty());
+    }
+
+    #[test]
+    fn bash_exit_code_survives_completed_status() {
+        // 命令跑完状态都是 completed；退出码只在 metadata.exit 里，测试没过要靠它看出来。
+        let line = json!({"kind": "part", "msg": "m", "key": "p", "time": 5, "part": {
+            "type": "tool", "tool": "bash", "callID": "call_1",
+            "state": {"status": "completed", "input": {"command": "npm test"},
+                      "output": "1 failing", "metadata": {"exit": 1}}}})
+        .to_string();
+        match parse_chat_items(&line).as_slice() {
+            [_, ChatItem::ToolResult { exit_code, .. }] => assert_eq!(*exit_code, Some(1)),
+            other => panic!("{other:?}"),
+        }
+        let slim = super::super::store::slim_part_for_test(json!({"type": "tool", "tool": "bash", "callID": "c",
+            "state": {"status": "completed", "input": {}, "output": "", "metadata": {"exit": 2, "output": "big"}}}));
+        assert_eq!(slim.pointer("/state/metadata"), Some(&json!({"exit": 2})));
     }
 
     #[test]
