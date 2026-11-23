@@ -89,6 +89,19 @@ describe("本轮结果卡的检查段", () => {
     expect(screen.getByText(zh.chat.checkStale(["代码检查"], ["balance.tsx"]))).toBeTruthy();
   });
 
+  // 实拍：先通过，再 `git stash` 藏掉修复跑一遍确认用例会失败，再 pop 回来。卡片写「1 个没过」，用户让 AI 去修。
+  it("夹在 git stash 和 stash pop 之间跑的检查（反证）不算这一轮的结果", () => {
+    const cmd = "bunx vitest run src/views/chat/TurnChecks.render.test.tsx 2>&1";
+    render(<TurnChanges items={[
+      edit("e1", "src/a.ts"), ok("e1"),
+      run("c1", cmd), ok("c1", " Tests  16 passed (16)"),
+      run("c2", `git stash push -q src/a.ts; ${cmd} | Select-Object -Last 6; git stash pop -q; git status --short`), ok("c2", " Tests  1 failed | 15 passed (16)"),
+    ]} />);
+    const rows = [...document.querySelectorAll(".chat-turn-check")];
+    expect(rows.map((row) => row.querySelector(".chat-turn-check-result")?.textContent)).toEqual(["16 个通过"]);
+    expect(screen.queryByText(zh.chat.checkFix)).toBeNull();
+  });
+
   it("lint 查过的文件之后又改了：照样标过时；没认出是哪个文件出问题的失败照样留着", () => {
     render(<TurnChanges items={[
       edit("e1", "src/a.ts"), ok("e1"),

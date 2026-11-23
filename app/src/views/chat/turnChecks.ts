@@ -553,6 +553,28 @@ function judgeCommand(segments: Segment[], kindsBySegment: CheckKind[][], result
 // 命令开头的变量赋值（`FOO=1 BAR="a b" vitest run`）：显示时去掉，留下真正跑的工具。
 const ASSIGNS = /^(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|\S*)\s+)+/;
 
+const STASH_AWAY = /^git\s+stash(?:\s+(?:push|save)\b|\s+-|\s*$)/i;
+const STASH_BACK = /^git\s+stash\s+(?:pop|apply)\b/i;
+
+/**
+ * 夹在 `git stash` 和 `git stash pop/apply` 之间的段。这样跑的检查是故意把改动藏掉再跑，看用例会不会失败（反证），
+ * 测的不是现在的代码，失败了也不是问题（实拍：`git stash push x; vitest run …; git stash pop`，卡片照实写
+ * 「1 个没过」，用户让 AI 去修，其实什么都没坏）。
+ */
+function stashedSegments(segments: Segment[]): Set<number> {
+  const inside = new Set<number>();
+  let open = -1;
+  segments.forEach((segment, index) => {
+    const text = segment.text.trim();
+    if (STASH_AWAY.test(text)) open = index;
+    else if (STASH_BACK.test(text) && open >= 0) {
+      for (let k = open + 1; k < index; k += 1) inside.add(k);
+      open = -1;
+    }
+  });
+  return inside;
+}
+
 export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
   const results = new Map<string, ToolResultItem>();
   for (const item of items) {
@@ -567,7 +589,8 @@ export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
     const command = unwrapped.text.trim();
     if (!command) return;
     const segments = splitCommand(command, unwrapped.cmd);
-    const kindsBySegment = segments.map((segment) => checkKindsOf(segment.text));
+    const stashed = stashedSegments(segments);
+    const kindsBySegment = segments.map((segment, index) => (stashed.has(index) ? [] : checkKindsOf(segment.text)));
     if (kindsBySegment.every((kinds) => kinds.length === 0)) return;
     const result = results.get(item.id);
     const whole: Verdict | null = !result ? { status: "unknown", note: { kind: "missing" } }
