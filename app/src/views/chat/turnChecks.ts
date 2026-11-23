@@ -26,7 +26,7 @@ export type TurnCheck = {
   status: CheckStatus;
   note: CheckNote;
   command: string;
-  /** 行里显示的那一段：这几类检查所在的那段命令，去掉开头的变量赋值（整条命令可能先 `SP=... ;` 设一堆变量）。 */
+  /** 行里显示的那几段（合成一行的几类各自所在的段，用 && 连起来）：这几类检查所在的命令，去掉开头的变量赋值（整条命令可能先 `SP=... ;` 设一堆变量）。 */
   shown: string;
   /** 对应的 tool_use id：点这一行跳回过程里的那次命令。 */
   toolId: string;
@@ -537,22 +537,23 @@ export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
       }
     });
     // 结论相同的几类合成一行：都通过的合成一行，其余结论完全相同才合。同一类出现两次（pytest; vitest）不合，分行。
-    const groups: { kinds: CheckKind[]; keys: string[]; verdict: Verdict; index: number }[] = [];
+    const groups: { kinds: CheckKind[]; keys: string[]; verdict: Verdict; indexes: number[] }[] = [];
     for (const [key, { kind, verdict, index }] of found) {
       // 「其中一项没过」本来就是对一组说的，同类也合（`cargo test -p a && cargo test -p b`）。
       const same = groups.find((group) => (verdict.note.kind === "oneFailed" || !group.kinds.includes(kind))
         && ((group.verdict.status === "pass" && verdict.status === "pass") || JSON.stringify(group.verdict) === JSON.stringify(verdict)));
       if (!same) {
-        groups.push({ kinds: [kind], keys: [key], verdict, index });
+        groups.push({ kinds: [kind], keys: [key], verdict, indexes: [index] });
         continue;
       }
       same.kinds.push(kind);
       same.keys.push(key);
+      if (!same.indexes.includes(index)) same.indexes.push(index);
       // 几类合成的通过行不带计数：「类型检查 + 测试 162 个通过」会让人以为 162 是两类加起来的。
       if (same.verdict.status === "pass") same.verdict = PASSED;
     }
     for (const group of groups) {
-      const shown = segments[group.index].text.replace(ASSIGNS, "").split(/\r?\n/)[0];
+      const shown = group.indexes.map((at) => segments[at].text.replace(ASSIGNS, "").split(/\r?\n/)[0]).join(" && ");
       all.push({ kinds: group.kinds, keys: group.keys, ...group.verdict, command, shown, toolId: item.id, at });
     }
   });

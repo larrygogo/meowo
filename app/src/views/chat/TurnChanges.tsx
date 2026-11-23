@@ -12,6 +12,7 @@ import { RevealChangeContext } from "./panelReveal";
 import { collectTurnChecks, isDocPath, type CheckKind, type TurnCheck } from "./turnChecks";
 import { revealItem } from "./foldMemory";
 import { RELEASE_FOLLOW_EVENT } from "./useStickToBottom";
+import { ChatActionsContext } from "./chatActions";
 
 /// 折叠时露出的行数（Kimi 实拍：3 行 + 「还有 N 个文件」）。
 const PREVIEW_ROWS = 3;
@@ -158,10 +159,22 @@ function staleKinds(t: ReturnType<typeof useT>, checks: TurnCheck[], staleIds: S
 /// 点一行跳回过程里的那次命令：展开回合折叠和那一行，滚过去，看完整输出。
 function TurnChecks({ checks, replyId, editedAfter, staleIds, codeChanged }: { checks: TurnCheck[]; replyId: string | null; editedAfter: string[]; staleIds: Set<string>; codeChanged: boolean }) {
   const t = useT();
+  // 「已过时」「没跑」的出路：一句现成的要求填进输入框，用户看过再发（只填不发，避免误发）。
+  const fill = useContext(ChatActionsContext)?.fillPrompt;
+  const fillButton = (label: string, text: string) => fill && (
+    <button type="button" className="chat-turn-checks-fill" data-tip={t.chat.checkFillTip} onClick={() => fill(text)}>{label}</button>
+  );
   if (checks.length === 0) {
     // 改了代码却一项检查都没跑：如实写出来。只改文档不提。
-    return codeChanged ? <p className="chat-turn-checks-note">{t.chat.checkNone}</p> : null;
+    return codeChanged ? (
+      <div className="chat-turn-checks-note">
+        <span className="chat-turn-checks-text">{t.chat.checkNone}</span>
+        {fillButton(t.chat.checkRunNow, t.chat.checkRunPrompt)}
+      </div>
+    ) : null;
   }
+  const staleNames = editedAfter.map((path) => path.slice(path.lastIndexOf("/") + 1));
+  const staleCommands = [...new Set(checks.filter((check) => staleIds.has(check.toolId)).map((check) => check.shown))];
   const jump = (toolId: string, from: HTMLElement) => {
     // 停在底部时对话区在自动跟随：先关掉，否则展开折叠后又被钉回底部。
     from.closest(".chat-scroll")?.dispatchEvent(new Event(RELEASE_FOLLOW_EVENT));
@@ -217,7 +230,10 @@ function TurnChecks({ checks, replyId, editedAfter, staleIds, codeChanged }: { c
         })}
       </ul>
       {editedAfter.length > 0 && (
-        <p className="chat-turn-checks-note is-warn">{t.chat.checkStale(staleKinds(t, checks, staleIds), editedAfter.map((path) => path.slice(path.lastIndexOf("/") + 1)))}</p>
+        <div className="chat-turn-checks-note is-warn">
+          <span className="chat-turn-checks-text">{t.chat.checkStale(staleKinds(t, checks, staleIds), staleNames)}</span>
+          {fillButton(t.chat.checkRerun, t.chat.checkRerunPrompt(editedAfter, staleCommands))}
+        </div>
       )}
     </>
   );

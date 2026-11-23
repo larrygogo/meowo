@@ -4,6 +4,7 @@ import type { ChatItem } from "../../api";
 import { TurnChanges } from "./TurnChanges";
 import { revealItem, useRememberedOpen } from "./foldMemory";
 import { zh } from "../../i18n/zh";
+import { ChatActionsContext } from "./chatActions";
 
 afterEach(cleanup);
 
@@ -51,7 +52,28 @@ describe("本轮结果卡的检查段", () => {
       edit("e2", "src/derive.ts"), ok("e2"),
     ]} />);
     expect(document.querySelector(".chat-turn-check-cmd")?.textContent).toBe("bunx vitest run src/derive");
-    expect(document.querySelector(".chat-turn-checks-note")?.textContent).toBe("测试跑完后又改了 derive.ts，这处改动还没验证过");
+    expect(document.querySelector(".chat-turn-checks-text")?.textContent).toBe("测试跑完后又改了 derive.ts，这处改动还没验证过");
+  });
+
+  it("「让 AI 重跑」只把要求填进输入框：点名改过的文件和要重跑的命令；没跑检查时给「让 AI 跑检查」", () => {
+    const filled: string[] = [];
+    const actions = { sendText: async () => true, fillPrompt: (text: string) => { filled.push(text); } };
+    render(<ChatActionsContext.Provider value={actions}><TurnChanges items={[
+      edit("e1", "src/a.ts"), ok("e1"),
+      run("c1", "bunx tsc --noEmit && bunx vitest run"), ok("c1", "Tests  3 passed (3)"),
+      edit("e2", "src/derive.ts"), ok("e2"),
+    ]} /></ChatActionsContext.Provider>);
+    fireEvent.click(screen.getByText(zh.chat.checkRerun));
+    expect(filled).toEqual([zh.chat.checkRerunPrompt(["src/derive.ts"], ["bunx tsc --noEmit && bunx vitest run"])]);
+    cleanup();
+    render(<ChatActionsContext.Provider value={actions}><TurnChanges items={[edit("e1", "src/a.ts"), ok("e1")]} /></ChatActionsContext.Provider>);
+    fireEvent.click(screen.getByText(zh.chat.checkRunNow));
+    expect(filled[1]).toBe(zh.chat.checkRunPrompt);
+  });
+
+  it("对话窗之外（没提供 fillPrompt）不出按钮", () => {
+    render(<TurnChanges items={[edit("e1", "src/a.ts"), ok("e1")]} />);
+    expect(screen.queryByText(zh.chat.checkRunNow)).toBeNull();
   });
 
   it("改了代码却没跑检查：如实写；只改文档：不提", () => {
