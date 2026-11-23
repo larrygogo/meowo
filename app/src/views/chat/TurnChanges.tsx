@@ -63,7 +63,9 @@ export const TurnChanges = memo(function TurnChanges({ items }: { items: ChatIte
   const [expanded, setExpanded] = useState(false);
   const [openFile, setOpenFile] = useState<string | null>(null);
   const detailId = useId();
-  const files = collectFileChanges(items, cwd);
+  // 代码排前、文档和任务记录（.lead、README）排后：只露前三行时，真正改的代码不该被挤进「还有 N 个文件」。
+  const changed = collectFileChanges(items, cwd);
+  const files = [...changed.filter((file) => !isDocPath(file.path)), ...changed.filter((file) => isDocPath(file.path))];
   // 只在命令或回执变了时重算：流式输出时每来一段字这张卡都会重渲染，命令多、输出长时一次要 5~20ms（实测 100~400 条）。
   const runSignature = items.map((item) => (item.type === "tool_use" && item.kind === "run") ? item.id
     : item.type === "tool_result" ? `${item.id}:${item.text.length}:${item.is_error ? 1 : 0}:${item.interrupted ? 1 : 0}:${item.exit_code ?? ""}` : "").join(",");
@@ -175,6 +177,9 @@ function TurnChecks({ checks, replyId, editedAfter, staleIds, codeChanged }: { c
   }
   const staleNames = editedAfter.map((path) => path.slice(path.lastIndexOf("/") + 1));
   const staleCommands = [...new Set(checks.filter((check) => staleIds.has(check.toolId)).map((check) => check.shown))];
+  // 没过、之后也没再改代码的检查：肯定还没修。没过但之后改过的可能已经修了，归到上面的「重跑」里。
+  const failed = checks.filter((check) => check.status === "fail" && !staleIds.has(check.toolId));
+  const failedKinds = [...new Set(failed.flatMap((check) => check.kinds))].map((kind) => KIND_LABEL(t, kind));
   const jump = (toolId: string, from: HTMLElement) => {
     // 停在底部时对话区在自动跟随：先关掉，否则展开折叠后又被钉回底部。
     from.closest(".chat-scroll")?.dispatchEvent(new Event(RELEASE_FOLLOW_EVENT));
@@ -229,6 +234,12 @@ function TurnChecks({ checks, replyId, editedAfter, staleIds, codeChanged }: { c
           );
         })}
       </ul>
+      {failed.length > 0 && fill && (
+        <div className="chat-turn-checks-note is-err">
+          <span className="chat-turn-checks-text">{t.chat.checkFailed(failedKinds)}</span>
+          {fillButton(t.chat.checkFix, t.chat.checkFixPrompt([...new Set(failed.map((check) => check.shown))]))}
+        </div>
+      )}
       {editedAfter.length > 0 && (
         <div className="chat-turn-checks-note is-warn">
           <span className="chat-turn-checks-text">{t.chat.checkStale(staleKinds(t, checks, staleIds), staleNames)}</span>
