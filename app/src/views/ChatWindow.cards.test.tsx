@@ -18,6 +18,7 @@ import {
   OPENCODE_PERMISSION_SCREEN,
 } from "../test/requestSamples";
 import { clickSequence, pointerTarget } from "./chat/terminalPointer";
+import composerFrames from "../test/fixtures/composer-frames.json";
 
 /// 后端仿真屏幕此刻的内容（managed_terminal_frame 的返回）：showScreen 时一并记下。
 let frameLines: string[] = [];
@@ -73,6 +74,33 @@ function delivered(sessionId: number): unknown[] {
     return [];
   });
 }
+
+describe("卡片过期：终端里的框已经关了，Claude 输入框正显示着建议回复", () => {
+  // Claude 空输入框有建议时回车即提交那句建议。卡片过期时替用户按的回车会落到输入框上，
+  // 把用户没说过的话发出去。按键前现读一帧：看到建议就不按（.lead/20261123-next-step）。
+  it("点「允许一次」：一个键都不写，卡片收起，提示条说明框已经关了", async () => {
+    setup(907, "claude");
+    const shot = composerFrames.frames.find((entry) => entry.name === "claude-2.1.330-suggestion-zh")!;
+    const base = invoke.getMockImplementation()!;
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => command === "managed_terminal_frame"
+      ? Promise.resolve({ lines: shot.lines, cursorRow: shot.cursor!.row, cursorCol: shot.cursor!.col, cursorVisible: true, cursorDim: true, cols: 120, rows: 32 })
+      : base(command, args));
+    render(<ChatWindow />);
+    await showScreen("claude", CLAUDE_APPROVAL_SCREEN);
+    fireEvent.click(await screen.findByRole("button", { name: "允许一次" }));
+    await screen.findByText(zh.chat.attentionGone);
+    expect(delivered(907)).toEqual([]);
+    expect(screen.queryByRole("button", { name: "允许一次" })).toBeNull();
+  });
+
+  it("框还在（画面上没有建议）：照常按", async () => {
+    setup(908, "claude");
+    render(<ChatWindow />);
+    await showScreen("claude", CLAUDE_APPROVAL_SCREEN);
+    fireEvent.click(await screen.findByRole("button", { name: "允许一次" }));
+    await waitFor(() => expect(delivered(908)).toEqual([["write_managed_terminal", "\r"]]));
+  });
+});
 
 describe("审批卡在对话窗里：五家同一套", () => {
   it.each(CARDS)("%s：同一张卡，「拒绝」「允许一次」名称与先后相同", async (_name, id, open) => {

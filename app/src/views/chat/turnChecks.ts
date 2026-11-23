@@ -26,8 +26,8 @@ export type TurnCheck = {
   status: CheckStatus;
   note: CheckNote;
   command: string;
-  /** 行里显示的那一段：这几类检查所在的那段命令，去掉开头的变量赋值（整条命令可能先 `SP=... ;` 设一堆变量）。 */
-  shown: string;
+  /** 与 keys 一一对应：每类检查所在的那段命令（显示与「重跑」要求用）。被更晚的运行盖过的类别连同它那段一起去掉（独立审查第 4 条）。这几类检查所在的命令，去掉开头的变量赋值（整条命令可能先 `SP=... ;` 设一堆变量）。 */
+  parts: string[];
   /** 对应的 tool_use id：点这一行跳回过程里的那次命令。 */
   toolId: string;
   /** 在 items 里的位置：和之后的改动比先后。 */
@@ -537,23 +537,27 @@ export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
       }
     });
     // 结论相同的几类合成一行：都通过的合成一行，其余结论完全相同才合。同一类出现两次（pytest; vitest）不合，分行。
-    const groups: { kinds: CheckKind[]; keys: string[]; verdict: Verdict; index: number }[] = [];
+    const groups: { kinds: CheckKind[]; keys: string[]; verdict: Verdict; indexes: number[] }[] = [];
     for (const [key, { kind, verdict, index }] of found) {
       // 「其中一项没过」本来就是对一组说的，同类也合（`cargo test -p a && cargo test -p b`）。
       const same = groups.find((group) => (verdict.note.kind === "oneFailed" || !group.kinds.includes(kind))
         && ((group.verdict.status === "pass" && verdict.status === "pass") || JSON.stringify(group.verdict) === JSON.stringify(verdict)));
       if (!same) {
-        groups.push({ kinds: [kind], keys: [key], verdict, index });
+        groups.push({ kinds: [kind], keys: [key], verdict, indexes: [index] });
         continue;
       }
       same.kinds.push(kind);
       same.keys.push(key);
+      if (!same.indexes.includes(index)) same.indexes.push(index);
       // 几类合成的通过行不带计数：「类型检查 + 测试 162 个通过」会让人以为 162 是两类加起来的。
       if (same.verdict.status === "pass") same.verdict = PASSED;
     }
     for (const group of groups) {
-      const shown = segments[group.index].text.replace(ASSIGNS, "").split(/\r?\n/)[0];
-      all.push({ kinds: group.kinds, keys: group.keys, ...group.verdict, command, shown, toolId: item.id, at });
+      const parts = group.keys.map((key) => {
+        const at = found.get(key)!.index;
+        return segments[at].text.replace(ASSIGNS, "").split(/\r?\n/)[0];
+      });
+      all.push({ kinds: group.kinds, keys: group.keys, ...group.verdict, command, parts, toolId: item.id, at });
     }
   });
   // 同一工具、同样范围（或之后跑了全量）只留最后一次：倒着走，某行的键全被更晚的行盖过就丢掉；部分被盖过的只留没被盖的。
@@ -566,7 +570,7 @@ export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
     later.push(...check.keys);
     // 「其中一项没过」是对整组说的：拆掉一部分类别后就不成立了，改写成看不出。
     const note = check.note.kind === "oneFailed" && fresh.length < check.kinds.length ? UNCLEAR : null;
-    kept.unshift({ ...check, kinds: fresh.map((at) => check.kinds[at]), keys: fresh.map((at) => check.keys[at]), ...(note ?? {}) });
+    kept.unshift({ ...check, kinds: fresh.map((at) => check.kinds[at]), keys: fresh.map((at) => check.keys[at]), parts: fresh.map((at) => check.parts[at]), ...(note ?? {}) });
   }
   return kept;
 }

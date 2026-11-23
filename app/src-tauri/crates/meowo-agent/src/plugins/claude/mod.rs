@@ -829,6 +829,9 @@ impl AgentPlugin for Claude {
             tail_rows: 0,
             tail_pattern: None,
             empty_pattern: r#"^(?:Try "[^"\r\n]*")?$"#,
+            // 回合结束约 5~10 秒后，空输入框里暗色画出预测的下一句（`加个测试跑一下`）：SGR 2、光标停在
+            // 列 2，和 `Try "..."` 同一种画法（2.1.330 真机，2026-11-23）。
+            suggestion_placeholder: true,
             send_requires_recognition: false,
             stash: Some(crate::chat_ui::ComposerStash {
                 input: "\x13",

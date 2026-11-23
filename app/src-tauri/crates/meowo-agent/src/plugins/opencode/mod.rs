@@ -440,6 +440,7 @@ impl AgentPlugin for Opencode {
             // `project?"` 占两行（1.19.5，tests/probe_draft_fidelity.rs，2026-11-15）。只认单行的话空输入框
             // 被当成有草稿，发送被拦下。所以词与词之间按任意空白认，引号里允许换行。
             empty_pattern: r#"^(?:Ask\s+anything…(?:\s+"[^"]*")?)?$"#,
+            suggestion_placeholder: false,
             send_requires_recognition: true,
             stash: None,
             clear_inputs: &["\x03"],

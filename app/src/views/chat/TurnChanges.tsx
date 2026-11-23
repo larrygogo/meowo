@@ -12,6 +12,7 @@ import { RevealChangeContext } from "./panelReveal";
 import { collectTurnChecks, isDocPath, type CheckKind, type TurnCheck } from "./turnChecks";
 import { revealItem } from "./foldMemory";
 import { RELEASE_FOLLOW_EVENT } from "./useStickToBottom";
+import { ChatActionsContext } from "./chatActions";
 
 /// 折叠时露出的行数（Kimi 实拍：3 行 + 「还有 N 个文件」）。
 const PREVIEW_ROWS = 3;
@@ -62,7 +63,9 @@ export const TurnChanges = memo(function TurnChanges({ items }: { items: ChatIte
   const [expanded, setExpanded] = useState(false);
   const [openFile, setOpenFile] = useState<string | null>(null);
   const detailId = useId();
-  const files = collectFileChanges(items, cwd);
+  // 代码排前、文档和任务记录（.lead、README）排后：只露前三行时，真正改的代码不该被挤进「还有 N 个文件」。
+  const changed = collectFileChanges(items, cwd);
+  const files = [...changed.filter((file) => !isDocPath(file.path)), ...changed.filter((file) => isDocPath(file.path))];
   // 只在命令或回执变了时重算：流式输出时每来一段字这张卡都会重渲染，命令多、输出长时一次要 5~20ms（实测 100~400 条）。
   const runSignature = items.map((item) => (item.type === "tool_use" && item.kind === "run") ? item.id
     : item.type === "tool_result" ? `${item.id}:${item.text.length}:${item.is_error ? 1 : 0}:${item.interrupted ? 1 : 0}:${item.exit_code ?? ""}` : "").join(",");
@@ -145,6 +148,8 @@ function editedAfterIndex(items: ChatItem[], after: number, cwd: string | null):
 }
 
 const KIND_LABEL = (t: ReturnType<typeof useT>, kind: CheckKind) => t.chat.checkKind[kind];
+/// 这几行检查各自跑的命令（去重，按出现先后）：「重跑 / 修」的要求里逐条列出。
+const commandsOf = (checks: TurnCheck[]) => [...new Set(checks.flatMap((check) => check.parts))];
 
 /// 提示里点名「哪些检查跑完后又改了代码」：过时行的类别，去掉之后又重跑过的（还有新鲜一行的类别不点名）。
 function staleKinds(t: ReturnType<typeof useT>, checks: TurnCheck[], staleIds: Set<string>): string[] {
@@ -158,10 +163,25 @@ function staleKinds(t: ReturnType<typeof useT>, checks: TurnCheck[], staleIds: S
 /// 点一行跳回过程里的那次命令：展开回合折叠和那一行，滚过去，看完整输出。
 function TurnChecks({ checks, replyId, editedAfter, staleIds, codeChanged }: { checks: TurnCheck[]; replyId: string | null; editedAfter: string[]; staleIds: Set<string>; codeChanged: boolean }) {
   const t = useT();
+  // 「已过时」「没跑」的出路：一句现成的要求填进输入框，用户看过再发（只填不发，避免误发）。
+  const fill = useContext(ChatActionsContext)?.fillPrompt;
+  const fillButton = (label: string, text: string) => fill && (
+    <button type="button" className="chat-turn-checks-fill" data-tip={t.chat.checkFillTip} onClick={() => fill(text)}>{label}</button>
+  );
   if (checks.length === 0) {
     // 改了代码却一项检查都没跑：如实写出来。只改文档不提。
-    return codeChanged ? <p className="chat-turn-checks-note">{t.chat.checkNone}</p> : null;
+    return codeChanged ? (
+      <div className="chat-turn-checks-note">
+        <span className="chat-turn-checks-text">{t.chat.checkNone}</span>
+        {fillButton(t.chat.checkRunNow, t.chat.checkRunPrompt)}
+      </div>
+    ) : null;
   }
+  const staleNames = editedAfter.map((path) => path.slice(path.lastIndexOf("/") + 1));
+  const staleCommands = commandsOf(checks.filter((check) => staleIds.has(check.toolId)));
+  // 没过、之后也没再改代码的检查：肯定还没修。没过但之后改过的可能已经修了，归到上面的「重跑」里。
+  const failed = checks.filter((check) => check.status === "fail" && !staleIds.has(check.toolId));
+  const failedKinds = [...new Set(failed.flatMap((check) => check.kinds))].map((kind) => KIND_LABEL(t, kind));
   const jump = (toolId: string, from: HTMLElement) => {
     // 停在底部时对话区在自动跟随：先关掉，否则展开折叠后又被钉回底部。
     from.closest(".chat-scroll")?.dispatchEvent(new Event(RELEASE_FOLLOW_EVENT));
@@ -209,15 +229,25 @@ function TurnChecks({ checks, replyId, editedAfter, staleIds, codeChanged }: { c
                 aria-label={`${label} ${result} · ${t.chat.checkJump}`} onClick={(event) => jump(check.toolId, event.currentTarget)}>
                 <span className="chat-turn-check-icon" aria-hidden="true">{stale && check.status === "pass" ? "!" : check.status === "pass" ? "✓" : check.status === "fail" ? "✕" : "?"}</span>
                 <span className="chat-turn-check-kind">{label}</span>
-                <code className="chat-turn-check-cmd">{check.shown}</code>
+                {/* 几段分开列，不拼成 `a && b`：原命令里可能是 `;` 或 `||`，拼错了反而误导。 */}
+                <code className="chat-turn-check-cmd">{[...new Set(check.parts)].join(" · ")}</code>
                 <span className="chat-turn-check-result">{result}</span>
               </button>
             </li>
           );
         })}
       </ul>
+      {failed.length > 0 && fill && (
+        <div className="chat-turn-checks-note is-err">
+          <span className="chat-turn-checks-text">{t.chat.checkFailed(failedKinds)}</span>
+          {fillButton(t.chat.checkFix, t.chat.checkFixPrompt(commandsOf(failed)))}
+        </div>
+      )}
       {editedAfter.length > 0 && (
-        <p className="chat-turn-checks-note is-warn">{t.chat.checkStale(staleKinds(t, checks, staleIds), editedAfter.map((path) => path.slice(path.lastIndexOf("/") + 1)))}</p>
+        <div className="chat-turn-checks-note is-warn">
+          <span className="chat-turn-checks-text">{t.chat.checkStale(staleKinds(t, checks, staleIds), staleNames)}</span>
+          {fillButton(t.chat.checkRerun, t.chat.checkRerunPrompt(editedAfter, staleCommands))}
+        </div>
       )}
     </>
   );

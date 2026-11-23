@@ -99,7 +99,7 @@ async function selectAgent(name: string | RegExp) {
   fireEvent.click(findOption(name));
 }
 
-import { AccountSection } from "./settings/AccountSection";
+import { AccountSection, sameAccountName } from "./settings/AccountSection";
 import { modelMenuPlacement } from "./settings/RelayAccess";
 import { descriptors } from "../test/agents";
 import { zh } from "../i18n/zh";
@@ -424,6 +424,21 @@ describe("AccountSection agent 卡", () => {
     render(<AccountSection />);
     await screen.findByTestId("agent-desc-claude");
     expect(screen.queryByTestId("agent-profile-claude")).toBeNull();
+
+    // Gmail 不认点和 +后缀：账号名 ar.b+x@gmail.com 与登录邮箱 arb@gmail.com 是同一个收件箱（实拍），也隐藏。
+    api.getAccounts.mockResolvedValue([
+      { provider: "claude", account: { email: "arb@gmail.com" }, usage: null, usage_supported: true, active_profile_name: "Ar.B+x@gmail.com" },
+    ]);
+    cleanup();
+    render(<AccountSection />);
+    await screen.findByTestId("agent-desc-claude");
+    expect(screen.queryByTestId("agent-profile-claude")).toBeNull();
+  });
+
+  it("只有 Gmail 按去点比较；别的域名点不同就是不同邮箱", () => {
+    expect(sameAccountName("a.b@gmail.com", "ab@googlemail.com")).toBe(true);
+    expect(sameAccountName("a.b@example.com", "ab@example.com")).toBe(false);
+    expect(sameAccountName("工作", "ab@gmail.com")).toBe(false);
   });
 
   // leader 2026-11-19：「切换了 tab 就切换了（启动方式）这样不好」。标签只管看，按钮才管用。

@@ -63,7 +63,7 @@ import { useSidebarLayout } from "./chat/useSidebarLayout";
 import { pasteImagesNatively, useInterrupt, writeInterruptKeys } from "./chat/terminalInput";
 import { leaveSubagentView } from "./chat/subagentView";
 import { SubagentViewNotice } from "./chat/SubagentViewNotice";
-import { clearPartialImageDraft, createSendQueue, IMAGE_PASTE_LANDING_POLLS, LATE_IMAGE_GRACE_MS, RESUME_VERIFY_WINDOW_MS, setSingleLinePaste, submitToTerminal, terminalInput, waitForTerminalReady, type SubmitInput, type TerminalReadyMessages, type TerminalStartupResult } from "./chat/terminalSubmit";
+import { clearPartialImageDraft, createSendQueue, IMAGE_PASTE_LANDING_POLLS, LATE_IMAGE_GRACE_MS, RESUME_VERIFY_WINDOW_MS, setSingleLinePaste, submitToTerminal as writeToTerminal, terminalInput, waitForTerminalReady, type SubmitInput, type TerminalReadyMessages, type TerminalStartupResult } from "./chat/terminalSubmit";
 import { ComposerBlocked, composerBlockEvent, composerBlockExit, composerBlockNotice, useNativeDraft } from "./chat/nativeDraft";
 import { useSessionRef, useSessionScope, useSessionState, useSessionTimer } from "./chat/sessionScope";
 import { launchGrid } from "./chat/terminalGrid";
@@ -129,6 +129,8 @@ import { REMOTE_PREFS_EVENT, remoteTurnFolding } from "../remotePrefs";
 import { RemoteSessionList } from "../mobile/RemoteSessionList";
 import { performUndo, typedUndoTarget, undoConfirmMessage } from "./chat/undoTerminal";
 import { useOutgoingUpkeep } from "./chat/useOutgoingUpkeep";
+import { useComposerSuggestion } from "./chat/useComposerSuggestion";
+import { composerSuggestion as suggestionOnScreen, readComposerFrame, terminalComposerIo } from "./chat/composer";
 import { useQuestionFormProbe } from "./chat/useQuestionFormProbe";
 import { SessionAdmin } from "./chat/SessionAdmin";
 import { NewSessionPage } from "./chat/NewSessionPage";
@@ -920,6 +922,16 @@ export function ChatWindow() {
   // 按 provider+cwd 查询——换会话、换项目都重取，装了新命令下次打开就见。
   // 未知 provider / 查询未回时为空：不补全、不给菜单，宁缺毋滥。
   const [chatUi, setChatUi] = useState<ChatUi | null>(null);
+  // 建议回复：Claude 回合结束后在终端输入框里画的「预测的下一句」，读出来放到输入框上方（只填不发）。
+  // 只在主回合停下、终端由 Meowo 托管、没有待答的终端交互时读。
+  const [composerSuggestion, dismissSuggestion] = useComposerSuggestion(sessionId, chatUi?.composer, tone !== "running" && history?.ptyManaged === true && !terminalReview);
+  // 所有往终端提交消息的路径（输入框、出错卡「继续」、方案卡、排队、侧问）都经这里：真写进终端那一刻，
+  // 那句建议就过期了，别在回合跑起来之前又冒出来、Tab 又填回去。放在写终端处而不是发送入口：
+  // 被拦下没发的不算（独立审查第 1 条与复验第 1、2 条）。
+  const submitToTerminal: typeof writeToTerminal = (...args) => {
+    dismissSuggestion();
+    return writeToTerminal(...args);
+  };
   // 往终端写东西之前收拾它的输入框（有草稿就收起或搬进对话页，见 chat/nativeDraft）。
   const nativeDraft = useNativeDraft({
     scope: sessionScope, sessionId, spec: chatUi?.composer, newline: chatUi?.newline_input, setPrompt,
@@ -1609,6 +1621,28 @@ export function ChatWindow() {
   // 聚焦不带滚动：对话区停在原来读到的位置（QuoteSelection.tsx）。
   const quoteIntoPrompt = useCallback((text: string) => {
     const next = appendQuote(promptRef.current, text);
+    setPrompt(next);
+    requestAnimationFrame(() => {
+      const el = promptInputRef.current;
+      if (!el) return;
+      el.focus({ preventScroll: true });
+      el.setSelectionRange(next.length, next.length);
+    });
+  }, []);
+  // 建议回复：填进输入框、光标放到末尾接着改，不发。
+  const acceptSuggestion = (text: string) => {
+    setPrompt(text);
+    requestAnimationFrame(() => {
+      const el = promptInputRef.current;
+      if (!el) return;
+      el.focus({ preventScroll: true });
+      el.setSelectionRange(text.length, text.length);
+    });
+  };
+  // 检查卡的「让 AI 重跑 / 修」：输入框空着就整句放进去；已经有这句就不再重复；有别的草稿就接在后面另起一段。
+  const fillPromptText = useCallback((text: string) => {
+    const current = promptRef.current;
+    const next = current.includes(text) ? current : current.trim() ? `${current.replace(/\s+$/, "")}\n\n${text}` : text;
     setPrompt(next);
     requestAnimationFrame(() => {
       const el = promptInputRef.current;
@@ -2912,7 +2946,8 @@ export function ChatWindow() {
     undoableIds,
     newSession: () => void openNewSessionWindow({ cwd: dirGone ? dirGoneOrigin : cwd, provider }).catch(() => {}),
     undoRejected: rejectedUndo ? () => void undoFromRef.current(rejectedUndo.id, rejectedUndo.text) : undefined,
-  }), [undoableIds, cwd, provider, rejectedUndo, dirGone, dirGoneOrigin]);
+    fillPrompt: fillPromptText,
+  }), [fillPromptText, undoableIds, cwd, provider, rejectedUndo, dirGone, dirGoneOrigin]);
   /// 原生图片附加：逐张把附件写进系统剪贴板 → 发插件声明的粘贴键（claude 的 Ctrl-V、
   /// kimi 在 Windows 上的 Alt+V——发 Ctrl-V 会被它的 composer 无视，真机实拍）让 TUI
   /// 自己读（claude 的 `[Image #N]`、kimi 的 `[image #N (W×H)]`）→ 等第 N 个占位符出现
@@ -4215,6 +4250,37 @@ export function ChatWindow() {
   // 到卡片随 .then 收起之间有窗口,期间极快双击会把 option.input 落键两次——命令审批场景
   // 等于替用户答两次。只锁**会收卡的终止动作**,多选勾选(卡片留驻)的连点不受影响。
   const optionResolvingRef = useRef(false);
+  // 替用户在终端选择框里按键（带回车）之前现读一帧：Claude 输入框正显示着建议回复，说明选择框已经
+  // 不在了（卡片过期：用户在终端里答过、或框自己关了，识别还没跟上）。这时的回车会落到输入框，
+  // Claude 会把那句建议直接发出去（空框有建议时 Enter 即提交）——不按，收卡，说一句。
+  // 只在这一家画建议、按键里有回车时才多读这一帧；读不到画面照常按（不比以前更差）。
+  // 经这里的按键排成一条队按点击顺序落：多选连勾的「方向键+回车」是相对上一次焦点算的，先读帧再写
+  // 会让读得快的那次插到前面，勾错项（独立审查：第 1 次读帧 80ms、第 2 次 5ms 时实测乱序）。
+  const attentionKeysQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const writeAttentionKeys = (input: string): Promise<true | "gone"> => {
+    const spec = chatUi?.composer;
+    const target = sessionId;
+    const run = async (): Promise<true | "gone"> => {
+      if (spec?.suggestion_placeholder && /[\r\n]/.test(input)) {
+        const frame = await terminalComposerIo(target).frame().catch(() => null);
+        if (suggestionOnScreen(readComposerFrame(frame, spec), spec) !== null) {
+          logChatEvent(target, { kind: "card_unrecognized", reason: "attention_gone_suggestion_shown", detail: { what: "terminal_keys" } });
+          setTerminalAttention(null);
+          // 菜单类卡片（/model）过期时也把菜单识别的状态复位，否则按钮会停在「菜单开着」。
+          terminalMenuOpenRef.current = false;
+          terminalMenuSeenRef.current = false;
+          setTerminalMenuOpen(false);
+          setSendError(t.chat.attentionGone, { terminal: true });
+          return "gone";
+        }
+      }
+      await writeManagedTerminal(target, input);
+      return true;
+    };
+    const next = attentionKeysQueue.current.then(run, run);
+    attentionKeysQueue.current = next.catch(() => {});
+    return next;
+  };
   const chooseTerminalOption = (option: { input: string; pointer?: boolean; label?: string } | undefined, responseReady = terminalResponseReady) => {
     if (!option || !responseReady || optionResolvingRef.current) return;
     // 选完这次菜单就结束了：关掉识别窗口，否则按钮会一直停在「收起」态。
@@ -4226,10 +4292,10 @@ export function ChatWindow() {
     // 要用鼠标点的选项（横排选项行，焦点在屏幕文字里看不出）：现读屏幕定位再点，找不到就什么都不发（见 chat/terminalPointer）。
     const answered = option.pointer && option.label
       ? clickOptionInTerminal(sessionId, option.label)
-      : writeManagedTerminal(sessionId, option.input).then(() => true);
+      : writeAttentionKeys(option.input);
     void answered
       .then((sent) => {
-        if (!isCurrentOperation()) return;
+        if (!isCurrentOperation() || sent === "gone") return;
         if (!sent) { setSendError(t.chat.optionNotFound, { terminal: true }); return; }
         terminalMenuOpenRef.current = false;
         terminalMenuSeenRef.current = false;
@@ -4410,7 +4476,7 @@ export function ChatWindow() {
     // 收卡的终止动作(提交/直答/单选即答)才上在途锁;多选勾选留驻,连勾自由。
     const terminates = option.kind === "submit" || option.kind === "chat" || soleChoice;
     if (terminates) optionResolvingRef.current = true;
-    void writeManagedTerminal(sessionId, option.input)
+    void writeAttentionKeys(option.input)
       .then(() => { if (terminates) setTerminalAttention(null); })
       .catch((error) => setSendError(formatBackendError(error, t.locale)))
       .finally(() => { if (terminates) optionResolvingRef.current = false; });
@@ -4497,8 +4563,8 @@ export function ChatWindow() {
         .finally(() => { optionResolvingRef.current = false; });
       return;
     }
-    void writeManagedTerminal(sessionId, option.input + value + "\r")
-      .then(() => setQuestionCustomText(""))
+    void writeAttentionKeys(option.input + value + "\r")
+      .then((sent) => { if (sent === true) setQuestionCustomText(""); })
       .catch((error) => setSendError(formatBackendError(error, t.locale)));
   };
 
@@ -5045,7 +5111,7 @@ export function ChatWindow() {
         // 选完后主动刷新模型（`/model` 切换不产生 Stop hook，不刷就一直显示旧值）。
         onChoose={chooseTerminalOption}
         onKey={(input) => {
-          void writeManagedTerminal(sessionId, input)
+          void writeAttentionKeys(input)
             .then(() => setTerminalAttention(null))
             .catch((error) => setSendError(formatBackendError(error, t.locale)));
         }}
@@ -5495,6 +5561,17 @@ export function ChatWindow() {
             <button type="button" className="chat-deferred-cancel" onClick={() => void sessionSettings.cancelDeferred()}>{t.chat.settingsDeferredCancel}</button>
           </div>
         ) : <div className="chat-send-error" role="status"><span>{sessionSettings.notice}</span></div>)}
+        {composerSuggestion && tone !== "running" && !prompt.trim() && !composerGated && supersededTo == null && (
+          // 对照 Claude 终端的灰字建议：那边按 Tab 接受；这里点按钮或在空输入框按 Tab，都只填不发。
+          <div className="chat-suggest">
+            <button type="button" className="chat-suggest-chip" data-tip={t.chat.suggestTip}
+              onClick={() => acceptSuggestion(composerSuggestion)}>
+              <span className="chat-suggest-label">{t.chat.suggestLabel}</span>
+              <span className="chat-suggest-text">{composerSuggestion}</span>
+              {!compactChrome && <kbd className="chat-suggest-key">Tab</kbd>}
+            </button>
+          </div>
+        )}
         <textarea
           ref={promptInputRef}
           value={prompt}
@@ -5556,6 +5633,14 @@ export function ChatWindow() {
             void pasteAttachments(files);
           }}
           onKeyDown={(event) => {
+            // 输入框空着、有建议回复时 Tab 接受（同 Claude 终端）：只填不发。
+            // 带修饰键的 Tab（Ctrl+Tab 切面板页签等）不算；输入法组字中也不算（独立审查第 3 条）。
+            if (event.key === "Tab" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && !imeComposing(event)
+              && composerSuggestion && tone !== "running" && !prompt.trim()) {
+              event.preventDefault();
+              acceptSuggestion(composerSuggestion);
+              return;
+            }
             // 补全菜单开着时按键先归菜单：↑↓ 移动高亮，Enter/Tab 把高亮项写进输入框
             // （不是发送——此前菜单展开时 Enter 直接把半截命令发出去了），Esc 收起。
             if (slashMatches.length > 0) {

@@ -35,6 +35,12 @@ row_pattern: string, prompt_prefix: string,
  */
 tail_rows: number, tail_pattern: string | null, empty_pattern: string, 
 /**
+ * 回合结束后 CLI 在空输入框里用暗色画的那句是「预测的下一句」（claude 的 prompt suggestions），
+ * 不是固定提示。对得上 `empty_pattern` 的仍是固定提示；只有这一家为 true 时，对话页才把
+ * 别的暗色占位当成建议回复拿出来。codex 等的占位会轮换固定提示语，不能当建议。
+ */
+suggestion_placeholder: boolean, 
+/**
  * 认不出输入框时对话页还发不发：false = 照发（claude 多年如此，另有提示识别、子代理视图等
  * 守卫兜着）；true = 不发，错误条给看终端画面与「仍然发送」的出口。
  */

@@ -2549,8 +2549,9 @@ button.stab {
 .provider-card-title-row {
   min-width: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--sp-8);
+  gap: var(--sp-4) var(--sp-8);
 }
 .provider-card-title .provider-name {
   /* 名字不参与收缩也不折行：徽章一多「Claude Code」会被挤成两行（实拍），该让的是徽章。 */
@@ -2592,6 +2593,7 @@ button.stab {
    （完整值走 data-tip）。不能 capitalize：邮箱会被改成「Valougalinier125@Gmail.Com」（实拍）。 */
 .provider-badge-profile {
   flex: 0 1 auto;
+  /* 标题行可折行：放不下先整枚折到下一行，不再被挤成只剩「账…」（实拍）；独占一行仍放不下才省略。 */
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
@@ -4571,6 +4573,18 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-turn-checks-note { margin: 0; padding: var(--sp-8) var(--sp-14); border-top: var(--hairline) solid var(--cc-border); font-size: var(--text-xs); color: var(--cc-text-faint); }
 .chat-turn-changes > .chat-turn-checks-note:first-child { border-top: 0; }
 .chat-turn-checks-note.is-warn { color: var(--cc-warn-text); }
+/* 建议回复：输入框上方一颗按钮，像一句没发出的话；不抢眼，只填不发。 */
+.chat-suggest { display: flex; padding: 0 var(--sp-4) var(--sp-6); min-width: 0; }
+.chat-suggest-chip { display: inline-flex; align-items: center; gap: var(--sp-8); max-width: 100%; min-width: 0; padding: var(--sp-4) var(--sp-10); border: var(--hairline) dashed var(--cc-border); border-radius: var(--radius-sm); background: none; font: inherit; font-size: var(--text-sm); color: var(--cc-text-dim); cursor: pointer; text-align: left; }
+.chat-suggest-chip:hover { border-style: solid; background: var(--fill-hover); color: var(--cc-text); }
+.chat-suggest-label { flex: none; font-size: var(--text-xs); color: var(--cc-text-faint); }
+.chat-suggest-text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.chat-suggest-key { flex: none; padding: 0 var(--sp-4); border: var(--hairline) solid var(--cc-border); border-radius: 4px; font-family: var(--cc-mono); font-size: var(--text-xs); color: var(--cc-text-faint); }
+.chat-turn-checks-note.is-err { color: var(--cc-err-text); }
+.chat-turn-checks-note:has(.chat-turn-checks-fill) { display: flex; align-items: center; gap: var(--sp-8); }
+.chat-turn-checks-text { flex: 1 1 auto; min-width: 0; }
+.chat-turn-checks-fill { flex: 0 0 auto; padding: var(--sp-2) var(--sp-8); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); background: none; font: inherit; color: var(--cc-text-dim); cursor: pointer; }
+.chat-turn-checks-fill:hover { background: var(--fill-hover); color: var(--cc-text); }
 /* 窄屏（手机远程页）：命令原文另起一行、缩进到类别下面。不藏：同一类可以有两行（cargo test 失败、vitest 通过），
    只看「测试」分不清是哪一条。 */
 @media (max-width: 480px) {
@@ -6751,6 +6765,9 @@ button.lead-entry-head:hover { background: var(--fill-hover); }
 @keyframes chat-pending-bounce { 0%, 60%, 100% { opacity: .35; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-2px); } }
 /* 聚焦只加深细线，不换成强调色：输入框几乎一直有焦点，一圈青柠常亮会把「主动作」的信号用掉。 */
 .chat-compose:focus-within { border-color: var(--line-strong); box-shadow: var(--shadow-input); }
+/* 输入框的焦点指示就是上面整框描边加深：按 Tab 收下建议回复会把输入模态切到键盘，全局 :focus-visible
+   兜底环在圆角框里再套一个直角青柠框（实拍），重复且难看。只撤 textarea 自己的，框里的按钮照旧有环。 */
+:root[data-im="kbd"] .chat-compose textarea:focus-visible { outline: none; }
 /* 7G-2：占位符原来在 faint 上再兑 78% 透明，落到 3.4:1——而它是「Enter 发送 /
    Shift+Enter 换行」这条约定的**唯一**说明位。直接用 faint（已按叠层重校，见 7G-1）。 */
 .chat-compose textarea::placeholder { color: var(--cc-text-faint); }

@@ -202,6 +202,16 @@ export function readComposer(screen: readonly string[] | null, spec: ComposerSpe
   }
 }
 
+/// 输入框里 CLI 画的「预测的下一句」（claude 的 prompt suggestions）：只认声明了这种占位的那一家，
+/// 只认判成占位的暗色字，且对不上固定提示（`Try "..."`）。不是建议返回 null。
+/// 2.1.330 实拍：回合结束约 5~10 秒后出现，光标停在输入起点，SGR 2（composer-frames.json 的 suggestion 帧）。
+export function composerSuggestion(read: ComposerRead, spec: ComposerSpec | null | undefined): string | null {
+  if (!spec?.suggestion_placeholder || read.state !== "empty" || !read.isPlaceholder) return null;
+  const text = read.text?.trim() ?? "";
+  if (!text || text.includes("\n") || new RegExp(spec.empty_pattern).test(text)) return null;
+  return text;
+}
+
 /// 同一帧的文字与光标一起读（分两次读会把异步重绘误认成用户移动了光标）。
 export function readComposerFrame(frame: TerminalScreenFrameDto | null | undefined, spec: ComposerSpec | null | undefined): ComposerRead {
   if (!frame) return UNKNOWN;

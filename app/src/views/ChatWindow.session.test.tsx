@@ -1030,11 +1030,53 @@ describe("ChatWindow", () => {
     expect(screen.getByRole("button", { name: "提交选择" })).toBeTruthy();
     fireEvent.click(firstChoice);
     expect(firstChoice.className).toContain("is-selected");
-    expect(invoke).toHaveBeenCalledWith("write_managed_terminal", {
+    // 按键前先现读一帧（卡片过期、输入框里正显示着建议回复时不按），写入因此是异步的。
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", {
       sessionId: 46, data: "\r",
-    });
+    }));
     expect(screen.queryByRole("button", { name: "上一项 ↑" })).toBeNull();
     expect(screen.queryByText("Meowo 正在从托管终端读取 Agent 的选项…")).toBeNull();
+  });
+
+  // 按键前要先读一帧（卡片过期判定），读帧快慢不一时连勾两项的按键不能乱序：每串「方向键+回车」
+  // 是相对上一次焦点算的，顺序一反就勾错项（.lead/20261123-next-step 独立审查复现）。
+  it("多选连勾两项：第一次读帧慢、第二次快，按键仍按点击顺序落", async () => {
+    window.history.replaceState({}, "", "/?sessionId=49");
+    const prompt = [
+      "\x1b[2JWhich items should I continue with?",
+      "> 1. [ ] First-screen tail reading",
+      "  2. [ ] Connection pooling",
+      "  3. [ ] Keep the current state",
+      "  4. [ ] Type something",
+      "Submit",
+      "Enter to select · up/down to navigate · Esc to cancel",
+    ].join("\r\n");
+    let frameReads = 0;
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 49, title: "连勾", status: "waiting", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: "question", items: [],
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
+      if (command === "managed_terminal_frame") {
+        frameReads += 1;
+        const delay = frameReads === 1 ? 80 : 5;
+        return new Promise((resolve) => setTimeout(() => resolve(null), delay));
+      }
+      if (command === "managed_terminal_snapshot") return Promise.resolve({
+        sessionId: 49, active: true, managed: true, data: btoa(prompt), startOffset: 0, endOffset: prompt.length,
+        exited: false, exitCode: null,
+      });
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    expect(await screen.findByText("Agent 正在等待你的回答")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Keep the current state" }));
+    fireEvent.click(screen.getByRole("button", { name: "Connection pooling" }));
+    const writes = () => invoke.mock.calls.filter(([command, args]) => command === "write_managed_terminal" && (args as { sessionId?: number })?.sessionId === 49).map(([, args]) => (args as { data: string }).data);
+    await waitFor(() => expect(writes()).toHaveLength(2));
+    expect(writes()).toEqual(["\x1b[B\x1b[B\r", "\x1b[A\r"]);
   });
 
   /**

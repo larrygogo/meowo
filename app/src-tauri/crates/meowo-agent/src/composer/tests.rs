@@ -41,6 +41,7 @@ fn spec_from(declared: &serde_json::Value) -> ComposerSpec {
         tail_rows: declared["tail_rows"].as_u64().unwrap() as usize,
         tail_pattern: optional(&declared["tail_pattern"]),
         empty_pattern: leak(&declared["empty_pattern"]),
+        suggestion_placeholder: declared["suggestion_placeholder"].as_bool().unwrap_or(false),
         send_requires_recognition: declared["send_requires_recognition"].as_bool().unwrap(),
         stash: declared["stash"].as_object().map(|_| ComposerStash {
             input: leak(&declared["stash"]["input"]),

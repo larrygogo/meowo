@@ -13,6 +13,8 @@ export type ChatActions = {
   newSession?: () => void;
   /// 「请求被拒」时撤回到出错那一轮之前（见 rejectedRecovery）。此刻撤不回时缺省。
   undoRejected?: () => void;
+  /// 把一句现成的话放进输入框，用户看过再自己发（本轮检查卡的「让 AI 重跑」）。
+  fillPrompt?: (text: string) => void;
 };
 
 export const ChatActionsContext = createContext<ChatActions | null>(null);

@@ -9,6 +9,7 @@
 //   real-<家>：五家真机发图（与截图）样本经后端真实解析的产物，见下方 REAL_SAMPLES。
 import type { ChatItem } from "../src/api";
 import { FIXED_NOW } from "./fixtures";
+import composerFrames from "../src/test/fixtures/composer-frames.json";
 import claudeSend from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/claude.83386c1d.items.json";
 import codexSilent from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/codex.01a1f9bf.items.json";
 import codexSend from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/codex.probe-send-image.items.json";
@@ -239,7 +240,7 @@ export function imageSceneItems(part: string, lang: Lang): { items: ChatItem[]; 
       ],
     };
   }
-  if (part === "checks") {
+  if (part === "checks" || part === "suggest") {
     // 回复末尾的「本轮结果」：①改了 4 个文件、类型检查和单测通过后又改了一个文件；②只跑了测试、3 个失败；
     // ③改了代码没跑检查。过程收进回合折叠，点检查行要能展开并跳回那条命令。
     const edit = (id: string, s: number, path: string, add: number) => ({
@@ -381,9 +382,15 @@ export function imageSceneMock(part: string, lang: Lang, chat: (cmd: string) => 
     if (cmd === "get_chat_history") {
       const base = chat(cmd) as Record<string, unknown>;
       const real = part.startsWith("real-") ? part.slice("real-".length) : null;
-      return { ...base, ...(real ? { provider: real } : {}), cwd: real ? REAL_CWD : "C:\\dev\\web-app", items, todos: [], pendingReview: null, status: running ? "running" : "waiting" };
+      return { ...base, ...(real ? { provider: real } : {}), cwd: real ? REAL_CWD : "C:\\dev\\web-app", items, todos: [], pendingReview: null, status: running ? "running" : "waiting", ...(part === "suggest" ? { ptyManaged: true } : {}) };
     }
     if (cmd === "pending_interaction") return { approval: null, question: null };
+    // 建议回复：Claude 回合结束后终端输入框里的暗色建议（2.1.330 实拍帧，见 composer-frames.json）。
+    if (part === "suggest" && cmd === "agent_chat_ui") return { ...(chat(cmd) as Record<string, unknown>), composer: composerFrames.specs.claude };
+    if (part === "suggest" && cmd === "managed_terminal_frame") {
+      const frame = composerFrames.frames.find((entry) => entry.name === "claude-2.1.330-suggestion-zh")!;
+      return { lines: frame.lines, cursorRow: frame.cursor!.row, cursorCol: frame.cursor!.col, cursorVisible: true, cursorDim: true, cols: 120, rows: 32 };
+    }
     if (cmd === "resolve_chat_image") {
       const src = (args as { src?: string }).src ?? "";
       // 网络图：一张一直在下载（加载中），其余成功；本地图：old 目录下的已删除。
