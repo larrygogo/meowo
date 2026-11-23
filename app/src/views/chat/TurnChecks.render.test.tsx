@@ -33,6 +33,46 @@ describe("本轮结果卡的检查段", () => {
     expect(screen.getByText(zh.chat.checkStale(["类型检查", "测试"], ["Row.tsx"]))).toBeTruthy();
   });
 
+  // 实拍（用户：「这些真的准吗？为什么经常显示出来」）：lint 点名了三个文件，之后改的是两个测试文件，
+  // 不该标过时；第一次 lint 报 balance.tsx 有 1 个问题，接着 `eslint --fix balance.tsx` 通过，红色那行不该还挂着。
+  it("lint 只在改到它查过的文件时才过时；报过的问题被同一工具复查通过后不再挂红", () => {
+    const eslintOut = [
+      "",
+      "C:\\Users\\x\\cloud\\front\\src\\pages\\cloud-host\\balance.tsx",
+      "  3:1  error  There should be at least one empty line between import groups  import/order",
+      "",
+      "✖ 1 problem (1 error, 0 warnings)",
+      "  1 error and 0 warnings potentially fixable with the `--fix` option.",
+    ].join("\n");
+    render(<TurnChanges items={[
+      edit("e1", "front/src/pages/cloud-host/balance.tsx"), ok("e1"),
+      run("c1", "cd front && npx tsc --noEmit -p . 2>&1 | grep -E \"cloud-host\" | head -20; npx eslint src/pages/cloud-host/balance.tsx src/pages/cloud-host/feeCenter.ts src/services/cloud-host.ts 2>&1 | tail -15"), ok("c1", eslintOut),
+      run("c2", "cd front && npx eslint --fix src/pages/cloud-host/balance.tsx && npx vitest run src/pages/cloud-host 2>&1 | tail -25"), ok("c2", " Tests  1 failed | 62 passed (63)"),
+      edit("e2", "front/src/pages/cloud-host/CloudBalancePage.test.tsx"), ok("e2"),
+      edit("e3", "front/src/pages/cloud-host/feeCenter.test.ts"), ok("e3"),
+      run("c3", "cd front && npx vitest run src/pages/cloud-host 2>&1 | grep -E \"Tests \""), ok("c3", " Tests  76 passed (76)"),
+    ]} />);
+    const rows = [...document.querySelectorAll(".chat-turn-check")];
+    expect(rows.map((row) => [row.querySelector(".chat-turn-check-cmd")?.textContent, row.querySelector(".chat-turn-check-result")?.textContent])).toEqual([
+      ["npx tsc --noEmit -p . 2>&1", "看不出结果 · 已过时"],
+      ["npx eslint --fix src/pages/cloud-host/balance.tsx", "通过"],
+      ["npx vitest run src/pages/cloud-host 2>&1", "76 个通过"],
+    ]);
+    expect(screen.getByText(zh.chat.checkStale(["类型检查"], ["CloudBalancePage.test.tsx", "feeCenter.test.ts"]))).toBeTruthy();
+  });
+
+  it("lint 查过的文件之后又改了：照样标过时；没认出是哪个文件出问题的失败照样留着", () => {
+    render(<TurnChanges items={[
+      edit("e1", "src/a.ts"), ok("e1"),
+      run("c1", "npx eslint src/a.ts src/b.ts"), ok("c1", "✖ 2 problems (2 errors, 0 warnings)", true),
+      run("c2", "npx eslint src/c.ts"), ok("c2"),
+      edit("e2", "src/c.ts"), ok("e2"),
+    ]} />);
+    const rows = [...document.querySelectorAll(".chat-turn-check")];
+    expect(rows.map((row) => row.querySelector(".chat-turn-check-result")?.textContent)).toEqual(["2 个问题", "通过 · 已过时"]);
+    expect(screen.getByText(zh.chat.checkStale(["代码检查"], ["c.ts"]))).toBeTruthy();
+  });
+
   it("类型检查之后改了文件、只重跑了测试：类型检查那一行标「已过时」，测试不标", () => {
     render(<TurnChanges items={[
       edit("e1", "src/a.ts"), ok("e1"),

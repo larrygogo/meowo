@@ -9,7 +9,7 @@ import { Icon } from "../../icons/Icon";
 import { icPencil } from "../../icons/glyphs";
 import { icSidebarRight } from "../../icons/glyphs.chat";
 import { RevealChangeContext } from "./panelReveal";
-import { collectTurnChecks, isDocPath, type CheckKind, type TurnCheck } from "./turnChecks";
+import { collectTurnChecks, editAffectsCheck, isDocPath, type CheckKind, type TurnCheck } from "./turnChecks";
 import { revealItem } from "./foldMemory";
 import { RELEASE_FOLLOW_EVENT } from "./useStickToBottom";
 import { ChatActionsContext } from "./chatActions";
@@ -76,9 +76,11 @@ export const TurnChanges = memo(function TurnChanges({ items }: { items: ChatIte
   const codeFiles = files.filter((file) => !isDocPath(file.path));
   // 最后一次检查之后又改了哪些代码文件：上面的「通过」不含这些改动。
   // 每条检查各自看：它之后有没有又改了代码。从最早一条「过时」的检查算起，列出之后改过的代码文件。
-  const staleIds = new Set(checks.filter((check) => editedAfterIndex(items, check.at, cwd).some((path) => !isDocPath(path))).map((check) => check.toolId));
-  const firstStale = checks.find((check) => staleIds.has(check.toolId));
-  const editedAfter = firstStale ? editedAfterIndex(items, firstStale.at, cwd).filter((path) => !isDocPath(path)) : [];
+  // lint 点名了文件的，只看改没改到那几个文件（editAffectsCheck）。
+  const staleEdits = new Map(checks.map((check) => [check.toolId,
+    editedAfterIndex(items, check.at, cwd).filter((path) => !isDocPath(path) && editAffectsCheck(check, path))] as const));
+  const staleIds = new Set(checks.filter((check) => (staleEdits.get(check.toolId)?.length ?? 0) > 0).map((check) => check.toolId));
+  const editedAfter = [...new Set(checks.flatMap((check) => staleEdits.get(check.toolId) ?? []))];
   const shown = expanded ? files : files.slice(0, PREVIEW_ROWS);
   const hidden = files.length - PREVIEW_ROWS;
   return (

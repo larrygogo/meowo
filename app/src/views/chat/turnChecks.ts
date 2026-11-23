@@ -99,6 +99,52 @@ function covers(later: string, earlier: string): boolean {
   return kindA === kindB && familyA === familyB && (scopeA === "" || scopeA === scopeB);
 }
 
+/** 一个去重键里点名的路径（小写、正斜杠、去掉通配之后的部分）。null 表示全量，或认不出范围（带 `-p=x` 这类筛选）。 */
+function scopePaths(key: string): string[] | null {
+  const scope = key.split("|")[2] ?? "";
+  if (!scope) return null;
+  const paths: string[] = [];
+  for (const token of scope.split(" ")) {
+    if (token.includes("=")) return null;
+    const path = token.replace(/\\/g, "/").replace(/^\.\//, "").replace(/[*?[{].*$/, "").replace(/\/+$/, "");
+    // `**/*.ts` 这种从根开始的通配：等于全量。
+    if (!path) return null;
+    paths.push(path);
+  }
+  return paths;
+}
+
+/** 路径（相对会话目录或绝对）在不在这几个点名的文件、目录里。命令常是 `cd 子项目 && eslint src/a.ts`，
+ *  点名的路径相对子项目，所以按「结尾是它」或「中间有这一段目录」比。 */
+function inScope(path: string, scope: string[]): boolean {
+  const p = path.replace(/\\/g, "/").toLowerCase();
+  return scope.some((s) => p === s || p.endsWith(`/${s}`) || p.startsWith(`${s}/`) || p.includes(`/${s}/`));
+}
+
+/**
+ * 之后改的这个文件，会不会让这一行检查过时。lint 是逐个文件查的：点名了文件或目录，就只有改到它们才算过时
+ * （实拍：`eslint a.ts b.ts c.ts` 之后改了两个测试文件，也标「已过时」，用户问「这些真的准吗」）。
+ * 类型检查、测试、构建会顺着 import 牵连别的文件，改哪儿都可能影响，照旧算过时。
+ */
+export function editAffectsCheck(check: TurnCheck, path: string): boolean {
+  if (check.kinds.some((kind) => kind !== "lint")) return true;
+  return check.keys.some((key) => {
+    const scope = scopePaths(key);
+    return !scope || inScope(path, scope);
+  });
+}
+
+/** lint 输出里出问题的文件：eslint 默认格式是单独一行文件路径、下面列问题；ruff、oxlint 等是 `路径:行:列`。 */
+function lintFailedFiles(output: string): string[] {
+  const text = output.replace(/\x1b\[[0-9;]*m/g, "");
+  const files = new Set<string>();
+  for (const line of text.split(/\r?\n/)) {
+    const match = /^\s*((?:[A-Za-z]:)?[^\s:]*[\\/][^\s:]*\.[A-Za-z]{1,6})\s*$/.exec(line) ?? /^((?:[A-Za-z]:)?[^\s:]+\.[A-Za-z]{1,6}):\d+:\d+/.exec(line);
+    if (match) files.add(match[1].replace(/\\/g, "/").toLowerCase());
+  }
+  return [...files];
+}
+
 const KIND_ORDER: CheckKind[] = ["typecheck", "test", "lint", "build"];
 
 // 段开头（规范化之后，见 headOf）按「开头是什么」认类别。只看开头：`grep vitest`、`cat tsconfig.json`、
@@ -513,6 +559,8 @@ export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
     if (item.type === "tool_result" && item.tool_use_id) results.set(item.tool_use_id, item);
   }
   const all: TurnCheck[] = [];
+  // 没过的 lint 命令输出里点名的文件（按 tool_use id）：之后同一工具把这些文件都查过、通过了，这一行就不再挂着红。
+  const lintFailures = new Map<string, string[]>();
   items.forEach((item, at) => {
     if (item.type !== "tool_use" || item.kind !== "run") return;
     const unwrapped = unwrapShell(commandOf(item).trim());
@@ -558,6 +606,10 @@ export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
         return segments[at].text.replace(ASSIGNS, "").split(/\r?\n/)[0];
       });
       all.push({ kinds: group.kinds, keys: group.keys, ...group.verdict, command, parts, toolId: item.id, at });
+      if (result && group.verdict.status === "fail" && group.kinds.every((kind) => kind === "lint")) {
+        const files = lintFailedFiles(result.text);
+        if (files.length > 0) lintFailures.set(item.id, files);
+      }
     }
   });
   // 同一工具、同样范围（或之后跑了全量）只留最后一次：倒着走，某行的键全被更晚的行盖过就丢掉；部分被盖过的只留没被盖的。
@@ -572,7 +624,20 @@ export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
     const note = check.note.kind === "oneFailed" && fresh.length < check.kinds.length ? UNCLEAR : null;
     kept.unshift({ ...check, kinds: fresh.map((at) => check.kinds[at]), keys: fresh.map((at) => check.keys[at]), parts: fresh.map((at) => check.parts[at]), ...(note ?? {}) });
   }
-  return kept;
+  // lint 没过、出问题的文件之后被同一工具单独查过且通过（实拍：`eslint a b c` 报 a 有 1 个问题，接着
+  // `eslint --fix a` 通过）：问题已经修掉，这一行不再显示红色的「1 个问题」。认不出是哪个文件出的问题就留着。
+  return kept.filter((check) => {
+    const files = lintFailures.get(check.toolId);
+    if (check.status !== "fail" || !files) return true;
+    const families = new Set(check.keys.map((key) => key.split("|")[1]));
+    const fixed = files.every((file) => kept.some((later) => later.at > check.at && later.status === "pass"
+      && later.keys.some((key) => {
+        const [kind, family] = key.split("|");
+        const scope = scopePaths(key);
+        return kind === "lint" && families.has(family) && (!scope || inScope(file, scope));
+      })));
+    return !fixed;
+  });
 }
 
 /** 文档、图片这类改了也不需要跑检查的文件。`.txt` 不算：requirements.txt、CMakeLists.txt 都会影响构建。 */
