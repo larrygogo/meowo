@@ -1702,14 +1702,66 @@ fn managed_config_dirs() -> Vec<std::path::PathBuf> {
 pub fn reconstruct_transcript_path(cwd: &str, session_id: &str) -> Option<std::path::PathBuf> {
     let relative = std::path::PathBuf::from(encode_cwd(cwd)).join(format!("{session_id}.jsonl"));
     let default = projects_dir()?.join(&relative);
-    std::iter::once(default)
+    let candidates = std::iter::once(default)
         .chain(
             managed_projects_dirs()
                 .into_iter()
                 .map(|projects| projects.join(&relative)),
         )
         .filter(|path| path.exists())
-        .max_by_key(|path| transcript_freshness(path))
+        .collect::<Vec<_>>();
+    pick_live_copy(candidates)
+}
+
+/// 多份同名副本里挑真正能续上的那份：先排除一条消息都没有的空壳，再按新鲜度取。
+///
+/// 实拍 2026-11-24：会话所在账号被冻结、换号登录后，新账号目录里冒出同名 transcript，
+/// 只有 cost-state / pr-link 等元数据、零条消息，mtime 却比旧账号里 3.4MB 的完整记录新。
+/// 纯按新鲜度挑会选中空壳，跨账号恢复把空壳同步过去，`claude --resume` 找不到对话
+/// 直接退出码 1，界面只剩「Agent 启动后退出」。
+///
+/// 只有一份时不做判定：调用方本来就只能用它，省掉看板轮询路径上的一次读文件。
+fn pick_live_copy(candidates: Vec<std::path::PathBuf>) -> Option<std::path::PathBuf> {
+    if candidates.len() <= 1 {
+        return candidates.into_iter().next();
+    }
+    candidates
+        .into_iter()
+        .max_by_key(|path| (has_conversation(path), transcript_freshness(path)))
+}
+
+/// transcript 里有没有至少一条 user/assistant 消息。真实记录通常前几行就命中；
+/// 空壳全是元数据行、体积很小，扫完也不贵。扫过 8 MiB 仍没命中就当作有内容——
+/// 宁可退回旧的按新鲜度挑，也不把一份大文件误判成空壳。读不了的文件当空壳。
+fn has_conversation(path: &std::path::Path) -> bool {
+    use std::io::BufRead;
+    const SCAN_LIMIT: u64 = 8 * 1024 * 1024;
+    #[derive(serde::Deserialize)]
+    struct Line<'a> {
+        #[serde(borrow, rename = "type")]
+        kind: Option<Cow<'a, str>>,
+    }
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut reader = std::io::BufReader::new(file);
+    let mut line = String::new();
+    let mut scanned = 0u64;
+    loop {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) | Err(_) => return false,
+            Ok(n) => scanned += n as u64,
+        }
+        if let Ok(Line { kind: Some(kind) }) = serde_json::from_str::<Line>(&line) {
+            if kind == "user" || kind == "assistant" {
+                return true;
+            }
+        }
+        if scanned > SCAN_LIMIT {
+            return true;
+        }
+    }
 }
 
 /// 候选副本的新鲜度：mtime 为主、字节数为副。跨 profile 恢复用 `fs::copy` 同步副本
@@ -1743,7 +1795,7 @@ pub fn find_transcript_by_session(session_id: &str) -> Option<std::path::PathBuf
     let file = format!("{session_id}.jsonl");
     let mut projects = vec![projects_dir()?];
     projects.extend(managed_projects_dirs());
-    projects
+    let candidates = projects
         .into_iter()
         .flat_map(|projects| {
             std::fs::read_dir(projects)
@@ -1757,7 +1809,8 @@ pub fn find_transcript_by_session(session_id: &str) -> Option<std::path::PathBuf
                 .filter(|candidate| candidate.exists())
                 .collect::<Vec<_>>()
         })
-        .max_by_key(|path| transcript_freshness(path))
+        .collect::<Vec<_>>();
+    pick_live_copy(candidates)
 }
 
 /// 「全局找不到」负缓存的有效期。看板活跃时每 ~2s 刷新一次，没有 transcript 的 claude 会话
@@ -3990,6 +4043,68 @@ mod tests {
             None => std::env::remove_var("MEOWO_DB"),
         }
         let _ = std::fs::remove_dir_all(home);
+    }
+
+    /// 换号后新账号目录冒出只有元数据的同名空壳（实拍 2026-11-24），mtime 比旧账号的
+    /// 完整记录新：查找必须选完整那份，否则跨账号恢复把空壳同步过去，resume 直接退出。
+    #[test]
+    fn transcript_lookup_skips_newer_metadata_only_stub() {
+        let sid = format!("stub-vs-real-{}", std::process::id());
+        let home = std::env::temp_dir().join(format!("cc_stub_home_{}", std::process::id()));
+        let project = "C--shared-project";
+        let real = home
+            .join(".meowo/profiles/claude/old/projects")
+            .join(project)
+            .join(format!("{sid}.jsonl"));
+        let stub = home
+            .join(".claude/projects")
+            .join(project)
+            .join(format!("{sid}.jsonl"));
+        for path in [&real, &stub] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        }
+        std::fs::write(
+            &real,
+            format!(
+                "{{\"type\":\"permission-mode\",\"sessionId\":\"{sid}\"}}\n{{\"type\":\"user\",\"sessionId\":\"{sid}\"}}\n"
+            ),
+        )
+        .unwrap();
+        // 空壳里嵌套的 "type":"user" 不能算数：只认顶层 type。
+        std::fs::write(
+            &stub,
+            format!(
+                "{{\"type\":\"cost-state\",\"sessionId\":\"{sid}\",\"modelUsage\":{{\"type\":\"user\"}}}}\n{{\"type\":\"pr-link\",\"sessionId\":\"{sid}\",\"prNumber\":1,\"note\":\"padding to make the stub larger than the real transcript\"}}\n"
+            ),
+        )
+        .unwrap();
+        let older = std::time::SystemTime::now() - std::time::Duration::from_secs(900);
+        std::fs::File::options()
+            .write(true)
+            .open(&real)
+            .unwrap()
+            .set_modified(older)
+            .unwrap();
+
+        let _env = crate::env_guard();
+        let old_home = std::env::var("USERPROFILE").ok();
+        let old_db = std::env::var("MEOWO_DB").ok();
+        std::env::set_var("USERPROFILE", &home);
+        std::env::set_var("MEOWO_DB", home.join(".meowo").join("board.db"));
+        let found = find_transcript_by_session(&sid);
+        let rebuilt = reconstruct_transcript_path(r"C:\shared\project", &sid);
+        for (key, old) in [
+            ("USERPROFILE", old_home),
+            ("MEOWO_DB", old_db),
+        ] {
+            match old {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        let _ = std::fs::remove_dir_all(&home);
+        assert_eq!(found.as_deref(), Some(real.as_path()));
+        assert_eq!(rebuilt.as_deref(), Some(real.as_path()));
     }
 
     /// 图片缓存跟着 CLAUDE_CONFIG_DIR 走:profile 账号里粘贴的图落在 profile 目录下,
