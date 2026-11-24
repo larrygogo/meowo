@@ -276,7 +276,7 @@ static BROKER_APPROVAL: crate::caps::BrokerApprovalCap = crate::caps::BrokerAppr
 
 impl AgentPlugin for Claude {
     /// `--add-dir` 把 Lead 目录算进工作区：default/acceptEdits 档写它不再弹审批。
-    fn lead_dir_grant(&self, dir: &std::path::Path) -> Option<crate::lead_paths::LeadDirGrant> {
+    fn lead_dir_grant(&self, dir: &std::path::Path, _env: &[(String, String)]) -> Option<crate::lead_paths::LeadDirGrant> {
         Some(crate::lead_paths::LeadDirGrant::Args(vec!["--add-dir".into(), dir.to_string_lossy().into_owned()]))
     }
 

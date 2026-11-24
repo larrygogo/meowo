@@ -226,8 +226,15 @@ static BROKER_APPROVAL: crate::caps::BrokerApprovalCap = crate::caps::BrokerAppr
 
 impl AgentPlugin for Codex {
     /// `--add-dir` 把 Lead 目录加进 workspace-write 沙箱的可写根（hook 进程继承同一沙箱，写 `.owner` 也靠它）。
-    fn lead_dir_grant(&self, dir: &std::path::Path) -> Option<crate::lead_paths::LeadDirGrant> {
-        Some(crate::lead_paths::LeadDirGrant::Args(vec!["--add-dir".into(), dir.to_string_lossy().into_owned()]))
+    fn lead_dir_grant(&self, dir: &std::path::Path, env: &[(String, String)]) -> Option<crate::lead_paths::LeadDirGrant> {
+        let home = env
+            .iter()
+            .find(|(k, v)| k == "CODEX_HOME" && !v.trim().is_empty())
+            .map(|(_, v)| std::path::PathBuf::from(v))
+            .or_else(|| std::env::var_os("CODEX_HOME").filter(|v| !v.is_empty()).map(Into::into))
+            .or_else(|| crate::home_dir().map(|h| h.join(".codex")));
+        let config = home.and_then(|h| std::fs::read_to_string(h.join("config.toml")).ok());
+        Some(crate::lead_paths::LeadDirGrant::Args(lead_writable_roots_arg(config.as_deref(), dir)))
     }
 
     fn broker_approval(&self) -> Option<&'static crate::caps::BrokerApprovalCap> {
@@ -1680,5 +1687,52 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&home);
+    }
+}
+
+/// Lead 目录的写权限交给 `-c sandbox_workspace_write.writable_roots=[…]`，不用 `--add-dir`：Meowo 默认把装了
+/// Lead 的 Codex 拆成 app-server + TUI `--remote`，0.169.0 的 TUI 收到 `--add-dir` 直接退出（原文
+/// 「--add-dir is not supported with --remote. Configure additional workspace roots on the server.」，
+/// redteam-1 复现，新建与 resume 都退）。`-c` 由 split_argv 交给 app-server，内嵌启动也认。
+/// `-c` 会整个替换数组，所以带上用户 config.toml 里已有的 writable_roots，只追加不覆盖。
+pub fn lead_writable_roots_arg(config: Option<&str>, dir: &std::path::Path) -> Vec<String> {
+    let mut roots: Vec<String> = config
+        .and_then(|text| text.parse::<toml_edit::DocumentMut>().ok())
+        .and_then(|doc| {
+            doc.get("sandbox_workspace_write")?
+                .get("writable_roots")?
+                .as_array()
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
+        })
+        .unwrap_or_default();
+    let dir = dir.to_string_lossy().into_owned();
+    if !roots.contains(&dir) {
+        roots.push(dir);
+    }
+    // JSON 字符串数组同时是合法的 TOML 内联数组（反斜杠转义规则一致），codex 按 TOML 解析 `-c` 的值。
+    let value = serde_json::to_string(&roots).unwrap_or_else(|_| "[]".into());
+    vec!["-c".into(), format!("sandbox_workspace_write.writable_roots={value}")]
+}
+
+#[cfg(test)]
+mod lead_grant_tests {
+    use super::lead_writable_roots_arg;
+    use std::path::Path;
+
+    #[test]
+    fn appends_lead_dir_to_user_roots_without_add_dir() {
+        let dir = Path::new(r"C:\Users\me\.meowo\projects\p-1\.lead");
+        let args = lead_writable_roots_arg(None, dir);
+        assert_eq!(args[0], "-c");
+        assert!(!args.iter().any(|a| a == "--add-dir"));
+        let value = args[1].strip_prefix("sandbox_workspace_write.writable_roots=").unwrap();
+        let parsed: toml_edit::Value = value.parse().unwrap();
+        assert_eq!(parsed.as_array().unwrap().iter().filter_map(|v| v.as_str()).collect::<Vec<_>>(), [dir.to_str().unwrap()]);
+
+        let config = "[sandbox_workspace_write]\nwritable_roots = [\"D:/cache\"]\n";
+        let args = lead_writable_roots_arg(Some(config), dir);
+        let parsed: toml_edit::Value = args[1].split_once('=').unwrap().1.parse().unwrap();
+        assert_eq!(parsed.as_array().unwrap().len(), 2, "{}", args[1]);
+        assert_eq!(lead_writable_roots_arg(Some(config), Path::new("D:/cache"))[1], "sandbox_workspace_write.writable_roots=[\"D:/cache\"]");
     }
 }

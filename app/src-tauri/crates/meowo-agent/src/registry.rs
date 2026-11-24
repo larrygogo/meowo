@@ -665,8 +665,14 @@ pub trait AgentPlugin: Sync {
     }
 
     /// 让这家 CLI 能写本项目 Lead 目录的办法（见 [`crate::lead_paths::LeadDirGrant`]）。宿主只在这家装了
-    /// Lead 时才用。None = 这家不需要或没有办法。
-    fn lead_dir_grant(&self, _dir: &Path) -> Option<crate::lead_paths::LeadDirGrant> {
+    /// Lead 时才用。None = 这家不需要或没有办法。`env` 是这次启动的环境（多账号的数据目录变量在里面）。
+    fn lead_dir_grant(&self, _dir: &Path, _env: &[(String, String)]) -> Option<crate::lead_paths::LeadDirGrant> {
+        None
+    }
+
+    /// [`Self::lead_dir_grant`] 的参数只在这个版本起实测过时返回下限：更老的 CLI 不认这个参数会直接退出
+    /// （redteam-1 问题 1 同类风险），宿主读不出版本或版本不到就不加。None = 不看版本。
+    fn lead_dir_grant_floor(&self) -> Option<(u32, u32, u32)> {
         None
     }
 

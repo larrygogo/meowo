@@ -383,6 +383,33 @@ fn task_outside_the_panel_location_gets_a_move_hint() {
     assert_eq!(snapshot_for(&repo.to_string_lossy(), Some("s1")).unwrap().slug, "2026-11-24-szx-dev");
 }
 
+/// redteam-1 问题 2：任务被迁移搬走后，会话按记住的旧路径再写一次，旧位置长出半截目录。认领要落在数据目录里
+/// 那份完整任务上（登记表不被拉回旧路径、面板不显示坏任务），提示 agent 把内容合并过去、删掉旧位置。
+#[test]
+fn write_to_old_path_after_migration_claims_the_moved_copy() {
+    let e = env();
+    let repo = e.d.join("moved-repo");
+    fs::create_dir_all(repo.join(".git")).unwrap();
+    let home = meowo_agent::lead_paths::ensure_lead_home(&repo).unwrap();
+    let moved = task(home.parent().unwrap(), "2026-11-24-moved", "verify");
+    let stale = repo.join(".lead").join("2026-11-24-moved");
+    fs::create_dir_all(&stale).unwrap();
+    fs::write(stale.join("progress.md"), "phase: verify
+- 闲置后写的一条
+").unwrap();
+    let data = json!({"session_id":"s9","cwd":repo,"tool_name":"Write","tool_input":{"file_path":stale.join("progress.md")}});
+    let out: Value = serde_json::from_str(&run("claim", &data.to_string(), &e.reg).stdout.expect("要提示合并")).unwrap();
+    let hint = out["hookSpecificOutput"]["additionalContext"].as_str().unwrap();
+    assert!(hint.contains("合并") && hint.contains(&moved.display().to_string()) && hint.contains(&stale.display().to_string()), "{hint}");
+    assert_eq!(owner(&moved), "s9");
+    assert!(!stale.join(".owner").exists());
+    let reg: Value = serde_json::from_str(&fs::read_to_string(&e.reg).unwrap()).unwrap();
+    assert!(reg["s9"].as_str().unwrap().contains(&*home.to_string_lossy()), "{reg}");
+    let snap = snapshot_for(&repo.to_string_lossy(), Some("s9")).unwrap();
+    assert_eq!(snap.slug, "2026-11-24-moved");
+    assert!(snap.spec.contains('#') || !snap.spec.is_empty(), "面板显示的是完整任务");
+}
+
 /// 实拍 2026-11-24：会话在 Desktop 启动（库里 cwd=Desktop），AI 先 cd 进 `workspace/work-log/.lead` 再写任务，
 /// hook 带的 cwd 跟着成了 work-log 仓库，任务就在它的 `.lead` 里，提醒没发；面板按 Desktop 找，看不到。
 /// 判位置要用库里的会话 cwd。

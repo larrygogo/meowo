@@ -755,6 +755,8 @@ fn migrate_legacy(store: &meowo_store::Store) {
     let Some(registry) = lead_registry() else {
         return;
     };
+    // 归属会话还没结束的任务不搬：会话闲着等用户时文件不会变，只看修改时间会把它搬走（redteam-1 问题 2）。
+    let live = store.unended_agent_session_ids().unwrap_or_default();
     let mut seen = std::collections::HashSet::new();
     for cwd in cwds {
         let cwd = std::path::Path::new(&cwd);
@@ -766,7 +768,7 @@ fn migrate_legacy(store: &meowo_store::Store) {
             lead.parent()
                 .is_some_and(|repo| crate::git::has_tracked_files(&repo.to_string_lossy(), ".lead"))
         };
-        let Some(report) = meowo_reporter::lead::migrate::migrate(cwd, &registry, tracked) else {
+        let Some(report) = meowo_reporter::lead::migrate::migrate(cwd, &registry, tracked, &live) else {
             continue;
         };
         if !report.moved.is_empty() || !report.skipped.is_empty() {

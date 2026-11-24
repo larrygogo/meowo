@@ -64,7 +64,14 @@ pub(crate) fn dir_grant(
     let Some(dir) = meowo_agent::lead_paths::ensure_lead_home(std::path::Path::new(cwd)) else {
         return Vec::new();
     };
-    match plugin.lead_dir_grant(&dir) {
+    if let Some(floor) = plugin.lead_dir_grant_floor() {
+        // 单测不探测真实 CLI（CI 上没装），按「读不出版本」处理。
+        let version = if cfg!(test) { None } else { crate::probe_cli_version(plugin) };
+        if !meowo_agent::lead_install::version_at_least(version.as_deref(), floor) {
+            return Vec::new();
+        }
+    }
+    match plugin.lead_dir_grant(&dir, env) {
         Some(LeadDirGrant::Args(args)) => args,
         Some(LeadDirGrant::InlineConfig(fragment)) => {
             if let Some(meowo_agent::McpAttach::InlineConfigEnv { env: key }) = plugin.mcp_attach() {

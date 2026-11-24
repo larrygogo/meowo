@@ -2,11 +2,13 @@
 //!
 //! 规则（照关卡选项原文）：先复制到新位置、核对文件一致，再删项目里那份，同时把登记表里的旧路径
 //! 改成新路径；正在等关卡答复的任务先不动；被 git 跟踪的文件只复制不删，交给用户决定。
-//! 另外跳过最近 30 分钟内还在改的任务：agent 记着旧的绝对路径，搬走后它一写又在项目里长出半截目录。
+//! 另外跳过还有人在用的任务：归属会话（`.owner`）还没结束的、最近 30 分钟内改过的。agent 记着旧的绝对路径，
+//! 搬走后它一写又在项目里长出半截目录（redteam-1 问题 2：只看修改时间时，闲置 30 分钟的会话照样被搬）。
 
-use super::{lock_registry, read_gate, slug_ok, strip_verbatim};
+use super::{lock_registry, owner_of, read_gate, slug_ok, strip_verbatim};
 use meowo_agent::lead_paths;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -72,9 +74,10 @@ fn same(a: &Path, b: &Path) -> bool {
 
 /// 迁移该工作目录所属项目的旧任务。`tracked` 由调用方判断（宿主跑 `git ls-files`），这里不起子进程，
 /// hook 路径也能安全调用纯文件操作的部分。
-pub fn migrate(cwd: &Path, registry: &Path, tracked: impl Fn(&Path) -> bool) -> Option<Report> {
+/// `live` 是还没结束的会话 id（agent 自己的会话 id，与 `.owner` 同一种），由宿主从库里取。
+pub fn migrate(cwd: &Path, registry: &Path, tracked: impl Fn(&Path) -> bool, live: &HashSet<String>) -> Option<Report> {
     let home = lead_paths::ensure_lead_home(cwd)?;
-    Some(migrate_into(&home, cwd, registry, tracked, SystemTime::now()))
+    Some(migrate_into(&home, cwd, registry, tracked, live, SystemTime::now()))
 }
 
 pub(crate) fn migrate_into(
@@ -82,6 +85,7 @@ pub(crate) fn migrate_into(
     cwd: &Path,
     registry: &Path,
     tracked: impl Fn(&Path) -> bool,
+    live: &HashSet<String>,
     now: SystemTime,
 ) -> Report {
     let mut report = Report::default();
@@ -104,15 +108,28 @@ pub(crate) fn migrate_into(
                     report.skipped.push((name, "lead/migrate_gate_pending"));
                     continue;
                 }
+                let owner = owner_of(&from);
+                if !owner.is_empty() && live.contains(&owner) {
+                    report.skipped.push((name, "lead/migrate_owner_live"));
+                    continue;
+                }
                 if recently_touched(&from, now) {
                     report.skipped.push((name, "lead/migrate_active"));
                     continue;
                 }
                 if to.exists() {
-                    // 被跟踪的目录上一轮已经复制过（原处保留），这次不算冲突。
-                    if !keep {
-                        report.skipped.push((name, "lead/migrate_conflict"));
+                    if keep {
+                        // 被跟踪的目录上一轮已经复制过（原处保留），这次不算冲突。
+                        continue;
                     }
+                    // 旧目录里每个文件新位置都有、且内容一样：上一轮已经搬过，只是删旧目录时失败了
+                    // （文件被占用等，redteam-1 问题 3）。按搬过处理、接着删；有一处不同才是真冲突，两份都留。
+                    if !subset_identical(&from, &to) {
+                        report.skipped.push((name, "lead/migrate_conflict"));
+                        continue;
+                    }
+                    renames.push((from.clone(), to));
+                    report.moved.push(name);
                     continue;
                 }
                 if copy_verified(&from, &to).is_err() {
@@ -174,6 +191,17 @@ fn walk(dir: &Path) -> Vec<PathBuf> {
         }
     }
     out
+}
+
+/// `from` 的每个文件在 `to` 里都有同名、同内容的副本（`to` 可以多出文件：新位置之后又写过）。
+fn subset_identical(from: &Path, to: &Path) -> bool {
+    walk(from).iter().all(|file| {
+        file.strip_prefix(from)
+            .ok()
+            .and_then(|rel| std::fs::read(to.join(rel)).ok())
+            .zip(std::fs::read(file).ok())
+            .is_some_and(|(a, b)| a == b)
+    })
 }
 
 /// 复制整个任务目录，再逐个核对大小与内容，任何一处不一致都算失败（调用方清掉半成品）。

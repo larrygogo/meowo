@@ -591,10 +591,22 @@ fn session_context(task: &Path, sid: &str) -> Option<String> {
 fn claim(data: &Value, registry: &Path) -> Option<String> {
     let sid = data.get("session_id").and_then(Value::as_str)?;
     let task = ownership::claim_target(data)?;
+    let hook_cwd = data.get("cwd").and_then(Value::as_str);
+    let cwd = panel_cwd(sid, crate::db_path().as_deref()).or_else(|| hook_cwd.map(str::to_owned));
+    // 任务已被搬进数据目录，agent 还按记住的旧路径写：认领新位置那份，登记表不被拉回旧路径，
+    // 面板照常显示完整任务（redteam-1 问题 2：认领旧路径时面板变成只有 progress.md 的坏任务）。
+    if let Some(moved) = cwd.as_deref().and_then(|c| moved_copy(&task, c)) {
+        record_owner(&moved, sid, registry);
+        let hint = format!(
+            "[lead] 任务 {slug} 已由 Meowo 搬到 {moved}，项目里的 {old} 是刚才这次写入新长出来的。请把刚写的内容合并进 {moved} 下的同名文件（那里才是完整版本，不要整个目录覆盖过去），然后删掉 {old}；之后只写 {moved}。",
+            slug = task.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+            moved = moved.display(),
+            old = task.display(),
+        );
+        return Some(json!({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": hint}}).to_string());
+    }
     record_owner(&task, sid, registry);
-    let hook_cwd = data.get("cwd").and_then(Value::as_str)?;
-    let cwd = panel_cwd(sid, crate::db_path().as_deref()).unwrap_or_else(|| hook_cwd.to_owned());
-    let hint = misplaced_hint(&task, &cwd)?;
+    let hint = misplaced_hint(&task, cwd.as_deref()?)?;
     Some(json!({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": hint}}).to_string())
 }
 
@@ -613,6 +625,14 @@ fn panel_cwd(sid: &str, db: Option<&Path>) -> Option<String> {
 /// 任务不在本项目的 Lead 目录（Meowo 数据目录里，见 `meowo_agent::lead_paths`）时，返回一句挪动指引。
 /// 项目里还没迁走的旧 `.lead` 面板照常能读，但写进去的任务也提示挪走：迁移只搬没人在动的任务，
 /// 正在推进的那个靠这句话让 agent 自己搬（关卡 B-20261124-lead-migrate）。
+/// 任务不在本项目 Lead 目录里、而 Lead 目录已有同名任务（迁移搬过去的）时，返回那份的路径。
+fn moved_copy(task: &Path, cwd: &str) -> Option<PathBuf> {
+    let canon = |p: &Path| p.canonicalize().map(strip_verbatim).unwrap_or_else(|_| p.to_path_buf());
+    let home = meowo_agent::lead_paths::lead_home(Path::new(cwd))?;
+    let target = home.join(task.file_name()?);
+    (canon(task.parent()?) != canon(&home) && target.is_dir()).then_some(target)
+}
+
 fn misplaced_hint(task: &Path, cwd: &str) -> Option<String> {
     let canon = |p: &Path| p.canonicalize().map(strip_verbatim).unwrap_or_else(|_| p.to_path_buf());
     let lead = canon(task.parent()?);
@@ -1455,7 +1475,7 @@ pub fn snapshot(cwd: &str) -> Option<LeadTaskDto> {
 }
 
 /// 任务归属的会话（`.owner` 里的 cc_session_id）；还没认领为空串。
-fn owner_of(task: &Path) -> String {
+pub(crate) fn owner_of(task: &Path) -> String {
     read(&task.join(".owner")).trim().to_owned()
 }
 

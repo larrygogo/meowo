@@ -1732,6 +1732,22 @@ mod tests {
         matches!(name, "codex" | "codex.exe")
     }
 
+    /// Lead 目录放行（任务 20261124-lead-store-in-meowo）：只能落在 app-server 一侧。TUI 带 `--add-dir`
+    /// 时 codex 0.169.0 远程模式直接退出（redteam-1 复现，新建与 resume 都退）。
+    #[test]
+    fn lead_dir_grant_goes_to_server_not_tui() {
+        let exe = if cfg!(windows) { r"C:\x\codex.exe" } else { "/x/codex" };
+        let dir = std::path::Path::new(if cfg!(windows) { r"C:\d\.lead" } else { "/d/.lead" });
+        let grant = meowo_agent::plugins::codex::lead_writable_roots_arg(None, dir);
+        for head in [vec![exe], vec![exe, "resume", "019a-thread"]] {
+            let mut argv = s(&head);
+            argv.extend(grant.iter().cloned());
+            let split = split_argv(&argv, owns).unwrap();
+            assert_eq!(split.server, grant, "{head:?}");
+            assert!(!split.tui.iter().any(|a| a == "--add-dir" || a.contains("writable_roots")), "{:?}", split.tui);
+        }
+    }
+
     /// 迁移清单：Meowo 现有的每一类 codex 启动注入都必须落到正确的一侧。
     /// browser_agent / lead_runtime 的 MCP `-c`、relay 的 model_provider `-c` → app-server；
     /// 启动选项（审批/沙箱，仅新建；恢复时丢弃）、resume/fork 子命令与会话 id → TUI。
