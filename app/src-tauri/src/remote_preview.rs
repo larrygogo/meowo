@@ -66,6 +66,8 @@ struct Proxy {
     /// 回收循环发现端口没人监听（或查不了监听表）的起始时刻：dev server 重启要几秒到几分钟，
     /// 这期间代理留着、请求给「预览没在运行」页，连续 [`MISSING_GRACE`] 都不在才回收。
     missing_since: Option<u64>,
+    /// 编号（[`NEXT_PROXY_ID`]）。
+    id: u64,
 }
 
 /// 端口持续没人监听多久才回收代理（AI 重启 dev server、装依赖期间手机刷新看到的是说明页，不是浏览器的连接错误）。
@@ -490,7 +492,7 @@ async fn ensure_proxy(key: Key, target: SocketAddr, owner: Owner, same_port_ok: 
         if let Some(p) = inner.proxies.get(&key) {
             return Ok(p.port);
         }
-        inner.proxies.insert(key, Proxy { port, target, owner, shutdown, active, last_seen, verified_at, missing_since: None });
+        inner.proxies.insert(key, Proxy { port, target, owner, shutdown, active, last_seen, verified_at, missing_since: None, id: NEXT_PROXY_ID.fetch_add(1, Ordering::SeqCst) });
         inner.last_ports.insert(key, port);
         !std::mem::replace(&mut inner.reaper, true)
     };
@@ -512,11 +514,11 @@ async fn reap_loop() {
         // - 代理占着同号端口，而 dev server 改成了对局域网开放（重启时加了 --host）：立即回收，下次打开换随机
         //   端口，不再挡着它的局域网入口（独立审查第二轮 D）；
         // - 没人监听 / 查不了：先记下起始时刻，连续 MISSING_GRACE 都这样才回收（第二轮 B）。
-        // 每个代理带上身份（它独有的计数器地址）：判断要等进程表，等回来时同一个 key 可能已经被回收又重开，
+        // 每个代理带上身份（编号）：判断要等进程表，等回来时同一个 key 可能已经被回收又重开，
         // 旧判断不能套到新代理上（独立审查第三轮）。
-        let checks: Vec<(Key, usize, u16, Owner)> =
+        let checks: Vec<(Key, u64, u16, Owner)> =
             lock().proxies.iter().map(|(k, p)| (*k, proxy_id(p), p.port, p.owner.clone())).collect();
-        let verdicts: Vec<(Key, usize, Verdict)> = tauri::async_runtime::spawn_blocking(move || {
+        let verdicts: Vec<(Key, u64, Verdict)> = tauri::async_runtime::spawn_blocking(move || {
             checks
                 .into_iter()
                 .map(|(key, id, port, owner)| {
@@ -577,9 +579,12 @@ fn verdict(check: Result<(SocketAddr, bool), String>, same_port: bool) -> Verdic
     }
 }
 
-fn proxy_id(p: &Proxy) -> usize {
-    Arc::as_ptr(&p.verified_at) as usize
+fn proxy_id(p: &Proxy) -> u64 {
+    p.id
 }
+
+/// 每个新代理一个编号（只增不减），回收判断写回时认人用。不用指针地址：旧代理释放后新代理可能落在同一地址。
+static NEXT_PROXY_ID: AtomicU64 = AtomicU64::new(1);
 
 struct Ctx {
     port: u16,
