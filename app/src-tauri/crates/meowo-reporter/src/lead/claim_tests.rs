@@ -371,6 +371,34 @@ fn task_outside_the_panel_location_gets_a_move_hint() {
     assert_eq!(snapshot_for(&repo.to_string_lossy(), Some("s1")).unwrap().slug, "2026-11-24-szx-dev");
 }
 
+/// 实拍 2026-11-24：会话在 Desktop 启动（库里 cwd=Desktop），AI 先 cd 进 `workspace/work-log/.lead` 再写任务，
+/// hook 带的 cwd 跟着成了 work-log 仓库，任务就在它的 `.lead` 里，提醒没发；面板按 Desktop 找，看不到。
+/// 判位置要用库里的会话 cwd。
+#[test]
+fn move_hint_uses_the_session_cwd_from_the_db_not_the_drifted_hook_cwd() {
+    let e = env();
+    let desktop = e.d.join("Desktop");
+    let work_log = desktop.join("workspace").join("work-log");
+    fs::create_dir_all(work_log.join(".git")).unwrap();
+    let t = task(&work_log, "2026-11-24-work-split", "spec");
+
+    let db = e.d.join("board.db");
+    let store = meowo_store::Store::open(&db).unwrap();
+    let project = store.upsert_project_by_root(&desktop.to_string_lossy(), "Desktop", 1).unwrap();
+    store.import_session("s1", project, "抖音视频主要内容", Some(&desktop.to_string_lossy()), 1).unwrap();
+    drop(store);
+
+    let cwd = panel_cwd("s1", Some(&db)).expect("库里有这个会话");
+    assert_eq!(cwd, desktop.to_string_lossy());
+    // 按漂移后的 hook cwd 判，任务看起来就在面板位置里（这就是漏报的原因）；按库里的 cwd 判才提醒。
+    assert_eq!(misplaced_hint(&t, &work_log.join(".lead").to_string_lossy()), None);
+    let hint = misplaced_hint(&t, &cwd).expect("按会话 cwd 判要提醒");
+    assert!(hint.contains(&desktop.join(".lead").join("2026-11-24-work-split").display().to_string()), "{hint}");
+    // 库里没有这个会话、或没有库：返回 None，调用方退回 hook cwd。
+    assert_eq!(panel_cwd("s2", Some(&db)), None);
+    assert_eq!(panel_cwd("s1", Some(&e.d.join("missing.db"))), None);
+}
+
 /// 面板没显示任务时给诊断日志的原因：列出找的位置、各任务阶段与归属；位置下没有任务时不记。
 #[test]
 fn hidden_reason_lists_tasks_with_phase_and_owner() {
