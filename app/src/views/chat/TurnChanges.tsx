@@ -78,15 +78,22 @@ export const TurnChanges = memo(function TurnChanges({ items }: { items: ChatIte
   // 每条检查各自看：它之后有没有又改了代码。从最早一条「过时」的检查算起，列出之后改过的代码文件。
   // lint 点名了文件的，只看改没改到那几个文件（editAffectsCheck）。
   // 用命令改的文件（sed -i 之类）也算：只对它之前跑的检查算，命令自己里头跑的检查不算（先改后查）。
+  // 工具改的文件带上绝对路径，和这一轮检查跑过的目录比，看它是不是落在别的子项目里（editAffectsCheck）。
+  // 命令改的文件路径相对命令当时的目录，换算不出绝对路径，不参与这一项。
   const runEdits = runEditsOf(items);
+  const roots = [...new Set(checks.flatMap((check) => (check.dir ? [check.dir] : [])))];
   const staleEdits = new Map(checks.map((check) => {
-    const edited = editedAfterIndex(items, check.at, cwd);
+    const tools = editedAfterIndex(items, check.at, cwd);
+    const edited = tools.filter((file) => !isDocPath(file.path) && editAffectsCheck(check, file.path, { abs: file.abs, roots })).map((file) => file.path);
     for (const run of runEdits) {
       if (run.at <= check.at || run.id === check.toolId) continue;
       // 同一个文件 Edit 工具记的是相对会话目录，命令提示里是相对命令当时的目录：结尾对得上算同一个。
-      for (const path of run.paths) if (!edited.some((seen) => seen === path || seen.endsWith(`/${path}`))) edited.push(path);
+      for (const path of run.paths) {
+        if (tools.some((seen) => seen.path === path || seen.path.endsWith(`/${path}`)) || edited.includes(path)) continue;
+        if (!isDocPath(path) && editAffectsCheck(check, path)) edited.push(path);
+      }
     }
-    return [check.toolId, edited.filter((path) => !isDocPath(path) && editAffectsCheck(check, path))] as const;
+    return [check.toolId, edited] as const;
   }));
   const staleIds = new Set(checks.filter((check) => (staleEdits.get(check.toolId)?.length ?? 0) > 0).map((check) => check.toolId));
   const editedAfter = [...new Set(checks.flatMap((check) => staleEdits.get(check.toolId) ?? []))];
@@ -166,12 +173,34 @@ function runEditsOf(items: ChatItem[]): { at: number; id: string; paths: string[
   return runs;
 }
 
-/// 某个位置之后又改了哪些文件（相对路径，去重，按首次出现）。
-function editedAfterIndex(items: ChatItem[], after: number, cwd: string | null): string[] {
-  return collectFileChanges(items.slice(after + 1), cwd).map((file) => file.path);
+/// 某个位置之后又改了哪些文件（显示用的相对路径 + 绝对路径，去重，按首次出现）。工具记的是相对路径时按会话目录补全。
+function editedAfterIndex(items: ChatItem[], after: number, cwd: string | null): { path: string; abs: string }[] {
+  return collectFileChanges(items.slice(after + 1), cwd).map((file) => {
+    const raw = (file.details[0]?.file.path ?? file.path).replace(/\\/g, "/");
+    const abs = /^(?:[A-Za-z]:)?\//.test(raw) || !cwd ? raw : `${cwd.replace(/\\/g, "/").replace(/\/+$/, "")}/${raw}`;
+    return { path: file.path, abs };
+  });
 }
 
-const KIND_LABEL = (t: ReturnType<typeof useT>, kind: CheckKind) => t.chat.checkKind[kind];
+/// 提示里点名的文件一般只写文件名；同名的会认错时带上上一级目录：改了几个同名文件，或检查命令里也出现了
+/// 这个名字（实拍 2026-11-24：eslint 查的是 activation-code/list/index.tsx，提示写「又改了 index.tsx」，
+/// 看着像在说同一个文件）。
+export function staleFileNames(paths: string[], checks: TurnCheck[]): string[] {
+  const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+  const commands = checks.flatMap((check) => check.parts).join("\n").replace(/\\/g, "/").toLowerCase();
+  return paths.map((path) => {
+    const name = base(path);
+    const lower = name.toLowerCase();
+    const parts = path.split("/");
+    // 命令里点名的就是这个文件（带着同样的上一级目录）不算撞名。
+    const sameFile = parts.length > 1 && commands.includes(parts.slice(-2).join("/").toLowerCase());
+    const clash = paths.some((other) => other !== path && base(other).toLowerCase() === lower)
+      || (!sameFile && new RegExp(`(?:^|[\\s/"'])${lower.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|[\\s"'])`, "m").test(commands));
+    return clash && parts.length > 1 ? parts.slice(-2).join("/") : name;
+  });
+}
+
+const KIND_LABEL =(t: ReturnType<typeof useT>, kind: CheckKind) => t.chat.checkKind[kind];
 /// 这几行检查各自跑的命令（去重，按出现先后）：「重跑 / 修」的要求里逐条列出。
 const commandsOf = (checks: TurnCheck[]) => [...new Set(checks.flatMap((check) => check.parts))];
 
@@ -201,7 +230,7 @@ function TurnChecks({ checks, replyId, editedAfter, staleIds, codeChanged }: { c
       </div>
     ) : null;
   }
-  const staleNames = editedAfter.map((path) => path.slice(path.lastIndexOf("/") + 1));
+  const staleNames = staleFileNames(editedAfter, checks);
   const staleCommands = commandsOf(checks.filter((check) => staleIds.has(check.toolId)));
   // 没过、之后也没再改代码的检查：肯定还没修。没过但之后改过的可能已经修了，归到上面的「重跑」里。
   const failed = checks.filter((check) => check.status === "fail" && !staleIds.has(check.toolId));
