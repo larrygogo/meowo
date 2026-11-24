@@ -50,6 +50,7 @@ mod tray_anim;
 mod macos;
 pub mod proxy;
 mod remote;
+mod remote_preview;
 mod settings;
 pub mod snap;
 mod term_script;

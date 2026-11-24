@@ -107,6 +107,12 @@ export function RemoteAccessCard() {
   const changeBind = (next: RemoteBindMode) => {
     void patch({ remote_access_bind: next }).then(refreshSettled);
   };
+  // 手机预览（leader 2026-11-24 关卡 B：远程访问开着就自动可用，这里是关掉它的地方）。关掉时后端
+  // 立即回收已开的预览端口；缺字段的旧设置按开处理，与后端 serde 默认一致。
+  const previewOn = settings?.remote_preview_enabled ?? true;
+  const togglePreview = () => {
+    void patch({ remote_preview_enabled: !previewOn });
+  };
   const bindOptions = [
     { value: "all" as const, label: t.remote.bindAll },
     { value: "loopback" as const, label: t.remote.bindLoopback },
@@ -176,6 +182,14 @@ export function RemoteAccessCard() {
           <div className="row-desc is-full">{bind === "all" ? t.remote.bindWarnAll : t.remote.bindDesc}</div>
         </div>
         <Dropdown value={bind} options={bindOptions} onChange={changeBind} />
+      </div>
+
+      <div className="row">
+        <div className="row-text">
+          <div className="row-label">{t.remote.preview}</div>
+          <div className="row-desc is-full">{t.remote.previewDesc}</div>
+        </div>
+        <Switch checked={previewOn} onChange={togglePreview} label={t.remote.preview} />
       </div>
 
 

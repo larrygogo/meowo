@@ -299,6 +299,18 @@ export function imageSceneItems(part: string, lang: Lang): { items: ChatItem[]; 
       ],
     };
   }
+  if (part === "preview") {
+    // 手机预览：AI 起了前后端两个 dev server，手机上点前端链接能开；后端端口没在监听，就地说原因。
+    return {
+      running: false,
+      items: [
+        user("u1", 300, zh ? "登录页改完了吗？我在手机上看看。" : "Is the login page done? I'll check on my phone."),
+        say("a1", 200, zh
+          ? "改好了，dev server 起在 [http://localhost:5173/login](http://localhost:5173/login)，打开看看。\n\n接口服务在 `http://localhost:8787`，还没起，等我把数据库迁移跑完。"
+          : "Done. The dev server is at [http://localhost:5173/login](http://localhost:5173/login), take a look.\n\nThe API is at `http://localhost:8787`; it isn't up yet, I'm still running the migration."),
+      ],
+    };
+  }
   if (part === "form") {
     // 小表单（ask_form）：前一张已填（收成一行），后一张五种字段都有、等你填。
     const formCall = (id: string, s: number) => ({
@@ -446,6 +458,12 @@ export function imageSceneMock(part: string, lang: Lang, chat: (cmd: string) => 
       return { ...base, ...(real ? { provider: real } : {}), cwd: real ? REAL_CWD : "C:\\dev\\web-app", items, todos: [], pendingReview: null, status: running ? "running" : "waiting", ...(part === "suggest" ? { ptyManaged: true } : {}) };
     }
     if (cmd === "pending_interaction") return { approval: null, question: null };
+    // 手机预览：8787 没人监听，其余给一张票（截图里新页被拦，只看对话这一页）。
+    if (cmd === "preview_open") {
+      const url = (args as { url?: string }).url ?? "";
+      if (url.includes(":8787")) return Promise.reject(new Error("preview/not_listening"));
+      return { port: 5173, path: "/__meowo/preview?c=demo" };
+    }
     // 交文件：old 开头的那份快照已被回收（卡片显示「已清理」）。
     if (cmd === "delivered_file_exists") return !((args as { path?: string }).path ?? "").includes("old000");
     // 建议回复：Claude 回合结束后终端输入框里的暗色建议（2.1.330 实拍帧，见 composer-frames.json）。

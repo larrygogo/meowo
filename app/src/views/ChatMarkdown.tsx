@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { openLink, revealTerminalPath } from "../api";
 import { remoteUi } from "../remoteMode";
 import { openInPanel } from "./chat/panelLinks";
+import { openPhonePreview } from "./chat/phonePreview";
 import { useT } from "../i18n";
 import { formatBackendError } from "../i18n/errors";
 // 语法高亮复用文件/diff 面板的同一套 hljs 基建（highlight.ts）：语言表、回退策略、
@@ -387,7 +388,9 @@ function LinkCode({ text, kind, cwd = "" }: { text: string; kind: "url" | "path"
     // 拖选这段文字（想复制）松手时也会触发 click：有选区就当是在选字，不打开。
     if (window.getSelection()?.toString()) return;
     const value = text.trim();
-    void (kind === "url" ? openLink(value) : revealTerminalPath(cwd, stripLineSuffix(value))).then(
+    // 手机上的本机网址：经电脑上的预览代理打开（phonePreview.ts），打不开的原因同样就地显示。
+    const preview = kind === "url" ? openPhonePreview(value, t.chat.previewOpening) : null;
+    void (preview ?? (kind === "url" ? openLink(value) : revealTerminalPath(cwd, stripLineSuffix(value)))).then(
       () => setFailed(null),
       (e) => setFailed(formatBackendError(e, t.locale)),
     );
@@ -483,22 +486,46 @@ export const components: Components = {
     // 「可点却必失败」比不可点更糟——渲染层直接降级为纯文本（终端侧另有显示
     // 拒绝原因的通道，见 ManagedTerminal；消息气泡里没有错误展示位）。
     if (!href || !/^https?:\/\//i.test(href)) return <>{children}</>;
-    return (
+    return <MarkdownLink href={href}>{children}</MarkdownLink>;
+  },
+};
+
+function MarkdownLink({ href, children }: { href: string; children: ReactNode }) {
+  const t = useT();
+  // 手机预览打不开（还没启动、不是本会话的端口……）要说出来，同 LinkCode：就地跟在链接后面，点 × 收起。
+  const [failed, setFailed] = useState<string | null>(null);
+  const linkRef = useRef<HTMLAnchorElement>(null);
+  return (
+    <>
       <a
+        ref={linkRef}
         href={href}
         data-tip={href}
         onClick={(event) => {
           event.preventDefault();
-          // 本机地址（dev server）在右侧面板的浏览器里打开，其余交给系统浏览器。
+          // 本机地址（dev server）：桌面在右侧面板的浏览器里打开，手机经电脑上的预览代理打开；
+          // 其余交给系统浏览器。
           if (openInPanel(href)) return;
+          const preview = openPhonePreview(href, t.chat.previewOpening);
+          if (preview) {
+            void preview.then(() => setFailed(null), (e) => setFailed(formatBackendError(e, t.locale)));
+            return;
+          }
           void openLink(href).catch(() => {});
         }}
       >
         {children}
       </a>
-    );
-  },
-};
+      {failed && (
+        <span className="chat-md-link-error">
+          <span role="status">{failed}</span>
+          <button type="button" className="chat-md-link-error-close" aria-label={t.chat.close} data-tip={t.chat.close}
+            onClick={() => { setFailed(null); linkRef.current?.focus(); }}>×</button>
+        </span>
+      )}
+    </>
+  );
+}
 
 /**
  * 模型输出（正文 / reasoning）的 markdown 渲染。react-markdown 不渲染内嵌原始 HTML，

@@ -1383,6 +1383,8 @@ export type Settings = {
   remote_access_port: number;
   /** 远程桥绑定网卡：all = 所有网卡(默认,旧行为) / loopback = 仅本机 / tailscale = 仅 Tailscale。 */
   remote_access_bind: RemoteBindMode;
+  /** 手机预览：手机上点对话里的本机链接，经电脑上的代理打开 dev server（remote_preview.rs）。默认开。 */
+  remote_preview_enabled: boolean;
   /** 远程访问 token。由 remote_access_info 惰性生成落盘；get_settings 不返回明文(恒空串),
    *  set_settings 忽略回传值(后端以磁盘值为准)。 */
   remote_access_token: string;

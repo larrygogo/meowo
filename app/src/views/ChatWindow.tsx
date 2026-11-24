@@ -95,6 +95,7 @@ import { TranscriptSearch } from "./chat/TranscriptSearch";
 import { formatReviewComments, type ReviewComment } from "./chat/diffComments";
 import { changedFileCount, sessionTouchedPaths } from "./chat/gitDiff";
 import { setPanelLinkHandler } from "./chat/panelLinks";
+import { setPreviewSession } from "./chat/phonePreview";
 import { absolutePath, RevealChangeContext } from "./chat/panelReveal";
 import { localUrlsIn } from "./chat/localUrls";
 import { useGuardedWindowClose } from "./chat/windowClose";
@@ -1030,6 +1031,12 @@ export function ChatWindow() {
     setPanelLinkHandler(panelActions.openUrl);
     return () => setPanelLinkHandler(null);
   }, [panelActions]);
+  // 手机上点本机地址经电脑上的预览代理打开（phonePreview.ts），后端要凭会话认端口归属。
+  useEffect(() => {
+    if (!remoteUi()) return;
+    setPreviewSession(sessionId);
+    return () => setPreviewSession(null);
+  }, [sessionId]);
   // 对话里点改过的文件 → 面板「更改」里它的 diff（panelReveal.ts）。手机远程页没有右侧面板，不提供，
   // 工具行和改动卡也就不出这个入口。
   const revealChange = useMemo(

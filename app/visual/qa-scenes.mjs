@@ -184,6 +184,8 @@ export const QA_SHOTS = [
   { name: "qa-form-filled", scene: "flow-images-form", size: [1100, 900], sel: ".chat-form", steps: [["tick", 600], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["click", ".chat-form.is-settled .chat-choices-toggle"], ["tick", 200]] },
   { name: "qa-form-other", scene: "flow-images-form", size: [1100, 1100], sel: ".chat-form", steps: [["tick", 600], ["eval", "[...document.querySelectorAll('.chat-form')].pop().scrollIntoView({ block: 'center' })"], ["click", ".chat-form-option >> nth=3"], ["type", ".chat-form-field >> nth=1 >> input", "内测群"], ["tick", 200]] },
   { name: "qa-m-form", page: "mobile", scene: "mobile-images-form", size: PHONE, sel: ".chat-form", langs: ["zh", "en"], steps: [["tick", 600], ["eval", "[...document.querySelectorAll('.chat-form')].pop().scrollIntoView({ block: 'start' })"], ["tick", 200]] },
+  // 手机预览：点正文里的 localhost 链接与行内代码里的接口地址；后者没在监听，原因就地跟在后面。
+  { name: "qa-m-preview", page: "mobile", scene: "mobile-images-preview", size: PHONE, sel: ".chat-message.is-assistant", langs: ["zh", "en"], steps: [["tick", 600], ["eval", "window.open = () => null"], ["click", ".chat-message.is-assistant code.chat-md-link-code"], ["tick", 400]] },
   // 手机键盘弹起（375×476 模拟可视高度）时点表单里的输入框：表单要占满可视区，不被顶栏和输入框挤成一条缝。
   { name: "qa-m-form-kbd", page: "mobile", scene: "mobile-images-form", size: [375, 476], steps: [["tick", 600], ["eval", "[...document.querySelectorAll('.chat-form')].pop().scrollIntoView({ block: 'start' })"], ["tick", 200], ["click", ".chat-form input >> nth=0"], ["tick", 400]] },
   { name: "qa-m-form-kbd-long", page: "mobile", scene: "mobile-images-form", size: [375, 476], steps: [["tick", 600], ["eval", "[...document.querySelectorAll('.chat-form')].pop().scrollIntoView({ block: 'start' })"], ["tick", 200], ["click", ".chat-form textarea >> nth=-1"], ["tick", 400]] },
@@ -347,6 +349,8 @@ export const QA_SHOTS = [
   { name: "qa-set-search-sub", scene: "settingswin-general", size: SETTINGS, sel: ".settings", steps: [["type", ".side-search input", "审批"]] },
   { name: "qa-set-en", scene: "settingswin-general", size: SETTINGS, sel: ".settings", langs: ["en"] },
   { name: "qa-set-en-remote", scene: "settingswin-remote", size: SETTINGS, sel: ".settings", langs: ["en"] },
+  // 手机预览开关（远程访问卡里绑定网卡下面一行）。
+  { name: "qa-set-remote-preview", scene: "settingswin-remote", size: SETTINGS, sel: ".settings", langs: ["zh", "en"] },
   { name: "qa-set-en-sessions", scene: "settingswin-sessions", size: SETTINGS, sel: ".settings", langs: ["en"] },
   // ── 定尺寸窗口的英文（文案最长）──
   ...["shortcuts", "appearance", "notify", "account", "extensions", "about"].map((sec) => ({ name: "qa-set-en-" + sec, scene: "settingswin-" + sec, size: SETTINGS, sel: ".settings", langs: ["en"], themes: ["light"] })),

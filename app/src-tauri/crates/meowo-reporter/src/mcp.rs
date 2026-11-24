@@ -156,6 +156,8 @@ const SEND_IMAGE_HINT: &str = concat!(
 
 ",
     "开工前要用户一次答清几件事（部署到哪、版本号、要不要顺带做某事）时，用 ask_form 发一张小表单，不要在正文里列一串问题让用户逐条手打。调用后先结束这一轮，用户填好的答案会作为下一条消息发给你。只有一个二选一的问题就直接问；要看截图才能比的方案用 offer_choices。",
+    "\n\n",
+    "起了 dev server 让用户看效果时，把地址写成可点的 http://localhost:端口 链接：用户在手机上点它，Meowo 会把这个端口开给手机看。所以页面里请求后端用相对路径（配 dev server 的 proxy），不要写死 http://localhost:3000 这类别的端口，手机上那个地址指向的是手机自己。",
 );
 
 const INSTRUCTIONS_IMAGES_ONLY: &str = SEND_IMAGE_HINT;
@@ -176,6 +178,8 @@ const INSTRUCTIONS_WITH_BROWSER: &str = concat!(
 
 ",
     "开工前要用户一次答清几件事（部署到哪、版本号、要不要顺带做某事）时，用 ask_form 发一张小表单，不要在正文里列一串问题让用户逐条手打。调用后先结束这一轮，用户填好的答案会作为下一条消息发给你。只有一个二选一的问题就直接问；要看截图才能比的方案用 offer_choices。",
+    "\n\n",
+    "起了 dev server 让用户看效果时，把地址写成可点的 http://localhost:端口 链接：用户在手机上点它，Meowo 会把这个端口开给手机看。所以页面里请求后端用相对路径（配 dev server 的 proxy），不要写死 http://localhost:3000 这类别的端口，手机上那个地址指向的是手机自己。",
 );
 
 /// 发图失败的回执固定以 `[Image error: <code>] ` 开头（contract.md）：app 侧的失败已带前缀，
@@ -612,6 +616,8 @@ mod tests {
         assert!(description.contains("不接受网址") && description.contains("保存到本地"));
         assert!(source.contains("不接受网址"));
         assert!(INSTRUCTIONS_IMAGES_ONLY.contains("存到本地"));
+        // 手机预览：两份说明都提醒 AI 别把后端地址写死成别的 localhost 端口。
+        assert!(INSTRUCTIONS_IMAGES_ONLY.contains("相对路径") && INSTRUCTIONS_WITH_BROWSER.contains("相对路径"));
     }
 
     #[test]
