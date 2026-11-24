@@ -33,6 +33,8 @@ export function occluded(area: DOMRect, root: ParentNode = document): boolean {
 }
 
 export type CustomEmu = { width: number; height: number; touch?: boolean; userAgent?: string };
+/** 新标签页建议地址省略时始终露出的尾部字数（够放下 `?theme=light` 这类区分参数）。 */
+const URL_TAIL_CHARS = 16;
 const RECENT_EMU_KEY = "meowo-browser-emu-recent";
 const RECENT_EMU_MAX = 3;
 const EMU_MIN = 200;
@@ -403,7 +405,14 @@ export function BrowserPane({ info, visible, suggestions }: {
             {suggestions.length > 0 && (
               <ul>
                 {suggestions.map((url) => (
-                  <li key={url}><button type="button" disabled={inputLocked} onClick={() => go(url)}>{url}</button></li>
+                  <li key={url}>
+                    {/* 长地址中间省略、保留尾巴：同一路径只差 ?theme=light/dark 的两条，尾部截断会变得一模一样（实拍 2026-11-24：
+                        长地址撑破面板、盖到左侧栏上）。完整地址放 title。 */}
+                    <button type="button" disabled={inputLocked} onClick={() => go(url)} title={url} aria-label={url}>
+                      <span className="browser-pane-start-head">{url.slice(0, -URL_TAIL_CHARS)}</span>
+                      <span className="browser-pane-start-tail">{url.slice(-URL_TAIL_CHARS)}</span>
+                    </button>
+                  </li>
                 ))}
               </ul>
             )}

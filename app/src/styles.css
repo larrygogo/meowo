@@ -5133,6 +5133,11 @@ button.chat-choice-pick:focus-visible { outline: none; box-shadow: inset 0 0 0 2
 .browser-pane-view.is-agent { padding: 3px; background: var(--cc-ok-vivid); animation: browser-agent-pulse calc(var(--dur-pulse) * 2) var(--ease-in-out) infinite; }
 .browser-pane-start { padding: var(--sp-30) var(--sp-18); color: var(--cc-text-faint); font-size: var(--text-xs); text-align: center; }
 .browser-pane-start ul { margin: var(--sp-14) 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; align-items: center; gap: var(--sp-6); }
+/* 地址单行、不超过面板宽：头部省略号收缩，尾部固定露出（见 BrowserPane 里 URL_TAIL_CHARS）。 */
+.browser-pane-start li { max-width: 100%; min-width: 0; }
+.browser-pane-start button { display: flex; max-width: 100%; white-space: nowrap; }
+.browser-pane-start-head { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.browser-pane-start-tail { flex: none; }
 .browser-pane-start button { padding: var(--sp-4) var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); color: var(--cc-text); background: transparent; font: inherit; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; cursor: pointer; }
 .browser-pane-start button:hover { background: var(--fill-hover); }
 @media (prefers-reduced-motion: reduce) { .browser-pane-bar .chat-diff-action.is-loading svg { animation: none; } }
