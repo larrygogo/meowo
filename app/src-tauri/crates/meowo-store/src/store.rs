@@ -2010,6 +2010,15 @@ impl Store {
         Ok(out)
     }
 
+    /// 还没结束的会话的 agent 会话 id（含闲着等用户的）。Lead 迁移据此不搬有人在用的任务。
+    pub fn unended_agent_session_ids(&self) -> Result<std::collections::HashSet<String>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT cc_session_id FROM sessions              WHERE status != 'ended' AND superseded_by IS NULL AND cc_session_id <> ''",
+        )?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        rows.collect::<Result<_, _>>().map_err(Into::into)
+    }
+
     /// 「新建会话」面板的最近目录：去重非空 cwd，按各目录最近一次 last_event_at 倒序取前 limit。
     pub fn recent_cwds(&self, limit: usize) -> Result<Vec<String>, StoreError> {
         let mut stmt = self.conn.prepare(

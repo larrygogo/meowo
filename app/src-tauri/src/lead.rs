@@ -743,6 +743,49 @@ pub(crate) async fn set_lead_provider_enabled(
 const GATE_POLL: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// 有关卡挂起的会话按任务归属映射；同一次巡检处理已回答的托管投递。
+/// 搬旧 `.lead` 的间隔（以关卡巡检轮数计，GATE_POLL=10s → 5 分钟）。
+const MIGRATE_EVERY: u32 = 30;
+
+/// 把最近会话所在项目里的旧 `.lead` 搬进 Meowo 数据目录（关卡 B-20261124-lead-migrate，leader 选「自动搬走」）。
+/// 每个项目只在有旧目录时才动；结果写诊断日志，被 git 跟踪留在原处的也记一行，方便用户自己决定删不删。
+fn migrate_legacy(store: &meowo_store::Store) {
+    let Ok(cwds) = store.recent_cwds(50) else {
+        return;
+    };
+    let Some(registry) = lead_registry() else {
+        return;
+    };
+    // 归属会话还没结束的任务不搬：会话闲着等用户时文件不会变，只看修改时间会把它搬走（redteam-1 问题 2）。
+    let live = store.unended_agent_session_ids().unwrap_or_default();
+    let mut seen = std::collections::HashSet::new();
+    for cwd in cwds {
+        let cwd = std::path::Path::new(&cwd);
+        let legacy = meowo_reporter::lead::migrate::legacy_dirs(cwd);
+        if legacy.is_empty() || !seen.insert(legacy.clone()) {
+            continue;
+        }
+        let tracked = |lead: &std::path::Path| {
+            lead.parent()
+                .is_some_and(|repo| crate::git::has_tracked_files(&repo.to_string_lossy(), ".lead"))
+        };
+        let Some(report) = meowo_reporter::lead::migrate::migrate(cwd, &registry, tracked, &live) else {
+            continue;
+        };
+        if !report.moved.is_empty() || !report.skipped.is_empty() {
+            let skipped: Vec<String> = report.skipped.iter().map(|(name, why)| format!("{name}({why})")).collect();
+            eprintln!(
+                "[lead] 迁移旧任务 · cwd={} · 搬走 {} 个 · 跳过 {}",
+                cwd.display(),
+                report.moved.len(),
+                if skipped.is_empty() { "无".into() } else { skipped.join("、") }
+            );
+        }
+        if let Some(kept) = report.kept_tracked {
+            eprintln!("[lead] {} 被 git 跟踪，已复制到 Meowo 数据目录，原处保留未删", kept.display());
+        }
+    }
+}
+
 fn scan_gate_states(
     store: &meowo_store::Store,
     mut answered: impl FnMut(&Path),
@@ -833,12 +876,18 @@ pub(crate) fn spawn_gate_watcher(app: tauri::AppHandle) {
             let _ = provider_installation_states();
             // 已经为哪些关卡推送过（每个关卡只推一次）。重启后会再推一次，可以接受。
             let mut pushed: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut tick: u32 = 0;
             loop {
                 std::thread::sleep(GATE_POLL);
                 let db_path = app.state::<crate::AppState>().db_path.clone();
                 let Ok(store) = crate::open_store(&db_path) else {
                     continue;
                 };
+                // 首轮就搬一次，之后每 5 分钟一次：跳过的任务（在等答复、最近还在改）下一轮再搬。
+                if tick.is_multiple_of(MIGRATE_EVERY) {
+                    migrate_legacy(&store);
+                }
+                tick = tick.wrapping_add(1);
                 let want = scan_gate_states(&store, |task| {
                     // 投递挪到独立线程：服务卡住时最坏要等几十秒，别拖住所有会话的待处理标记与推送（做空 R10）。
                     crate::lead_conversation::reconcile_task_detached(

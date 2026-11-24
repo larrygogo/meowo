@@ -15,6 +15,7 @@
 
 pub mod command;
 mod guard;
+pub mod migrate;
 pub(crate) mod ownership;
 pub mod publication;
 
@@ -162,54 +163,25 @@ fn norm(v: &Value) -> String {
     v.to_string().replace("\\\\", "/").replace('\\', "/")
 }
 
-/// git 根目录；不在 git 里就是 cwd 本身。绝不越过项目边界向上找（初版踩过：主目录下的任务
-/// 注入到了所有非 git 目录）。
+/// git 根目录；不在 git 里就是 cwd 本身。实现在 meowo-agent，hook、宿主与各家启动参数共用一份。
 pub fn project_root(cwd: &Path) -> PathBuf {
-    let start = cwd
-        .canonicalize()
-        .map(strip_verbatim)
-        .unwrap_or_else(|_| cwd.to_path_buf());
-    let mut d = Some(start.as_path());
-    while let Some(dir) = d {
-        if dir.join(".git").exists() {
-            return dir.to_path_buf();
-        }
-        d = dir.parent();
-    }
-    start
+    meowo_agent::lead_paths::project_root(cwd)
 }
 
-/// worktree 对应的主检出：`<wt>/.git` 是个文件，内容 `gitdir: <主检出>/.git/worktrees/<名>`，那个目录里的
-/// `commondir` 指回 `<主检出>/.git`。不是 worktree、或任何一步读不到，返回 None。
-fn main_checkout(root: &Path) -> Option<PathBuf> {
-    let dot_git = root.join(".git");
-    if !dot_git.is_file() {
-        return None;
-    }
-    let gitdir = read(&dot_git).trim().strip_prefix("gitdir:")?.trim().to_owned();
-    let gitdir = root.join(gitdir); // 相对路径相对 worktree 根，绝对路径 join 后不变
-    let common = read(&gitdir.join("commondir"));
-    let common = gitdir.join(common.trim()).canonicalize().map(strip_verbatim).ok()?;
-    let main = common.parent()?.to_path_buf();
-    (main != root && main.join(".lead").is_dir()).then_some(main)
-}
-
-/// 要找任务的 `.lead` 目录：项目自己的在前；在 worktree 里再加上主检出的。skill 规定任务目录一律放主检出
-///（worktree 删了任务记录不能跟着没），只看 worktree 根时，worktree 会话的 Lead 面板和手机关卡卡片都看不到
-/// 自己的任务（做空审查 2026-11-12 复现：snapshot_for 传 worktree 路径返回 None）。
+/// 要找任务的 `.lead` 目录：Meowo 数据目录里本项目的那份在前（新任务都建在这里，见
+/// `meowo_agent::lead_paths`）；项目里还没迁走的旧 `.lead` 跟在后面，迁移完成前照常能读到旧任务。
+/// worktree 与主检出共用同一个项目键，worktree 会话的面板和手机关卡卡片也能看到主检出的任务
+///（做空审查 2026-11-12 复现过只看 worktree 根时看不到）。
 pub(crate) fn lead_dirs(cwd: &Path) -> Vec<PathBuf> {
-    let root = project_root(cwd);
-    let main = main_checkout(&root);
-    std::iter::once(root).chain(main).map(|r| r.join(".lead")).collect()
+    meowo_agent::lead_paths::lead_home(cwd)
+        .into_iter()
+        .chain(migrate::legacy_dirs(cwd))
+        .collect()
 }
 
 /// Windows 上 canonicalize 会带 `\\?\` 前缀（真机实测登记表里出现过），登记表和界面里都不该出现它。
 pub(crate) fn strip_verbatim(p: PathBuf) -> PathBuf {
-    let s = p.to_string_lossy();
-    match s.strip_prefix(r"\\?\") {
-        Some(rest) if !rest.starts_with("UNC") => PathBuf::from(rest),
-        _ => p,
-    }
+    meowo_agent::lead_paths::strip_verbatim(p)
 }
 
 fn find_task(cwd: Option<&str>) -> Option<PathBuf> {
@@ -599,7 +571,7 @@ fn session_context(task: &Path, sid: &str) -> Option<String> {
         .collect();
     parts.push(format!(
         "## 按需读（恢复任务时先核对未完成项、最新决定和证据，摘要不能替代原文）\n  任务目录里：SPEC.md（完整规格）、acceptance.json（全部验收项与证据）、progress.md、decisions.md{}",
-        if conventions.is_empty() { String::new() } else { format!("\n  项目约定：.lead/{}", conventions.join("、.lead/")) }
+        if conventions.is_empty() { String::new() } else { format!("\n  项目约定（在 {}）：{}", lead.display(), conventions.join("、")) }
     ));
     Some(
         json!({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": truncate(&parts.join("\n\n"), 8000)}})
@@ -619,10 +591,22 @@ fn session_context(task: &Path, sid: &str) -> Option<String> {
 fn claim(data: &Value, registry: &Path) -> Option<String> {
     let sid = data.get("session_id").and_then(Value::as_str)?;
     let task = ownership::claim_target(data)?;
+    let hook_cwd = data.get("cwd").and_then(Value::as_str);
+    let cwd = panel_cwd(sid, crate::db_path().as_deref()).or_else(|| hook_cwd.map(str::to_owned));
+    // 任务已被搬进数据目录，agent 还按记住的旧路径写：认领新位置那份，登记表不被拉回旧路径，
+    // 面板照常显示完整任务（redteam-1 问题 2：认领旧路径时面板变成只有 progress.md 的坏任务）。
+    if let Some(moved) = cwd.as_deref().and_then(|c| moved_copy(&task, c)) {
+        record_owner(&moved, sid, registry);
+        let hint = format!(
+            "[lead] 任务 {slug} 已由 Meowo 搬到 {moved}，项目里的 {old} 是刚才这次写入新长出来的。请把刚写的内容合并进 {moved} 下的同名文件（那里才是完整版本，不要整个目录覆盖过去），然后删掉 {old}；之后只写 {moved}。",
+            slug = task.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+            moved = moved.display(),
+            old = task.display(),
+        );
+        return Some(json!({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": hint}}).to_string());
+    }
     record_owner(&task, sid, registry);
-    let hook_cwd = data.get("cwd").and_then(Value::as_str)?;
-    let cwd = panel_cwd(sid, crate::db_path().as_deref()).unwrap_or_else(|| hook_cwd.to_owned());
-    let hint = misplaced_hint(&task, &cwd)?;
+    let hint = misplaced_hint(&task, cwd.as_deref()?)?;
     Some(json!({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": hint}}).to_string())
 }
 
@@ -638,20 +622,29 @@ fn panel_cwd(sid: &str, db: Option<&Path>) -> Option<String> {
     store.session_cwd(id).ok()?.filter(|cwd| !cwd.is_empty())
 }
 
-/// 任务所在的 `.lead` 不是面板会读的那几个（会话 cwd 的项目根、worktree 的主检出）时，返回一句挪动指引。
+/// 任务不在本项目的 Lead 目录（Meowo 数据目录里，见 `meowo_agent::lead_paths`）时，返回一句挪动指引。
+/// 项目里还没迁走的旧 `.lead` 面板照常能读，但写进去的任务也提示挪走：迁移只搬没人在动的任务，
+/// 正在推进的那个靠这句话让 agent 自己搬（关卡 B-20261124-lead-migrate）。
+/// 任务不在本项目 Lead 目录里、而 Lead 目录已有同名任务（迁移搬过去的）时，返回那份的路径。
+fn moved_copy(task: &Path, cwd: &str) -> Option<PathBuf> {
+    let canon = |p: &Path| p.canonicalize().map(strip_verbatim).unwrap_or_else(|_| p.to_path_buf());
+    let home = meowo_agent::lead_paths::lead_home(Path::new(cwd))?;
+    let target = home.join(task.file_name()?);
+    (canon(task.parent()?) != canon(&home) && target.is_dir()).then_some(target)
+}
+
 fn misplaced_hint(task: &Path, cwd: &str) -> Option<String> {
     let canon = |p: &Path| p.canonicalize().map(strip_verbatim).unwrap_or_else(|_| p.to_path_buf());
     let lead = canon(task.parent()?);
-    let dirs = lead_dirs(Path::new(cwd));
-    if dirs.iter().any(|d| canon(d) == lead) {
+    let home = meowo_agent::lead_paths::lead_home(Path::new(cwd))?;
+    if canon(&home) == lead {
         return None;
     }
-    let target = dirs.first()?.join(task.file_name()?);
-    let looked: Vec<String> = dirs.iter().map(|d| d.display().to_string()).collect();
+    let target = home.join(task.file_name()?);
     Some(format!(
-        "[lead] 任务 {} 不在 Meowo Lead 面板读取的位置，用户看不到它的面板。面板按会话工作目录 {cwd} 所在的 git 仓库根找任务，只读：{}。请把整个任务目录移到 {}（不要另留一份副本），再用 Write 或 Edit 改一次那里的 progress.md，让 Meowo 重新认领。",
+        "[lead] 任务 {} 不在本项目的 Lead 目录。Meowo 把 Lead 任务统一放在数据目录里、不放项目里，会话工作目录 {cwd} 对应的位置是 {}。请把整个任务目录移到 {}（不要另留一份副本），再用 Write 或 Edit 改一次那里的 progress.md，让 Meowo 重新认领。",
         task.display(),
-        looked.join("、"),
+        home.display(),
         target.display()
     ))
 }
@@ -696,29 +689,34 @@ pub fn hidden_reason(cwd: &str, session: Option<&str>) -> Option<String> {
     Some(format!("找的位置 {looked}；active={active}；任务：{}", list.join("；")))
 }
 
-/// 把任务记到会话名下：写 `.owner` 并更新登记表（一个任务只归一个会话）。
-fn record_owner(task: &Path, sid: &str, registry: &Path) {
+/// 登记表的进程间锁，返回的文件句柄活着就持有锁（drop 时释放）。认领与迁移改路径都要拿它。
+pub(crate) fn lock_registry(registry: &Path) -> Option<std::fs::File> {
     // 协议worker都在同一宿主PID，原先tmp<PID>在并发read-modify-rename时会丢其他会话映射。
     // std::fs::File::try_lock（Rust 1.89）也约束其他reporter进程，退出后内核自动释放锁。
-    let Ok(lock) = std::fs::OpenOptions::new()
+    let lock = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
         .open(registry.with_extension("lock"))
-    else {
-        return;
-    };
+        .ok()?;
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
     loop {
         match lock.try_lock() {
-            Ok(()) => break,
+            Ok(()) => return Some(lock),
             Err(std::fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
                 std::thread::sleep(std::time::Duration::from_millis(2))
             }
-            Err(_) => return,
+            Err(_) => return None,
         }
     }
+}
+
+/// 把任务记到会话名下：写 `.owner` 并更新登记表（一个任务只归一个会话）。
+fn record_owner(task: &Path, sid: &str, registry: &Path) {
+    let Some(_lock) = lock_registry(registry) else {
+        return;
+    };
     let registry_map = match read_checked(registry) {
         Ok(raw) => match serde_json::from_str::<Value>(&raw) {
             Ok(Value::Object(map)) => map,
@@ -1477,7 +1475,7 @@ pub fn snapshot(cwd: &str) -> Option<LeadTaskDto> {
 }
 
 /// 任务归属的会话（`.owner` 里的 cc_session_id）；还没认领为空串。
-fn owner_of(task: &Path) -> String {
+pub(crate) fn owner_of(task: &Path) -> String {
     read(&task.join(".owner")).trim().to_owned()
 }
 
@@ -1570,6 +1568,7 @@ fn snapshot_inner(cwd: &str, session: Option<&str>, unfiltered: bool) -> Option<
     Some(LeadTaskDto {
         delivery: None,
         issues: (!issues.is_empty()).then_some(issues),
+        legacy_kept: migrate::kept_dirs(Path::new(cwd)).first().map(|d| d.display().to_string()),
         slug: task.file_name()?.to_string_lossy().into_owned(),
         phase: phase_of(&task),
         spec: truncate(&read_text(&task.join("SPEC.md"), false), 12000),
@@ -1759,3 +1758,15 @@ pub fn wait(
 mod tests;
 #[cfg(test)]
 mod claim_tests;
+
+/// 测试进程统一用一个临时数据根：任务的新位置按 `MEOWO_DB` 推，不隔离的话测试会往真实的
+/// `~/.meowo/projects` 里建目录，还会读到本机正在用的 board.db。
+#[cfg(test)]
+pub(crate) fn test_data_root() -> &'static Path {
+    static ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    ROOT.get_or_init(|| {
+        let dir = strip_verbatim(tempfile::tempdir().unwrap().keep().canonicalize().unwrap());
+        std::env::set_var("MEOWO_DB", dir.join("board.db"));
+        dir
+    })
+}

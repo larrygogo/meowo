@@ -147,6 +147,33 @@ describe("进度：解析真实 progress.md", () => {
     expect(latest.body.indexOf("独立复核三轮")).toBeLessThan(latest.body.indexOf("leader 接受 C-20261118-multi-forge-1"));
   });
 
+  it("节标题不带日期（## 记录）时按条目日期分组，条目里的时间保留（用户 2026-11-24：进度总是显示未注明日期）", () => {
+    const log = parseLeadProgress([
+      "phase: implement",
+      "",
+      "## 接续摘要",
+      "- 正在做：验证",
+      "",
+      "## 记录",
+      "- 2026-11-23 建任务",
+      "- 2026-11-24 09:30 定方案",
+      "  细节缩进行跟着上一条",
+      "- 2026-11-24T17:05:12 跑完测试",
+      "",
+      "## 2026-11-25 18:40 发 C",
+      "- 等答复",
+    ].join("\n"));
+    expect(log.sections.map((x) => [x.date, x.title])).toEqual([
+      ["2026-11-25 18:40", "发 C"],
+      ["2026-11-24", "记录"],
+      ["2026-11-23", "记录"],
+      [null, "接续摘要"],
+    ]);
+    const day = log.sections[1];
+    expect(day.body).toBe("- 09:30 定方案\n  细节缩进行跟着上一条\n- 17:05 跑完测试");
+    expect(day.items).toBe(2);
+  });
+
   it("尾部截断在节中间：只去掉第一行的半句，半截的节单独成「更早的记录」，内容一行不丢", () => {
     const text = sample("multi-forge.progress.tail.md");
     expect([...text].length).toBe(LEAD_TAIL_LIMIT);

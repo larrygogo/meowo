@@ -35,6 +35,7 @@ struct Env {
     registry: PathBuf,
 }
 fn env() -> Env {
+    crate::lead::test_data_root();
     let root = tempfile::tempdir().unwrap();
     let task = root.path().join(".lead/20261112-provider");
     fs::create_dir_all(&task).unwrap();

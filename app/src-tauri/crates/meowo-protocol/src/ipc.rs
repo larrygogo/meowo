@@ -1563,6 +1563,11 @@ pub struct LeadTaskDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub issues: Option<Vec<String>>,
+    /// 项目里被 git 跟踪、迁移时只复制没删的旧 `.lead` 目录（关卡 B-20261124-lead-migrate：交给用户决定
+    /// 删不删）。面板据此提示一行；没有为 None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub legacy_kept: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

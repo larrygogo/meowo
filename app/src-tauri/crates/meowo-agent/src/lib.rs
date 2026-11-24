@@ -43,6 +43,7 @@ pub mod launch;
 pub mod launch_options;
 pub mod mcp_config;
 pub mod lead_install;
+pub mod lead_paths;
 pub mod plugins;
 pub mod ports;
 pub mod profile;

@@ -106,11 +106,13 @@ function countItems(lines: Line[]): number {
   return lines.filter((l) => !l.fenced && TOP_ITEM.test(l.text)).length;
 }
 
-/// 日期打头的顶层条目：`- 2026-11-09 定位根因…`、`- 2026-11-16：用户批准…`。返回日期与去掉日期后的条目行。
+/// 日期打头的顶层条目：`- 2026-11-09 定位根因…`、`- 2026-11-16：用户批准…`、`- 2026-11-24 17:05 改了…`。
+/// 返回日期与去掉日期后的条目行；写了时间的，时间留在条目开头（按天分组后，同一天的条目靠时间区分先后）。
 function datedItem(line: Line): { date: string; text: string } | null {
   if (line.fenced) return null;
-  const m = /^([-*+]\s+)(\d{4}-\d{2}-\d{2})(?:[\s：:，,]+|$)(.*)$/.exec(line.text);
-  return m ? { date: m[2], text: `${m[1]}${m[3]}` } : null;
+  const m = /^([-*+]\s+)(\d{4}-\d{2}-\d{2})(?:[ T](\d{1,2}:\d{2})(?::\d{2})?)?(?:[\s：:，,]+|$)(.*)$/.exec(line.text);
+  if (!m) return null;
+  return { date: m[2], text: `${m[1]}${m[3] ? `${m[3]} ` : ""}${m[4]}` };
 }
 
 /// 没有 `##` 节标题的旧格式：按条目日期分组，日期变了开新的一组；不写日期的条目跟着上一组。
@@ -131,10 +133,11 @@ function groupByItemDate(lines: Line[]): { date: string | null; lines: Line[]; l
   return groups;
 }
 
+/// `## 2026-11-24 改存数据目录`、`## 2026-11-24 17:05 …`：节标题里的日期（带时间时连时间一起显示）。
 function splitHeading(text: string): { date: string | null; title: string | null } {
-  const m = /^(\d{4}-\d{2}-\d{2})[\s：:，,·—-]*(.*)$/.exec(text.trim());
+  const m = /^(\d{4}-\d{2}-\d{2}(?:[ T]\d{1,2}:\d{2})?)(?::\d{2})?[\s：:，,·—-]*(.*)$/.exec(text.trim());
   if (!m) return { date: null, title: text.trim() || null };
-  return { date: m[1], title: m[2].trim() || null };
+  return { date: m[1].replace("T", " "), title: m[2].trim() || null };
 }
 
 /// progress.md → 按节的时间线，**最新的一节在最前**；节内条目保持原顺序。
@@ -158,7 +161,12 @@ export function parseLeadProgress(text: string): LeadProgressLog {
     let body: Line[] = [];
     const flush = () => {
       // 第一个 `##` 之前的内容（前言、旧格式的条目、截断后的半节）按条目日期分组，不丢。
-      if (head) push(head.date, head.title, body);
+      // 节标题没写日期（`## 记录`、`## 进展`）、条目自己带日期时，按条目日期分组：此前整节显示「未注明日期」，
+      // 条目里的日期白写了（用户 2026-11-24：「进度总是显示未注明日期」）。
+      if (head && !head.date && body.some((l) => datedItem(l))) {
+        const title = head.title;
+        for (const g of groupByItemDate(body)) push(g.date, title, g.lines);
+      } else if (head) push(head.date, head.title, body);
       else for (const g of groupByItemDate(body)) push(g.date, null, g.lines, true);
     };
     for (const line of lines) {

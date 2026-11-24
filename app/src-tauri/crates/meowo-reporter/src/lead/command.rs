@@ -2,6 +2,19 @@ use super::{publication, review_checks, slug_ok};
 use serde_json::{json, Value};
 use std::path::Path;
 
+/// `lead root [--cwd <目录>]`：打印本项目的 Lead 目录（不存在就建好）。skill 让 agent 开任务前先跑它：
+/// 任务改存 Meowo 数据目录后（任务 20261124-lead-store-in-meowo），位置由项目键算出，agent 自己拼不出来。
+/// 输出就是一行绝对路径，agent 直接拿去用；不加 JSON 包装。
+pub fn root(args: &[String]) -> Result<String, String> {
+    let cwd = match args {
+        [] => std::env::current_dir().map_err(|_| "lead/cwd_unavailable")?,
+        [flag, dir] if flag == "--cwd" => std::path::PathBuf::from(dir),
+        _ => return Err("lead/command_invalid".into()),
+    };
+    let home = meowo_agent::lead_paths::ensure_lead_home(&cwd).ok_or("lead/home_unavailable")?;
+    Ok(home.display().to_string())
+}
+
 pub fn run(args: &[String]) -> Result<Value, String> {
     run_with_owner(args, crate::proc::owner_pid("kimi"))
 }

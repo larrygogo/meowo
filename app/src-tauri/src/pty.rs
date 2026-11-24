@@ -1418,10 +1418,14 @@ impl PtyBroker {
             });
         command.args(crate::browser_agent::launch_args(provider, mcp_session));
         // 走环境变量交 MCP 的 agent（opencode）：与中转用的同名变量合并后覆盖上面设的值。
-        for (key, value) in crate::browser_agent::launch_env(provider, env) {
+        // Lead 目录的放行规则（opencode 也走这个变量）叠在浏览器 MCP 合并好的内容上。
+        let mut extra_env = crate::browser_agent::launch_env(provider, env);
+        let lead_dir_args = crate::lead_runtime::dir_grant(provider, env, cwd, &mut extra_env);
+        for (key, value) in extra_env {
             command.env(key, value);
         }
         command.args(crate::lead_runtime::launch_args(provider, env, mcp_session));
+        command.args(lead_dir_args);
         // 终端归一化:GUI 的托管 PTY 是给人看的全彩 xterm.js 渲染面,颜色必须可用。TERM
         // 之外还得管颜色开关——meowo 常从设了 NO_COLOR 的上游派生(典型:被某个 agent 的
         // "捕获输出用"子环境启动,那里为拿干净输出会置 NO_COLOR=1),CommandBuilder 默认

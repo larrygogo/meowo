@@ -38,4 +38,9 @@ resumeSummary?: string,
 /**
  * 正在挂起或已作答未消费的关卡；没有关卡或 gate.json 损坏为 None。
  */
-gate: LeadGateDto | null, delivery?: LeadDeliveryDto, issues?: Array<string>, };
+gate: LeadGateDto | null, delivery?: LeadDeliveryDto, issues?: Array<string>, 
+/**
+ * 项目里被 git 跟踪、迁移时只复制没删的旧 `.lead` 目录（关卡 B-20261124-lead-migrate：交给用户决定
+ * 删不删）。面板据此提示一行；没有为 None。
+ */
+legacyKept?: string, };
