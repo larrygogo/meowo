@@ -41,7 +41,7 @@ fn shared_workflow_keeps_risk_permission_and_review_contracts() {
         "本文不授予额外权限",
         "不能仅靠改动行数判定风险",
         "可逆的普通设计取舍不发 B",
-        "默认将任务放主检出",
+        "worktree 与主检出共用一个",
         "不得在实施时补该字段绕过验证",
         "角色不可用时必须报告",
         "重复看到同一答复不得重复执行业务",
@@ -74,7 +74,10 @@ fn shared_workflow_keeps_risk_permission_and_review_contracts() {
         "`blocked` 写「需 leader 决定",
         "以「## 总结论」一节结尾才算完成",
         "agents/redteam-<序号>-work/",
-        "`.lead/harness.md`",
+        "Lead 目录的 `harness.md`",
+        // 任务改存 Meowo 数据目录（任务 20261124-lead-store-in-meowo）：位置由 lead root 给出，不再在项目根建 .lead。
+        "运行文末本机命令的 `lead root`",
+        "不要在项目根或别处另建 `.lead`",
     ] {
         assert!(SKILL.contains(rule), "{rule}");
     }

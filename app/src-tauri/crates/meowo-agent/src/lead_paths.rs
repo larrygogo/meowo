@@ -102,6 +102,17 @@ pub fn ensure_lead_home_in(projects: &Path, cwd: &Path) -> Option<PathBuf> {
     Some(home)
 }
 
+/// 怎么让 CLI 能写本项目的 Lead 目录（它在工作目录之外）。不放行时 Claude 每写一次任务文件弹一次审批，
+/// Codex 的 workspace-write 沙箱直接拦（hook 进程继承沙箱，连 `.owner` 都写不进），Gemini 的文件工具拒绝
+/// 工作区外的路径（调研 explore-1，任务 20261124-lead-store-in-meowo）。只放行这一个目录，不放行整个数据根。
+#[derive(Debug, Clone, PartialEq)]
+pub enum LeadDirGrant {
+    /// 追加到启动命令的参数。
+    Args(Vec<String>),
+    /// 深合并进内联配置环境变量（opencode 的 `OPENCODE_CONFIG_CONTENT`）的 JSON 片段。
+    InlineConfig(serde_json::Value),
+}
+
 /// Windows 上 canonicalize 会带 `\\?\` 前缀（真机实测登记表里出现过），登记表和界面里都不该出现它。
 pub fn strip_verbatim(p: PathBuf) -> PathBuf {
     let s = p.to_string_lossy();

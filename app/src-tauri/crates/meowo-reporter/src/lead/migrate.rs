@@ -42,6 +42,11 @@ fn legacy_dirs_in(home: Option<&Path>, cwd: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+/// 被 git 跟踪、复制后留在原处且还在的旧目录（面板提示用户自己决定删不删）。
+pub fn kept_dirs(cwd: &Path) -> Vec<PathBuf> {
+    lead_paths::lead_home(cwd).map(|home| retired_dirs(&home)).unwrap_or_default().into_iter().filter(|d| d.is_dir()).collect()
+}
+
 fn retired_dirs(home: &Path) -> Vec<PathBuf> {
     let Some(file) = home.parent().map(|p| p.join(LEGACY_FILE)) else {
         return Vec::new();

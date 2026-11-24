@@ -335,6 +335,7 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose, onOpenInPanel,
       </div>
       <div className="lead-overview">
         {(task.issues ?? []).map((issue) => <p key={issue} className="lead-gate-error" role="status">{formatBackendError(issue, t.locale)}</p>)}
+        {task.legacyKept && <p className="lead-latest" title={task.legacyKept}>{t.chat.leadLegacyKept(task.legacyKept)}</p>}
         <LeadStages phase={task.phase} />
         {latest && <p className="lead-latest" title={latest}><span className="lead-latest-label">{t.chat.leadLatest}</span>{latest}</p>}
       </div>

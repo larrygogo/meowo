@@ -2054,6 +2054,13 @@ thread_local! {
     static GIT_SPAWNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// `dir` 仓库里 `path` 下有没有被 git 跟踪的文件。git 不可用、不是仓库时按「没有」算。
+/// Lead 迁移用：被跟踪的旧任务只复制不删（关卡 B-20261124-lead-migrate）。
+pub(crate) fn has_tracked_files(dir: &str, path: &str) -> bool {
+    git_output(dir, &["ls-files", "-z", "--", path])
+        .is_ok_and(|out| out.status.success() && !out.stdout.is_empty())
+}
+
 fn git_output(dir: &str, args: &[&str]) -> std::io::Result<std::process::Output> {
     git_run(dir, args, &[], None)
 }

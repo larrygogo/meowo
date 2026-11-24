@@ -1548,6 +1548,7 @@ fn snapshot_inner(cwd: &str, session: Option<&str>, unfiltered: bool) -> Option<
     Some(LeadTaskDto {
         delivery: None,
         issues: (!issues.is_empty()).then_some(issues),
+        legacy_kept: migrate::kept_dirs(Path::new(cwd)).first().map(|d| d.display().to_string()),
         slug: task.file_name()?.to_string_lossy().into_owned(),
         phase: phase_of(&task),
         spec: truncate(&read_text(&task.join("SPEC.md"), false), 12000),

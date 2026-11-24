@@ -449,6 +449,11 @@ fn parse_launch_defaults(content: &str) -> crate::LaunchDefaults {
 }
 
 impl AgentPlugin for Kimi {
+    /// `--add-dir`（kimi 2.7.2 `--help`：Add an additional workspace directory）。
+    fn lead_dir_grant(&self, dir: &std::path::Path) -> Option<crate::lead_paths::LeadDirGrant> {
+        Some(crate::lead_paths::LeadDirGrant::Args(vec!["--add-dir".into(), dir.to_string_lossy().into_owned()]))
+    }
+
     fn process_scope(&self, argv: &[String]) -> crate::registry::ProcessScope {
         use crate::registry::ProcessScope;
         let own = argv.first().is_some_and(|arg| {

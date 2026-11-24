@@ -225,6 +225,11 @@ impl crate::RelayCap for CodexRelay {
 static BROKER_APPROVAL: crate::caps::BrokerApprovalCap = crate::caps::BrokerApprovalCap;
 
 impl AgentPlugin for Codex {
+    /// `--add-dir` 把 Lead 目录加进 workspace-write 沙箱的可写根（hook 进程继承同一沙箱，写 `.owner` 也靠它）。
+    fn lead_dir_grant(&self, dir: &std::path::Path) -> Option<crate::lead_paths::LeadDirGrant> {
+        Some(crate::lead_paths::LeadDirGrant::Args(vec!["--add-dir".into(), dir.to_string_lossy().into_owned()]))
+    }
+
     fn broker_approval(&self) -> Option<&'static crate::caps::BrokerApprovalCap> {
         Some(&BROKER_APPROVAL)
     }

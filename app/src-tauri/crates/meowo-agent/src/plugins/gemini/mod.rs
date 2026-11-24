@@ -174,6 +174,11 @@ static VARIANTS: [Variant; 1] = [Variant {
 pub struct Gemini;
 
 impl AgentPlugin for Gemini {
+    /// `--include-directories`：文件工具只认工作区内路径，Lead 目录要显式纳入工作区。
+    fn lead_dir_grant(&self, dir: &std::path::Path) -> Option<crate::lead_paths::LeadDirGrant> {
+        Some(crate::lead_paths::LeadDirGrant::Args(vec!["--include-directories".into(), dir.to_string_lossy().into_owned()]))
+    }
+
     fn process_scope(&self, argv: &[String]) -> crate::registry::ProcessScope {
         use crate::registry::ProcessScope;
         let is_gemini = |arg: &String| {

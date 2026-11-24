@@ -664,6 +664,12 @@ pub trait AgentPlugin: Sync {
         Vec::new()
     }
 
+    /// 让这家 CLI 能写本项目 Lead 目录的办法（见 [`crate::lead_paths::LeadDirGrant`]）。宿主只在这家装了
+    /// Lead 时才用。None = 这家不需要或没有办法。
+    fn lead_dir_grant(&self, _dir: &Path) -> Option<crate::lead_paths::LeadDirGrant> {
+        None
+    }
+
     /// 新建页默认值：读 CLI 自己的配置（打开新建页时现读，不缓存）。`cwd` 用于项目级配置。
     fn launch_defaults(
         &self,

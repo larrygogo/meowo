@@ -1120,6 +1120,7 @@ export const zh = {
     leadReviewRevision: (revision: string) => `验收版本：${revision}`,
     leadReviewScope: "本次签署的验收项",
     leadDataIssue: "数据待更新",
+    leadLegacyKept: (path: string) => `项目里的旧任务目录 ${path} 已提交进 git，Meowo 复制到数据目录后没有删它。不再需要可以从仓库里删掉`,
     leadEvidenceCommand: "验证命令",
     leadEvidenceResult: "结果",
     leadEvidenceReference: "证据位置",

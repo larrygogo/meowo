@@ -953,6 +953,7 @@ export const en: Dict = {
     leadReviewRevision: (revision) => `Review revision: ${revision}`,
     leadReviewScope: "Checks signed by this review",
     leadDataIssue: "Data needs updating",
+    leadLegacyKept: (path: string) => `The old task folder ${path} is committed to git. Meowo copied it to its data folder and left the original in place. Remove it from the repo if you no longer need it`,
     leadEvidenceCommand: "Verification command",
     leadEvidenceResult: "Result",
     leadEvidenceReference: "Evidence location",

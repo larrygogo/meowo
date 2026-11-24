@@ -180,6 +180,14 @@ static VARIANTS: [Variant; 1] = [Variant {
 pub struct Opencode;
 
 impl AgentPlugin for Opencode {
+    /// 工作目录外的路径由 `permission.external_directory` 管，默认询问；按 glob 放行 Lead 目录。
+    fn lead_dir_grant(&self, dir: &std::path::Path) -> Option<crate::lead_paths::LeadDirGrant> {
+        let pattern = format!("{}/**", dir.to_string_lossy().replace('\\', "/"));
+        Some(crate::lead_paths::LeadDirGrant::InlineConfig(
+            serde_json::json!({ "permission": { "external_directory": { pattern: "allow" } } }),
+        ))
+    }
+
     fn screen_rules(&self) -> &'static [crate::screen::ScreenRule] {
         screen::RULES
     }
