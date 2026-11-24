@@ -283,7 +283,15 @@ fn host_ip(host: &str) -> Option<IpAddr> {
 
 /// 远程桥自己的端口不当预览目标（它不是 dev server，开出去只会多一个入口）。
 fn remote_owned_port(port: u16) -> bool {
-    crate::remote::running_port() == Some(port) || lock().proxies.values().any(|p| p.port == port)
+    crate::remote::running_port() == Some(port)
+        || proxy_owns_port(lock().proxies.iter().map(|((_, target), p)| (*target, p.port)), port)
+}
+
+/// `port` 是不是别的预览的代理端口（`proxies` 为 (目标端口, 代理端口)）。代理与目标同号时（默认如此，见
+/// [`ensure_proxy`]）那就是这个 dev server 自己的预览，不算：原来一律算，第一次打开成功、代理占了同号端口后，
+/// 再点同一个链接就被拒成「不是本会话的」（实拍 2026-11-24：手机经 Tailscale 点 localhost:5180，第二次被拒）。
+fn proxy_owns_port(proxies: impl IntoIterator<Item = (u16, u16)>, port: u16) -> bool {
+    proxies.into_iter().any(|(target, proxy)| proxy == port && target != port)
 }
 
 /// 找到监听 `port` 的、属于会话的那个回环地址；第二项 = 能不能占同号端口（见 [`ensure_proxy`]）。
@@ -1129,6 +1137,17 @@ mod tests {
         assert_eq!(verdict(Err("preview/not_session".into()), true), Verdict::Drop);
         assert_eq!(verdict(Err("preview/not_listening".into()), true), Verdict::Missing);
         assert_eq!(verdict(Err("preview/owner_unknown".into()), false), Verdict::Missing);
+    }
+
+    /// 实拍 2026-11-24：第一次打开 5180 成功，代理占了同号的 5180；再点同一个链接被拒成「不是本会话的」。
+    #[test]
+    fn same_numbered_proxy_does_not_block_reopening_its_own_target() {
+        // 5180 的代理就开在 5180：再开 5180 照常放行。
+        assert!(!proxy_owns_port([(5180, 5180)], 5180));
+        // 5173 的代理退到了随机端口 51234：把 51234 当预览目标要拒（那是代理，不是 dev server）。
+        assert!(proxy_owns_port([(5173, 51234)], 51234));
+        assert!(!proxy_owns_port([(5173, 51234)], 5173));
+        assert!(!proxy_owns_port(std::iter::empty(), 5180));
     }
 
     /// dev server 自己开在所有网卡上时不占同号端口（Windows 上会把它的局域网入口抢走）。
