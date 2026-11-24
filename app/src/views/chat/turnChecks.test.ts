@@ -400,11 +400,27 @@ describe("这一轮的检查", () => {
       ["npx tsc --noEmit", "npx tsc --noEmit -p .", ["pass"]],
       ["npx vitest run", "npx vitest run src/a.test.ts", ["fail", "pass"]],
       ["cargo test", "cargo clippy", ["fail", "pass"]],
+      // 实拍 2026-11-24：同一个包，后一次去掉了名字筛选，跑得更全，盖过。
+      ["cargo test -p meowo-reporter lead 2>&1", "cargo test -p meowo-reporter", ["pass"]],
+      ["npx vitest run --project web src/a.test.ts", "npx vitest run --project web", ["pass"]],
+      // 反过来更窄、换了包、选项不同的都不盖。
+      ["cargo test -p meowo-reporter", "cargo test -p meowo-reporter lead", ["fail", "pass"]],
+      ["cargo test -p a lead", "cargo test -p b", ["fail", "pass"]],
+      ["npx vitest run --project web src/a.test.ts", "npx vitest run", ["pass"]],
+      ["npx vitest run src/a.test.ts", "npx vitest run --project web", ["fail", "pass"]],
     ];
     for (const [first, second, expected] of pairs) {
       const checks = collectTurnChecks([...run(first, { is_error: true, text: "boom" }), ...run(second, {})]);
       expect([first, second, checks.map((c) => c.status)]).toEqual([first, second, expected]);
     }
+  });
+
+  it("实拍 2026-11-24：带筛选的 cargo test 失败，之后在复合命令里跑整个包通过，旧失败退场", () => {
+    const checks = collectTurnChecks([
+      ...run("cargo test -p meowo-reporter lead 2>&1 | grep -E \"^test result|FAILED\"", { text: "test result: FAILED. 145 passed; 1 failed; 0 ignored;" }),
+      ...run("cargo test -p meowo-reporter 2>&1 | grep -E \"^test result|FAILED\" ; cargo check 2>&1 | grep -E \"^error\"", { text: "test result: ok. 173 passed; 0 failed; 0 ignored;" }),
+    ]);
+    expect(checks.filter((c) => c.kinds.includes("test")).map((c) => c.status)).toEqual(["pass"]);
   });
 
   it("做空第五轮：PowerShell 5.1 不认 &&，命令没跑", () => {

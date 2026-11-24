@@ -70,10 +70,7 @@ fn run_inner(mode: &str, raw: &str, registry: &Path) -> Output {
     let data = Value::Object(data);
     let stdout = match mode {
         "session" => session(&data, registry),
-        "claim" => {
-            claim(&data, registry);
-            None
-        }
+        "claim" => claim(&data, registry),
         "stop" => stop(&data, registry),
         "wait" => return wait(&data, registry, WAIT_POLL, WAIT_MAX),
         _ => None,
@@ -609,12 +606,75 @@ fn session_context(task: &Path, sid: &str) -> Option<String> {
 /// 写入任务目录里任意文件的会话认领该任务；从被写的路径反推任务目录，不看工作目录
 /// （会话在主目录启动、在 worktree 里工作时都能认领）。怎么认出「写的是哪个任务」见 ownership 模块。
 /// 子代理的调用（载荷带 agent_id）同样认领：session_id 是主会话的，任务归主会话。
-fn claim(data: &Value, registry: &Path) {
-    let Some(sid) = data.get("session_id").and_then(Value::as_str) else {
-        return;
-    };
-    let Some(task) = ownership::claim_target(data) else { return };
+///
+/// 返回值是给 agent 的提示（Claude 的 PostToolUse additionalContext）：任务建在面板读不到的地方时，
+/// 当场告诉它挪到哪。此前任务建在 git 仓库外的上级目录，认领照样成功，面板却只看仓库根下的
+/// `.lead`，用户问「为什么看不到 lead 面板」时 agent 也看不到面板，只能猜（用户诊断包 2026-11-24）。
+fn claim(data: &Value, registry: &Path) -> Option<String> {
+    let sid = data.get("session_id").and_then(Value::as_str)?;
+    let task = ownership::claim_target(data)?;
     record_owner(&task, sid, registry);
+    let cwd = data.get("cwd").and_then(Value::as_str)?;
+    let hint = misplaced_hint(&task, cwd)?;
+    Some(json!({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": hint}}).to_string())
+}
+
+/// 任务所在的 `.lead` 不是面板会读的那几个（会话 cwd 的项目根、worktree 的主检出）时，返回一句挪动指引。
+fn misplaced_hint(task: &Path, cwd: &str) -> Option<String> {
+    let canon = |p: &Path| p.canonicalize().map(strip_verbatim).unwrap_or_else(|_| p.to_path_buf());
+    let lead = canon(task.parent()?);
+    let dirs = lead_dirs(Path::new(cwd));
+    if dirs.iter().any(|d| canon(d) == lead) {
+        return None;
+    }
+    let target = dirs.first()?.join(task.file_name()?);
+    let looked: Vec<String> = dirs.iter().map(|d| d.display().to_string()).collect();
+    Some(format!(
+        "[lead] 任务 {} 不在 Meowo Lead 面板读取的位置，用户看不到它的面板。面板按会话工作目录 {cwd} 所在的 git 仓库根找任务，只读：{}。请把整个任务目录移到 {}（不要另留一份副本），再用 Write 或 Edit 改一次那里的 progress.md，让 Meowo 重新认领。",
+        task.display(),
+        looked.join("、"),
+        target.display()
+    ))
+}
+
+/// 面板在这个 cwd、这个会话下为什么没有任务可显示（宿主写诊断日志用）：找了哪些 `.lead`、里面各任务的
+/// 阶段和归属。只描述事实，不下结论——同一份信息对「位置不对」「没认领上」「已结束」都够判断。
+/// 读取位置下一个任务都没有时返回 None：多数会话根本不用 Lead，每个都记一行会淹没日志。
+pub fn hidden_reason(cwd: &str, session: Option<&str>) -> Option<String> {
+    let dirs = lead_dirs(Path::new(cwd));
+    let looked: Vec<String> = dirs.iter().map(|d| d.display().to_string()).collect();
+    let looked = looked.join("、");
+    let tasks: Vec<PathBuf> = dirs.iter().flat_map(|d| ownership::tasks_in(d)).collect();
+    if tasks.is_empty() {
+        return None;
+    }
+    let active = dirs
+        .iter()
+        .map(|d| read(&d.join("active")).trim().to_owned())
+        .find(|s| !s.is_empty())
+        .unwrap_or_else(|| "无".into());
+    const SHOWN: usize = 6;
+    let mut list: Vec<String> = tasks
+        .iter()
+        .take(SHOWN)
+        .map(|t| {
+            let owner = owner_of(t);
+            let who = if owner.is_empty() {
+                "无主"
+            } else if session == Some(owner.as_str()) {
+                "本会话"
+            } else {
+                "别的会话"
+            };
+            let phase = phase_of(t);
+            let name = t.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            format!("{name}（phase={}，{who}）", if phase.is_empty() { "未写" } else { &phase })
+        })
+        .collect();
+    if tasks.len() > SHOWN {
+        list.push(format!("另有 {} 个", tasks.len() - SHOWN));
+    }
+    Some(format!("找的位置 {looked}；active={active}；任务：{}", list.join("；")))
 }
 
 /// 把任务记到会话名下：写 `.owner` 并更新登记表（一个任务只归一个会话）。
