@@ -1225,3 +1225,7 @@ body.remote-ui .chat-remote-type input:focus { outline: none; box-shadow: inset 
 body.remote-ui .chat-remote-type button { min-height: 44px; padding: 0 14px; color: var(--cc-text); background: var(--fill-selected); font-size: 14px; }
 /* 这几排按钮彼此只隔 8px：统一的 6px 外扩会互相压，按钮本身已够 44。 */
 :where(body.remote-ui) .chat-remote-keys button::after { inset: 0; }
+
+/* HTML 视图卡（ViewCard.tsx）：手机卡宽只有 340px 左右，「页面」标签让给标题。 */
+body.remote-ui .chat-view-tag { display: none; }
+body.remote-ui .chat-view.is-zoomed { inset: 0; border-radius: 0; }

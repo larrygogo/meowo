@@ -59,3 +59,11 @@ export function deliveredDownloadSrc(path: string): string | null {
   const src = convertFileSrc(path);
   return src.startsWith("/file?") ? `/download?${src.slice("/file?".length)}` : null;
 }
+
+/** HTML 视图卡的页面地址（chat_views.rs）：桌面是 meowo-view 协议（Windows http://meowo-view.localhost/…，
+ *  macOS meowo-view://localhost/…），手机由 transport 改指 /view/。主题放进地址，页面一打开就是对的颜色。 */
+export function viewSrc(id: string, theme: "light" | "dark"): string | null {
+  if (!/^[0-9a-f]{32}$/.test(id)) return null;
+  const base = convertFileSrc(`${id}.html`, "meowo-view");
+  return `${base}${base.includes("?") ? "&" : "?"}theme=${theme}`;
+}

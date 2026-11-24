@@ -1,0 +1,13 @@
+<style>
+  :root { --bg:#ffffff; --fg:#1d1d1f; --dim:#6b6b70; --line:#e4e4e8; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#17181a; --fg:#ececee; --dim:#9a9aa0; --line:#2a2b2e; } }
+  body { margin:0; padding:28px; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; }
+  .card { border:1px solid var(--line); border-radius:14px; padding:22px; }
+  h3 { margin:0 0 6px; font-size:18px; } p { margin:0 0 18px; color:var(--dim); }
+  .row { display:flex; gap:10px; }
+  button { border:0; border-radius:10px; padding:11px 22px; font:inherit; font-weight:600; cursor:pointer; transition:transform .12s, filter .12s; }
+  button:active { transform:scale(.96); } button:hover { filter:brightness(1.08); }
+  .primary { background:transparent; color:#2f6fed; box-shadow:inset 0 0 0 1.5px #2f6fed; } .primary[style] {}
+  .ghost { background:transparent; color:var(--fg); box-shadow:inset 0 0 0 1px var(--line); }
+</style>
+<div class="card"><h3>导出报告</h3><p>把本月的 128 条记录导出成 CSV。</p><div class="row"><button class="primary">导出</button><button class="ghost">取消</button></div></div>

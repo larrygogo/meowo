@@ -1500,7 +1500,7 @@ mod tests {
     /// claude 的免审批清单：发图始终在；浏览器开关关掉时只剩它。
     #[test]
     fn send_image_is_always_auto_allowed() {
-        assert_eq!(auto_allowed(false), vec!["send_image", "compare_images", "offer_choices", "send_file", "notify_user", "ask_form"]);
+        assert_eq!(auto_allowed(false), vec!["send_image", "compare_images", "offer_choices", "send_file", "notify_user", "ask_form", "show_html"]);
         let on = auto_allowed(true);
         assert!(on.contains(&"send_image") && on.contains(&"browser_click"));
         assert!(!on.contains(&"browser_evaluate"));
@@ -1552,13 +1552,14 @@ mod tests {
         assert_eq!(rule["toolName"].as_str(), Some("send_image"));
         assert_eq!(rule["decision"].as_str(), Some("allow"));
         let rules = doc["rule"].as_array_of_tables().unwrap();
-        assert_eq!(rules.len(), 6);
+        assert_eq!(rules.len(), 7);
         assert_eq!(rules.get(1).unwrap()["toolName"].as_str(), Some("compare_images"));
         assert_eq!(rules.get(2).unwrap()["toolName"].as_str(), Some("offer_choices"));
         assert_eq!(rules.get(3).unwrap()["toolName"].as_str(), Some("send_file"));
         assert_eq!(rules.get(4).unwrap()["toolName"].as_str(), Some("notify_user"));
         assert_eq!(rules.get(5).unwrap()["toolName"].as_str(), Some("ask_form"));
-        // 只放行发图、对照、方案卡、交文件、提醒、表单，没有服务器级 trust 或通配。
+        assert_eq!(rules.get(6).unwrap()["toolName"].as_str(), Some("show_html"));
+        // 只放行发图、对照、方案卡、交文件、提醒、表单、视图卡，没有服务器级 trust 或通配。
         assert!(!body.contains("browser") && !body.contains('*'));
     }
 
@@ -1587,7 +1588,7 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         let doc: toml_edit::DocumentMut = text.parse().unwrap();
         let rules = doc["permission"]["rules"].as_array_of_tables().unwrap();
-        assert_eq!(rules.len(), 7, "{text}");
+        assert_eq!(rules.len(), 8, "{text}");
         assert_eq!(rules.get(0).unwrap()["pattern"].as_str(), Some("Bash(rm *)"));
         assert_eq!(rules.get(1).unwrap()["pattern"].as_str(), Some("mcp__meowo__send_image"));
         assert_eq!(rules.get(2).unwrap()["pattern"].as_str(), Some("mcp__meowo__compare_images"));
@@ -1595,16 +1596,17 @@ mod tests {
         assert_eq!(rules.get(4).unwrap()["pattern"].as_str(), Some("mcp__meowo__send_file"));
         assert_eq!(rules.get(5).unwrap()["pattern"].as_str(), Some("mcp__meowo__notify_user"));
         assert_eq!(rules.get(6).unwrap()["pattern"].as_str(), Some("mcp__meowo__ask_form"));
+        assert_eq!(rules.get(7).unwrap()["pattern"].as_str(), Some("mcp__meowo__show_html"));
         assert_eq!(rules.get(1).unwrap()["decision"].as_str(), Some("allow"));
-        // 旧版本只放行了发图：升级后再同步要补上对照、方案卡、交文件、提醒，且不留重复。
+        // 旧版本只放行了发图：升级后再同步要补上对照、方案卡、交文件、提醒、表单、视图卡，且不留重复。
         let mut old_doc: toml_edit::DocumentMut = text.parse().unwrap();
-        for at in [6, 5, 4, 3, 2] {
+        for at in [7, 6, 5, 4, 3, 2] {
             old_doc["permission"]["rules"].as_array_of_tables_mut().unwrap().remove(at);
         }
         std::fs::write(&path, old_doc.to_string()).unwrap();
         sync_permission_rule(&path, "mcp__", true);
         let upgraded: toml_edit::DocumentMut = std::fs::read_to_string(&path).unwrap().parse().unwrap();
-        assert_eq!(upgraded["permission"]["rules"].as_array_of_tables().unwrap().len(), 7);
+        assert_eq!(upgraded["permission"]["rules"].as_array_of_tables().unwrap().len(), 8);
         assert_eq!(doc["default_model"].as_str(), Some("keep"));
         sync_permission_rule(&path, "mcp__", false);
         let doc: toml_edit::DocumentMut = std::fs::read_to_string(&path).unwrap().parse().unwrap();

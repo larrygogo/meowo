@@ -1,0 +1,31 @@
+<style>
+  :root { --bg:#ffffff; --fg:#1d1d1f; --dim:#6b6b70; --line:#e4e4e8; --accent:#2f6fed; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#17181a; --fg:#ececee; --dim:#9a9aa0; --line:#2a2b2e; --accent:#5b8cff; } }
+  body { margin:0; padding:20px; background:var(--bg); color:var(--fg); font:14px/1.5 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; }
+  .row { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+  .cell { border:1px solid var(--line); border-radius:12px; padding:18px 14px 14px; display:flex; flex-direction:column; align-items:center; gap:12px; }
+  .cell h4 { margin:0; font-size:13px; font-weight:600; }
+  .cell p { margin:0; color:var(--dim); font-size:12px; text-align:center; min-height:36px; }
+  button.demo { border:0; border-radius:10px; padding:10px 22px; background:var(--accent); color:#fff; font:inherit; font-weight:600; cursor:pointer; }
+  .a:active { transform:scale(.94); transition:transform .08s; } .a { transition:transform .25s cubic-bezier(.3,1.6,.5,1); }
+  .b { transition:box-shadow .2s, transform .2s; } .b:hover { transform:translateY(-2px); box-shadow:0 8px 20px rgba(47,111,237,.35); }
+  .c { position:relative; overflow:hidden; } .c span.r { position:absolute; border-radius:50%; background:rgba(255,255,255,.5); transform:scale(0); animation:rip .5s ease-out; pointer-events:none; }
+  @keyframes rip { to { transform:scale(4); opacity:0; } }
+  .pick { margin-top:auto; border:1px solid var(--line); background:transparent; color:var(--fg); border-radius:8px; padding:4px 10px; font:inherit; font-size:12px; cursor:pointer; }
+  .pick:hover { border-color:var(--accent); color:var(--accent); }
+  .count { color:var(--dim); font-size:12px; }
+  a { color:var(--accent); }
+</style>
+<div class="row">
+  <div class="cell"><h4>弹一下</h4><p>按下缩小，松手回弹，有力度感</p><button class="demo a">保存</button><span class="count" id="ca">点了 0 次</span><button class="pick" onclick="meowo.send('就用「弹一下」')">选这个</button></div>
+  <div class="cell"><h4>浮起</h4><p>悬停时上浮带阴影，按下无动画</p><button class="demo b">保存</button><span class="count" id="cb">点了 0 次</span><button class="pick" onclick="meowo.send('就用「浮起」')">选这个</button></div>
+  <div class="cell"><h4>水波</h4><p>点击处扩散水波纹，<a href="https://m3.material.io/foundations/interaction/states">Material 风格</a></p><button class="demo c">保存</button><span class="count" id="cc">点了 0 次</span><button class="pick" onclick="meowo.send('就用「水波」')">选这个</button></div>
+</div>
+<script>
+  for (const k of ["a","b","c"]) { let n = 0; document.querySelector("."+k).addEventListener("click", (e) => {
+    document.getElementById("c"+k).textContent = "点了 " + (++n) + " 次";
+    if (k === "c") { const b = e.currentTarget, r = document.createElement("span"), s = Math.max(b.clientWidth, b.clientHeight);
+      r.className = "r"; r.style.width = r.style.height = s + "px"; const o = b.getBoundingClientRect();
+      r.style.left = (e.clientX - o.left - s/2) + "px"; r.style.top = (e.clientY - o.top - s/2) + "px"; b.appendChild(r); setTimeout(() => r.remove(), 500); }
+  }); }
+</script>

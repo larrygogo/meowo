@@ -4,7 +4,9 @@
 // 三版对照与取舍见 .lead/20261122-rich-display/decisions.md。
 //
 // 后端回执（chat_choices.rs）：一句说明，每个带截图的方案一行图片引用，最后一行
-// `[Choices: {JSON}]` 是题面与方案（image 是引用行的下标）。界面只认统一工具名，不按 Provider 分支。
+// `[Choices: {JSON}]` 是题面与方案（image 是引用行的下标，view 是 HTML 预览的快照指纹）。界面只认统一工具名，不按 Provider 分支。
+// HTML 预览（任务 20261124-html-cards）：缩略图位置放一块不接收点击的页面缩略，点 ⤢ 进放大层，
+// 放大层里页面能点能试，也能「选这个」。
 import { memo, useContext, useMemo, useState, useSyncExternalStore, type KeyboardEvent } from "react";
 import { isRemotePath, safeFileSrc } from "../../assetSrc";
 import { useT } from "../../i18n";
@@ -15,10 +17,11 @@ import { fileNameOf, ImageFailure, imageErrorText, sentImageReceipt, useImageLoa
 import { formatChoiceAnswer, parseChoiceAnswer, type ChoiceAnswer } from "./choiceReply";
 import { looksLikeCardReply } from "./formReply";
 import { Lightbox, type GalleryItem } from "./Lightbox";
+import { ViewZoom, ViewThumb } from "./ViewCard";
 import { useToolRunState } from "./toolState";
 import type { ToolResultItem, ToolUseItem } from "./shared";
 
-export type ChoiceOption = { label: string; description: string | null; image: string | null };
+export type ChoiceOption = { label: string; description: string | null; image: string | null; view: string | null };
 export type ChoicesReceipt = { question: string; options: ChoiceOption[] };
 
 const MARKER = "[Choices: ";
@@ -46,6 +49,7 @@ export function parseChoicesReceipt(text: string): ChoicesReceipt | null {
         label: option.label.trim(),
         description: typeof option.description === "string" && option.description.trim() ? option.description.trim() : null,
         image: images[at] ?? null,
+        view: typeof option.view === "string" && /^[0-9a-f]{32}$/.test(option.view) ? option.view : null,
       }];
     })
     : [];
@@ -116,6 +120,7 @@ function ChoiceCard({ cardId, receipt, followUps }: { cardId: string; receipt: C
   const sendFailed = sendState?.status === "failed";
   const [expanded, setExpanded] = useState(false);
   const [gallery, setGallery] = useState<number | null>(null);
+  const [viewZoom, setViewZoom] = useState<number | null>(null);
 
   const card = useMemo(() => ({ question, labels: options.map((option) => option.label) }), [question, options]);
   // 往后看用户消息：是这张卡发的就是答案；是别的卡发的（同一轮两张卡）就跳过接着看；
@@ -159,19 +164,24 @@ function ChoiceCard({ cardId, receipt, followUps }: { cardId: string; receipt: C
     }
   };
   const zoom = (index: number) => {
+    if (options[index]?.view) {
+      setViewZoom(index);
+      return;
+    }
     const at = gallerySources.findIndex((entry) => entry.index === index);
     if (at >= 0) setGallery(at);
   };
+  const hasViews = options.some((option) => option.view);
 
   const grid = (interactive: boolean) => (
     <div className="chat-choices-grid" role={interactive ? "radiogroup" : "list"} aria-label={question || t.chat.choicesTag}
-      data-count={options.length} data-images={gallerySources.length > 0 || undefined}>
+      data-count={options.length} data-images={gallerySources.length > 0 || hasViews || undefined}>
       {options.map((option, index) => (
         <ChoiceTile key={index} index={index} option={option}
           interactive={interactive}
           selected={interactive ? selected === index : answer?.kind === "picked" && answer.index === index}
           onSelect={() => setSelected(index)}
-          onZoom={gallerySources.some((entry) => entry.index === index) ? () => zoom(index) : null} />
+          onZoom={option.view || gallerySources.some((entry) => entry.index === index) ? () => zoom(index) : null} />
       ))}
     </div>
   );
@@ -188,6 +198,16 @@ function ChoiceCard({ cardId, receipt, followUps }: { cardId: string; receipt: C
           </button>
         );
       } : undefined} />
+  );
+  const zoomed = viewZoom !== null ? options[viewZoom] : null;
+  const viewLayer = zoomed?.view && viewZoom !== null && (
+    <ViewZoom id={zoomed.view} title={`${viewZoom + 1} · ${zoomed.label}`} caption={zoomed.description} onClose={() => setViewZoom(null)}
+      action={open ? (
+        <button type="button" className="chat-lightbox-action is-pick" aria-pressed={selected === viewZoom}
+          onClick={() => { setSelected(viewZoom); setViewZoom(null); }}>
+          <span>{t.chat.choicesPickThis(viewZoom + 1)}</span>
+        </button>
+      ) : null} />
   );
 
   if (!open && (answer || skipped)) {
@@ -212,6 +232,7 @@ function ChoiceCard({ cardId, receipt, followUps }: { cardId: string; receipt: C
         </div>
         {expanded && grid(false)}
         {lightbox}
+        {viewLayer}
       </div>
     );
   }
@@ -220,7 +241,7 @@ function ChoiceCard({ cardId, receipt, followUps }: { cardId: string; receipt: C
     <div className="chat-choices" onKeyDown={onKeyDown}>
       <div className="chat-choices-head">
         <span className="chat-choices-tag">{t.chat.choicesTag}</span>
-        {open && <span className="chat-choices-hint">{t.chat.choicesHint(options.length, gallerySources.length > 0)}</span>}
+        {open && <span className="chat-choices-hint">{t.chat.choicesHint(options.length, gallerySources.length > 0 || hasViews)}</span>}
       </div>
       {question && <div className="chat-choices-question">{question}</div>}
       {grid(open)}
@@ -243,6 +264,7 @@ function ChoiceCard({ cardId, receipt, followUps }: { cardId: string; receipt: C
       )}
       {sendFailed && <div className="chat-choices-error" role="alert">{t.chat.choicesSendFailed}</div>}
       {lightbox}
+      {viewLayer}
     </div>
   );
 }
@@ -260,7 +282,12 @@ function ChoiceTile({ index, option, interactive, selected, onSelect, onZoom }: 
   const src = option.image && !isRemotePath(option.image) ? safeFileSrc(option.image) : null;
   const body = (
     <>
-      {option.image && (
+      {option.view && (
+        <span className="chat-choice-shot chat-choice-view">
+          <ViewThumb id={option.view} title={option.label} />
+        </span>
+      )}
+      {!option.view && option.image && (
         <span className="chat-choice-shot">
           {src && !load.failed
             ? <img src={src} alt={option.label} loading="lazy" draggable={false} onLoad={load.onLoad} onError={load.onError} />
@@ -275,11 +302,11 @@ function ChoiceTile({ index, option, interactive, selected, onSelect, onZoom }: 
     </>
   );
   return (
-    <div className={"chat-choice" + (selected ? " is-selected" : "") + (option.image ? " has-shot" : "")} role={interactive ? undefined : "listitem"}>
+    <div className={"chat-choice" + (selected ? " is-selected" : "") + (option.image || option.view ? " has-shot" : "")} role={interactive ? undefined : "listitem"}>
       {interactive
         ? <button type="button" className="chat-choice-pick" role="radio" aria-checked={selected} onClick={onSelect}>{body}</button>
         : <div className="chat-choice-pick">{body}</div>}
-      {onZoom && src && !load.failed && (
+      {onZoom && (option.view || (src && !load.failed)) && (
         <button type="button" className="chat-choice-zoom" aria-label={t.chat.choicesZoom(index + 1)} data-tip={t.chat.choicesZoom(index + 1)} onClick={onZoom}>⤢</button>
       )}
     </div>

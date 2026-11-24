@@ -143,9 +143,11 @@ pub const SEND_FILE: &str = "send_file";
 pub const NOTIFY_USER: &str = "notify_user";
 /// 小表单：一次问用户 1~8 件事，用户在对话里填好提交，卡片替用户发一条消息（chat_forms.rs）。
 pub const ASK_FORM: &str = "ask_form";
-/// 只把内容交给用户、不改用户任何东西、不对外发送的工具（发图、对照、方案卡、交文件、提醒、表单）：
+/// HTML 视图卡：一段 HTML（或本机 .html）存成快照，在对话里嵌成能点能动的小页面（chat_views.rs）。
+pub const SHOW_HTML: &str = "show_html";
+/// 只把内容交给用户、不改用户任何东西、不对外发送的工具（发图、对照、方案卡、交文件、提醒、表单、视图卡）：
 /// 五家都免逐次审批，也不受浏览器开关约束。方案卡、表单的「回复」是用户自己点的，工具本身不替用户做任何事。
-pub const IMAGE_TOOLS: &[&str] = &[SEND_IMAGE, COMPARE_IMAGES, OFFER_CHOICES, SEND_FILE, NOTIFY_USER, ASK_FORM];
+pub const IMAGE_TOOLS: &[&str] = &[SEND_IMAGE, COMPARE_IMAGES, OFFER_CHOICES, SEND_FILE, NOTIFY_USER, ASK_FORM, SHOW_HTML];
 
 /// Meowo 自己的 MCP 工具（发图、浏览器）在对话页上统一叫 `mcp__meowo__<工具>`：claude、kimi
 /// 原样就是这个形态，codex 的命名空间形态由插件拼成它。gemini（`mcp_meowo_<工具>`）与 opencode
@@ -1503,6 +1505,16 @@ pub fn readable_roots() -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    /// 视图卡与其他 Meowo 工具一样：gemini（mcp_meowo_）、opencode（meowo_）的名字换成统一名，前端只认这一种；
+    /// claude / kimi / codex 原样就是统一名。五家免审批都从 IMAGE_TOOLS 读，show_html 必须在里面。
+    #[test]
+    fn show_html_gets_the_unified_name_for_every_provider() {
+        assert_eq!(canonical_meowo_tool("mcp_meowo_show_html", "mcp_meowo_"), "mcp__meowo__show_html");
+        assert_eq!(canonical_meowo_tool("meowo_show_html", "meowo_"), "mcp__meowo__show_html");
+        assert_eq!(canonical_meowo_tool("mcp__meowo__show_html", "mcp_meowo_"), "mcp__meowo__show_html");
+        assert!(IMAGE_TOOLS.contains(&SHOW_HTML));
+    }
+
     use super::*;
 
     const PNG_1X1: &[u8] = &[

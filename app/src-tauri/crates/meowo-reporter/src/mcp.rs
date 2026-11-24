@@ -36,8 +36,9 @@ const OFFER_CHOICES: &str = "offer_choices";
 const SEND_FILE: &str = meowo_agent::images::SEND_FILE;
 const NOTIFY_USER: &str = meowo_agent::images::NOTIFY_USER;
 const ASK_FORM: &str = meowo_agent::images::ASK_FORM;
+const SHOW_HTML: &str = meowo_agent::images::SHOW_HTML;
 
-/// 不受浏览器开关约束的那组（发图、对照、方案卡、交文件、提醒、表单）。
+/// 不受浏览器开关约束的那组（发图、对照、方案卡、交文件、提醒、表单、视图卡）。
 fn is_image_tool(name: &str) -> bool {
     meowo_agent::images::IMAGE_TOOLS.contains(&name)
 }
@@ -156,6 +157,10 @@ const SEND_IMAGE_HINT: &str = concat!(
 
 ",
     "开工前要用户一次答清几件事（部署到哪、版本号、要不要顺带做某事）时，用 ask_form 发一张小表单，不要在正文里列一串问题让用户逐条手打。调用后先结束这一轮，用户填好的答案会作为下一条消息发给你。只有一个二选一的问题就直接问；要看截图才能比的方案用 offer_choices。",
+    "
+
+",
+    "要用户看动效、交互、可以悬停看数值的图，或者几种交互方案对比时，用 show_html 把一段 HTML 嵌进对话（静态画面还是截图用 send_image）。页面要自带全部内容：CSS、JS、SVG 都内联，页面不联网（CDN 也加载不了）；跟随深浅主题用 prefers-color-scheme。页面里调用 meowo.send(\"一句话\") 会把这句话放进用户的输入框，适合做「选这个」之类的按钮。offer_choices 的方案也可以给 html，交互方案放进方案卡里比。",
     "\n\n",
     "起了 dev server 让用户看效果时，把地址写成可点的 http://localhost:端口 链接：用户在手机上点它，Meowo 会把这个端口开给手机看。所以页面里请求后端用相对路径（配 dev server 的 proxy），不要写死 http://localhost:3000 这类别的端口，手机上那个地址指向的是手机自己。dev server 要用你自己的后台运行方式起（让它留在你的进程下面），不要用 & 、nohup 或 Start-Process 把它甩出去，否则 Meowo 认不出它是这个会话的，不会开给手机。",
 );
@@ -178,6 +183,10 @@ const INSTRUCTIONS_WITH_BROWSER: &str = concat!(
 
 ",
     "开工前要用户一次答清几件事（部署到哪、版本号、要不要顺带做某事）时，用 ask_form 发一张小表单，不要在正文里列一串问题让用户逐条手打。调用后先结束这一轮，用户填好的答案会作为下一条消息发给你。只有一个二选一的问题就直接问；要看截图才能比的方案用 offer_choices。",
+    "
+
+",
+    "要用户看动效、交互、可以悬停看数值的图，或者几种交互方案对比时，用 show_html 把一段 HTML 嵌进对话（静态画面还是截图用 send_image）。页面要自带全部内容：CSS、JS、SVG 都内联，页面不联网（CDN 也加载不了）；跟随深浅主题用 prefers-color-scheme。页面里调用 meowo.send(\"一句话\") 会把这句话放进用户的输入框，适合做「选这个」之类的按钮。offer_choices 的方案也可以给 html，交互方案放进方案卡里比。",
     "\n\n",
     "起了 dev server 让用户看效果时，把地址写成可点的 http://localhost:端口 链接：用户在手机上点它，Meowo 会把这个端口开给手机看。所以页面里请求后端用相对路径（配 dev server 的 proxy），不要写死 http://localhost:3000 这类别的端口，手机上那个地址指向的是手机自己。dev server 要用你自己的后台运行方式起（让它留在你的进程下面），不要用 & 、nohup 或 Start-Process 把它甩出去，否则 Meowo 认不出它是这个会话的，不会开给手机。",
 );
@@ -199,11 +208,13 @@ fn prepare_args(tool: &str, mut args: Value) -> Value {
         let cwd = std::env::current_dir().ok();
         if let Some(options) = args.get_mut("options").and_then(Value::as_array_mut) {
             for option in options {
-                let Some(source) = option.get("image").and_then(Value::as_str).map(str::trim) else {
-                    continue;
-                };
-                if let Some(path) = absolute_source(source, cwd.as_deref()) {
-                    option["image"] = json!(path.to_string_lossy());
+                for key in ["image", "html_path"] {
+                    let Some(source) = option.get(key).and_then(Value::as_str).map(str::trim) else {
+                        continue;
+                    };
+                    if let Some(path) = absolute_source(source, cwd.as_deref()) {
+                        option[key] = json!(path.to_string_lossy());
+                    }
                 }
             }
         }
@@ -212,7 +223,7 @@ fn prepare_args(tool: &str, mut args: Value) -> Value {
     let keys: &[&str] = match tool {
         SEND_IMAGE => &["source"],
         COMPARE_IMAGES => &["before", "after"],
-        SEND_FILE => &["path"],
+        SEND_FILE | SHOW_HTML => &["path"],
         _ => return args,
     };
     let cwd = std::env::current_dir().ok();
@@ -344,7 +355,7 @@ fn send_image_tool() -> Value {
 fn offer_choices_tool() -> Value {
     tool(
         OFFER_CHOICES,
-        "请用户在 2~4 个方案里点一个：Meowo 在对话里把方案并排显示成一张卡（手机上也能点），每个方案可带一张本地截图。用户点选后，卡片会以用户的身份发一条消息告诉你选了哪个（可能附一句补充），也可能一个都不要。用在真正需要用户拍板、而且看了才能比的取舍上：布局、配色、交互方式、文案语气这类。先把每个方案做出来截图（比如用 browser_screenshot），再调用。小决定自己定，不要每步都弹卡。调用后立即返回，不会等用户：收到确认后先结束这一轮，等用户的选择消息到了再按它动手。截图只接受本地文件（PNG、JPEG、GIF、WebP、SVG，单张不超过 20MB），不接受网址。",
+        "请用户在 2~4 个方案里点一个：Meowo 在对话里把方案并排显示成一张卡（手机上也能点），每个方案可带一张本地截图。用户点选后，卡片会以用户的身份发一条消息告诉你选了哪个（可能附一句补充），也可能一个都不要。用在真正需要用户拍板、而且看了才能比的取舍上：布局、配色、交互方式、文案语气这类。先把每个方案做出来截图（比如用 browser_screenshot），再调用。小决定自己定，不要每步都弹卡。调用后立即返回，不会等用户：收到确认后先结束这一轮，等用户的选择消息到了再按它动手。截图只接受本地文件（PNG、JPEG、GIF、WebP、SVG，单张不超过 20MB），不接受网址。动效、交互方案截图看不出来时，给方案 html 预览代替截图，用户能直接点着试。",
         json!({
             "question": { "type": "string", "description": "要用户决定的问题，一句话，比如「设置页用哪种布局？」" },
             "options": {
@@ -357,7 +368,9 @@ fn offer_choices_tool() -> Value {
                     "properties": {
                         "label": { "type": "string", "description": "方案的短名字，几个字，比如「列表式」" },
                         "description": { "type": "string", "description": "可选。一句说明这个方案的特点或代价" },
-                        "image": { "type": "string", "description": "可选。这个方案的截图：本地路径（绝对路径，或相对当前工作目录）" }
+                        "image": { "type": "string", "description": "可选。这个方案的截图：本地路径（绝对路径，或相对当前工作目录）" },
+                        "html": { "type": "string", "description": "可选。这个方案的可交互预览：一段自带全部内容的 HTML（要求同 show_html）。用户能在卡片里点着试。和 image、html_path 三选一" },
+                        "html_path": { "type": "string", "description": "可选。同 html，但给本机 .html 文件的路径" }
                     },
                     "required": ["label"]
                 }
@@ -419,8 +432,22 @@ fn ask_form_tool() -> Value {
     )
 }
 
+fn show_html_tool() -> Value {
+    tool(
+        SHOW_HTML,
+        "在用户的对话里嵌一块能点、能动的小页面（手机上也能看）：Meowo 存一份快照，页面直接显示在对话里，高度跟着内容走，用户可以放大看。用在截图说不清的时候：动效、交互、可以悬停看数值的图表、状态机或时序的演示、几种交互方案的对比。静态画面还是截图用 send_image；完整的应用起 dev server 让用户在浏览器里看。页面要自带全部内容：CSS、JS、SVG、小图都内联（大图转 data: 或 SVG），页面不联网：不能引用相对路径或网上的文件（CDN 上的脚本、样式、图片、字体都加载不了），不能 fetch / XHR / WebSocket，也不能提交表单，图表库这类要用就整段内联，或者直接用 SVG 画。用户也常在手机上看（卡宽约 340px），布局要能自适应窄屏，别写死三栏或固定宽度；卡片按内容高度显示，最外层容器别写死高度、别用 100vh。页面会拿到用户当前的深浅主题：用 prefers-color-scheme 或 html[data-theme=dark] 写两套颜色。页面里可以调 meowo.send(\"一句话\")，这句话会放进用户的输入框，用户自己决定发不发——适合做「选这个」「就按这个改」的按钮。交的是调用那一刻的内容，改了要重新调用。html 和 path 二选一，单页不超过 2MB。调用后立即返回一句确认，页面不会回传给你。",
+        json!({
+            "title": { "type": "string", "description": "卡片标题，几个字，比如「按钮动效对比」" },
+            "html": { "type": "string", "description": "完整的 HTML 文本（可以只是一个片段，Meowo 会补上文档外壳）。和 path 二选一" },
+            "path": { "type": "string", "description": "本机 .html 文件的路径（绝对路径，或相对当前工作目录）。和 html 二选一" },
+            "height": { "type": "integer", "minimum": 80, "maximum": 1600, "description": "可选。固定卡片高度（像素）。不给就跟着页面内容高度走，最高约半屏，再高在卡内滚动" }
+        }),
+        &["title"],
+    )
+}
+
 fn tools(options: Options) -> Vec<Value> {
-    let mut list = vec![send_image_tool(), compare_images_tool(), offer_choices_tool(), send_file_tool(), notify_user_tool(), ask_form_tool()];
+    let mut list = vec![send_image_tool(), compare_images_tool(), offer_choices_tool(), send_file_tool(), notify_user_tool(), ask_form_tool(), show_html_tool()];
     if options.browser {
         list.extend(browser_tools());
     }
@@ -587,7 +614,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             names(&list),
-            ["send_image", "compare_images", "offer_choices", "send_file", "notify_user", "ask_form"].map(String::from).to_vec()
+            ["send_image", "compare_images", "offer_choices", "send_file", "notify_user", "ask_form", "show_html"].map(String::from).to_vec()
         );
         let reply = respond(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "browser_snapshot" } }), Some(&channel), IMAGES_ONLY).unwrap();
         assert_eq!(reply["result"]["isError"], true);

@@ -178,6 +178,14 @@ export const QA_SHOTS = [
   { name: "qa-choices-zoom", scene: "flow-images-choices", size: [1100, 800], sel: ".chat-choices", steps: [["tick", 600], ["hover", ".chat-choice >> nth=1"], ["click", ".chat-choice-zoom >> nth=1"], ["tick", 400]] },
   { name: "qa-choices-expanded", scene: "flow-images-choices", size: [1100, 1000], sel: ".chat-choices", steps: [["tick", 600], ["click", ".chat-choices-toggle"], ["tick", 200]] },
   { name: "qa-m-choices", page: "mobile", scene: "mobile-images-choices", size: PHONE, sel: ".chat-choices", steps: [["tick", 600]] },
+  // HTML 视图卡（show_html，ViewCard.tsx）：已清理的旧页面、动效对比、可悬停的图表、三个方案都是可交互预览的方案卡。
+  { name: "qa-view", scene: "flow-images-view", size: [1100, 1400], langs: ["zh", "en"], steps: [["tick", 1200]] },
+  { name: "qa-view-zoom", scene: "flow-images-view", size: [1100, 800], steps: [["tick", 1000], ["eval", "document.querySelectorAll('.chat-view')[1].scrollIntoView({ block: 'center' })"], ["click", ".chat-view >> nth=1 >> .chat-view-btn >> nth=1"], ["tick", 600]] },
+  { name: "qa-view-choice-zoom", scene: "flow-images-view", size: [1100, 800], steps: [["tick", 1000], ["eval", "document.querySelector('.chat-choices').scrollIntoView({ block: 'center' })"], ["click", ".chat-choice-zoom >> nth=1"], ["tick", 600]] },
+  { name: "qa-m-view", page: "mobile", scene: "mobile-images-view", size: PHONE, langs: ["zh", "en"], steps: [["tick", 1200], ["eval", "document.querySelectorAll('.chat-view')[1].scrollIntoView({ block: 'start' })"], ["tick", 300]] },
+  { name: "qa-m-view-zoom", page: "mobile", scene: "mobile-images-view", size: PHONE, steps: [["tick", 1200], ["eval", "document.querySelectorAll('.chat-view')[2].scrollIntoView({ block: 'center' })"], ["click", ".chat-view >> nth=2 >> .chat-view-btn >> nth=1"], ["tick", 500]] },
+  { name: "qa-m-view-choices", page: "mobile", scene: "mobile-images-view", size: PHONE, steps: [["tick", 1200], ["eval", "document.querySelector('.chat-choices').scrollIntoView({ block: 'start' })"], ["tick", 400]] },
+  { name: "qa-m-view-choice-zoom", page: "mobile", scene: "mobile-images-view", size: PHONE, steps: [["tick", 1200], ["eval", "document.querySelector('.chat-choices').scrollIntoView({ block: 'start' })"], ["click", ".chat-choice-zoom >> nth=0"], ["tick", 500]] },
   // 小表单（ask_form，FormCard.tsx）：前一张已填（收成一行，可展开）、后一张五种字段等你填；漏填必填项提交；手机。
   { name: "qa-form", scene: "flow-images-form", size: [1100, 1100], sel: ".chat-form", langs: ["zh", "en"], steps: [["tick", 600], ["eval", "[...document.querySelectorAll('.chat-form')].pop().scrollIntoView({ block: 'center' })"], ["tick", 200]] },
   { name: "qa-form-missing", scene: "flow-images-form", size: [1100, 1100], sel: ".chat-form", steps: [["tick", 600], ["eval", "[...document.querySelectorAll('.chat-form')].pop().scrollIntoView({ block: 'center' })"], ["click", ".chat-form-option >> nth=1"], ["click", "button.chat-choices-send"], ["tick", 200]] },

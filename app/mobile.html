@@ -4,6 +4,8 @@
 <html>
   <head>
     <meta charset="UTF-8" />
+    <!-- 只管 frame：视图卡里 AI 写的页面（/view/）不能把自己这块 iframe 导航到外站（审查第 5 轮）。别的指令不加，免得误伤手机页。 -->
+    <meta http-equiv="Content-Security-Policy" content="frame-src 'self'" />
     <!-- 7M-11:去掉 maximum-scale=1。禁双指缩放是无障碍硬伤(视力受限用户没有替代手段),
          与 mobile.css 里「放大交给系统」的注释也自相矛盾。iOS 聚焦小字号输入框会自动放大
          整页,靠输入控件钉 16px 压制(mobile.css),不再靠禁缩放。

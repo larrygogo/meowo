@@ -10,6 +10,7 @@ mod browser_permission;
 mod chat;
 mod chat_choices;
 mod chat_forms;
+mod chat_views;
 mod chat_files;
 mod chat_images;
 mod checkpoints;
@@ -1430,7 +1431,26 @@ pub fn run() {
     if let Err(error) = ptys.start_attach_server() {
         eprintln!("启动 PTY attach 服务失败: {error}");
     }
-    let builder = tauri::Builder::default();
+    // HTML 视图卡（chat_views.rs）：agent 写的页面从独立的源出，不和主窗口同源。读文件放进阻塞池，
+    // 不占 webview 的协议回调线程（长会话里几十张卡同时加载）。
+    let builder = tauri::Builder::default().register_asynchronous_uri_scheme_protocol(
+        chat_views::SCHEME,
+        |_ctx, request, responder| {
+            let path = request.uri().path().to_string();
+            tauri::async_runtime::spawn_blocking(move || {
+                let served = chat_views::serve(
+                    &chat_views::views_root(),
+                    chat_views::id_from_path(&path),
+                    chat_views::DESKTOP_ANCESTORS,
+                );
+                let mut response = tauri::http::Response::builder().status(served.status);
+                for (name, value) in served.headers {
+                    response = response.header(name, value);
+                }
+                responder.respond(response.body(served.body).unwrap_or_default());
+            });
+        },
+    );
     // single-instance 必须最先注册（官方要求，越早越能拦住二次启动）。仅 release：
     // debug 构建豁免——本机开发的常态是「安装版自启 + dev 版并行」，同 identifier 的
     // single-instance 会把 dev 实例当二次启动当场掐死，开发流程整个断掉；双开的已知
