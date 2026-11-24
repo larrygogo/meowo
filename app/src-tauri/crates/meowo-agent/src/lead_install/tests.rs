@@ -78,6 +78,8 @@ fn shared_workflow_keeps_risk_permission_and_review_contracts() {
         // 任务改存 Meowo 数据目录（任务 20261124-lead-store-in-meowo）：位置由 lead root 给出，不再在项目根建 .lead。
         "运行文末本机命令的 `lead root`",
         "不要在项目根或别处另建 `.lead`",
+        // 用户 2026-11-24：面板进度「总是显示未注明日期」，要带时间。
+        "写成 `- 2026-11-24 17:05 做了什么`",
     ] {
         assert!(SKILL.contains(rule), "{rule}");
     }

@@ -24,7 +24,7 @@ description: Meowo Lead workflow for ambitious implementation, explicit leader g
 1. 进入 Lead 后先建任务目录，再派调研或做别的事：Meowo 的 Lead 面板只靠任务目录显示，没建目录用户就看不到面板。任务文件不放在项目目录里：先在会话工作目录下运行文末本机命令的 `lead root`，它打印本项目的 Lead 目录（在 Meowo 数据目录里，按项目分开，worktree 与主检出共用一个），下文的「Lead 目录」都指它。先读项目约束及 Lead 目录里的 `product.md`、`standards.md`（若存在）。在 Lead 目录下创建 `<日期-任务>/`，写 `SPEC.md`、`acceptance.json`、`progress.md`、`decisions.md`，四个文件一起建好，缺了验收清单面板会报格式错误。面板只读这个目录，不要在项目根或别处另建 `.lead`；工作目录跑到别的仓库时，以会话启动时的工作目录为准。
 2. SPEC 写目的、业务事实、终态、四方向产物/过程、约束、不做与未决问题。acceptance.json 顶层为数组，验收项含 `id`、`check`、`passes:false`；只能由用户验证的业务判断增加 `by:"leader"`，不得在实施时补该字段绕过验证。SPEC 另设「验收判据」一节，按验收 id 写：通过时能观察到什么（在哪个入口、做什么操作、看到什么结果），以及至少一个「看似完成但不算通过」的反例（如只改了样式没改行为、只跑了单元测试没走真实入口、只覆盖了新数据没覆盖旧数据）。判据写在 SPEC 而不是 acceptance.json，不改验收清单的字段结构。判据必须在写产品代码之前定下来，否则容易照着实现去写判据；确实是事后补写的，在该节注明「事后补写」和原因，发 C 时在说明里披露。
 3. 通过原生写工具更新任务文件，让 Meowo 认领本会话。不要自报其他会话 ID，不替别人的 `active` 或 `.owner` 争抢归属。
-4. 在 progress 中维护 `phase: interview/spec/design/implement/verify/blocked/done`。记录失败尝试和证据，不以阶段标签代替实际完成。
+4. 在 progress 中维护 `phase: interview/spec/design/implement/verify/blocked/done`。记录失败尝试和证据，不以阶段标签代替实际完成。每条进度记录以本地时间的「日期 时间」开头，写成 `- 2026-11-24 17:05 做了什么`（用 shell 的 `date` 取当前时间，不凭印象写），面板按日期分组并显示时间；只写日期或不写，面板会显示成「未注明日期」。
 5. progress.md 在首行 `phase:` 之后维护一段「接续摘要」，只写当前状态、不写历史：正在做的验收项、最近一次验证过的代码版本、下一步具体动作、未解决的阻塞和已改动的文件。当前阶段只写在首行 `phase:`，摘要里不另写 phase 行，避免两处不一致。每完成一个验收项、发出关卡前、启动长耗时操作前更新一次。上下文被压缩或会话中断后，先读接续摘要和 decisions.md 再继续，不凭压缩后的记忆推进。
 
 ## 子代理协作

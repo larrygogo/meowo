@@ -71,7 +71,13 @@ fn fnv1a(bytes: &[u8]) -> u32 {
 
 /// 数据根下放各项目 Lead 目录的地方。
 pub fn projects_root() -> Option<PathBuf> {
-    Some(crate::meowo_data_root()?.join("projects"))
+    let root = crate::meowo_data_root()?.join("projects");
+    // MEOWO_DB 用 `/` 写时，拼出来的路径 `/` 与 `\` 混用（实测 `…/data\projects\…`）。这个路径要交给 agent
+    // 原样使用、也写进放错位置的提示，Windows 上统一成 `\`。
+    if cfg!(windows) {
+        return Some(PathBuf::from(root.to_string_lossy().replace('/', "\\")));
+    }
+    Some(root)
 }
 
 /// 该工作目录所属项目的 Lead 目录（不保证已存在）。解析不到 home 时为 None。
