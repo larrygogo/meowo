@@ -1,7 +1,7 @@
 //! Lead 任务目录的位置：`<数据根>/projects/<项目键>/.lead/`。
 //!
 //! 用户 2026-11-24 要求任务文件不放项目里、放进 Meowo 数据目录（任务 20261124-lead-store-in-meowo）。
-//! 实查时 4 个仓库的 `.lead` 没被忽略、出现在 git 状态里，ledger-app 已把 29 个任务文件提交进仓库，
+//! 实查时 4 个仓库的 `.lead` 没被忽略、出现在 git 状态里，有个仓库已把 29 个任务文件提交了进去，
 //! worktree 里建的任务会随 worktree 一起被删。
 //!
 //! 保留名为 `.lead` 的父目录：认领、redteam 写入拦截、Codex apply_patch、opencode 插件都按
