@@ -225,6 +225,13 @@ export function leadTask(lang: "zh" | "en", kind: "B" | "C" | "rich" = "B"): unk
     ],
     gate: verify ? {
       id: "g2", kind: "C", status: "pending", answer: null, options: [],
+      // c1 的证据停在审查时的版本，交付版本之后又改过代码：卡片上会列出「证据版本与交付版本不一致」。
+      review: { revision: "1a2b3c4", checks: [
+        { id: "c1", check: zh ? "12 个测试全部通过" : "All 12 tests pass", passes: true, waived: null, leader: false, blocked: null,
+          evidence: [{ command: zh ? "lead-redteam 审查" : "lead-redteam review", result: zh ? "通过" : "Pass", revision: "9f8e7d6", reference: "agents/redteam-1.md", limitations: "" }] },
+        { id: "c2", check: zh ? "PR 已开并通过 CI" : "PR opened and CI green", passes: false, waived: null, leader: true, blocked: null },
+        { id: "c3", check: zh ? "beta 上用英文账户实发一条通知" : "Send a real notice to an English account on beta", passes: false, waived: null, leader: false, blocked: zh ? "要 beta 开机实测" : "Needs a beta host" },
+      ] },
       title: zh ? "登录校验统一完成" : "Sign-in validation unified",
       summary: zh
         ? "**怎么上手试**\n- 构建：分支 `refactor/login-schema`，重启 dev 实例\n- 打开登录页，邮箱填 `a@`，点登录\n- 应该看到：输入框下方提示「邮箱格式不对」，三个页面文案一致\n\n**结果**：12 个测试全过，三个表单共用 `src/schemas/login.ts`。"
@@ -252,6 +259,18 @@ function leadRichTask(zh: boolean): unknown {
   const check = (id: string, text: string, over: Record<string, unknown> = {}) => ({ id, check: text, passes: false, waived: null, leader: false, blocked: null, ...over });
   return {
     slug: "20261118-multi-forge", phase: "verify", gate: null,
+    // 后端从 progress.md 开头另取的「接续摘要」：中文样例是尾部截断后的 progress，里面已经没有这一节了，正好是长任务的样子。
+    resumeSummary: (zh ? [
+      "- 正在做：M6 CI 全绿（Windows detect 计时测试偶发失败，重跑通过）",
+      "- 最近验证的版本：1315887c",
+      "- 下一步：等 leader 决定是否合并 #197、#198",
+      "- 阻塞：M5 要 leader 提供 gitlab.com 测试账号",
+    ] : [
+      "- Working on: M6 CI green (Windows detect timing test flaked once, passed on rerun)",
+      "- Last verified build: 1315887c",
+      "- Next: wait for the leader to decide on merging #197 and #198",
+      "- Blocked: M5 needs a gitlab.com test account from the leader",
+    ]).join("\n"),
     spec: zh ? "# 代码托管：多平台 PR（20261118-multi-forge）\n\n## 目的\n不只 GitHub。" : "# Code hosting: PRs beyond GitHub (20261118-multi-forge)\n\n## Goal\nNot only GitHub.",
     checks: [
       check("M1", zh ? "GitLab、Gitea、Bitbucket、Gitee 的 PR 列表、检查、合并、评论走统一接口" : "GitLab, Gitea, Bitbucket and Gitee PRs, checks, merge and comments go through one interface",

@@ -18,7 +18,7 @@ vi.mock("../../api", async (importActual) => ({
 }));
 
 const { DockWork } = await import("./DockWork");
-const { LeadGateCard, LeadPanel, useLeadTask, gateWaiting, leadLatest, leadProgress, leadTaskTitle } = await import("./LeadPanel");
+const { LeadGateCard, LeadPanel, useLeadTask, gateWaiting, leadLatest, leadProgress, leadTaskTitle, staleReviewChecks } = await import("./LeadPanel");
 
 const history = { plan: undefined, agentModes: [], pendingReview: null, todos: [] };
 
@@ -742,4 +742,76 @@ it("验收显示稳定编号，旧任务的决定表格拆成卡，进度使用�
   fireEvent.click(screen.getByRole("tab", { name: "进度" }));
   expect(document.querySelectorAll(".lead-timeline .lead-timeline-marker")).toHaveLength(2);
   expect(document.querySelectorAll(".lead-timeline .lead-entry")[0].textContent).toContain("第二节");
+});
+
+it("接续摘要钉在进度页最上面，时间线里不再重复；旧任务没有摘要时进度页和原来一样", () => {
+  const progress = "phase: implement\n\n## 接续摘要\n- 下一步：跑验收 2\n\n## 2026-11-24 第一节\n- 第一条记录\n\n## 2026-11-25 第二节\n- 第二条记录";
+  const { container, rerender } = render(<LeadPanel task={task({ progress, resumeSummary: "- 下一步：跑验收 2" })} onClose={() => {}} />);
+  fireEvent.click(screen.getByRole("tab", { name: "进度" }));
+  const notes = container.querySelector(".lead-notes.is-progress")!;
+  // 摘要在时间线前面（DOM 顺序即视觉顺序），带标题，正文可见。
+  expect(notes.firstElementChild?.className).toBe("lead-resume");
+  expect(screen.getByRole("region", { name: zh.chat.leadResumeTitle })).toBeTruthy();
+  expect(screen.getByText(visibleText("下一步：跑验收 2"))).toBeTruthy();
+  // 时间线只剩两节真实记录，倒序不变。
+  const entries = [...notes.querySelectorAll(".lead-timeline .lead-entry")];
+  expect(entries).toHaveLength(2);
+  expect(entries[0].textContent).toContain("第二节");
+  expect(notes.querySelector(".lead-timeline")?.textContent).not.toContain("接续摘要");
+
+  // 长任务：末尾 6000 字里已经没有摘要那一节了，摘要照样在最上面。
+  rerender(<LeadPanel task={task({ progress: "## 2026-11-25 第二节\n- 第二条记录", resumeSummary: "- 下一步：跑验收 2" })} onClose={() => {}} />);
+  expect(container.querySelector(".lead-resume")?.textContent).toContain("下一步：跑验收 2");
+
+  // 旧任务（后端不给 resumeSummary）：没有摘要块，文件里碰巧叫「接续摘要」的节也照常留在时间线里。
+  rerender(<LeadPanel task={task({ progress })} onClose={() => {}} />);
+  expect(container.querySelector(".lead-resume")).toBeNull();
+  expect(container.querySelectorAll(".lead-timeline .lead-entry")).toHaveLength(3);
+});
+
+it("只有接续摘要、还没有记录时显示摘要，不显示「暂无内容」", () => {
+  const { container } = render(<LeadPanel task={task({ progress: "phase: spec\n## 接续摘要\n- 正在写 SPEC", resumeSummary: "- 正在写 SPEC" })} onClose={() => {}} />);
+  fireEvent.click(screen.getByRole("tab", { name: "进度" }));
+  expect(container.querySelector(".lead-resume")?.textContent).toContain("正在写 SPEC");
+  expect(container.querySelectorAll(".lead-timeline .lead-entry")).toHaveLength(0);
+  expect(screen.queryByText(zh.chat.leadSectionEmpty)).toBeNull();
+});
+
+describe("C 卡标出证据版本与交付版本不一致的验收项", () => {
+  const ev = (revision: string) => ({ command: "lead-redteam 审查", result: "通过", revision, reference: "agents/redteam-1.md", limitations: "" });
+  const check = (id: string, over: Record<string, unknown> = {}) => ({ id, check: `检查 ${id}`, passes: true, waived: null, leader: false, blocked: null, ...over });
+
+  it("审查之后又改了代码：通过项的证据都停在旧版本，就列出来；短 SHA 对长 SHA、大小写不同不算不一致", () => {
+    const review = { revision: "ABC1234", checks: [
+      check("AC1", { evidence: [ev("9f8e7d6")] }),
+      check("AC2", { evidence: [ev("9f8e7d6"), ev("abc1234def5678")] }),
+      check("AC3"),
+      check("AC4", { passes: false, evidence: [ev("9f8e7d6")] }),
+      check("AC5", { evidence: [ev("修补前工作区"), ev(" 修补前工作区 ")] }),
+    ] };
+    expect(staleReviewChecks(review)).toEqual([
+      { id: "AC1", check: "检查 AC1", revisions: ["9f8e7d6"] },
+      { id: "AC5", check: "检查 AC5", revisions: ["修补前工作区"] },
+    ]);
+  });
+
+  it("卡片上显示提醒和对应的验收项；证据都对得上时不显示", () => {
+    const stale = gate("C", { review: { revision: "abc1234", checks: [
+      { id: "business", check: "确认业务范围", passes: false, leader: true, waived: null, blocked: null },
+      check("AC1", { evidence: [ev("9f8e7d6")] }),
+    ] } });
+    const { rerender } = render(<LeadGateCard cwd="C:/repo" gate={stale} onAnswered={() => {}} />);
+    // 不只靠颜色：整块是 role="note"，结论是文字标题，读屏能读到「几项没在哪个版本上验证过」。
+    const note = screen.getByRole("note");
+    expect(note.querySelector(".lead-stale-title")?.textContent).toBe(zh.chat.leadReviewStaleTitle(1, "abc1234"));
+    expect(note.textContent).toContain(zh.chat.leadReviewStaleHint);
+    const list = screen.getByRole("list", { name: zh.chat.leadReviewStaleList });
+    expect(list.textContent).toContain("检查 AC1");
+    expect(list.textContent).toContain("证据版本 9f8e7d6");
+    // 只是提醒：「验收通过」照常可点。
+    expect((screen.getByRole("button", { name: zh.chat.leadGateAccept }) as HTMLButtonElement).disabled).toBe(false);
+    rerender(<LeadGateCard cwd="C:/repo" gate={gate("C")} onAnswered={() => {}} />);
+    expect(screen.queryByRole("note")).toBeNull();
+    expect(screen.queryByRole("list", { name: zh.chat.leadReviewStaleList })).toBeNull();
+  });
 });

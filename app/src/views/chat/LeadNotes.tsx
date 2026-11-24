@@ -10,7 +10,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useT } from "../../i18n";
 import { ChatMarkdown } from "../ChatMarkdown";
-import { parseLeadDecisions, parseLeadProgress, type LeadProgressSection } from "./leadNotesParse";
+import { isLeadResumeSection, parseLeadDecisions, parseLeadProgress, type LeadProgressSection } from "./leadNotesParse";
 
 function Earlier({ file }: { file: string }) {
   const t = useT();
@@ -92,9 +92,23 @@ export function resetLeadProgressOpen() {
   openBySlug.clear();
 }
 
-export function LeadProgress({ text, slug = "" }: { text: string; slug?: string }) {
+/// 接续摘要钉在进度页最上面（2026-11-24）：它是「现在到哪了、下一步做什么」，leader 打开进度页第一眼要看的就是它；
+/// 写在 progress.md 开头，时间线按节倒序会把它排到最底，长任务里还落在末尾 6000 字之外。版式同决定卡（底色块，不用左侧竖条）。
+function LeadResume({ text }: { text: string }) {
   const t = useT();
-  const log = useMemo(() => parseLeadProgress(text), [text]);
+  return (
+    <section className="lead-resume" aria-label={t.chat.leadResumeTitle}>
+      <h4 className="lead-resume-title">{t.chat.leadResumeTitle}</h4>
+      <div className="lead-note-body chat-md"><ChatMarkdown text={text} /></div>
+    </section>
+  );
+}
+
+export function LeadProgress({ text, slug = "", resume }: { text: string; slug?: string; resume?: string }) {
+  const t = useT();
+  const parsed = useMemo(() => parseLeadProgress(text), [text]);
+  // 没有摘要的旧任务：时间线原样，不做任何过滤。
+  const log = useMemo(() => resume ? { ...parsed, sections: parsed.sections.filter((s) => !isLeadResumeSection(s)) } : parsed, [parsed, resume]);
   const keys = useMemo(() => leadSectionKeys(log.sections), [log]);
   const [, rerender] = useState(0);
   const state = sectionOpenState(slug);
@@ -102,12 +116,13 @@ export function LeadProgress({ text, slug = "" }: { text: string; slug?: string 
   useEffect(() => {
     if (latestKey && !state.has(latestKey)) state.set(latestKey, true);
   }, [latestKey, state]);
-  if (log.sections.length === 0) {
+  if (log.sections.length === 0 && !resume) {
     // 空文件、只有 phase 行：当前阶段已在顶部阶段条上，这里如实说没有记录。
     return log.truncated ? <Earlier file="progress.md" /> : <div className="chat-tasks-empty">{t.chat.leadSectionEmpty}</div>;
   }
   return (
     <div className="lead-notes is-progress">
+      {resume && <LeadResume text={resume} />}
       <ol className="lead-timeline">
         {log.sections.map((section, index) => {
           const key = keys[index];

@@ -14,6 +14,17 @@
 /// 后端截取的字数（lead.rs 的 tail(…, 6000)），两边要一起改。
 export const LEAD_TAIL_LIMIT = 6000;
 
+/// progress.md「接续摘要」一节：后端（meowo-reporter lead.rs 的 resume_summary）从文件**开头**按这个标题
+/// 另取正文、封顶这么多字，放在 LeadTaskDto.resumeSummary 里；末尾 6000 字在长任务里已经截不到它了。
+/// 标题与上限两边要一起改（RESUME_HEADING / RESUME_LIMIT）。
+export const LEAD_RESUME_HEADING = "接续摘要";
+export const LEAD_RESUME_LIMIT = 1500;
+
+/// 时间线里的这一节是不是接续摘要：摘要已经钉在进度页最上面时，时间线里不再重复它。
+export function isLeadResumeSection(section: { title: string | null }): boolean {
+  return !!section.title?.startsWith(LEAD_RESUME_HEADING);
+}
+
 const DATE = /\d{4}-\d{2}-\d{2}/;
 const FENCE = /^\s*(```|~~~)/;
 const TOP_ITEM = /^(?:[-*+]|\d+[.)])\s+/;

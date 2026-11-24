@@ -18,7 +18,7 @@ import { ApprovalCard } from "./ApprovalCard";
 import { useTablist } from "../useTablist";
 import { Icon } from "../../icons/Icon";
 import { icCircle, icClock, icFlag, icMinus, icSidebarRight } from "../../icons/glyphs.chat";
-import { icCheck } from "../../icons/glyphs";
+import { icAlert, icCheck } from "../../icons/glyphs";
 
 /// 轮询间隔：任务文件由 agent 随手改写，没有推送通道；读的是本地几个小文件，开销可忽略。
 const POLL_MS = 4000;
@@ -379,7 +379,7 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose, onOpenInPanel,
           <div className="chat-plan-doc">
             {section === "spec"
               ? <div className="chat-md"><ChatMarkdown text={task.spec || t.chat.leadSectionEmpty} /></div>
-              : section === "decisions" ? <LeadDecisions text={task.decisions} /> : <LeadProgress text={task.progress} slug={task.slug} />}
+              : section === "decisions" ? <LeadDecisions text={task.decisions} /> : <LeadProgress text={task.progress} slug={task.slug} resume={task.resumeSummary} />}
           </div>
         )}
       </div>
@@ -419,6 +419,26 @@ type GateChoice = { id: string; label: string; recommended?: boolean; detail?: s
 /// 确认、验收这类最常见的作答也得两下（2026-11-12 优化）。
 const DIRECT_KINDS = new Set(["A", "C", "D"]);
 
+/// 两个版本标识是不是同一个：去空白、不分大小写后相同，或者都是 7 位以上的十六进制、一个是另一个的前缀（短 SHA 对长 SHA）。
+function sameRevision(a: string, b: string): boolean {
+  const x = a.trim().toLowerCase();
+  const y = b.trim().toLowerCase();
+  if (!x || !y) return false;
+  if (x === y) return true;
+  const sha = /^[0-9a-f]{7,40}$/;
+  return sha.test(x) && sha.test(y) && (x.startsWith(y) || y.startsWith(x));
+}
+
+/// C 卡冻结的验收项里，标了通过、有证据，但没有一条证据是在交付版本（review.revision）上取得的那些。
+/// 试跑（2026-11-24）：审查之后主会话又改了代码，C 卡仍写「独立审查全部通过」，leader 以为当前代码审过了。
+/// lead skill 要求审查结论也记一条证据、版本写审查时的版本，这里把对不上的项摆到 leader 眼前。
+/// 没有证据的项不算：旧任务没有证据记录，不凭空报警。
+export function staleReviewChecks(review: NonNullable<LeadGateDto["review"]>): { id: string; check: string; revisions: string[] }[] {
+  return review.checks
+    .filter((check) => check.passes && check.evidence?.length && !check.evidence.some((e) => sameRevision(e.revision, review.revision)))
+    .map((check) => ({ id: check.id, check: check.check, revisions: [...new Set(check.evidence!.map((e) => e.revision.trim()))] }));
+}
+
 function gateChoices(gate: LeadGateDto, t: ReturnType<typeof useT>): GateChoice[] {
   if (gate.kind === "A") return [{ id: "revise", label: t.chat.leadGateRevise, requiresNote: true, negative: true }, { id: "confirm", label: t.chat.leadGateConfirm, primary: true }];
   if (gate.kind === "C") return [{ id: "reject", label: t.chat.leadGateReject, requiresNote: true, negative: true }, { id: "accept", label: t.chat.leadGateAccept, primary: true }];
@@ -439,6 +459,29 @@ const STALE_GATE = /^lead\/gate_(?:changed|bad_choice|missing|closed)$/;
 
 /// returnFocusTo：提交成功、卡片随轮询收起时焦点的去处（输入框），同审批卡。
 /// onStale：提交被拒且原因是卡片过时（STALE_GATE），就地重读关卡。不复用 onAnswered：那是「答上了」。
+/// 证据版本与交付版本对不上的提醒（2026-11-24 第四轮，对照过三版，见 PR #224）：整块提醒色底 + 图标 + 一句结论当标题，
+/// 下面一句怎么办、逐项列出。跟 GitHub 合并框里「审查之后又有新提交」、Primer 的 warning Flash 一样，内容直接摊开，
+/// 不收进「查看」（leader 不点开就不知道是哪项）。颜色复用 .ns-warn 与本轮检查 is-stale 的提醒色，不用报错红；
+/// 不拦「验收通过」：这是提醒，接受与否由 leader 定。role="note" + 文字结论，读屏和色弱都不靠颜色。
+function LeadStaleNotice({ stale, revision }: { stale: ReturnType<typeof staleReviewChecks>; revision: string }) {
+  const t = useT();
+  if (stale.length === 0) return null;
+  return (
+    <div className="lead-stale" role="note">
+      <p className="lead-stale-head"><Icon glyph={icAlert} size={14} /><strong className="lead-stale-title">{t.chat.leadReviewStaleTitle(stale.length, revision)}</strong></p>
+      <p className="lead-stale-hint">{t.chat.leadReviewStaleHint}</p>
+      <ul className="lead-stale-list" aria-label={t.chat.leadReviewStaleList}>
+        {stale.map((item) => (
+          <li key={item.id}>
+            <span className="lead-stale-id">{item.id}</span> {item.check}
+            <span className="lead-stale-rev">{t.chat.leadReviewStaleRevision(item.revisions.join(", "))}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function LeadGateCard({ cwd, gate, onAnswered, onStale, returnFocusTo }: {
   cwd: string;
   gate: LeadGateDto;
@@ -448,6 +491,7 @@ export function LeadGateCard({ cwd, gate, onAnswered, onStale, returnFocusTo }: 
 }) {
   const t = useT();
   const direct = DIRECT_KINDS.has(gate.kind);
+  const stale = gate.kind === "C" && gate.review ? staleReviewChecks(gate.review) : [];
   // B、Q：选中的选项；A、C、D：点了否定按钮、正在写意见的那一项。不预选推荐项：复盘里关卡多是一路点过去的。
   const [choice, setChoice] = useState<string | null>(null);
   const [note, setNote] = useState("");
@@ -546,6 +590,7 @@ export function LeadGateCard({ cwd, gate, onAnswered, onStale, returnFocusTo }: 
               <li key={check.id}>{check.id} · {check.check}</li>
             ))}
           </ul>
+          <LeadStaleNotice stale={stale} revision={gate.review.revision} />
         </div>
       )}
       {gate.summary && (

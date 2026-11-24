@@ -6556,6 +6556,10 @@ button.lead-entry-head:hover { background: var(--fill-hover); }
 .lead-entry-title { min-width: 0; color: var(--cc-text-dim); font-size: var(--text-sm); line-height: var(--leading-normal); overflow-wrap: anywhere; }
 .lead-entry.is-latest .lead-entry-title, .lead-entry.is-open .lead-entry-title { color: var(--cc-text); font-weight: var(--fw-medium); }
 .lead-entry .lead-note-body { padding: var(--sp-2) var(--sp-8) var(--sp-10); }
+/* 接续摘要（2026-11-24）：钉在进度时间线上面，版式同决定卡（底色块 + 小标题），不用左侧竖条（standards.md）。 */
+.lead-resume { display: flex; flex-direction: column; gap: var(--sp-6); margin: 0 0 var(--sp-12); padding: var(--sp-10) var(--sp-12); border-radius: var(--radius-md); background: var(--fill-hover); }
+.lead-resume-title { margin: 0; color: var(--cc-text-faint); font-size: var(--text-xs); font-weight: var(--fw-medium); line-height: var(--leading-normal); }
+.lead-resume .lead-note-body { color: var(--cc-text); }
 .lead-notes-earlier { margin: var(--sp-6) 0 0; padding-left: calc(16px + var(--sp-6) + var(--sp-8)); color: var(--cc-text-faint); font-size: var(--text-xs); }
 .lead-notes.is-decisions .lead-notes-earlier { padding-left: var(--sp-12); }
 @media (max-width: 600px) {
@@ -6585,6 +6589,19 @@ button.lead-entry-head:hover { background: var(--fill-hover); }
    离滚到底还差几像素，渐隐带正好压在框的下半截（量到框底 278.6、可视区底 278，底边 16px 被淡掉）。
    scroll-margin 让聚焦时多滚一段、框底离可视区留出间距。 */
 .lead-gate-card .chat-approval-copy:has(.lead-gate-note:focus) { -webkit-mask-image: none; mask-image: none; }
+/* 证据版本与交付版本对不上的验收项（2026-11-24 第四轮）：提醒色底块（同 .ns-warn）+ 图标标题（同 .agent-mcp-unreadable-head），
+   明细直接摊开。提醒不是报错：不用报错红、不加彩色竖条（standards.md），也不拦「验收通过」。 */
+.lead-stale { margin-top: var(--sp-8); padding: var(--sp-8) var(--sp-10); border-radius: var(--radius-md); background: color-mix(in srgb, var(--cc-warn-vivid) 10%, transparent); color: var(--cc-text); font-size: var(--text-xs); line-height: var(--leading-normal); }
+.lead-stale p { margin: 0; }
+.lead-stale .lead-stale-head { display: flex; align-items: flex-start; gap: var(--sp-6); margin-bottom: var(--sp-4); font-size: var(--text-sm); }
+/* 图标对齐首行（标题折成两行时不居中到两行中间）：1.5 行高下首行中线约在 0.75em。 */
+.lead-stale-head svg { flex: none; margin-top: calc(0.75em - 7px); color: var(--cc-warn-text); }
+.lead-stale-title { color: var(--cc-warn-text); font-weight: var(--fw-semibold); }
+.lead-stale-hint { color: var(--cc-text-dim); }
+.lead-stale-list { margin: var(--sp-4) 0 0; padding-left: var(--sp-16); }
+.lead-stale-list li { margin: var(--sp-2) 0; overflow-wrap: anywhere; }
+.lead-stale-id { font-variant-numeric: tabular-nums; color: var(--cc-text-dim); }
+.lead-stale-rev { margin-left: var(--sp-6); color: var(--cc-text-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .lead-gate-summary { max-height: 7.5em; overflow: hidden; font-size: var(--text-sm); }
 .lead-gate-summary.is-expanded { max-height: none; }
 /* 审批卡的标题圆点挂在 .chat-approval-copy strong 上；摘要是 markdown，加粗不该带圆点（实拍）。 */

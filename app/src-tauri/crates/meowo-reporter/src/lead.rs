@@ -1,4 +1,4 @@
-//! Lead 工作流的 hook：`meowo-reporter lead <session|claim|stop>`。
+//! Lead 工作流的 hook：`meowo-reporter lead <session|claim|stop|guard>`。
 //!
 //! 为什么在 reporter 里而不是脚本：Lead 工作流随 Meowo 分发给所有用户，用户机器上不一定有
 //! Python（初版是 ~/.claude/lead/hook.py）。行为与那版逐条对齐，场景测试也一一移植（见文末）。
@@ -11,8 +11,10 @@
 //! - session（SessionStart，含压缩后 source=compact）：注入当前任务的规格与进度。
 //! - claim（PostToolUse）：哪个会话**写了**任务的 progress.md，任务就归哪个会话。
 //! - stop（Stop）：任务归属会话在实施阶段、**本轮推进过任务**、验收没过完时拦住它。
+//! - guard（PreToolUse，仅 Claude）：lead-redteam 只许写任务目录 agents/ 下的审查报告，见 [`guard`]。
 
 pub mod command;
+mod guard;
 pub(crate) mod ownership;
 pub mod publication;
 
@@ -64,6 +66,9 @@ fn run_inner(mode: &str, raw: &str, registry: &Path) -> Output {
     if mode == "claim" && !raw.contains(".lead") {
         return Output::default(); // 快速路径：绝大多数工具调用直接返回
     }
+    if mode == "guard" && !raw.contains(guard::REVIEWER) {
+        return Output::default(); // 同上：不是 redteam 的写入不解析 JSON
+    }
     let Ok(Value::Object(data)) = serde_json::from_str::<Value>(raw) else {
         return Output::default();
     };
@@ -72,6 +77,7 @@ fn run_inner(mode: &str, raw: &str, registry: &Path) -> Output {
         "session" => session(&data, registry),
         "claim" => claim(&data, registry),
         "stop" => stop(&data, registry),
+        "guard" => guard::check(&data),
         "wait" => return wait(&data, registry, WAIT_POLL, WAIT_MAX),
         _ => None,
     };
@@ -1483,6 +1489,41 @@ fn visible_to(task: &Path, session: Option<&str>) -> bool {
     session == Some(owner.as_str())
 }
 
+/// 「接续摘要」节标题与字数上限；前端 leadNotesParse.ts 的 LEAD_RESUME_HEADING / LEAD_RESUME_LIMIT 要一起改。
+const RESUME_HEADING: &str = "接续摘要";
+const RESUME_LIMIT: usize = 1500;
+
+/// progress.md 开头读到的文本里，标题以「接续摘要」开头的那一节：从标题下一行截到下一个同级或更高级的
+/// 标题为止（摘要里自己的小标题不截断），代码块里的 `#` 不算标题。没有这一节或正文为空时 None。
+fn resume_summary(head: &str) -> Option<String> {
+    // `## 标题` → (级数, 标题文字)；`#` 后面必须跟空白，`#tag` 不算。
+    fn heading(line: &str) -> Option<(usize, &str)> {
+        let level = line.bytes().take_while(|b| *b == b'#').count();
+        let rest = &line[level..];
+        ((1..=6).contains(&level) && rest.starts_with([' ', '\t'])).then(|| (level, rest.trim()))
+    }
+    let mut fenced = false;
+    let mut found: Option<usize> = None;
+    let mut body = Vec::new();
+    for line in head.lines() {
+        let trimmed = line.trim_start();
+        let fence = trimmed.starts_with("```") || trimmed.starts_with("~~~");
+        let title = if fenced || fence { None } else { heading(line) };
+        if fence {
+            fenced = !fenced;
+        }
+        match (found, title) {
+            (None, Some((level, text))) if text.starts_with(RESUME_HEADING) => found = Some(level),
+            (Some(own), Some((level, _))) if level <= own => break,
+            (Some(_), _) => body.push(line),
+            (None, _) => {}
+        }
+    }
+    found?;
+    let text = body.join("\n").trim().to_owned();
+    (!text.is_empty()).then(|| truncate(&text, RESUME_LIMIT))
+}
+
 /// 同 snapshot，但只给任务归属的会话看（用户反馈 2026-11-09：同一项目的另一个会话里也冒出了别的会话的
 /// Lead 入口和关卡卡片）。没认领的任务（还在访谈、写规格）照旧给项目里所有会话看。
 pub fn snapshot_for(cwd: &str, session: Option<&str>) -> Option<LeadTaskDto> {
@@ -1522,6 +1563,7 @@ fn snapshot_inner(cwd: &str, session: Option<&str>, unfiltered: bool) -> Option<
         checks,
         decisions: tail(&read_text(&task.join("decisions.md"), true), 6000),
         progress: tail(&read_text(&task.join("progress.md"), true), 6000),
+        resume_summary: resume_summary(&read_text(&task.join("progress.md"), false)),
         gate: gate
             .filter(|g| g.status != "consumed")
             .or_else(|| {
