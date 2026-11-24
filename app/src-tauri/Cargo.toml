@@ -117,7 +117,16 @@ axum = { version = "0.8", default-features = false, features = ["http1", "json",
 # tokio 经 tauri 传递引入，但 tauri 默认不开 net（现由 updater→reqwest 链传递打开）——
 # 远程桥的 TcpListener 依赖它，显式声明不把编译成败押在别人的依赖树上。
 # time：更新下载的停顿看门狗（lib.rs stall_watchdog）要 tokio::time::sleep。
-tokio = { version = "1", features = ["net", "sync", "time"] }
+tokio = { version = "1", features = ["net", "sync", "time", "io-util", "rt"] }
+# 手机预览代理（remote_preview.rs）：要逐个改写请求/响应头、透传 websocket 升级，axum 的路由层
+# 用不上，直接用 hyper 的连接级 API。四个都已在依赖树里（axum / reqwest 传递引入，lock 已锁），零新增。
+# io-util：websocket 升级后两端对拷（copy_bidirectional）；rt：task_local 把 /rpc 的 Host 带给 preview_open。
+hyper = { version = "1", features = ["server", "client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+# 预览代理的连接开 TCP 保活（手机断网留下的半开连接要能探测出来）。tokio 的传递依赖，lock 已锁 0.6。
+socket2 = "0.6"
 # 「更改」面板放弃未跟踪文件时移进系统回收站而不是永久删（git.rs discard_blocking）。
 # 钉在 5.2.x：5.3.0 发布不满两周；5.2.9 覆盖 Windows(IFileOperation)/macOS(Finder)/Linux(freedesktop)。
 trash = "~5.2.9"

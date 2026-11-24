@@ -116,6 +116,14 @@ bridged_args!(FileMentionCandidatesArgs {
     query: String
 });
 
+// 手机预览（app remote_preview.rs）：手机上点了对话里的本机链接。sessionId 用来认「这个端口
+// 是不是这个会话起的」。
+bridged_args!(PreviewOpenArgs {
+    #[cfg_attr(test, ts(type = "number"))]
+    session_id: i64,
+    url: String
+});
+
 bridged_args!(LeadTaskSnapshotArgs {
     cwd: String,
     #[serde(default)]

@@ -265,6 +265,9 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "forge_accounts",
     // 输入框 `@` 补全（2026-11-04 用户决定放行）：只回文件/目录名，不读内容；目录收口同改动列表。
     "file_mention_candidates",
+    // 手机预览（2026-11-24 leader 关卡 B 选「远程访问开着就自动可用」）：为会话自己起的本机 dev server
+    // 端口开一个代理端口，回一次性码。收口见 remote_preview.rs 模块头。
+    "preview_open",
     // Lead 工作流（模块头「例外（2026-11-09）」）
     "lead_task_snapshot",
     "answer_lead_gate",
@@ -616,6 +619,21 @@ pub(crate) async fn regenerate_remote_token(app: tauri::AppHandle) -> Result<(),
 
 /// 常量时间比较（逐字节 |= 异或）。长度不同直接 false——token 长度本就是公开信息
 /// （generate_token 恒 64 字符），不构成泄露。
+/// 预览代理（remote_preview.rs）校验 cookie 用同一个常量时间比较。
+pub(crate) fn token_matches_pub(expected: &str, provided: &str) -> bool {
+    token_matches(expected, provided)
+}
+
+/// 远程桥此刻监听的端口（没开为 None）。预览不把它当目标。
+pub(crate) fn running_port() -> Option<u16> {
+    match RUNNING_PORT.load(std::sync::atomic::Ordering::SeqCst) {
+        0 => None,
+        p => Some(p),
+    }
+}
+
+static RUNNING_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+
 fn token_matches(expected: &str, provided: &str) -> bool {
     let (a, b) = (expected.as_bytes(), provided.as_bytes());
     if a.is_empty() || a.len() != b.len() {
@@ -682,6 +700,8 @@ async fn apply_with(
                 };
                 if let Some(running) = to_stop {
                     running.shutdown.notify_one();
+                    RUNNING_PORT.store(0, std::sync::atomic::Ordering::SeqCst);
+                    crate::remote_preview::bridge_stopped();
                 }
                 set_error(Some(e));
                 return;
@@ -707,6 +727,9 @@ async fn apply_with(
     };
     if let Some(running) = to_stop {
         running.shutdown.notify_one();
+        // 桥停了（关闭、改端口、换绑定、重新生成令牌都先走这里）：预览代理一起关。
+        RUNNING_PORT.store(0, std::sync::atomic::Ordering::SeqCst);
+        crate::remote_preview::bridge_stopped();
     }
 
     if !enabled {
@@ -775,6 +798,8 @@ async fn apply_with(
         });
         inner.last_error = None;
     }
+    RUNNING_PORT.store(port16, std::sync::atomic::Ordering::SeqCst);
+    crate::remote_preview::bridge_started(bind_addr);
     if bind_addr.is_unspecified() {
         eprintln!(
             "[remote] 远程访问已启动：{bind_addr}:{port16}（全网卡明文 HTTP：token、聊天与按键内容对同网设备可见，不可信网络请改用 Tailscale/loopback 绑定）"
@@ -890,7 +915,14 @@ async fn rpc_handler(
         // 未放行与不存在同响应，不区分——不给探测面。
         return err_status(StatusCode::NOT_FOUND, "remote/unknown_command");
     }
-    dispatch(&ctx.app, &command, &body).await
+    // 手机预览要知道手机是经哪个本机地址进来的（局域网 / Tailscale），代理开在同一个地址上。
+    let host = headers.get(axum::http::header::HOST).and_then(|v| v.to_str().ok()).map(str::to_string);
+    REQUEST_HOST.scope(host, dispatch(&ctx.app, &command, &body)).await
+}
+
+tokio::task_local! {
+    /// 本次 /rpc 请求的 Host 头（只给 preview_open 用；dispatch 的其余分支不看它）。
+    static REQUEST_HOST: Option<String>;
 }
 
 // 各臂参数结构体住在 meowo_protocol::bridge（camelCase + deny_unknown_fields 由那边的
@@ -1082,6 +1114,30 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                 return reply::<()>(Err(e));
             }
             reply(crate::fsutil::file_mention_candidates(a.cwd, a.query).await)
+        }
+        "preview_open" => {
+            let a = args!(PreviewOpenArgs);
+            let db_path = state.db_path.clone();
+            let session_id = a.session_id;
+            let pty_root = state.ptys.child_pid(session_id);
+            // 设置与会话 pid 都要读盘/开库：放进阻塞池。
+            let prep = tauri::async_runtime::spawn_blocking(move || {
+                let enabled = crate::settings::load_settings().remote_preview_enabled;
+                let store = crate::open_store(&db_path).ok();
+                let stored = store
+                    .as_ref()
+                    .and_then(|s| s.session_pid(session_id).ok().flatten())
+                    .and_then(|p| u32::try_from(p).ok());
+                (enabled, stored)
+            })
+            .await;
+            let Ok((enabled, stored)) = prep else {
+                return reply::<()>(Err("preview/owner_unknown".into()));
+            };
+            let roots: Vec<u32> = pty_root.into_iter().chain(stored).collect();
+            let owner = crate::remote_preview::Owner::Session { roots };
+            let phone_host = REQUEST_HOST.try_with(|h| h.clone()).ok().flatten();
+            reply(crate::remote_preview::open(a.url, owner, enabled, phone_host).await)
         }
         "fork_session" => {
             let a = args!(ForkSessionArgs);
@@ -3088,6 +3144,7 @@ mod tests {
             // api.ts forkSession
             "fork_session" => parse::<ForkSessionArgs>(br#"{"sessionId":42,"cols":100,"rows":30}"#).map(|_| ()),
             // api.ts fileMentionCandidates
+            "preview_open" => parse::<PreviewOpenArgs>(br#"{"sessionId":7,"url":"http://localhost:5173/"}"#).map(|_| ()),
             "file_mention_candidates" => parse::<FileMentionCandidatesArgs>(br#"{"cwd":"C:/repo","query":"src/ma"}"#).map(|_| ()),
             "lead_task_snapshot" => parse::<LeadTaskSnapshotArgs>(br#"{"cwd":"C:/repo","session":"cc-abc"}"#).map(|_| ()),
             "answer_lead_gate" => parse::<AnswerLeadGateArgs>(br#"{"cwd":"C:/repo","gateId":"B-1","choice":"1","note":"","version":"frozen-v1"}"#)
