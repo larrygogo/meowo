@@ -10,6 +10,9 @@
 import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { viewSrc } from "../../assetSrc";
+import { Icon } from "../../icons/Icon";
+import { icClose, icRefresh } from "../../icons/glyphs";
+import { icCollapse, icExpand } from "../../icons/glyphs.chat";
 import { useT } from "../../i18n";
 import { openLink } from "../../api";
 import { pushEscLayer } from "../../escLayers";
@@ -244,7 +247,7 @@ function LinkAsk({ url, onOpen, onDismiss }: { url: string; onOpen: () => void; 
       <span className="chat-view-linkask-text">{t.chat.viewLinkAsk}</span>
       <span className="chat-view-linkask-url" title={url}><b>{host}</b>{rest && <span>{rest}</span>}</span>
       <button type="button" className="chat-view-linkask-open" onClick={() => { openFromView(url, t.chat.previewOpening); onOpen(); }}>{t.chat.viewLinkOpen}</button>
-      <button type="button" className="chat-view-btn" aria-label={t.chat.viewLinkDismiss} data-tip={t.chat.viewLinkDismiss} onClick={onDismiss}>✕</button>
+      <button type="button" className="chat-view-btn" aria-label={t.chat.viewLinkDismiss} data-tip={t.chat.viewLinkDismiss} onClick={onDismiss}><Icon glyph={icClose} size={14} /></button>
     </div>
   );
 }
@@ -322,9 +325,9 @@ export function ViewCard({ view }: { view: ViewReceipt }) {
           <span className="chat-view-tag">{t.chat.viewTag}</span>
           <span className="chat-view-title" title={view.title}>{view.title}</span>
           <span className="chat-view-actions">
-            <button type="button" className="chat-view-btn" aria-label={t.chat.viewReload} data-tip={t.chat.viewReload} onClick={() => setReload((n) => n + 1)}>↻</button>
+            <button type="button" className="chat-view-btn" aria-label={t.chat.viewReload} data-tip={t.chat.viewReload} onClick={() => setReload((n) => n + 1)}><Icon glyph={icRefresh} size={14} /></button>
             <button type="button" className="chat-view-btn" aria-label={zoomed ? t.chat.viewShrink : t.chat.viewZoom} data-tip={zoomed ? t.chat.viewShrink : t.chat.viewZoom}
-              aria-pressed={zoomed} onClick={() => setZoomed((v) => !v)}>{zoomed ? "✕" : "⤢"}</button>
+              aria-pressed={zoomed} onClick={() => setZoomed((v) => !v)}><Icon glyph={zoomed ? icCollapse : icExpand} size={14} /></button>
           </span>
         </div>
         <div className="chat-view-body">
@@ -371,7 +374,7 @@ export function ViewZoom({ id, title, caption, action, onClose }: {
           {caption && <span className="chat-view-meta">{caption}</span>}
           <span className="chat-view-actions">
             {action}
-            <button type="button" className="chat-view-btn" aria-label={t.chat.viewShrink} data-tip={t.chat.viewShrink} onClick={onClose}>✕</button>
+            <button type="button" className="chat-view-btn" aria-label={t.chat.viewShrink} data-tip={t.chat.viewShrink} onClick={onClose}><Icon glyph={icCollapse} size={14} /></button>
           </span>
         </div>
         <div className="chat-view-body">
