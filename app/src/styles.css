@@ -4856,6 +4856,12 @@ button.chat-choice-pick:focus-visible { outline: none; box-shadow: inset 0 0 0 2
 .chat-view-btn { width: 28px; height: 28px; padding: 0; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); font-size: 14px; line-height: 1; cursor: pointer; }
 .chat-view-btn:hover { background: var(--fill-hover); color: var(--cc-text); }
 .chat-view-btn:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: -2px; }
+/* 页面想开链接的确认条：宿主自己画，在标题行下、页面上方。 */
+.chat-view-linkask { display: flex; align-items: center; gap: var(--sp-8); min-height: 36px; padding: 0 var(--sp-6) 0 var(--sp-12); border-bottom: var(--hairline) solid var(--line-subtle); background: var(--fill-hover); font-size: var(--text-sm); }
+.chat-view-linkask-text { flex: none; color: var(--cc-text-dim); }
+.chat-view-linkask-url { flex: 1; min-width: 0; overflow: hidden; color: var(--cc-text); font-family: var(--cc-mono); font-size: var(--text-xs); white-space: nowrap; text-overflow: ellipsis; }
+.chat-view-linkask-open { flex: none; height: 26px; padding: 0 var(--sp-10); border: 0; border-radius: var(--radius-sm); background: var(--cc-accent); color: var(--cc-on-accent); font-size: var(--text-sm); cursor: pointer; }
+.chat-view-linkask-open:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: 2px; }
 .chat-view-body { position: relative; flex: 1; min-height: 0; background: var(--cc-window-bg); }
 .chat-view-frame { display: block; width: 100%; border: 0; background: transparent; }
 .chat-view-gone { padding: var(--sp-16) var(--sp-12); color: var(--cc-text-faint); font-size: var(--text-sm); }

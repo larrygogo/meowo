@@ -92,68 +92,44 @@ describe("视图卡沙箱与消息", () => {
     expect(frame.style.height).toBe("260px");
   });
 
-  it("meowo.send 只放进输入框，不替用户发送；超长截断", () => {
+  it("meowo.send 只放进输入框，不替用户发送；超长截断；一秒内连发只认一次", () => {
     vi.useFakeTimers({ toFake: ["Date", "performance"] });
     const { frame, value } = mount();
+    const message = (text: string) => ({ jsonrpc: "2.0", method: "ui/message", params: { role: "user", content: { type: "text", text } } });
     clickInto(frame);
-    post(frame.contentWindow, { jsonrpc: "2.0", method: "ui/message", params: { role: "user", content: { type: "text", text: "  就用「弹一下」 " } } });
+    post(frame.contentWindow, message("  就用「弹一下」 "));
     expect(value.fillPrompt).toHaveBeenCalledWith("就用「弹一下」");
     expect(value.sendText).not.toHaveBeenCalled();
+    post(frame.contentWindow, message("紧接着又来"));
+    expect(value.fillPrompt).toHaveBeenCalledTimes(1);
     vi.advanceTimersByTime(1500);
-    clickInto(frame);
-    post(frame.contentWindow, { jsonrpc: "2.0", method: "ui/message", params: { content: { type: "text", text: "长".repeat(5000) } } });
+    post(frame.contentWindow, message("长".repeat(5000)));
     expect((value.fillPrompt as ReturnType<typeof vi.fn>).mock.calls[1][0]).toHaveLength(2000);
     vi.useRealTimers();
   });
 
-  it("用户没在用这块页面时不收：没点进来、点进来前很久发的、点一次连发", () => {
-    vi.useFakeTimers({ toFake: ["Date", "performance"] });
+  it("焦点不在这块页面上时不收（用户在别处打字、页面加载就发）", () => {
     const { frame, value } = mount();
-    const message = { jsonrpc: "2.0", method: "ui/message", params: { content: { type: "text", text: "加载就塞" } } };
-    post(frame.contentWindow, message);
+    post(frame.contentWindow, { jsonrpc: "2.0", method: "ui/message", params: { content: { type: "text", text: "加载就塞" } } });
     expect(value.fillPrompt).not.toHaveBeenCalled();
-    // 隔了很久用户才点进来：之前压着的那条已过期，不能借这次点击放出去。
-    vi.advanceTimersByTime(5000);
-    clickInto(frame);
-    expect(value.fillPrompt).not.toHaveBeenCalled();
-    post(frame.contentWindow, message);
-    post(frame.contentWindow, message);
-    post(frame.contentWindow, message);
-    expect(value.fillPrompt).toHaveBeenCalledTimes(1);
-    vi.useRealTimers();
   });
 
-  it("消息比父窗口失焦先到（跨进程顺序不定）也认：压住等失焦；点击留下的机会 1.5 秒后作废", () => {
-    vi.useFakeTimers({ toFake: ["Date", "performance"] });
-    const { frame, value } = mount();
-    const message = (text: string) => ({ jsonrpc: "2.0", method: "ui/message", params: { content: { type: "text", text } } });
-    post(frame.contentWindow, message("先到的消息"));
-    expect(value.fillPrompt).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(100);
-    clickInto(frame);
-    expect(value.fillPrompt).toHaveBeenCalledWith("先到的消息");
-    // 再点一次，但页面攒着不用，过 2 秒再自己发：不认。
-    vi.advanceTimersByTime(1200);
-    clickInto(frame);
-    vi.advanceTimersByTime(2000);
-    post(frame.contentWindow, message("攒着的"));
-    expect(value.fillPrompt).toHaveBeenCalledTimes(1);
-    vi.useRealTimers();
-  });
-
-  it("点一次只能开一个链接：开完焦点收回，后面的不放行（审查第 2 轮 linkSpam）", () => {
-    vi.useFakeTimers({ toFake: ["Date", "performance"] });
+  it("页面要开链接：不自动打开，卡片出一条确认，点「打开」才开；javascript: 不认；刷屏也只有一条", () => {
     openLink.mockClear();
     const { frame } = mount();
-    clickInto(frame);
-    for (let i = 0; i < 5; i += 1) {
-      post(frame.contentWindow, { jsonrpc: "2.0", method: "ui/open-link", params: { url: `https://example.com/${i}` } });
-      vi.advanceTimersByTime(1100);
-    }
-    expect(document.activeElement).not.toBe(frame);
+    post(frame.contentWindow, { jsonrpc: "2.0", method: "ui/open-link", params: { url: "javascript:alert(1)" } });
+    expect(document.querySelector(".chat-view-linkask")).toBeNull();
+    for (let i = 0; i < 5; i += 1) post(frame.contentWindow, { jsonrpc: "2.0", method: "ui/open-link", params: { url: `https://example.com/${i}` } });
+    expect(openLink).not.toHaveBeenCalled();
+    expect(document.querySelectorAll(".chat-view-linkask")).toHaveLength(1);
+    expect(screen.getByText("example.com/4")).toBeTruthy();
+    fireEvent.click(screen.getByText("打开"));
     expect(openLink).toHaveBeenCalledTimes(1);
-    expect(openLink).toHaveBeenCalledWith("https://example.com/0");
-    vi.useRealTimers();
+    expect(openLink).toHaveBeenCalledWith("https://example.com/4");
+    expect(document.querySelector(".chat-view-linkask")).toBeNull();
+    post(frame.contentWindow, { jsonrpc: "2.0", method: "ui/open-link", params: { url: "https://example.com/x" } });
+    fireEvent.click(screen.getByLabelText("不打开"));
+    expect(openLink).toHaveBeenCalledTimes(1);
   });
 
   it("换主题时告诉页面，不重载", async () => {
@@ -227,8 +203,11 @@ describe("方案卡里的 HTML 方案", () => {
     expect(thumb.getAttribute("sandbox")).toBe("allow-scripts");
     expect(thumb.style.pointerEvents).toBe("none");
     expect(thumb.tabIndex).toBe(-1);
+    act(() => thumb.focus());
     post(thumb.contentWindow, { jsonrpc: "2.0", method: "ui/message", params: { content: { type: "text", text: "缩略图塞字" } } });
+    post(thumb.contentWindow, { jsonrpc: "2.0", method: "ui/open-link", params: { url: "https://example.com/" } });
     expect(fillPrompt).not.toHaveBeenCalled();
+    expect(document.querySelector(".chat-view-linkask")).toBeNull();
   });
 
   it("放大后能「选这个」，发出的消息和截图方案卡同一格式", async () => {

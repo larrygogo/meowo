@@ -29,12 +29,8 @@ const SEND_MAX = 2000;
 /** 没收到页面报高度之前的占位高度（页面加载通常几十毫秒，先占一块不至于跳得太狠）。 */
 const INITIAL_HEIGHT = 200;
 const MIN_HEIGHT = 48;
-/** 两次放进输入框 / 开链接之间至少隔多久：挡住页面一次点击连发。 */
+/** 两次放进输入框之间至少隔多久。 */
 const ACTION_GAP_MS = 1000;
-/** 点进页面后多久内的动作算这次点击的（再久就是页面攒着自己用）。 */
-const ARM_MS = 1500;
-/** 消息比「父窗口失焦」先到时，压住多久等它。 */
-const HOLD_MS = 300;
 
 export function parseViewReceipt(text: string): ViewReceipt | null {
   const line = text.split("\n").map((entry) => entry.trim()).reverse().find((entry) => entry.startsWith(MARKER) && entry.endsWith("]"));
@@ -71,15 +67,22 @@ function asMessage(data: unknown): Message | null {
   return { method: record.method, params };
 }
 
-/** 页面里 http(s) 链接：本机地址桌面进右侧面板、手机走预览代理，其余交给系统浏览器（与正文链接同一套）。 */
-function openFromView(href: string, opening: string) {
-  let url: URL;
+/** 只认 http(s) 绝对地址，返回规范化后的写法；其余（javascript:、file:、相对地址）一律不认。 */
+function safeLink(href: string): string | null {
   try {
-    url = new URL(href);
+    const url = new URL(href);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
   } catch {
-    return;
+    return null;
   }
-  if (url.protocol !== "http:" && url.protocol !== "https:") return;
+}
+
+/** 页面里 http(s) 链接：本机地址桌面进右侧面板、手机走预览代理，其余交给系统浏览器（与正文链接同一套）。
+ *  只在用户点了卡片上的「打开」时调用（用户手势里，手机浏览器不会拦新页面）。 */
+function openFromView(href: string, opening: string) {
+  const safe = safeLink(href);
+  if (!safe) return;
+  const url = new URL(safe);
   if (openInPanel(url.href)) return;
   const preview = openPhonePreview(url.href, opening);
   if (preview) {
@@ -97,7 +100,7 @@ function openFromView(href: string, opening: string) {
  * 一块沙箱页面。高度跟着页面报的走（上限 maxHeight，超出页面自己滚）；fixedHeight 给了就固定。
  * 放大不换 iframe（换了页面状态就丢了）：外层卡片切成铺满窗口的定位，iframe 原地变大。
  */
-export function ViewFrame({ id, title, fixedHeight, maxHeight, onMissing, onEscape, className, interactive = true, fill = false }: {
+export function ViewFrame({ id, title, fixedHeight, maxHeight, onMissing, onEscape, onLink, className, interactive = true, fill = false }: {
   id: string;
   title: string;
   /** 撑满外层（缩略图、放大层）：高度交给 CSS，不跟页面报的走。 */
@@ -107,6 +110,8 @@ export function ViewFrame({ id, title, fixedHeight, maxHeight, onMissing, onEsca
   onMissing?: () => void;
   /** 焦点在页面里时按了 Esc（桥转告）：放大态用它收回。 */
   onEscape?: () => void;
+  /** 页面想打开一个 http(s) 链接：由卡片显示确认条，用户点了才开。 */
+  onLink?: (url: string) => void;
   className?: string;
   /** false：缩略图，页面照常渲染但不接收点击（方案卡里点缩略图是「选它」，不是点页面里的按钮）。 */
   interactive?: boolean;
@@ -118,59 +123,19 @@ export function ViewFrame({ id, title, fixedHeight, maxHeight, onMissing, onEsca
   const [reported, setReported] = useState<number | null>(null);
   // 地址只按首次的主题定：之后换主题发消息过去，不重载页面（重载会丢掉用户在页面里点出来的状态）。
   const [src] = useState(() => viewSrc(id, theme));
-  const opening = t.chat.previewOpening;
   const fillPrompt = actions?.fillPrompt;
   const missing = useRef(onMissing);
   missing.current = onMissing;
-  const lastAction = useRef(Number.NEGATIVE_INFINITY);
+  const lastFill = useRef(Number.NEGATIVE_INFINITY);
   const escape = useRef(onEscape);
   escape.current = onEscape;
-  // 用户把焦点交给这块页面一次，页面只能做一个动作（审查第 2 轮：点一次后能每秒开一个浏览器标签）。
-  // 点进 iframe 时父窗口失焦、activeElement 变成这个 iframe，那一刻记下「上膛」时间；动作用掉就退膛并把焦点收回，
-  // 下一个动作要用户再点一次。膛只留 ARM_MS：过期作废，页面不能攒着一次点击、过一会儿再自己用。
-  // 跨源 iframe 在另一个进程，「父窗口失焦」和「页面发来的消息」到达父页的先后没有保证（2026-11-24 演示页实测
-  // 消息先到、被当成没点过丢掉）：没上膛时先把动作压住 HOLD_MS，等失焦到了再放行。
-  // 间隔都用 performance.now()：不受系统改时间影响（演示页把 Date.now 定死，实测限频永远算成 0）。
-  const armedAt = useRef(Number.NEGATIVE_INFINITY);
-  const pending = useRef<{ message: Message; at: number } | null>(null);
-  const run = useRef<(message: Message) => void>(() => {});
+  const link = useRef(onLink);
+  link.current = onLink;
   useEffect(() => {
-    const onBlur = () => {
-      if (document.activeElement !== frame.current) return;
-      armedAt.current = performance.now();
-      const held = pending.current;
-      pending.current = null;
-      if (held && performance.now() - held.at <= HOLD_MS) run.current(held.message);
-    };
-    // 两个信号都听：iframe 元素自己的 focus（父窗口本就没有焦点时，点进页面不会再触发父窗口 blur——
-    // 第一次动作后焦点被挪回输入框，但整个窗口的焦点仍留在 iframe 的进程里，2026-11-24 演示页实测），
-    // 以及父窗口 blur（老路径）。
-    const node = frame.current;
-    node?.addEventListener("focus", onBlur);
-    window.addEventListener("blur", onBlur);
-    return () => {
-      node?.removeEventListener("focus", onBlur);
-      window.removeEventListener("blur", onBlur);
-    };
-  }, []);
-  useEffect(() => {
-    const handle = (message: Message) => {
-      if (!frame.current) return;
-      // 放进输入框、开链接要「用户正在用这块页面」：刚点进这个 iframe（上膛未过期）、焦点还在它上面、不是缩略图、限频。
-      // 桥里已按用户激活过滤；这里不信页面自己说的，按宿主看得到的事实再拦一道（页面可以绕过桥直接 postMessage）。
-      if (message.method === "ui/message" || message.method === "ui/open-link") {
-        if (!interactive) return;
-        const now = performance.now();
-        if (now - lastAction.current < ACTION_GAP_MS) return;
-        const ready = now - armedAt.current <= ARM_MS && document.activeElement === frame.current;
-        if (!ready) {
-          pending.current = { message, at: now };
-          return;
-        }
-        lastAction.current = now;
-        armedAt.current = Number.NEGATIVE_INFINITY;
-        frame.current.blur();
-      }
+    const onMessage = (event: MessageEvent) => {
+      if (!frame.current || event.source !== frame.current.contentWindow) return;
+      const message = asMessage(event.data);
+      if (!message) return;
       switch (message.method) {
         case "ui/notifications/size-changed": {
           const height = Number(message.params.height);
@@ -178,15 +143,25 @@ export function ViewFrame({ id, title, fixedHeight, maxHeight, onMissing, onEsca
           break;
         }
         case "ui/message": {
+          // 只放进输入框、不发送；要「用户正在用这块页面」：焦点在这个 iframe 上、不是缩略图、两次间隔 ≥1 秒。
+          // 放进去以后焦点移到输入框，页面要再放一句就得等用户点回来。不再猜「刚点过没有」：父页看不到跨源
+          // iframe 里的点击，靠焦点事件推断会漏判（审查第 3 轮：先点「保存」再点「选这个」被静默丢掉）。
+          // 剩余风险：页面自己抢焦点后能放进一句话——看得见、不会自动发送（decisions.md）。
+          const now = performance.now();
+          if (!interactive || document.activeElement !== frame.current || now - lastFill.current < ACTION_GAP_MS) break;
           const content = message.params.content as Record<string, unknown> | undefined;
           const text = typeof content?.text === "string" ? content.text.trim().slice(0, SEND_MAX) : "";
-          // 只放进输入框，用户看过再自己发：页面是 agent 写的，自动发送等于让页面替用户说话。
-          if (text && fillPrompt) fillPrompt(text);
+          if (!text || !fillPrompt) break;
+          lastFill.current = now;
+          fillPrompt(text);
           break;
         }
-        case "ui/open-link":
-          if (typeof message.params.url === "string") openFromView(message.params.url, opening);
+        case "ui/open-link": {
+          // 不自动打开：交给卡片画一条宿主自己的「打开」确认（页面伪造不了宿主的按钮；iOS 也只在用户手势里放行新页面）。
+          const url = typeof message.params.url === "string" ? safeLink(message.params.url) : null;
+          if (interactive && url) link.current?.(url);
           break;
+        }
         case "meowo/view-missing":
           missing.current?.();
           break;
@@ -195,15 +170,9 @@ export function ViewFrame({ id, title, fixedHeight, maxHeight, onMissing, onEsca
           break;
       }
     };
-    run.current = handle;
-    const onMessage = (event: MessageEvent) => {
-      if (!frame.current || event.source !== frame.current.contentWindow) return;
-      const message = asMessage(event.data);
-      if (message) handle(message);
-    };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [fillPrompt, opening, interactive]);
+  }, [fillPrompt, interactive]);
 
   // 主题变了告诉页面（桥把它写到 <html data-theme> 与 color-scheme 上）。
   useEffect(() => {
@@ -228,6 +197,20 @@ export function ViewFrame({ id, title, fixedHeight, maxHeight, onMissing, onEsca
       // 页面的 prefers-color-scheme 跟着 iframe 元素的 color-scheme 走。
       style={{ height: fill ? "100%" : height, colorScheme: theme, pointerEvents: interactive ? undefined : "none" }}
     />
+  );
+}
+
+/** 页面想打开的链接：卡片上一条宿主自己画的确认，点「打开」才开（页面伪造不了这个按钮）。 */
+function LinkAsk({ url, onDone }: { url: string; onDone: () => void }) {
+  const t = useT();
+  const shown = url.replace(/^https?:\/\//, "");
+  return (
+    <div className="chat-view-linkask" role="status">
+      <span className="chat-view-linkask-text">{t.chat.viewLinkAsk}</span>
+      <span className="chat-view-linkask-url" title={url}>{shown}</span>
+      <button type="button" className="chat-view-linkask-open" onClick={() => { openFromView(url, t.chat.previewOpening); onDone(); }}>{t.chat.viewLinkOpen}</button>
+      <button type="button" className="chat-view-btn" aria-label={t.chat.viewLinkDismiss} data-tip={t.chat.viewLinkDismiss} onClick={onDone}>✕</button>
+    </div>
   );
 }
 
@@ -280,6 +263,7 @@ export function ViewCard({ view }: { view: ViewReceipt }) {
   const [zoomed, setZoomed] = useState(false);
   const [missing, setMissing] = useState(false);
   const [reload, setReload] = useState(0);
+  const [askLink, setAskLink] = useState<string | null>(null);
   const close = useCallback(() => setZoomed(false), []);
   useZoomEsc(zoomed, close);
   // 上限约半屏：一张卡不该把对话挤得只剩它；页面更高时在卡内滚。
@@ -308,10 +292,11 @@ export function ViewCard({ view }: { view: ViewReceipt }) {
               aria-pressed={zoomed} onClick={() => setZoomed((v) => !v)}>{zoomed ? "✕" : "⤢"}</button>
           </span>
         </div>
+        {askLink && <LinkAsk url={askLink} onDone={() => setAskLink(null)} />}
         <div className="chat-view-body">
           <ViewFrame key={reload} id={view.id} title={view.title} className="chat-view-frame"
             fixedHeight={zoomed ? null : view.height} maxHeight={zoomed ? undefined : maxHeight}
-            onMissing={() => setMissing(true)} onEscape={zoomed ? close : undefined} />
+            onMissing={() => setMissing(true)} onEscape={zoomed ? close : undefined} onLink={setAskLink} />
         </div>
       </div>
     </>
@@ -340,6 +325,7 @@ export function ViewZoom({ id, title, caption, action, onClose }: {
 }) {
   const t = useT();
   const [missing, setMissing] = useState(false);
+  const [askLink, setAskLink] = useState<string | null>(null);
   useZoomEsc(true, onClose);
   return createPortal(
     <>
@@ -353,10 +339,11 @@ export function ViewZoom({ id, title, caption, action, onClose }: {
             <button type="button" className="chat-view-btn" aria-label={t.chat.viewShrink} data-tip={t.chat.viewShrink} onClick={onClose}>✕</button>
           </span>
         </div>
+        {askLink && <LinkAsk url={askLink} onDone={() => setAskLink(null)} />}
         <div className="chat-view-body">
           {missing
             ? <div className="chat-view-gone">{t.chat.viewMissing}</div>
-            : <ViewFrame id={id} title={title} fill className="chat-view-frame" onMissing={() => setMissing(true)} onEscape={onClose} />}
+            : <ViewFrame id={id} title={title} fill className="chat-view-frame" onMissing={() => setMissing(true)} onEscape={onClose} onLink={setAskLink} />}
         </div>
       </div>
     </>,

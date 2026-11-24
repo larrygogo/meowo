@@ -1743,6 +1743,9 @@ export const zh = {
     viewReload: "重新加载",
     viewZoom: "放大",
     viewShrink: "收回",
+    viewLinkAsk: "页面要打开",
+    viewLinkOpen: "打开",
+    viewLinkDismiss: "不打开",
     // 小表单（Meowo 的 ask_form 工具，FormCard.tsx）。
     formPreparing: "正在准备表单…",
     formFailed: "表单没能发过来",
