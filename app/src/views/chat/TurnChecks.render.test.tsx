@@ -5,6 +5,7 @@ import { TurnChanges } from "./TurnChanges";
 import { revealItem, useRememberedOpen } from "./foldMemory";
 import { zh } from "../../i18n/zh";
 import { ChatActionsContext } from "./chatActions";
+import { ChatCwdContext } from "./ToolActivity";
 
 afterEach(cleanup);
 
@@ -87,6 +88,30 @@ describe("本轮结果卡的检查段", () => {
     // 改到的是第一条 lint 查过的文件；第二条查的是别的文件，不受影响。
     expect(rows.map((row) => row.querySelector(".chat-turn-check-result")?.textContent)).toEqual(["通过 · 已过时", "通过"]);
     expect(screen.getByText(zh.chat.checkStale(["代码检查"], ["balance.tsx"]))).toBeTruthy();
+  });
+
+  // 实拍 2026-11-24（用户：「还是老是会误报」）：多仓根目录 cloud 下，先在 src-tauri 跑 cargo test / clippy、
+  // 在根目录跑一个点名的 vitest，之后改了子仓 xbot-admin-front 的 index.tsx 再对它跑 eslint。前面几行全标「已过时」。
+  it("改动碰不到的检查不标过时：工具链对不上、改的是别的子项目", () => {
+    const root = "C:\\Users\\x\\cloud";
+    const items = [
+      edit("e0", `${root}\\src-tauri\\src\\engine\\fleet.rs`), ok("e0"),
+      run("c1", "cd /c/Users/x/cloud/src-tauri && cargo test --bin xbot-gui engine::fleet 2>&1 | tail -3"), ok("c1", "test result: ok. 4 passed; 0 failed; 0 ignored"),
+      run("c2", "cd /c/Users/x/cloud; npx vitest run src/lib/__tests__/error-i18n.test.ts 2>&1 | tail -5"), ok("c2", " Tests  10 passed (10)"),
+      edit("e1", `${root}\\xbot-admin-front\\src\\pages\\activation-code\\list\\index.tsx`), ok("e1"),
+      run("c3", "cd /c/Users/x/cloud/xbot-admin-front; npx eslint src/pages/activation-code/list/index.tsx"), ok("c3"),
+    ];
+    render(<ChatCwdContext.Provider value={root}><TurnChanges items={items} /></ChatCwdContext.Provider>);
+    expect(document.querySelectorAll(".chat-turn-check.is-stale")).toHaveLength(0);
+    cleanup();
+    // 反过来：改的是根项目自己的文件、或 Rust 文件，照旧过时。
+    render(<ChatCwdContext.Provider value={root}><TurnChanges items={[
+      ...items,
+      edit("e2", `${root}\\src\\lib\\errors.ts`), ok("e2"),
+      edit("e3", `${root}\\src-tauri\\src\\auth.rs`), ok("e3"),
+    ]} /></ChatCwdContext.Provider>);
+    const rows = [...document.querySelectorAll(".chat-turn-check")];
+    expect(rows.map((row) => row.querySelector(".chat-turn-check-result")?.textContent)).toEqual(["4 个通过 · 已过时", "10 个通过 · 已过时", "通过"]);
   });
 
   // 实拍：先通过，再 `git stash` 藏掉修复跑一遍确认用例会失败，再 pop 回来。卡片写「1 个没过」，用户让 AI 去修。

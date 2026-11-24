@@ -35,6 +35,8 @@ export type TurnCheck = {
   /** 去重用：每类对应的「类别|工具|范围」（见 segmentKey、covers）。同一工具重跑全量或同样范围才算盖过；
    *  换了工具（cargo test 换成 vitest）、范围更窄（全量换成只跑一个文件）各留各的（做空第四、五轮）。 */
   keys: string[];
+  /** 检查跑在哪个目录（规范化的绝对路径，见 workDirOf）；命令里没切过绝对目录时为 null。判断改动碰不碰得到它用。 */
+  dir: string | null;
 };
 
 // 带值的选项：值不是「跑的范围」，连值一起去掉。
@@ -132,16 +134,76 @@ function inScope(path: string, scope: string[]): boolean {
   return scope.some((s) => p === s || p.endsWith(`/${s}`) || p.startsWith(`${s}/`) || p.includes(`/${s}/`));
 }
 
+/** 路径规范成好比较的样子：正斜杠、小写、git bash 的 `/c/x` 换成 `c:/x`、去掉 `./` 和结尾斜杠。 */
+export function normPath(path: string): string {
+  return path.trim().replace(/^(["'])(.*)\1$/, "$2").replace(/\\/g, "/").replace(/^\/([a-z])(?=\/|$)/i, "$1:")
+    .replace(/\/\.(?=\/|$)/g, "").replace(/\/+$/, "").toLowerCase();
+}
+const isAbsPath = (path: string) => /^[a-z]:(?:\/|$)/.test(path) || path.startsWith("/");
+const under = (path: string, dir: string) => path === dir || path.startsWith(`${dir}/`);
+
+/** 检查段跑在哪个目录：命令里它前面切过的绝对目录（再叠上之后的相对 cd）。没切过绝对目录就不知道——
+ *  shell 的当前目录会跨命令保留，光看这一条推不出来——返回 null。 */
+function workDirOf(segments: Segment[], index: number): string | null {
+  let dir: string | null = null;
+  for (let at = 0; at < index; at += 1) {
+    const cd = /^(?:cd|pushd|set-location|sl)(?:\s+\/d)?\s+(.+)$/i.exec(segments[at].text.trim());
+    if (!cd) {
+      if (/^popd\b|^pop-location\b/i.test(segments[at].text.trim())) dir = null;
+      continue;
+    }
+    const target = normPath(cd[1]);
+    if (isAbsPath(target)) dir = target;
+    else if (dir === null || target.startsWith("~") || target === "-") dir = null;
+    else {
+      const parts: string[] = dir.split("/");
+      for (const part of target.split("/")) {
+        if (part === "..") parts.pop();
+        else if (part && part !== ".") parts.push(part);
+      }
+      dir = parts.join("/");
+    }
+  }
+  return dir;
+}
+
+// 前端文件与原生工具链的文件：cargo test 不会因为改了 .tsx 过时，tsc / vitest 也不会因为改了 .rs 过时
+// （实拍 2026-11-24：一轮里先跑完 cargo test、clippy，再改另一个前端仓的 index.tsx，cargo 几行全标「已过时」）。
+const FRONTEND_FILE = /\.(?:[cm]?[jt]sx?|vue|svelte|astro|css|scss|sass|less|html?)$/i;
+const NATIVE_FILE = /\.(?:rs|go|java|kt|kts|scala|py|rb|cs|swift|c|cc|cpp|h|hpp)$|(?:^|\/)(?:cargo\.(?:toml|lock)|go\.(?:mod|sum)|pom\.xml|build\.gradle(?:\.kts)?)$/i;
+const NATIVE_FAMILY = /^(?:(?:cargo|go|mvn|gradle|gradlew|\.\/gradlew|dotnet|swift) |(?:pytest|mypy|pyright|basedpyright|ruff|flake8|pylint|unittest|golangci-lint|rspec|phpunit)$)/;
+const JS_FAMILY = /^(?:tsc|vue-tsc|tsgo|vitest|jest|playwright|mocha|ava|jasmine|eslint|oxlint|biome|stylelint|prettier)$/;
+
 /**
- * 之后改的这个文件，会不会让这一行检查过时。lint 是逐个文件查的：点名了文件或目录，就只有改到它们才算过时
- * （实拍：`eslint a.ts b.ts c.ts` 之后改了两个测试文件，也标「已过时」，用户问「这些真的准吗」）。
- * 类型检查、测试、构建会顺着 import 牵连别的文件，改哪儿都可能影响，照旧算过时。
+ * 改的文件落在检查目录里另一个子项目中（这一轮有检查 cd 进过那个子项目），而检查只点名了自己项目里的文件：
+ * 改动碰不到它（实拍 2026-11-24：在多仓的根目录跑 `vitest run src/lib/…test.ts`，之后改了子仓 xbot-admin-front
+ * 的 index.tsx，测试被标「已过时」）。全量跑的不排除：根目录的全量测试可能也收子项目的用例。
  */
-export function editAffectsCheck(check: TurnCheck, path: string): boolean {
-  if (check.kinds.some((kind) => kind !== "lint")) return true;
+function inOtherNestedProject(dir: string, scope: string[] | null, abs: string, roots: string[]): boolean {
+  if (!scope || !under(abs, dir) || abs === dir) return false;
+  const owner = roots.filter((root) => root !== dir && root.startsWith(`${dir}/`) && under(abs, root))
+    .sort((a, b) => b.length - a.length)[0];
+  return !!owner && scope.every((path) => !under(`${dir}/${path}`, owner));
+}
+
+/**
+ * 之后改的这个文件，会不会让这一行检查过时。宁可漏报：「已过时」误报多了，用户就不再信这一栏。
+ * - 工具链对不上的不算（见 FRONTEND_FILE）。
+ * - lint 是逐个文件查的：点名了文件或目录，就只有改到它们才算过时
+ *   （实拍：`eslint a.ts b.ts c.ts` 之后改了两个测试文件，也标「已过时」，用户问「这些真的准吗」）。
+ * - 落在别的子项目里的不算（见 inOtherNestedProject）；要 project（改动的绝对路径、这一轮检查跑过的目录）才判。
+ * - 其余类型检查、测试、构建会顺着 import 牵连别的文件，照旧算过时。
+ */
+export function editAffectsCheck(check: TurnCheck, path: string, project?: { abs: string; roots: string[] }): boolean {
+  const file = normPath(path);
+  const abs = project ? normPath(project.abs) : null;
   return check.keys.some((key) => {
+    const [kind, family] = key.split("|");
+    if (NATIVE_FAMILY.test(family) && FRONTEND_FILE.test(file)) return false;
+    if (JS_FAMILY.test(family) && NATIVE_FILE.test(file)) return false;
     const scope = scopePaths(key);
-    return !scope || inScope(path, scope);
+    if (check.dir && abs && isAbsPath(abs) && inOtherNestedProject(check.dir, scope, abs, project!.roots)) return false;
+    return kind !== "lint" || !scope || inScope(path, scope);
   });
 }
 
@@ -859,7 +921,7 @@ export function collectTurnChecks(items: ChatItem[]): TurnCheck[] {
         const at = found.get(key)!.index;
         return segments[at].text.replace(ASSIGNS, "").split(/\r?\n/)[0];
       });
-      all.push({ kinds: group.kinds, keys: group.keys, ...group.verdict, command, parts, toolId: item.id, at });
+      all.push({ kinds: group.kinds, keys: group.keys, ...group.verdict, command, parts, toolId: item.id, at, dir: workDirOf(segments, Math.min(...group.indexes)) });
       if (result && group.verdict.status === "fail" && group.kinds.every((kind) => kind === "lint")) {
         const files = lintFailedFiles(result.text);
         if (files.length > 0) lintFailures.set(item.id, files);
