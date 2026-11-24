@@ -94,6 +94,18 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "remote/timeout", exact: true, zh: "连不上桌面端，请求超时", en: "Couldn't reach the desktop app. The request timed out." },
   // 远程桥 git 只读命令的收口（remote.rs ensure_session_dir / 改动清单校验）。
   { m: "remote/not_session_dir", exact: true, zh: "只能查看会话目录里的改动", en: "Only changes in the session folder can be viewed" },
+  // 手机预览（remote_preview.rs）：点对话里的本机链接打不开时，就地显示在链接后面。
+  { m: "preview/not_listening", exact: true, zh: "预览还没启动：电脑上这个端口现在没有程序在监听", en: "The preview isn't running: nothing is listening on that port on your computer" },
+  { m: "preview/not_session", exact: true, zh: "这个端口不是本会话起的程序（用 & 或 nohup 在后台起的也认不出），Meowo 不会把它开给手机。可以让 AI 用它自己的后台运行方式重起 dev server", en: "That port wasn't opened by this session (servers started with & or nohup aren't recognized either), so Meowo won't open it to your phone. Ask the AI to restart the dev server with its own background-run feature" },
+  { m: "preview/owner_unknown", exact: true, zh: "查不到这个端口是谁开的，没有打开", en: "Couldn't tell which program owns that port, so it wasn't opened" },
+  { m: "preview/disabled", exact: true, zh: "手机预览已在电脑的设置里关掉", en: "Phone preview is turned off in the desktop settings" },
+  { m: "preview/remote_off", exact: true, zh: "电脑上的远程访问没开", en: "Remote access is off on your computer" },
+  { m: "preview/loopback_bind", exact: true, zh: "远程访问只监听本机，手机连不到预览端口。在电脑设置里把监听改成局域网或 Tailscale", en: "Remote access only listens on this computer, so your phone can't reach the preview. Switch it to LAN or Tailscale in the desktop settings" },
+  { m: "preview/hostname", exact: true, zh: "手机是用主机名连的 Meowo，预览要用 IP：在电脑设置里扫二维码重新连一次", en: "Your phone reached Meowo by hostname, but the preview needs an IP address. Scan the QR code in the desktop settings to reconnect" },
+  { m: "preview/https", exact: true, zh: "暂不支持 https 的本机地址", en: "Local https addresses aren't supported yet" },
+  { m: "preview/not_local", exact: true, zh: "这不是电脑上的本机地址", en: "That isn't a local address on your computer" },
+  { m: "preview/bad_url", exact: true, zh: "链接格式不对", en: "That link isn't valid" },
+  { m: "preview/bind_failed", exact: true, zh: "电脑上开不了预览端口", en: "Couldn't open a preview port on your computer" },
   { m: "remote/not_changed_file", exact: true, zh: "这个文件不在改动列表里", en: "This file is not in the change list" },
   { m: "remote/unauthorized", exact: true, zh: "配对已失效，请重新扫码", en: "Pairing expired; scan the code again" },
   { m: "remote/not_json", exact: true, zh: "响应异常，网络可能被中间设备拦截", en: "Unexpected response; the network may be intercepting requests" },

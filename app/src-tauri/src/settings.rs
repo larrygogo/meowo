@@ -293,6 +293,11 @@ pub(crate) struct Settings {
     /// tailscale 模式找不到接口时拒绝启动而非回退 0.0.0.0（见 remote.rs resolve_bind_addr）。
     #[serde(default = "default_remote_bind")]
     pub(crate) remote_access_bind: String,
+    /// 手机预览（remote_preview.rs）：手机上点对话里的本机链接，经远程桥旁开一个端口代理到
+    /// 电脑上的 dev server。缺省开（leader 2026-11-24 关卡 B 选「远程访问开着就自动可用」），
+    /// 只在远程访问开着时生效；关掉后已开的预览代理立即回收。
+    #[serde(default = "default_true")]
+    pub(crate) remote_preview_enabled: bool,
     /// 远程访问 token（64 位十六进制，remote::generate_token 严格生成）。空 = 未生成，
     /// server 不会启动。落盘持久化，但**不随 get_settings/settings-changed 下发**——
     /// 窗口侧唯一的取得口是配对命令 remote_access_info（见 without_remote_token）。
@@ -379,6 +384,7 @@ impl Default for Settings {
             remote_access_enabled: false,
             remote_access_port: default_remote_port(),
             remote_access_bind: default_remote_bind(),
+            remote_preview_enabled: true,
             remote_access_token: String::new(),
             bark_url: String::new(),
             bark_paused: false,
@@ -933,6 +939,10 @@ pub(crate) async fn set_settings(
     let _ = app.emit("settings-changed", without_remote_token(settings.clone()));
     // 远程访问开关/端口热生效（fire-and-forget，内部自行读最新 settings 并比对差异）。
     crate::remote::apply(&app);
+    // 手机预览关掉了：已开的代理立即回收（开着时由 remote_preview 按需开，不用在这里做事）。
+    if !settings.remote_preview_enabled {
+        crate::remote_preview::close_all();
+    }
     Ok(())
 }
 

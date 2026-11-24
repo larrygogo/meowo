@@ -21,7 +21,7 @@ description: Meowo Lead workflow for ambitious implementation, explicit leader g
 
 ## 建立任务
 
-1. 先读项目约束及 `.lead/product.md`、`.lead/standards.md`（若存在）。在项目根创建 `.lead/<日期-任务>/`，写 `SPEC.md`、`acceptance.json`、`progress.md`、`decisions.md`。使用临时 worktree 时默认将任务放主检出，避免清理 worktree 时丢记录；项目明确要求独立存储时遵守项目约定并说明保存位置。
+1. 进入 Lead 后先建任务目录，再派调研或做别的事：Meowo 的 Lead 面板只靠任务目录显示，没建目录用户就看不到面板。先读项目约束及 `.lead/product.md`、`.lead/standards.md`（若存在）。在项目根创建 `.lead/<日期-任务>/`，项目根指会话工作目录所在的 git 仓库根（工作目录不在 git 仓库里时就是工作目录本身），不是仓库外的上级目录；面板只读这里的 `.lead`。写 `SPEC.md`、`acceptance.json`、`progress.md`、`decisions.md`。使用临时 worktree 时默认将任务放主检出，避免清理 worktree 时丢记录；项目明确要求独立存储时遵守项目约定并说明保存位置。
 2. SPEC 写目的、业务事实、终态、四方向产物/过程、约束、不做与未决问题。acceptance.json 顶层为数组，验收项含 `id`、`check`、`passes:false`；只能由用户验证的业务判断增加 `by:"leader"`，不得在实施时补该字段绕过验证。SPEC 另设「验收判据」一节，按验收 id 写：通过时能观察到什么（在哪个入口、做什么操作、看到什么结果），以及至少一个「看似完成但不算通过」的反例（如只改了样式没改行为、只跑了单元测试没走真实入口、只覆盖了新数据没覆盖旧数据）。判据写在 SPEC 而不是 acceptance.json，不改验收清单的字段结构。判据必须在写产品代码之前定下来，否则容易照着实现去写判据；确实是事后补写的，在该节注明「事后补写」和原因，发 C 时在说明里披露。
 3. 通过原生写工具更新任务文件，让 Meowo 认领本会话。不要自报其他会话 ID，不替别人的 `.lead/active` 或 `.owner` 争抢归属。
 4. 在 progress 中维护 `phase: interview/spec/design/implement/verify/blocked/done`。记录失败尝试和证据，不以阶段标签代替实际完成。

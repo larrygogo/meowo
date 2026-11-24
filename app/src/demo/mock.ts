@@ -48,6 +48,7 @@ export const store: Store = {
     remote_access_enabled: false,
     remote_access_port: 18620,
     remote_access_bind: "all",
+    remote_preview_enabled: true,
     remote_access_token: "",
     bark_url: "",
     workspace_order: [],

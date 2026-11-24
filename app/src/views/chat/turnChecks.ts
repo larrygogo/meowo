@@ -96,7 +96,18 @@ export function segmentKey(text: string): string {
 function covers(later: string, earlier: string): boolean {
   const [kindA, familyA, scopeA] = later.split("|");
   const [kindB, familyB, scopeB] = earlier.split("|");
-  return kindA === kindB && familyA === familyB && (scopeA === "" || scopeA === scopeB);
+  if (kindA !== kindB || familyA !== familyB) return false;
+  if (scopeA === "" || scopeA === scopeB) return true;
+  // 选项型范围（`-p=app`、`--project=web`）完全一样，后一次只是去掉了名字、路径筛选：跑得更全，也算盖过。
+  // 实拍 2026-11-24：`cargo test -p meowo-reporter lead` 失败、修好后跑 `cargo test -p meowo-reporter` 全过，
+  // 卡片还一直挂着前一次的失败。路径筛选不能反过来比子集：`vitest run a.ts` 比 `vitest run a.ts b.ts` 更窄。
+  const split = (scope: string) => {
+    const tokens = scope ? scope.split(" ") : [];
+    return { flags: tokens.filter((t) => t.startsWith("-")).join(" "), named: tokens.filter((t) => !t.startsWith("-")) };
+  };
+  const a = split(scopeA);
+  const b = split(scopeB);
+  return a.named.length === 0 && a.flags === b.flags;
 }
 
 /** 一个去重键里点名的路径（小写、正斜杠、去掉通配之后的部分）。null 表示全量，或认不出范围（带 `-p=x` 这类筛选）。 */
