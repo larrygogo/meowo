@@ -182,7 +182,25 @@ function editedAfterIndex(items: ChatItem[], after: number, cwd: string | null):
   });
 }
 
-const KIND_LABEL = (t: ReturnType<typeof useT>, kind: CheckKind) => t.chat.checkKind[kind];
+/// 提示里点名的文件一般只写文件名；同名的会认错时带上上一级目录：改了几个同名文件，或检查命令里也出现了
+/// 这个名字（实拍 2026-11-24：eslint 查的是 activation-code/list/index.tsx，提示写「又改了 index.tsx」，
+/// 看着像在说同一个文件）。
+export function staleFileNames(paths: string[], checks: TurnCheck[]): string[] {
+  const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+  const commands = checks.flatMap((check) => check.parts).join("\n").replace(/\\/g, "/").toLowerCase();
+  return paths.map((path) => {
+    const name = base(path);
+    const lower = name.toLowerCase();
+    const parts = path.split("/");
+    // 命令里点名的就是这个文件（带着同样的上一级目录）不算撞名。
+    const sameFile = parts.length > 1 && commands.includes(parts.slice(-2).join("/").toLowerCase());
+    const clash = paths.some((other) => other !== path && base(other).toLowerCase() === lower)
+      || (!sameFile && new RegExp(`(?:^|[\\s/"'])${lower.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|[\\s"'])`, "m").test(commands));
+    return clash && parts.length > 1 ? parts.slice(-2).join("/") : name;
+  });
+}
+
+const KIND_LABEL =(t: ReturnType<typeof useT>, kind: CheckKind) => t.chat.checkKind[kind];
 /// 这几行检查各自跑的命令（去重，按出现先后）：「重跑 / 修」的要求里逐条列出。
 const commandsOf = (checks: TurnCheck[]) => [...new Set(checks.flatMap((check) => check.parts))];
 
@@ -212,7 +230,7 @@ function TurnChecks({ checks, replyId, editedAfter, staleIds, codeChanged }: { c
       </div>
     ) : null;
   }
-  const staleNames = editedAfter.map((path) => path.slice(path.lastIndexOf("/") + 1));
+  const staleNames = staleFileNames(editedAfter, checks);
   const staleCommands = commandsOf(checks.filter((check) => staleIds.has(check.toolId)));
   // 没过、之后也没再改代码的检查：肯定还没修。没过但之后改过的可能已经修了，归到上面的「重跑」里。
   const failed = checks.filter((check) => check.status === "fail" && !staleIds.has(check.toolId));

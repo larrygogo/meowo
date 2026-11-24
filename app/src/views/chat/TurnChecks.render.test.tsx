@@ -114,6 +114,24 @@ describe("本轮结果卡的检查段", () => {
     expect(rows.map((row) => row.querySelector(".chat-turn-check-result")?.textContent)).toEqual(["4 个通过 · 已过时", "10 个通过 · 已过时", "通过"]);
   });
 
+  it("提示里点名的文件和检查命令里的文件同名时带上上一级目录，是同一个文件时不带", () => {
+    render(<TurnChanges items={[
+      run("c1", "cd front && npx eslint src/pages/activation-code/list/index.tsx"), ok("c1"),
+      run("c2", "cd front && npx eslint src/pages/cloud-host/balance.tsx"), ok("c2"),
+      edit("e1", "front/src/pages/subscription/index.tsx"), ok("e1"),
+      edit("e2", "front/src/pages/cloud-host/balance.tsx"), ok("e2"),
+      run("c3", "cd front && npx tsc --noEmit -p ."), ok("c3"),
+    ]} />);
+    expect(screen.getByText(zh.chat.checkStale(["代码检查"], ["balance.tsx"]))).toBeTruthy();
+    cleanup();
+    render(<TurnChanges items={[
+      run("c1", "cd front && npx eslint src/pages/activation-code/list/index.tsx"), ok("c1"),
+      run("c2", "cd front && npx vitest run src/pages/subscription"), ok("c2", " Tests  3 passed (3)"),
+      edit("e1", "front/src/pages/subscription/index.tsx"), ok("e1"),
+    ]} />);
+    expect(screen.getByText(zh.chat.checkStale(["测试"], ["subscription/index.tsx"]))).toBeTruthy();
+  });
+
   // 实拍：先通过，再 `git stash` 藏掉修复跑一遍确认用例会失败，再 pop 回来。卡片写「1 个没过」，用户让 AI 去修。
   it("夹在 git stash 和 stash pop 之间跑的检查（反证）不算这一轮的结果", () => {
     const cmd = "bunx vitest run src/views/chat/TurnChecks.render.test.tsx 2>&1";
