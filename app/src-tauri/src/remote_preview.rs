@@ -286,11 +286,13 @@ fn remote_owned_port(port: u16) -> bool {
 
 /// 找到监听 `port` 的、属于会话的那个回环地址；第二项 = 能不能占同号端口（见 [`ensure_proxy`]）。
 fn resolve_target(port: u16, owner: &Owner) -> Result<(SocketAddr, bool), String> {
+    resolve_target_excluding(port, owner, None)
+}
+
+/// 同上；`own` 是代理自己占着同号端口时的监听地址，判断「dev server 是不是只听回环」时不算它。
+fn resolve_target_excluding(port: u16, owner: &Owner, own: Option<IpAddr>) -> Result<(SocketAddr, bool), String> {
     let listeners = listener_pids(port).ok_or_else(|| "preview/owner_unknown".to_string())?;
-    // dev server 自己开在所有网卡或某个局域网地址上：同网设备本来就能直接连它。代理再占同号端口，
-    // Windows 上会把这个端口的局域网入口抢过来（后绑的具体地址优先，独立审查实测），别的设备就被挡在
-    // 外面。这时不占同号端口。
-    let same_port_ok = listeners.iter().all(|(ip, _)| ip.is_loopback());
+    let same_port_ok = same_port_free(&listeners, own);
     // 只认回环能连到的监听：绑在 127.0.0.1 / 0.0.0.0 → 连 127.0.0.1；绑在 ::1 / :: → 连 ::1。
     let reachable: Vec<(SocketAddr, u32)> = listeners
         .into_iter()
@@ -328,6 +330,14 @@ fn resolve_target(port: u16, owner: &Owner) -> Result<(SocketAddr, bool), String
     // 关卡 B 签的「只开放本会话自己起的端口」。改由 MCP 说明让 AI 用自己的后台运行功能起 dev server，
     // 被拒时提示写清楚原因和改法。
     Err("preview/not_session".into())
+}
+
+/// dev server 自己开在所有网卡或某个局域网地址上：同网设备本来就能直接连它。代理再占同号端口，
+/// Windows 上会把这个端口的局域网入口抢过来（后绑的具体地址优先，独立审查实测），别的设备就被挡在
+/// 外面。这时不占同号端口。代理自己已经占着同号端口时，它那条监听（局域网地址）不算——算进去的话
+/// 同号代理每次复查都会被当成「dev server 对局域网开放了」而回收（独立审查第三轮，实测 60 秒内被关）。
+fn same_port_free(listeners: &[(IpAddr, u32)], own: Option<IpAddr>) -> bool {
+    listeners.iter().filter(|(ip, _)| Some(*ip) != own).all(|(ip, _)| ip.is_loopback())
 }
 
 /// 在属于会话进程树的监听里挑一个，IPv4 优先（Node 18+ 的「localhost」可能只开在 ::1，所以两族都收）。
@@ -502,18 +512,17 @@ async fn reap_loop() {
         // - 代理占着同号端口，而 dev server 改成了对局域网开放（重启时加了 --host）：立即回收，下次打开换随机
         //   端口，不再挡着它的局域网入口（独立审查第二轮 D）；
         // - 没人监听 / 查不了：先记下起始时刻，连续 MISSING_GRACE 都这样才回收（第二轮 B）。
-        let checks: Vec<(Key, u16, Owner)> = lock().proxies.iter().map(|(k, p)| (*k, p.port, p.owner.clone())).collect();
-        let verdicts: Vec<(Key, Verdict)> = tauri::async_runtime::spawn_blocking(move || {
+        // 每个代理带上身份（它独有的计数器地址）：判断要等进程表，等回来时同一个 key 可能已经被回收又重开，
+        // 旧判断不能套到新代理上（独立审查第三轮）。
+        let checks: Vec<(Key, usize, u16, Owner)> =
+            lock().proxies.iter().map(|(k, p)| (*k, proxy_id(p), p.port, p.owner.clone())).collect();
+        let verdicts: Vec<(Key, usize, Verdict)> = tauri::async_runtime::spawn_blocking(move || {
             checks
                 .into_iter()
-                .map(|(key, port, owner)| {
-                    let v = match resolve_target(key.1, &owner) {
-                        Ok((_, same_port_ok)) if port == key.1 && !same_port_ok => Verdict::Drop,
-                        Ok(_) => Verdict::Fine,
-                        Err(code) if code == "preview/not_session" => Verdict::Drop,
-                        Err(_) => Verdict::Missing,
-                    };
-                    (key, v)
+                .map(|(key, id, port, owner)| {
+                    let own = (port == key.1).then_some(key.0);
+                    let v = verdict(resolve_target_excluding(key.1, &owner, own), port == key.1);
+                    (key, id, v)
                 })
                 .collect()
         })
@@ -521,9 +530,9 @@ async fn reap_loop() {
         .unwrap_or_default();
         let reaped: Vec<Proxy> = {
             let mut inner = lock();
-            for (key, verdict) in &verdicts {
-                if let Some(p) = inner.proxies.get_mut(key) {
-                    p.missing_since = match verdict {
+            for (key, id, v) in &verdicts {
+                if let Some(p) = inner.proxies.get_mut(key).filter(|p| proxy_id(p) == *id) {
+                    p.missing_since = match v {
                         Verdict::Missing => Some(p.missing_since.unwrap_or(now)),
                         _ => None,
                     };
@@ -533,7 +542,7 @@ async fn reap_loop() {
                 .proxies
                 .iter()
                 .filter(|(k, p)| {
-                    let dropped = verdicts.iter().any(|(key, v)| key == *k && matches!(v, Verdict::Drop));
+                    let dropped = verdicts.iter().any(|(key, id, v)| key == *k && *id == proxy_id(p) && matches!(v, Verdict::Drop));
                     let missing_long = p.missing_since.is_some_and(|since| now.saturating_sub(since) >= MISSING_GRACE);
                     let idle = p.active.load(Ordering::SeqCst) == 0 && now.saturating_sub(p.last_seen.load(Ordering::SeqCst)) >= idle_limit;
                     dropped || missing_long || idle
@@ -550,10 +559,26 @@ async fn reap_loop() {
 }
 
 /// 回收循环对一个代理的判断。
+#[derive(Debug, PartialEq)]
 enum Verdict {
     Fine,
     Missing,
     Drop,
+}
+
+/// `same_port`：代理占着与目标同号的端口。
+fn verdict(check: Result<(SocketAddr, bool), String>, same_port: bool) -> Verdict {
+    match check {
+        // 代理占着同号端口，而 dev server（不算代理自己）已经不只听回环：让出来。
+        Ok((_, same_port_ok)) if same_port && !same_port_ok => Verdict::Drop,
+        Ok(_) => Verdict::Fine,
+        Err(code) if code == "preview/not_session" => Verdict::Drop,
+        Err(_) => Verdict::Missing,
+    }
+}
+
+fn proxy_id(p: &Proxy) -> usize {
+    Arc::as_ptr(&p.verified_at) as usize
 }
 
 struct Ctx {
@@ -1080,6 +1105,25 @@ mod tests {
         h.insert(header::ORIGIN, HeaderValue::from_static("http://192.168.1.5:5199"));
         rewrite_request_headers(&mut h, "192.168.1.5:5173", 5173, 5173);
         assert_eq!(h[header::ORIGIN], "http://192.168.1.5:5199");
+    }
+
+    /// 同号代理自己那条局域网监听不算进「dev server 是不是只听回环」（第三轮回归：算进去就 60 秒内被回收）。
+    #[test]
+    fn own_same_port_listener_does_not_count_against_the_dev_server() {
+        let lan: IpAddr = "192.168.5.108".parse().unwrap();
+        let listeners = vec![(IpAddr::V4(Ipv4Addr::LOCALHOST), 10), (lan, 99)];
+        assert!(!same_port_free(&listeners, None));
+        assert!(same_port_free(&listeners, Some(lan)));
+        // dev server 自己改成了对所有网卡开放：就算排除代理自己，也该让出同号端口。
+        let widened = vec![(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 10), (lan, 99)];
+        assert!(!same_port_free(&widened, Some(lan)));
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 5173);
+        assert_eq!(verdict(Ok((addr, same_port_free(&listeners, Some(lan)))), true), Verdict::Fine);
+        assert_eq!(verdict(Ok((addr, same_port_free(&widened, Some(lan)))), true), Verdict::Drop);
+        assert_eq!(verdict(Ok((addr, false)), false), Verdict::Fine);
+        assert_eq!(verdict(Err("preview/not_session".into()), true), Verdict::Drop);
+        assert_eq!(verdict(Err("preview/not_listening".into()), true), Verdict::Missing);
+        assert_eq!(verdict(Err("preview/owner_unknown".into()), false), Verdict::Missing);
     }
 
     /// dev server 自己开在所有网卡上时不占同号端口（Windows 上会把它的局域网入口抢走）。
