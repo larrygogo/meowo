@@ -20,7 +20,7 @@ import opencodeShot from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-re
 import opencodeSend from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/opencode.probe-send-image.items.json";
 
 type Lang = "zh" | "en";
-type Internals = { convertFileSrc?: (path: string) => string };
+type Internals = { convertFileSrc?: (path: string, protocol?: string) => string };
 
 const ROOT = "C:\\Users\\demo\\.meowo\\images";
 
@@ -206,7 +206,8 @@ function realItems(provider: string): ChatItem[] {
 /// 挂载前：图片路径映射到现画的 PNG。
 export function imageSceneBoot(): void {
   const it = (window as unknown as { __TAURI_INTERNALS__?: Internals }).__TAURI_INTERNALS__;
-  if (it) it.convertFileSrc = (path) => imageFor(path);
+  // 视图卡页面（meowo-view 协议）由演示 vite 的 /__view/ 中间件出（vite.visual.config.mjs）。
+  if (it) it.convertFileSrc = (path, protocol) => (protocol === "meowo-view" ? `/__view/${path}` : imageFor(path));
 }
 
 const sendCall = (id: string, ts: string, source: string, caption: string | null) => ({
@@ -308,6 +309,45 @@ export function imageSceneItems(part: string, lang: Lang): { items: ChatItem[]; 
         say("a1", 200, zh
           ? "改好了，dev server 起在 [http://localhost:5173/login](http://localhost:5173/login)，打开看看。\n\n接口服务在 `http://localhost:8787`，还没起，等我把数据库迁移跑完。"
           : "Done. The dev server is at [http://localhost:5173/login](http://localhost:5173/login), take a look.\n\nThe API is at `http://localhost:8787`; it isn't up yet, I'm still running the migration."),
+      ],
+    };
+  }
+  if (part === "view") {
+    // HTML 视图卡（show_html）：动效对比（能点、能「选这个」）、可悬停的体积图、已被清理的旧页面；
+    // 再一张方案卡，三个方案都是可交互预览。
+    const call = (id: string, s: number, name: string) => ({
+      type: "tool_use", id, timestamp: at(s), name, kind: "other", summary: "",
+    }) as unknown as ChatItem;
+    const view = (title: string, id: string, bytes: number, height: number | null = null) => [
+      zh ? `视图已显示给用户：「${title}」。` : `View shown to the user: "${title}".`,
+      `[View: ${JSON.stringify({ title, id, bytes, height })}]`,
+    ].join("\n");
+    const choices = (question: string, options: unknown[]) => [
+      zh ? "方案卡已显示给用户。" : "Options card shown to the user.",
+      `[Choices: ${JSON.stringify({ question, options })}]`,
+    ].join("\n");
+    return {
+      running: false,
+      items: [
+        user("u0", 1200, zh ? "上周那个加载动画再给我看看。" : "Show me last week's loading animation again."),
+        call("v0", 1190, "mcp__meowo__show_html"),
+        receipt("v0", at(1189), view(zh ? "加载动画" : "Loading animation", "0".repeat(32), 3_120)),
+        say("a0", 1180, zh ? "那份页面已经被清理了，我重新做一份。" : "That page was cleaned up; I'll make it again."),
+        user("u1", 600, zh ? "保存按钮的点击动效，给我看看几种。" : "Show me a few click effects for the save button."),
+        say("a1", 590, zh ? "做了三种，点一下试试手感，选好点「选这个」。" : "Here are three. Click to feel each, then hit Pick."),
+        call("v1", 580, "mcp__meowo__show_html"),
+        receipt("v1", at(579), view(zh ? "保存按钮动效对比" : "Save button effects", "1".repeat(32), 2_870)),
+        user("u2", 400, zh ? "换了图表库以后包小了多少？" : "How much smaller is the bundle after the chart swap?"),
+        say("a2", 390, zh ? "小了 34%，主要是 chart.js 换成了 echarts-lite。悬停能看每块的数。" : "34% smaller, mostly from swapping chart.js for echarts-lite. Hover for each chunk."),
+        call("v2", 380, "mcp__meowo__show_html"),
+        receipt("v2", at(379), view(zh ? "打包体积改前改后" : "Bundle size before/after", "2".repeat(32), 2_410)),
+        user("u3", 200, zh ? "导出按钮用哪种样式？" : "Which style for the export button?"),
+        call("c1", 190, "mcp__meowo__offer_choices"),
+        receipt("c1", at(189), choices(zh ? "导出按钮用哪种样式？" : "Which style for the export button?", [
+          { label: zh ? "实心圆角" : "Solid", description: zh ? "和现有主按钮一致" : "Matches the current primary", image: null, view: "3".repeat(32) },
+          { label: zh ? "胶囊" : "Pill", description: zh ? "更醒目，和标签风格接近" : "Bolder, close to tags", image: null, view: "4".repeat(32) },
+          { label: zh ? "描边" : "Outline", description: zh ? "最克制，适合次要入口" : "Quietest, for secondary actions", image: null, view: "5".repeat(32) },
+        ])),
       ],
     };
   }

@@ -177,7 +177,8 @@ export function editOutcome(item: import("./shared").ToolUseItem, result?: impor
 
 import { ChatCwdContext } from "./chatCwd";
 import { CompareMessage } from "./CompareCard";
-import { isChoicesTool, isCompareTool, isFileTool, isFormTool, isNotifyTool } from "./imageTools";
+import { isChoicesTool, isCompareTool, isFileTool, isFormTool, isNotifyTool, isViewTool } from "./imageTools";
+import { ViewMessage } from "./ViewCard";
 import { FormMessage } from "./FormCard";
 import { FileMessage, NotifyMessage } from "./FileCard";
 import { ChoiceMessage } from "./ChoiceCard";
@@ -330,6 +331,7 @@ export const ToolActivity = memo(function ToolActivity({ item, result }: { item:
   if (isFileTool(item)) return <FileMessage item={item} result={result} />;
   if (isNotifyTool(item)) return <NotifyMessage item={item} result={result} />;
   if (isFormTool(item)) return <FormMessage item={item} result={result} />;
+  if (isViewTool(item)) return <ViewMessage item={item} result={result} />;
   const row = (() => {
     switch (item.kind) {
       case "run": return <BashTool item={item} result={media.result} />;

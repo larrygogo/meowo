@@ -563,8 +563,8 @@ fn unescaped_image_refs(text: &str) -> Vec<String> {
     out
 }
 
-/// 回执里一行 JSON 摘要的开头：对照（compare_images）、方案卡（offer_choices）、交文件（send_file）、提醒（notify_user）、表单（ask_form）。
-const SUMMARY_LINES: [&str; 5] = ["[Image compare: ", "[Choices: ", "[File: ", "[Notify: ", "[Form: "];
+/// 回执里一行 JSON 摘要的开头：对照（compare_images）、方案卡（offer_choices）、交文件（send_file）、提醒（notify_user）、表单（ask_form）、视图卡（show_html）。
+const SUMMARY_LINES: [&str; 6] = ["[Image compare: ", "[Choices: ", "[File: ", "[Notify: ", "[Form: ", "[View: "];
 
 /// 摘要行 `[Image compare: {JSON}]`、`[Choices: {JSON}]` 被当成 JSON 字符串输出时，里面的引号和
 /// 反斜杠都多了一层转义。按 JSON 字符串的规则还原一次，还原出来是合法 JSON 对象才补回去。

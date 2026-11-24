@@ -4,7 +4,7 @@ import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 
 const appDir = fileURLToPath(new URL("..", import.meta.url));
 // worktree 里 app/node_modules 常是指向主仓库的 junction：vite 按真实路径判定可否读取，
@@ -15,9 +15,38 @@ const nodeModulesReal = realpathSync(join(appDir, "node_modules"));
 // 共用一个缓存目录还会读到别的 worktree 预构建的依赖（icon 车道实际撞上）。
 export const VISUAL_PORT = Number(process.env.VISUAL_PORT) || 5191;
 
+/** HTML 视图卡演示：`/__view/<指纹>.html` 出 visual/views/ 下的样本页，照 chat_views.rs 的做法注入同一份桥脚本、
+ *  带同样的沙箱 CSP（真实桌面走 meowo-view 协议，手机走 /view/，这里只为截图）。 */
+function viewPages() {
+  const head = '<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark">';
+  return {
+    name: "meowo-view-pages",
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const m = /^\/__view\/([0-9a-f]{32})\.html/.exec(req.url ?? "");
+        if (!m) return next();
+        const bridge = `<script>${readFileSync(join(appDir, "src-tauri/src/view_bridge.js"), "utf8")}</script>`;
+        const file = join(appDir, "visual/views", `${m[1]}.html`);
+        let body;
+        if (existsSync(file)) {
+          const src = readFileSync(file, "utf8");
+          const doctype = /^\s*<!doctype[^>]*>/i.exec(src);
+          body = doctype ? `${doctype[0]}${head}${bridge}${src.slice(doctype[0].length)}` : `<!doctype html>${head}${bridge}${src}`;
+        } else {
+          body = `<!doctype html>${head}<script>parent.postMessage({jsonrpc:"2.0",method:"meowo/view-missing",params:{}},"*")</script>`;
+          // 真实路由回 404；截图工具把任何 4xx 都当失败，演示这里回 200，失效态照样由页面里的消息触发。
+        }
+        res.setHeader("content-type", "text/html; charset=utf-8");
+        res.setHeader("content-security-policy", "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; sandbox allow-scripts");
+        res.end(body);
+      });
+    },
+  };
+}
+
 export default defineConfig({
   root: appDir,
-  plugins: [react()],
+  plugins: [react(), viewPages()],
   clearScreen: false,
   logLevel: "warn",
   // 与 vite.demo.config.ts 相同：mock 挂到演示专用的全局名上，不碰 __TAURI_INTERNALS__。

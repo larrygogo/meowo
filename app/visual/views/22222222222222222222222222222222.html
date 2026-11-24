@@ -1,0 +1,26 @@
+<!doctype html>
+<html><head><style>
+  :root { --bg:#ffffff; --fg:#1d1d1f; --dim:#6b6b70; --grid:#ececf0; --old:#c7c9d1; --new:#2f6fed; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#17181a; --fg:#ececee; --dim:#9a9aa0; --grid:#26272a; --old:#4a4c52; --new:#5b8cff; } }
+  body { margin:0; padding:16px 20px 12px; background:var(--bg); color:var(--fg); font:13px/1.5 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; }
+  .legend { display:flex; gap:16px; color:var(--dim); font-size:12px; margin-bottom:8px; } .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; vertical-align:-1px; }
+  svg { width:100%; height:auto; display:block; } text { fill:var(--dim); font-size:11px; }
+  rect.bar { transition:opacity .15s; } rect.bar:hover { opacity:.75; }
+  #tip { position:fixed; pointer-events:none; background:var(--fg); color:var(--bg); padding:4px 8px; border-radius:6px; font-size:12px; opacity:0; transition:opacity .1s; white-space:nowrap; }
+</style></head><body>
+<div class="legend"><span><i style="background:var(--old)"></i>改前</span><span><i style="background:var(--new)"></i>改后</span><span style="margin-left:auto">合计 1.84 MB → 1.21 MB（−34%）</span></div>
+<svg id="c" viewBox="0 0 640 220"></svg>
+<div id="tip"></div>
+<script>
+  const data = [["vendor",820,610],["app",412,388],["chart.js",344,0],["echarts-lite",0,96],["locales",210,58],["icons",96,62]];
+  const svg = document.getElementById("c"), tip = document.getElementById("tip"), max = 900, H = 180, W = 640, bw = 34;
+  let html = "";
+  for (let i = 0; i <= 3; i++) { const y = 10 + H - H * i / 3; html += `<line x1="40" x2="${W}" y1="${y}" y2="${y}" stroke="var(--grid)"/><text x="0" y="${y+4}">${Math.round(max*i/3)}K</text>`; }
+  data.forEach(([n,a,b],i) => { const x = 60 + i * 96;
+    html += `<rect class="bar" data-t="${n} 改前 ${a} KB" x="${x}" y="${10+H-H*a/max}" width="${bw}" height="${H*a/max}" rx="3" fill="var(--old)"/>`;
+    html += `<rect class="bar" data-t="${n} 改后 ${b} KB" x="${x+bw+4}" y="${10+H-H*b/max}" width="${bw}" height="${H*b/max}" rx="3" fill="var(--new)"/>`;
+    html += `<text x="${x+bw}" y="${H+28}" text-anchor="middle">${n}</text>`; });
+  svg.innerHTML = html;
+  svg.addEventListener("mousemove", (e) => { const t = e.target.dataset && e.target.dataset.t; tip.style.opacity = t ? 1 : 0; if (t) { tip.textContent = t; tip.style.left = (e.clientX + 12) + "px"; tip.style.top = (e.clientY - 28) + "px"; } });
+  svg.addEventListener("mouseleave", () => tip.style.opacity = 0);
+</script></body></html>

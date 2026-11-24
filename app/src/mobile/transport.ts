@@ -328,9 +328,11 @@ export function installRemoteTransport(): void {
     __TAURI_INTERNALS__?: { convertFileSrc?: (path: string, protocol?: string) => string };
   }).__TAURI_INTERNALS__;
   if (internals) {
-    internals.convertFileSrc = (path: string) => {
+    internals.convertFileSrc = (path: string, protocol?: string) => {
       // 优先降级凭据(primeFileToken 领取);未就绪时回退主 token,保首屏图片可加载。
       const token = fileToken ?? getToken() ?? "";
+      // HTML 视图卡(chat_views.rs):走 /view/,服务端校验后 302 到只对这一页有效的口令,页面脚本拿不到凭据。
+      if (protocol === "meowo-view") return `/view/${encodeURIComponent(path)}?token=${encodeURIComponent(token)}`;
       return `/file?path=${encodeURIComponent(path)}&token=${encodeURIComponent(token)}`;
     };
   }

@@ -43,9 +43,9 @@ describe("方案卡回执", () => {
     const parsed = parseChoicesReceipt(receipt())!;
     expect(parsed.question).toBe("设置页用哪种布局？");
     expect(parsed.options).toEqual([
-      { label: "卡片式", description: "留白多", image: `${DIR}a.png` },
-      { label: "列表式", description: "像系统设置] 密度高", image: `${DIR}b.png` },
-      { label: "分组式", description: null, image: null },
+      { label: "卡片式", description: "留白多", image: `${DIR}a.png`, view: null },
+      { label: "列表式", description: "像系统设置] 密度高", image: `${DIR}b.png`, view: null },
+      { label: "分组式", description: null, image: null, view: null },
     ]);
   });
 

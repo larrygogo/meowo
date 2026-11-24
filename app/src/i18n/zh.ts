@@ -809,6 +809,7 @@ export const zh = {
       file: "正在交文件",
       notify: "正在提醒你",
       form: "正在准备表单",
+      view: "正在准备页面",
       other: "正在执行…",
     },
     turnToolFailed: (count: number) => `（${count} 失败）`,
@@ -1734,6 +1735,14 @@ export const zh = {
     choicesHideAll: "收起",
     choicesZoom: (n: number) => `放大看方案 ${n}`,
     choicesPickThis: (n: number) => `选方案 ${n}`,
+    // HTML 视图卡（Meowo 的 show_html 工具，ViewCard.tsx）。
+    viewPreparing: "正在准备页面…",
+    viewFailed: "页面没能发过来",
+    viewTag: "页面",
+    viewMissing: "页面已被清理，可以让 AI 重新发一次",
+    viewReload: "重新加载",
+    viewZoom: "放大",
+    viewShrink: "收回",
     // 小表单（Meowo 的 ask_form 工具，FormCard.tsx）。
     formPreparing: "正在准备表单…",
     formFailed: "表单没能发过来",
