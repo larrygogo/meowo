@@ -1152,105 +1152,105 @@
           "needle": "[paste #",
           "note": "2.6.1 真机 2026-11-14（tests/probe_draft_fidelity.rs）：粘贴 60 行后输入框里只剩这个占位，5120 字单行是 `[paste #1 5120 chars]`；kimi.exe 含模板 `[paste #${pasteId} +${n} lines]`",
           "rule": "composer.paste",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:803"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:807"
         },
         {
           "legacy": false,
           "needle": "",
           "note": "2.6.1 真机 2026-11-14（tests/probe_draft_fidelity.rs）：45 行草稿只画最后 12 行，上边框中间嵌 `↑ 33 more`。kimi.exe 里没搜到这段的原样模板（箭头、数字与 more 是运行时拼的），只做样例测试",
           "rule": "composer.overflow",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:782"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:786"
         },
         {
           "legacy": false,
           "needle": "thinking set to",
           "note": "2.5.1 kimi.EXE：`Thinking set to ` 2 处（/effort 成功后的回话）",
           "rule": "effort.confirm",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:686"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:690"
         },
         {
           "legacy": false,
           "needle": "unsupported thinking effort",
           "note": "2.5.1 kimi.EXE：`unsupported thinking effort` 1 处；同一规则里的 `cannot switch models while streaming` 0 处，留作旧版兼容",
           "rule": "effort.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:687"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:691"
         },
         {
           "legacy": false,
           "needle": "cannot undo ",
           "note": "2.5.1 kimi.EXE formatUndoLimitMessage：`Cannot undo ` 4 处，后面的数字与原因是运行时拼的",
           "rule": "undo.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:1079"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:1083"
         },
         {
           "legacy": false,
           "needle": "[image #",
           "note": "2.5.1 kimi.EXE：`[image #` 2 处（输入框里的贴图占位）；`[image:` 1 处是旧形态",
           "rule": "clipboard_image",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:854"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:858"
         },
         {
           "legacy": false,
           "needle": "",
           "note": "2.6.1 kimi.exe：提问表单末尾恒有的自定义答案项（`DEFAULT_OTHER_LABEL = \"Other\"`）。选项只有一个通用词，搜程序文件证明不了什么",
           "rule": "option:kimi:question#0",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:524"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:528"
         },
         {
           "legacy": false,
           "needle": "Type your answer, then press Enter to save.",
           "note": "2.6.1 真机屏幕 2026-11-15（probe_kimi_other：按 Other 的数字键之后题干下方的提示）；程序文件里是原句",
           "rule": "option-ready:kimi:question#0",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:529"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:533"
         },
         {
           "legacy": false,
           "needle": "Approve once",
           "note": "2.6.1 kimi.exe `DEFAULT_APPROVAL_CHOICES` 与真机屏幕 2026-11-14；计划审阅的 `Approve` 同规则",
           "rule": "option:kimi:command-approval#0",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:564"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:568"
         },
         {
           "legacy": false,
           "needle": "Approve for this session",
           "note": "2.6.1 kimi.exe `DEFAULT_APPROVAL_CHOICES` 与真机屏幕 2026-11-14",
           "rule": "option:kimi:command-approval#1",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:570"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:574"
         },
         {
           "legacy": false,
           "needle": "",
           "note": "2.6.1 真机屏幕 2026-11-14。选项只有一个通用词，搜程序文件证明不了什么；这一项在不在由同屏的问句规则盯着",
           "rule": "option:kimi:command-approval#2",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:576"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:580"
         },
         {
           "legacy": false,
           "needle": "Reject with feedback",
           "note": "2.6.1 kimi.exe `DEFAULT_APPROVAL_CHOICES`（requires_feedback）与真机屏幕 2026-11-14；计划审阅的 `Revise` 同规则",
           "rule": "option:kimi:command-approval#3",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:582"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:586"
         },
         {
           "legacy": false,
           "needle": "Type feedback · ↵ submit.",
           "note": "2.6.1 真机屏幕 2026-11-14（probe_deny_feedback：按 4 之后的页脚）；程序文件里是原句",
           "rule": "option-ready:kimi:command-approval#3",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:587"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:591"
         },
         {
           "legacy": false,
           "needle": "←/→/tab switch",
           "note": "2.5.1 kimi.EXE renderSubmitTab 的提示行；`←/→/tab switch` 2 处，`1-${n} / ↵ choose` 是运行时拼的",
           "rule": "attention:kimi:question",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:507"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:511"
         },
         {
           "legacy": false,
           "needle": "run this command?",
           "note": "2.5.1 kimi.EXE：`Run this command?` 在审批问句表里（与 Write this file? 等并列）",
           "rule": "attention:kimi:command-approval",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:540"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:544"
         },
         {
           "legacy": true,
@@ -1370,21 +1370,21 @@
           "needle": "do you trust the files in this folder",
           "note": "0.16x 之前的信任页标题；0.166.0 改为 `Trust this folder?`（codex.exe 里 `do you trust` 0 处）",
           "rule": "literal:do you trust the files in this folder",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:518"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:525"
         },
         {
           "legacy": true,
           "needle": "do you trust the contents of this directory",
           "note": "更早版本的信任页标题；0.166.0 已无",
           "rule": "literal:do you trust the contents of this directory",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:519"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:526"
         },
         {
           "legacy": false,
           "needle": "trust this folder?",
           "note": "",
           "rule": "literal:trust this folder?",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:520"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:527"
         },
         {
           "legacy": false,
@@ -1510,28 +1510,28 @@
           "needle": "Ask Codex to do anything",
           "note": "0.167.2 真机 2026-11-14（probe_tui_script cells）：空输入框的暗色占位",
           "rule": "composer.empty",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:416"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:423"
         },
         {
           "legacy": false,
           "needle": "Pasted Content ",
           "note": "0.167.2 真机 2026-11-14（tests/probe_draft_fidelity.rs）：粘贴 5120 字后输入框里只剩这个占位（60 行的粘贴是 `[Pasted Content 2219 chars]`）；codex.exe 含模板 `[Pasted Content ` + 字数 + ` chars]`",
           "rule": "composer.paste",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:431"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:438"
         },
         {
           "legacy": false,
           "needle": "",
           "note": "0.167.2 真机 2026-11-14（tests/probe_draft_fidelity.rs）：45 行草稿只画最后 22 行，首行最右一列画 `↑`。标记只有一个箭头字符，程序文件里没有可搜的原样片段，只做样例测试",
           "rule": "composer.overflow",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:432"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:439"
         },
         {
           "legacy": false,
           "needle": "[image #",
           "note": "0.166.0 codex.exe 含 `- [Image #…]` 模板（附件占位，与输入框里的贴图占位同一写法）",
           "rule": "clipboard_image",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:477"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:484"
         },
         {
           "legacy": false,
@@ -1567,7 +1567,7 @@
           "needle": "approval_policy",
           "note": "0.163 rollout 实样（运行中权限档，research-cli-drift X4）；0.166.0 codex.exe 55 处",
           "rule": "record:approval_policy",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:800"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:807"
         },
         {
           "legacy": false,
