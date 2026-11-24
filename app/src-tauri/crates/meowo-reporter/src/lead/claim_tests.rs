@@ -15,6 +15,7 @@ struct Env {
 }
 
 fn env() -> Env {
+    test_data_root();
     let tmp = tempfile::tempdir().unwrap();
     let d = strip_verbatim(tmp.path().canonicalize().unwrap());
     let reg = d.join("sessions.json");
@@ -340,8 +341,9 @@ fn stop_adopts_an_orphan_written_this_turn() {
 }
 
 /// 用户诊断包 2026-11-24 的形状：会话工作目录是 git 仓库 `<父>/repo`，agent 把任务建在仓库外的
-/// `<父>/.lead` 下。认领照样成功，面板却只读 `repo/.lead`，用户看不到面板，agent 也不知道。
-/// 修复后：认领时当场回一句挪到哪；建在仓库根下的任务不提示。
+/// `<父>/.lead` 下。认领照样成功，用户看不到面板，agent 也不知道。认领时当场回一句挪到哪。
+/// 任务改存 Meowo 数据目录后（任务 20261124-lead-store-in-meowo），建在仓库里的旧位置同样提示挪走，
+/// 只有本项目 Lead 目录里的不提示。
 #[test]
 fn task_outside_the_panel_location_gets_a_move_hint() {
     let e = env();
@@ -349,6 +351,8 @@ fn task_outside_the_panel_location_gets_a_move_hint() {
     fs::create_dir_all(parent.join(".lead")).unwrap();
     let repo = parent.join("repo");
     fs::create_dir_all(repo.join(".git")).unwrap();
+    let home = meowo_agent::lead_paths::ensure_lead_home(&repo).unwrap();
+    assert!(home.starts_with(test_data_root()), "{}", home.display());
     let outside = task(&parent, "2026-11-24-inbound-flow", "spec");
     let claim = |path: &Path| {
         let data = json!({"session_id":"s1","cwd":repo,"tool_name":"Write","tool_input":{"file_path":path.join("progress.md")}});
@@ -359,15 +363,23 @@ fn task_outside_the_panel_location_gets_a_move_hint() {
     let v: Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["hookSpecificOutput"]["hookEventName"], "PostToolUse");
     let hint = v["hookSpecificOutput"]["additionalContext"].as_str().unwrap();
-    let want = repo.join(".lead").join("2026-11-24-inbound-flow");
+    let want = home.join("2026-11-24-inbound-flow");
     assert!(hint.contains(&want.display().to_string()), "{hint}");
     // 提示不妨碍认领
     assert_eq!(owner(&outside), "s1");
 
-    let inside = task(&repo, "2026-11-24-szx-dev", "design");
-    fs::create_dir_all(repo.join(".lead")).unwrap();
+    // 仓库里的旧位置：面板照常读得到，但也提示挪走
+    let legacy = task(&repo, "2026-11-24-legacy", "design");
+    let legacy_out: Value = serde_json::from_str(&claim(&legacy).expect("仓库里的旧位置要提示")).unwrap();
+    let legacy_hint = legacy_out["hookSpecificOutput"]["additionalContext"].as_str().unwrap();
+    assert!(legacy_hint.contains(&home.join("2026-11-24-legacy").display().to_string()), "{legacy_hint}");
+
+    let inside = home.join("2026-11-24-szx-dev");
+    fs::create_dir_all(&inside).unwrap();
+    fs::write(inside.join("progress.md"), "phase: design
+").unwrap();
     assert_eq!(claim(&inside), None);
-    // 面板确实看得到仓库根下的那个
+    // 面板确实看得到 Lead 目录里的那个
     assert_eq!(snapshot_for(&repo.to_string_lossy(), Some("s1")).unwrap().slug, "2026-11-24-szx-dev");
 }
 
@@ -390,10 +402,11 @@ fn move_hint_uses_the_session_cwd_from_the_db_not_the_drifted_hook_cwd() {
 
     let cwd = panel_cwd("s1", Some(&db)).expect("库里有这个会话");
     assert_eq!(cwd, desktop.to_string_lossy());
-    // 按漂移后的 hook cwd 判，任务看起来就在面板位置里（这就是漏报的原因）；按库里的 cwd 判才提醒。
-    assert_eq!(misplaced_hint(&t, &work_log.join(".lead").to_string_lossy()), None);
+    // 改存数据目录前，按漂移后的 hook cwd 判，任务看起来就在面板位置里（漏报的原因）。现在仓库里的 .lead
+    // 一律提示挪走，判位置仍用库里的 cwd：提示里写的目标目录必须是面板会读的那个项目。
     let hint = misplaced_hint(&t, &cwd).expect("按会话 cwd 判要提醒");
-    assert!(hint.contains(&desktop.join(".lead").join("2026-11-24-work-split").display().to_string()), "{hint}");
+    let home = meowo_agent::lead_paths::lead_home(&desktop).unwrap();
+    assert!(hint.contains(&home.join("2026-11-24-work-split").display().to_string()), "{hint}");
     // 库里没有这个会话、或没有库：返回 None，调用方退回 hook cwd。
     assert_eq!(panel_cwd("s2", Some(&db)), None);
     assert_eq!(panel_cwd("s1", Some(&e.d.join("missing.db"))), None);

@@ -13,6 +13,7 @@ struct Env {
 }
 
 fn env() -> Env {
+    test_data_root();
     let tmp = tempfile::tempdir().unwrap();
     let d = tmp.path().canonicalize().unwrap();
     let reg = d.join("sessions.json");
@@ -1394,7 +1395,7 @@ fn worktree_session_sees_tasks_in_main_checkout() {
     fs::write(wt.join(".lead/active"), "20261112-own").unwrap();
     assert_eq!(snapshot(&wt_s).map(|s| s.slug), Some("20261112-own".to_owned()));
     // 普通仓库（.git 是目录）不受影响
-    assert!(main_checkout(&main).is_none());
+    assert!(meowo_agent::lead_paths::main_checkout(&main).is_none());
 }
 
 /// 只差环境实测的条目（blocked）：快照带给面板；剩下的全是这种、又没挂关卡时，提示直接说发关卡 D
