@@ -338,3 +338,55 @@ fn stop_adopts_an_orphan_written_this_turn() {
         .stdout
         .is_some_and(|s| s.contains("block")));
 }
+
+/// 用户诊断包 2026-11-24 的形状：会话工作目录是 git 仓库 `<父>/repo`，agent 把任务建在仓库外的
+/// `<父>/.lead` 下。认领照样成功，面板却只读 `repo/.lead`，用户看不到面板，agent 也不知道。
+/// 修复后：认领时当场回一句挪到哪；建在仓库根下的任务不提示。
+#[test]
+fn task_outside_the_panel_location_gets_a_move_hint() {
+    let e = env();
+    let parent = e.d.join("szx");
+    fs::create_dir_all(parent.join(".lead")).unwrap();
+    let repo = parent.join("repo");
+    fs::create_dir_all(repo.join(".git")).unwrap();
+    let outside = task(&parent, "2026-11-24-inbound-flow", "spec");
+    let claim = |path: &Path| {
+        let data = json!({"session_id":"s1","cwd":repo,"tool_name":"Write","tool_input":{"file_path":path.join("progress.md")}});
+        run("claim", &data.to_string(), &e.reg).stdout
+    };
+
+    let out = claim(&outside).expect("建在仓库外要提示");
+    let v: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["hookSpecificOutput"]["hookEventName"], "PostToolUse");
+    let hint = v["hookSpecificOutput"]["additionalContext"].as_str().unwrap();
+    let want = repo.join(".lead").join("2026-11-24-inbound-flow");
+    assert!(hint.contains(&want.display().to_string()), "{hint}");
+    // 提示不妨碍认领
+    assert_eq!(owner(&outside), "s1");
+
+    let inside = task(&repo, "2026-11-24-szx-dev", "design");
+    fs::create_dir_all(repo.join(".lead")).unwrap();
+    assert_eq!(claim(&inside), None);
+    // 面板确实看得到仓库根下的那个
+    assert_eq!(snapshot_for(&repo.to_string_lossy(), Some("s1")).unwrap().slug, "2026-11-24-szx-dev");
+}
+
+/// 面板没显示任务时给诊断日志的原因：列出找的位置、各任务阶段与归属；位置下没有任务时不记。
+#[test]
+fn hidden_reason_lists_tasks_with_phase_and_owner() {
+    let e = env();
+    let root = project(&e, "p");
+    let cwd = root.to_string_lossy().into_owned();
+    assert_eq!(hidden_reason(&cwd, Some("s1")), None);
+    let done = task(&root, "a-done", "done");
+    fs::write(done.join(".owner"), "s1").unwrap();
+    let other = task(&root, "b-other", "implement");
+    fs::write(other.join(".owner"), "s2").unwrap();
+    task(&root, "c-orphan", "implement");
+    let reason = hidden_reason(&cwd, Some("s1")).unwrap();
+    assert!(reason.contains(&root.join(".lead").display().to_string()), "{reason}");
+    assert!(reason.contains("a-done（phase=done，本会话）"), "{reason}");
+    assert!(reason.contains("b-other（phase=implement，别的会话）"), "{reason}");
+    assert!(reason.contains("c-orphan（phase=implement，无主）"), "{reason}");
+    assert!(reason.contains("active=c-orphan"), "{reason}");
+}

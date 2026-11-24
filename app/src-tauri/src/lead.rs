@@ -16,6 +16,7 @@ pub(crate) async fn lead_task_snapshot(
 ) -> Result<Option<LeadTaskDto>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let mut task = meowo_reporter::lead::snapshot_for(&cwd, session.as_deref());
+        log_hidden(&cwd, session.as_deref(), task.is_none());
         if let Some(task) = task.as_mut() {
             if let Some(gate) = &task.gate {
                 task.delivery =
@@ -26,6 +27,29 @@ pub(crate) async fn lead_task_snapshot(
     })
     .await
     .map_err(|e| e.to_string())
+}
+
+/// 读取位置里有任务、面板却没有任务可显示时，往诊断日志记一行原因（找了哪些 `.lead`、各任务的阶段和归属）。此前什么都不记，
+/// 用户报「看不到 lead 面板」时诊断包里一行相关记录都没有（2026-11-24）。前端每 4 秒轮询一次，
+/// 同一会话只在原因变了时记，任务出现后清掉记录，之后再消失会重新记。
+fn log_hidden(cwd: &str, session: Option<&str>, hidden: bool) {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static LAST: OnceLock<Mutex<HashMap<(String, String), String>>> = OnceLock::new();
+    // 前端在拿到会话 id 之前也会查一次（session 为空），这种瞬时状态不记。
+    let Some(sid) = session.filter(|s| !s.is_empty()) else { return };
+    let key = (cwd.to_owned(), sid.to_owned());
+    let mut last = LAST.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
+    if !hidden {
+        last.remove(&key);
+        return;
+    }
+    let Some(reason) = meowo_reporter::lead::hidden_reason(cwd, Some(sid)) else { return };
+    if last.get(&key) == Some(&reason) {
+        return;
+    }
+    eprintln!("[lead] 面板没有任务可显示 · cwd={cwd} · session={sid} · {reason}");
+    last.insert(key, reason);
 }
 
 /// leader 回答关卡。核对关卡 id 与状态后写入 answered；同一答案重复提交视为成功。

@@ -456,7 +456,8 @@ fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
         if !reserve_owner(&task, &session) {
             return Output::default();
         }
-        let out = lead::run("claim", &native.data.to_string(), registry);
+        // claim 的提示是 Claude PostToolUse 的输出格式，其他 Provider 不认，丢掉。
+        let out = Output { stdout: None, ..lead::run("claim", &native.data.to_string(), registry) };
         let Some(task) = lead::task_of_session(&session, registry) else {
             return out;
         };
