@@ -45,14 +45,38 @@ fn shared_workflow_keeps_risk_permission_and_review_contracts() {
         "不得在实施时补该字段绕过验证",
         "角色不可用时必须报告",
         "重复看到同一答复不得重复执行业务",
+        "不改验收清单的字段结构",
+        // reporter 的 phase_of 取第一处 `phase:` 行：接续摘要自带 phase 行会抢先，两处不一致时面板读错。
+        "摘要里不另写 phase 行",
+        "由主会话原样存到同一路径",
+        "`lead-redteam` 只拿任务目录",
+        "`.lead/harness.md`",
     ] {
         assert!(SKILL.contains(rule), "{rule}");
     }
-    for rule in ["不继承实施者推理", "leader 点名具体条目", "静态判断必须标注未实测", "验证版本和证据对应关系"] {
+    for rule in [
+        "不继承实施者推理",
+        "leader 点名具体条目",
+        "静态判断必须标注未实测",
+        "验证版本和证据对应关系",
+        "默认从「无法判定」出发",
+        "SPEC 没有验收判据时",
+        // REVIEW 由 codex/kimi/gemini/opencode/claude 共用，只有 claude 版有写工具：只读角色必须有退路。
+        "把完整报告直接作为答复返回",
+    ] {
         assert!(REVIEW.contains(rule), "{rule}");
     }
 }
 
+/// 模板发给所有用户：不得带开发者本机的路径或账号（脚手架复盘曾指向个人笔记文件）。
+#[test]
+fn shared_templates_carry_no_machine_specific_paths() {
+    for (name, text) in [("SKILL", SKILL), ("REVIEW", REVIEW)] {
+        for bad in [":\\Users\\", ":/Users/", "/home/", "AppData", "work-log"] {
+            assert!(!text.contains(bad), "{name} 含本机路径片段 {bad}");
+        }
+    }
+}
 #[test]
 fn native_install_refresh_and_uninstall_preserve_user_assets() {
     let fixture = Fixture::new();

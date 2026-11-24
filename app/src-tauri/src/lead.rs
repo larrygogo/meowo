@@ -155,7 +155,10 @@ mod auto_resume_tests {
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
-const REDTEAM_HEADER: &str = "---\nname: lead-redteam\ndescription: 独立对照规格和证据验证交付，不修改源码。\ntools: Read, Grep, Glob, Bash\n---\n\n";
+/// 只有 Claude 版给 Write：审查报告落到任务目录 `agents/redteam-<序号>.md`，主会话只收路径和短结论，
+/// 不让整份报告挤进主会话上下文。Write 只许写这一个报告文件由 REVIEW 正文约束。其他 provider 的审查角色
+/// 保持只读（REVIEW 共用，写不了文件时把完整报告作为答复返回）。
+const REDTEAM_HEADER: &str = "---\nname: lead-redteam\ndescription: 独立对照规格和证据验证交付，不修改源码。\ntools: Read, Grep, Glob, Bash, Write\n---\n\n";
 /// 安装文件里的标记：卸载只删带它的文件，用户自己写的同名文件不碰。
 pub(crate) const MANAGED_MARK: &str = "由 Meowo 安装和管理";
 /// wait（asyncRewake）最多挂 7 天，hook timeout 设得更长一点，交给 reporter 自己按时退出。
