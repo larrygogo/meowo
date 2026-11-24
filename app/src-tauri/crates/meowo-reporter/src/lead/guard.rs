@@ -1,5 +1,8 @@
 //! `lead guard`（Claude 的 PreToolUse，matcher 只挂 Write|Edit|NotebookEdit）：lead-redteam 只许写
-//! 任务目录下 `agents/` 里的审查报告，别的写入当场拒绝。
+//! 任务目录下 `agents/` 里的审查报告，以及自己的临时工作目录 `agents/<名字>-work/`，别的写入当场拒绝。
+//!
+//! 为什么给临时目录：审查要构造各代格式的测试数据、写驱动脚本。只许写报告时，2026-11-24 第三轮试跑里
+//! 三个 redteam 被拦后都改用 Bash heredoc 照写不误。给一个合法位置，Write 能用，前后对比也能整体排除它。
 //!
 //! 为什么要拦：Claude 版 redteam 为了把报告落盘才有 Write，「只写报告」原本只靠正文约束。
 //! 不挂 Bash：每条命令都起一个进程太重；redteam 经 Bash 写文件靠主会话前后对比 git status 事后核对。
@@ -34,7 +37,7 @@ pub(super) fn check(data: &Value) -> Option<String> {
         return None;
     }
     let reason = format!(
-        "lead-redteam 只能写任务目录下 agents/ 里的审查报告（如 .lead/<任务>/agents/redteam-1.md），不能写 {target}。不要改用其他方式写这个文件；把需要改的地方写进报告交给主会话。"
+        "lead-redteam 只能写任务目录下 agents/ 里的审查报告（如 .lead/<任务>/agents/redteam-1.md）和临时工作目录（如 .lead/<任务>/agents/redteam-1-work/ 下的脚本和测试数据），不能写 {target}。临时文件改写到工作目录；不要改用 Bash 等其他方式写这个文件；需要改源码的地方写进报告交给主会话。"
     );
     Some(
         json!({"hookSpecificOutput": {
@@ -46,8 +49,9 @@ pub(super) fn check(data: &Value) -> Option<String> {
     )
 }
 
-/// `…/.lead/<任务>/agents/<文件>`：路径里不能有 `..`（否则可以借报告目录跳出去）。只认 agents/ 下一层：
-/// `agents/snapshots/` 是主会话放前后对比快照的地方，对比时会排除它，审查者不能写进去。
+/// `…/.lead/<任务>/agents/<文件>` 或 `…/.lead/<任务>/agents/<名字>-work/…`：路径里不能有 `..`（否则可以借
+/// 报告目录跳出去）。`agents/snapshots/` 是主会话放前后对比快照的地方，对比时会排除它，审查者不能写进去；
+/// 其他子目录也不放行，只有以 `-work` 结尾的工作目录可以多层。
 fn report_path(path: &Path) -> bool {
     let mut parts = Vec::new();
     for c in path.components() {
@@ -57,11 +61,17 @@ fn report_path(path: &Path) -> bool {
             _ => {}
         }
     }
-    // 找最后一个 `.lead`：任务目录在它下一层，报告是任务目录 agents/ 里的文件（恰好再多一段）。
+    // 找最后一个 `.lead`：任务目录在它下一层，agents/ 再下一层。
     parts.iter().rposition(|p| p.eq_ignore_ascii_case(".lead")).is_some_and(|i| {
-        parts.len() == i + 4
+        let in_agents = parts.len() >= i + 4
             && super::slug_ok(&parts[i + 1])
-            && parts[i + 2].eq_ignore_ascii_case("agents")
+            && parts[i + 2].eq_ignore_ascii_case("agents");
+        let report = parts.len() == i + 4;
+        let work = parts.len() >= i + 5 && {
+            let d = parts[i + 3].to_ascii_lowercase();
+            d.len() > "-work".len() && d.ends_with("-work")
+        };
+        in_agents && (report || work)
     })
 }
 
@@ -96,6 +106,8 @@ mod tests {
             "/p/proj/.lead/20261124-x/agents/redteam-1.md",
             ".lead/20261124-x/agents/redteam-2.md",
             "/p/proj/.LEAD/20261124-x/Agents/redteam-1.md",
+            "/p/proj/.lead/20261124-x/agents/redteam-1-work/drive.py",
+            "/p/proj/.lead/20261124-x/agents/redteam-2-work/fixtures/v1-gbk.json",
         ] {
             assert!(!denied(&w(ok)), "{ok}");
         }
@@ -109,6 +121,9 @@ mod tests {
             "/p/proj/.lead/20261124-x/agents/../progress.md",
             "/p/proj/.lead/20261124-x/agents/../../../src/main.rs",
             "../escape/.lead/t/agents/../../x.md",
+            "/p/proj/.lead/20261124-x/agents/other/x.py",
+            "/p/proj/.lead/20261124-x/agents/-work/x.py",
+            "/p/proj/.lead/20261124-x/agents/redteam-1-work/../../progress.md",
         ] {
             assert!(denied(&w(bad)), "{bad}");
         }
