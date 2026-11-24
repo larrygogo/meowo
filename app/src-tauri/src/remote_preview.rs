@@ -17,8 +17,11 @@
 //!   按端口区分的 HttpOnly cookie，再 302 到干净地址。cookie 不区分端口，所以名字带端口、值是
 //!   该代理独有的随机串；转发给 dev server 前删掉。
 //! - 入站 Host 必须是 IP 字面量（防 DNS rebinding：攻击者的域名解析到本机时 Host 是域名）。
-//! - 只在远程桥所在的网卡上监听；远程访问关闭 / 令牌重发（都会经 remote::apply 重启桥）、
-//!   设置里关掉预览、30 分钟没有连接时回收。
+//! - 归属不是只在打开那一刻查：之后每 15 秒内第一个请求、连接失败后、换连另一个地址族时都重查，
+//!   dev server 停了、端口被别的程序接手，预览立即不再转发（独立审查 2026-11-24 #3）。
+//! - 只在远程桥所在的网卡上监听，入站 Host 必须是代理监听的那个地址；远程访问关闭 / 令牌重发
+//!   （都会经 remote::apply 重启桥）、设置里关掉预览、端口不再属于会话、30 分钟没有热更新连接也
+//!   没有请求时回收。回收连已升级的 websocket 一起断；打开与关闭交错时靠代次号作废在途的那次打开。
 
 use bytes::Bytes;
 use http_body_util::{combinators::BoxBody, BodyExt, Full};
@@ -49,11 +52,29 @@ const AUTH_PATH: &str = "/__meowo/preview";
 struct Proxy {
     port: u16,
     target: SocketAddr,
+    /// 谁的端口：之后重查归属用。
+    owner: Owner,
     shutdown: tokio::sync::watch::Sender<bool>,
-    /// 当前打开的连接数（含升级后的 websocket）；为 0 且闲置超时才回收。
+    /// 当前开着的 websocket 隧道数（热更新连接，页面开着就一直在）；为 0 且闲置超时才回收。
+    /// 普通 HTTP 连接不算：浏览器会把空闲的长连接挂好几分钟，算进来就永远回收不了。
     active: Arc<AtomicUsize>,
     /// 最近一次有请求的时刻（自 hub 创建起的秒数）。
     last_seen: Arc<AtomicU64>,
+    /// 最近一次确认归属的时刻；[`NEEDS_CHECK`] = 下一个请求先重查。
+    verified_at: Arc<AtomicU64>,
+}
+
+const NEEDS_CHECK: u64 = u64::MAX;
+/// 归属确认后多久内不再重查（一次页面加载有上百个模块请求，不能每个都扫进程表）。
+const VERIFY_EVERY: u64 = 15;
+
+/// 端口归属：会话的根进程（托管 PTY 子进程、reporter 记下的 agent pid）与会话目录。
+#[derive(Clone, Debug)]
+pub(crate) enum Owner {
+    Session { roots: Vec<u32>, dir: Option<String> },
+    /// 测试与手动验证用：不查归属。
+    #[cfg(test)]
+    Anyone,
 }
 
 struct PendingCode {
@@ -72,6 +93,9 @@ struct HubInner {
     last_ports: HashMap<Key, u16>,
     codes: HashMap<String, PendingCode>,
     reaper: bool,
+    /// 代次：桥起停、设置里关掉预览时加一。打开预览中途要等进程表，等回来时代次变了就作废，
+    /// 不在桥已经停掉之后再开出一个代理、发出一个码（独立审查 #4）。
+    generation: u64,
 }
 
 struct Hub {
@@ -98,6 +122,7 @@ pub(crate) fn bridge_started(bind: IpAddr) {
         let mut inner = lock();
         let stale = if inner.bind != Some(bind) { std::mem::take(&mut inner.proxies) } else { HashMap::new() };
         inner.bind = Some(bind);
+        inner.generation += 1;
         stale
     };
     for (_, proxy) in stale {
@@ -111,6 +136,7 @@ pub(crate) fn bridge_stopped() {
         let mut inner = lock();
         inner.bind = None;
         inner.codes.clear();
+        inner.generation += 1;
         std::mem::take(&mut inner.proxies)
     };
     for (_, proxy) in proxies {
@@ -123,6 +149,7 @@ pub(crate) fn close_all() {
     let proxies = {
         let mut inner = lock();
         inner.codes.clear();
+        inner.generation += 1;
         std::mem::take(&mut inner.proxies)
     };
     for (_, proxy) in proxies {
@@ -135,7 +162,10 @@ pub(crate) fn close_all() {
 #[derive(serde::Serialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PreviewTicket {
-    /// 手机该连的代理端口（主机名用手机此刻访问远程页的那个）。
+    /// 手机该连的主机（代理监听的那个本机地址，IPv6 带方括号）。不用手机地址栏里的主机名：
+    /// 经 MagicDNS / .local 名字连进来时，代理只认 IP（防 DNS rebinding）。
+    pub host: String,
+    /// 代理端口。
     pub port: u16,
     /// 换码地址（含一次性码）；换完跳到原链接的路径。
     pub path: String,
@@ -171,13 +201,16 @@ pub(crate) fn parse_local_url(raw: &str) -> Result<(u16, String), String> {
     Ok((port, path))
 }
 
-/// 手机点了一个本机链接。`roots` 是该会话的进程（托管 PTY 子进程、reporter 记下的 agent pid）。
-pub(crate) async fn open(url: String, roots: Vec<u32>, enabled: bool, phone_host: Option<String>) -> Result<PreviewTicket, String> {
+/// 手机点了一个本机链接。`owner` 是该会话的进程与目录。
+pub(crate) async fn open(url: String, owner: Owner, enabled: bool, phone_host: Option<String>) -> Result<PreviewTicket, String> {
     if !enabled {
         return Err("preview/disabled".into());
     }
     let (target_port, path) = parse_local_url(&url)?;
-    let bind = lock().bind.ok_or_else(|| "preview/remote_off".to_string())?;
+    let (bind, generation) = {
+        let inner = lock();
+        (inner.bind.ok_or_else(|| "preview/remote_off".to_string())?, inner.generation)
+    };
     if bind.is_loopback() {
         // 远程桥只听本机：手机是经隧道（adb reverse、ssh -L）连进来的，新开的端口隧道里没有。
         return Err("preview/loopback_bind".into());
@@ -186,22 +219,35 @@ pub(crate) async fn open(url: String, roots: Vec<u32>, enabled: bool, phone_host
         return Err("preview/not_session".into());
     }
     let listen = listen_ip(bind, phone_host.as_deref());
+    if listen.is_unspecified() {
+        // 桥开在所有网卡上，手机却是经主机名（MagicDNS、.local）连进来的：不知道该把代理开在哪张网卡、
+        // 给手机哪个 IP。让用户改用二维码里的 IP 地址连。
+        return Err("preview/hostname".into());
+    }
 
     // 查谁在监听、是不是这个会话的进程：进程表与连接表都是阻塞系统调用。
-    let target = tauri::async_runtime::spawn_blocking(move || resolve_target(target_port, &roots))
+    let check = owner.clone();
+    let (target, same_port_ok) = tauri::async_runtime::spawn_blocking(move || resolve_target(target_port, &check))
         .await
         .map_err(|e| e.to_string())??;
 
     let key = (listen, target_port);
-    let port = ensure_proxy(key, target).await?;
+    let port = ensure_proxy(key, target, owner, same_port_ok, generation).await?;
     let code = crate::remote::generate_token()?;
     {
         let mut inner = lock();
+        if inner.generation != generation {
+            return Err("preview/remote_off".into());
+        }
         let now = Instant::now();
         inner.codes.retain(|_, c| c.expires > now);
         inner.codes.insert(code.clone(), PendingCode { key, path, expires: now + CODE_TTL });
     }
-    Ok(PreviewTicket { port, path: format!("{AUTH_PATH}?c={code}") })
+    let host = match listen {
+        IpAddr::V6(v6) => format!("[{v6}]"),
+        IpAddr::V4(v4) => v4.to_string(),
+    };
+    Ok(PreviewTicket { host, port, path: format!("{AUTH_PATH}?c={code}") })
 }
 
 /// 代理开在哪个地址上：远程桥绑在具体网卡（Tailscale）就用它；绑在所有网卡时用手机这次访问远程页
@@ -231,9 +277,13 @@ fn remote_owned_port(port: u16) -> bool {
     crate::remote::running_port() == Some(port) || lock().proxies.values().any(|p| p.port == port)
 }
 
-/// 找到监听 `port` 的、属于会话进程树的那个回环地址。
-fn resolve_target(port: u16, roots: &[u32]) -> Result<SocketAddr, String> {
+/// 找到监听 `port` 的、属于会话的那个回环地址；第二项 = 能不能占同号端口（见 [`ensure_proxy`]）。
+fn resolve_target(port: u16, owner: &Owner) -> Result<(SocketAddr, bool), String> {
     let listeners = listener_pids(port).ok_or_else(|| "preview/owner_unknown".to_string())?;
+    // dev server 自己开在所有网卡或某个局域网地址上：同网设备本来就能直接连它。代理再占同号端口，
+    // Windows 上会把这个端口的局域网入口抢过来（后绑的具体地址优先，独立审查实测），别的设备就被挡在
+    // 外面。这时不占同号端口。
+    let same_port_ok = listeners.iter().all(|(ip, _)| ip.is_loopback());
     // 只认回环能连到的监听：绑在 127.0.0.1 / 0.0.0.0 → 连 127.0.0.1；绑在 ::1 / :: → 连 ::1。
     let reachable: Vec<(SocketAddr, u32)> = listeners
         .into_iter()
@@ -249,13 +299,81 @@ fn resolve_target(port: u16, roots: &[u32]) -> Result<SocketAddr, String> {
     if reachable.is_empty() {
         return Err("preview/not_listening".into());
     }
+    let (roots, dir) = match owner {
+        Owner::Session { roots, dir } => (roots, dir),
+        #[cfg(test)]
+        Owner::Anyone => {
+            let all: Vec<SocketAddr> = reachable.iter().map(|(a, _)| *a).collect();
+            return Ok((*all.iter().min_by_key(|a| !a.is_ipv4()).unwrap(), same_port_ok));
+        }
+    };
     let parent_of = crate::proc::parent_map();
     let mut tree = std::collections::HashSet::new();
     for &root in roots.iter().filter(|r| **r > 0) {
         tree.insert(root);
         tree.extend(crate::proc::descendant_pids(&parent_of, root));
     }
-    pick_owned(&reachable, &tree).ok_or_else(|| "preview/not_session".to_string())
+    if let Some(addr) = pick_owned(&reachable, &tree) {
+        return Ok((addr, same_port_ok));
+    }
+    // 进程树断了的情形：AI 用 `npm run dev &`、nohup、Start-Process 起服务时，中间那层 shell 退出，
+    // 从会话根往下找不到 dev server（独立审查实测 node <- bash <- 已退出）。这时按「断开处在会话之后
+    // 启动 + 工作目录在会话目录里」认领，见 [`orphan_owned`]。
+    let orphans: Vec<(SocketAddr, u32)> = reachable.iter().copied().filter(|(_, pid)| !tree.contains(pid)).collect();
+    if let Some(dir) = dir.as_deref().filter(|d| !d.trim().is_empty()) {
+        let owned = orphan_owned(&orphans, roots, dir);
+        if let Some(addr) = owned.iter().copied().min_by_key(|a| !a.is_ipv4()) {
+            return Ok((addr, same_port_ok));
+        }
+    }
+    Err("preview/not_session".into())
+}
+
+/// 进程树断开的监听里，哪些可以认作会话起的。从监听进程沿父进程往上走，走到父进程已经退出
+/// （或父 pid 被复用成了更晚启动的进程）为止，断开处那个进程就是这一支的顶。认领条件：
+/// - 顶在会话根进程之后才启动：`npm run dev &` 的 npx/node 是这样；用户自己终端里起的服务往上会走到
+///   登录时就在的 explorer / 终端，比会话早，不认；
+/// - 监听进程的工作目录在会话目录里。
+fn orphan_owned(orphans: &[(SocketAddr, u32)], roots: &[u32], dir: &str) -> Vec<SocketAddr> {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    if orphans.is_empty() {
+        return Vec::new();
+    }
+    let mut sys = System::new();
+    let kind = ProcessRefreshKind::new().with_cwd(UpdateKind::Always);
+    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
+    let Some(session_start) = roots.iter().filter_map(|r| sys.process(Pid::from_u32(*r))).map(|p| p.start_time()).min() else {
+        return Vec::new();
+    };
+    orphans
+        .iter()
+        .filter(|(_, pid)| {
+            let Some(listener) = sys.process(Pid::from_u32(*pid)) else { return false };
+            if !listener.cwd().is_some_and(|cwd| path_within(&cwd.to_string_lossy(), dir)) {
+                return false;
+            }
+            let mut top = listener;
+            for _ in 0..64 {
+                match top.parent().and_then(|pp| sys.process(pp)) {
+                    Some(parent) if parent.start_time() <= top.start_time() => top = parent,
+                    _ => break,
+                }
+            }
+            top.start_time() >= session_start
+        })
+        .map(|(addr, _)| *addr)
+        .collect()
+}
+
+/// `path` 是否就是 `dir` 或在它下面（Windows 不分大小写、两种斜杠都认）。
+fn path_within(path: &str, dir: &str) -> bool {
+    let norm = |s: &str| {
+        let s = s.replace('\\', "/");
+        let s = s.trim_end_matches('/').to_string();
+        if cfg!(windows) { s.to_lowercase() } else { s }
+    };
+    let (p, d) = (norm(path), norm(dir));
+    !d.is_empty() && (p == d || p.starts_with(&format!("{d}/")))
 }
 
 /// 在属于会话进程树的监听里挑一个，IPv4 优先（Node 18+ 的「localhost」可能只开在 ::1，所以两族都收）。
@@ -360,20 +478,22 @@ fn parse_lsof_listeners(text: &str) -> Vec<(IpAddr, u32)> {
 /// 代理端口优先与目标同号：dev server 只听 127.0.0.1，同号端口开在局域网地址上不冲突。手机上的地址
 /// 于是和电脑上只差主机名，按「服务器端口」去连热更新的客户端也连得上（webpack-dev-server 的
 /// websocket 地址带的是服务器端口，换成别的代理端口它就绕过代理直连、在手机上连不上，实测）。
-/// 同号绑不上（dev server 开在所有网卡、或者端口被别的程序占了）再试上次用过的，最后随机。
-async fn ensure_proxy(key: Key, target: SocketAddr) -> Result<u16, String> {
+/// 同号不能占（dev server 自己开在局域网上，见 [`resolve_target`]）或绑不上时，再试上次用过的，最后随机。
+async fn ensure_proxy(key: Key, target: SocketAddr, owner: Owner, same_port_ok: bool, generation: u64) -> Result<u16, String> {
     let (listen, target_port) = key;
     let preferred = {
         let mut inner = lock();
         if let Some(p) = inner.proxies.get_mut(&key) {
             // 同一端口换了监听族（dev server 重启后从 127.0.0.1 换到 ::1）：改连新地址，端口不变。
             p.target = target;
+            p.owner = owner;
+            p.verified_at.store(now_secs(), Ordering::SeqCst);
             return Ok(p.port);
         }
-        inner.last_ports.get(&key).copied()
+        inner.last_ports.get(&key).copied().filter(|p| *p != target_port || same_port_ok)
     };
     let mut listener = None;
-    for p in [Some(target_port), preferred, Some(0)].into_iter().flatten() {
+    for p in [same_port_ok.then_some(target_port), preferred, Some(0)].into_iter().flatten() {
         if let Ok(l) = tokio::net::TcpListener::bind((listen, p)).await {
             listener = Some(l);
             break;
@@ -385,15 +505,28 @@ async fn ensure_proxy(key: Key, target: SocketAddr) -> Result<u16, String> {
     let (shutdown, rx) = tokio::sync::watch::channel(false);
     let active = Arc::new(AtomicUsize::new(0));
     let last_seen = Arc::new(AtomicU64::new(now_secs()));
-    let ctx = Arc::new(Ctx { port, key, secret: secret.clone(), active: active.clone(), last_seen: last_seen.clone() });
+    let verified_at = Arc::new(AtomicU64::new(now_secs()));
+    let ctx = Arc::new(Ctx {
+        port,
+        key,
+        secret: secret.clone(),
+        active: active.clone(),
+        last_seen: last_seen.clone(),
+        verified_at: verified_at.clone(),
+        shutdown: rx.clone(),
+    });
 
     let start_reaper = {
         let mut inner = lock();
+        // 桥在这期间停了 / 重启了 / 预览被关了：这次打开作废，刚绑的监听随 listener 一起丢掉。
+        if inner.generation != generation || inner.bind.is_none() {
+            return Err("preview/remote_off".into());
+        }
         // 两个请求同时为同一端口开代理：先到的赢，后到的关掉自己刚绑的监听。
         if let Some(p) = inner.proxies.get(&key) {
             return Ok(p.port);
         }
-        inner.proxies.insert(key, Proxy { port, target, shutdown, active, last_seen });
+        inner.proxies.insert(key, Proxy { port, target, owner, shutdown, active, last_seen, verified_at });
         inner.last_ports.insert(key, port);
         !std::mem::replace(&mut inner.reaper, true)
     };
@@ -410,18 +543,27 @@ async fn reap_loop() {
         tokio::time::sleep(REAP_EVERY).await;
         let now = now_secs();
         let idle_limit = IDLE_REAP.as_secs();
+        // 端口不再监听、或者换成了不属于会话的程序：也回收（不只是闲置）。
+        let checks: Vec<(Key, Owner)> = lock().proxies.iter().map(|(k, p)| (*k, p.owner.clone())).collect();
+        let gone: Vec<Key> = tauri::async_runtime::spawn_blocking(move || {
+            checks.into_iter().filter(|(key, owner)| resolve_target(key.1, owner).is_err()).map(|(k, _)| k).collect()
+        })
+        .await
+        .unwrap_or_default();
         let reaped: Vec<Proxy> = {
             let mut inner = lock();
             let stale: Vec<Key> = inner
                 .proxies
                 .iter()
-                .filter(|(_, p)| p.active.load(Ordering::SeqCst) == 0 && now.saturating_sub(p.last_seen.load(Ordering::SeqCst)) >= idle_limit)
+                .filter(|(k, p)| {
+                    gone.contains(k) || (p.active.load(Ordering::SeqCst) == 0 && now.saturating_sub(p.last_seen.load(Ordering::SeqCst)) >= idle_limit)
+                })
                 .map(|(k, _)| *k)
                 .collect();
             stale.into_iter().filter_map(|k| inner.proxies.remove(&k)).collect()
         };
         for p in reaped {
-            eprintln!("[preview] 预览代理闲置回收：{}", p.port);
+            eprintln!("[preview] 预览代理回收：{}", p.port);
             let _ = p.shutdown.send(true);
         }
     }
@@ -433,9 +575,12 @@ struct Ctx {
     secret: Arc<str>,
     active: Arc<AtomicUsize>,
     last_seen: Arc<AtomicU64>,
+    verified_at: Arc<AtomicU64>,
+    /// 回收信号：已升级的 websocket 隧道也要随它断开。
+    shutdown: tokio::sync::watch::Receiver<bool>,
 }
 
-/// 连接计数守卫：连接（含升级后的 websocket）结束时减一。
+/// websocket 隧道计数守卫：隧道结束时减一。
 struct ActiveGuard(Arc<AtomicUsize>);
 impl Drop for ActiveGuard {
     fn drop(&mut self) {
@@ -451,12 +596,13 @@ async fn serve(listener: tokio::net::TcpListener, ctx: Arc<Ctx>, mut shutdown: t
         };
         let Ok((stream, _)) = accepted else { continue };
         let _ = stream.set_nodelay(true);
+        // 手机断网、锁屏后连接可能半开着，永远不会收到 FIN：开 TCP 保活，几分钟内探测出来并断掉，
+        // 否则热更新隧道一直算「开着」，闲置回收永远不触发（独立审查 #2）。
+        let keepalive = socket2::TcpKeepalive::new().with_time(Duration::from_secs(60)).with_interval(Duration::from_secs(15));
+        let _ = socket2::SockRef::from(&stream).set_tcp_keepalive(&keepalive);
         let ctx = ctx.clone();
         let mut conn_shutdown = shutdown.clone();
-        ctx.active.fetch_add(1, Ordering::SeqCst);
-        let guard = ActiveGuard(ctx.active.clone());
         tauri::async_runtime::spawn(async move {
-            let _guard = guard;
             let svc_ctx = ctx.clone();
             let service = hyper::service::service_fn(move |req| {
                 let ctx = svc_ctx.clone();
@@ -483,8 +629,9 @@ async fn handle(mut req: Request<Incoming>, ctx: &Ctx) -> Response<Body> {
     let Some(inbound_host) = req.headers().get(header::HOST).and_then(|h| h.to_str().ok()).map(str::to_string) else {
         return plain(StatusCode::BAD_REQUEST, "missing host");
     };
-    if !host_is_ip_literal(&inbound_host) {
-        return plain(StatusCode::MISDIRECTED_REQUEST, "host not allowed");
+    // 入站 Host 必须就是代理监听的那个地址（防 DNS rebinding：那时 Host 是攻击者的域名）。
+    if host_ip(&inbound_host) != Some(ctx.key.0) || !host_is_ip_literal(&inbound_host) {
+        return hostname_page();
     }
 
     if req.uri().path() == AUTH_PATH {
@@ -495,28 +642,41 @@ async fn handle(mut req: Request<Incoming>, ctx: &Ctx) -> Response<Body> {
     }
 
     let target_port = ctx.key.1;
-    let Some(target) = lock().proxies.get(&ctx.key).map(|p| p.target) else {
+    let Some((mut target, owner)) = lock().proxies.get(&ctx.key).map(|p| (p.target, p.owner.clone())) else {
         return plain(StatusCode::SERVICE_UNAVAILABLE, "preview closed");
     };
+    // 归属过期（15 秒）或上次连失败过：先重查。dev server 停了、端口被别的程序接手，就不再转发。
+    let verified = ctx.verified_at.load(Ordering::SeqCst);
+    if verified == NEEDS_CHECK || now_secs().saturating_sub(verified) >= VERIFY_EVERY {
+        match reverify(ctx, target_port, owner.clone()).await {
+            Ok(addr) => target = addr,
+            Err(page) => return page,
+        }
+    }
     rewrite_request_headers(req.headers_mut(), &inbound_host, target_port, ctx.port);
     let upgrade_requested = req.headers().contains_key(header::UPGRADE);
     if upgrade_requested && req.headers().get(header::ORIGIN).is_some_and(|o| o == "null") {
         return plain(StatusCode::FORBIDDEN, "origin not allowed");
     }
 
-    let stream = match connect(target).await {
-        Some((s, used)) => {
-            if used != target {
-                // dev server 重启后换了族：记住新地址，别让之后每个请求都先空等一次（Windows 上连一个
-                // 没人听的回环端口要约 2 秒才失败，实测）。
-                if let Some(p) = lock().proxies.get_mut(&ctx.key) {
-                    p.target = used;
-                }
+    let stream = match tokio::time::timeout(Duration::from_secs(3), tokio::net::TcpStream::connect(target)).await {
+        Ok(Ok(s)) => s,
+        _ => {
+            // 连不上：dev server 停了、重启了，或者换了地址族（127.0.0.1 ↔ ::1）。重查一次归属拿新地址，
+            // 不直接去连另一个族——那里可能是别的程序（独立审查 #3）。
+            ctx.verified_at.store(NEEDS_CHECK, Ordering::SeqCst);
+            let addr = match reverify(ctx, target_port, owner).await {
+                Ok(addr) if addr != target => addr,
+                Ok(_) => return not_running_page(target_port),
+                Err(page) => return page,
+            };
+            match tokio::time::timeout(Duration::from_secs(3), tokio::net::TcpStream::connect(addr)).await {
+                Ok(Ok(s)) => s,
+                _ => return not_running_page(target_port),
             }
-            s
         }
-        None => return not_running_page(target_port),
     };
+    let _ = stream.set_nodelay(true);
     let Ok((mut sender, conn)) = hyper::client::conn::http1::handshake(TokioIo::new(stream)).await else {
         return not_running_page(target_port);
     };
@@ -534,12 +694,17 @@ async fn handle(mut req: Request<Incoming>, ctx: &Ctx) -> Response<Body> {
             let active = ctx.active.clone();
             active.fetch_add(1, Ordering::SeqCst);
             let guard = ActiveGuard(active);
+            let mut shutdown = ctx.shutdown.clone();
             tauri::async_runtime::spawn(async move {
                 let _guard = guard;
                 if let (Ok(a), Ok(b)) = (client_upgrade.await, server_upgrade.await) {
                     let mut a = TokioIo::new(a);
                     let mut b = TokioIo::new(b);
-                    let _ = tokio::io::copy_bidirectional(&mut a, &mut b).await;
+                    // 回收时隧道一起断：关掉远程访问后，已经建好的热更新连接不能还通着 dev server。
+                    tokio::select! {
+                        _ = tokio::io::copy_bidirectional(&mut a, &mut b) => {}
+                        _ = shutdown.wait_for(|stop| *stop) => {}
+                    }
                 }
             });
         }
@@ -548,19 +713,20 @@ async fn handle(mut req: Request<Incoming>, ctx: &Ctx) -> Response<Body> {
     resp.map(|b| b.boxed())
 }
 
-/// 先连监听时查到的地址；dev server 重启后换了族（127.0.0.1 ↔ ::1）就试另一个。
-async fn connect(target: SocketAddr) -> Option<(tokio::net::TcpStream, SocketAddr)> {
-    let other = match target.ip() {
-        IpAddr::V4(_) => SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), target.port()),
-        IpAddr::V6(_) => SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), target.port()),
-    };
-    for addr in [target, other] {
-        if let Ok(Ok(s)) = tokio::time::timeout(Duration::from_secs(3), tokio::net::TcpStream::connect(addr)).await {
-            let _ = s.set_nodelay(true);
-            return Some((s, addr));
+/// 重查归属：仍属于会话就更新目标地址并记下确认时刻；否则给一页人话（并让回收循环收掉它）。
+async fn reverify(ctx: &Ctx, target_port: u16, owner: Owner) -> Result<SocketAddr, Response<Body>> {
+    let result = tauri::async_runtime::spawn_blocking(move || resolve_target(target_port, &owner)).await;
+    match result {
+        Ok(Ok((addr, _))) => {
+            if let Some(p) = lock().proxies.get_mut(&ctx.key) {
+                p.target = addr;
+            }
+            ctx.verified_at.store(now_secs(), Ordering::SeqCst);
+            Ok(addr)
         }
+        Ok(Err(code)) if code == "preview/not_session" => Err(not_session_page(target_port)),
+        _ => Err(not_running_page(target_port)),
     }
-    None
 }
 
 /// 凭一次性码种 cookie，再跳到原链接的路径。码用一次就删，过期的也删。
@@ -639,12 +805,14 @@ pub(crate) fn rewrite_request_headers(headers: &mut HeaderMap, inbound_host: &st
     if let Ok(v) = HeaderValue::from_str(&local) {
         headers.insert(header::HOST, v);
     }
-    if headers.get(header::ORIGIN).is_some_and(|o| o != "null") {
+    // Origin 只在它就是预览页自己（同一个代理地址）时改：别的页面（同 IP 的另一个预览、外站）来的请求
+    // 原样交给 dev server，让它自带的来源检查照常生效（独立审查 #9）。
+    let inbound_origin = format!("http://{inbound_host}");
+    if headers.get(header::ORIGIN).is_some_and(|o| o.as_bytes() == inbound_origin.as_bytes()) {
         if let Ok(v) = HeaderValue::from_str(&local_origin) {
             headers.insert(header::ORIGIN, v);
         }
     }
-    let inbound_origin = format!("http://{inbound_host}");
     if let Some(r) = headers.get(header::REFERER).and_then(|v| v.to_str().ok()).map(str::to_string) {
         if let Some(rest) = r.strip_prefix(&inbound_origin) {
             if rest.is_empty() || rest.starts_with('/') || rest.starts_with('?') {
@@ -716,7 +884,8 @@ fn local_location_path(loc: &str, target_port: u16) -> Option<String> {
         out.push('#');
         out.push_str(f);
     }
-    Some(out)
+    // `http://localhost:5173//evil.example/` 去掉主机后是 `//evil.example/`，浏览器会当成外站（独立审查 #6）。
+    Some(safe_local_path(&out))
 }
 
 fn rewrite_set_cookie(raw: &str) -> String {
@@ -775,6 +944,26 @@ fn need_link_page() -> Response<Body> {
         "这个预览地址要从 Meowo 手机页的对话里点链接进入。回到 Meowo，再点一次那个链接。",
         "Open it from Meowo",
         "This preview opens from a link in the Meowo chat on your phone. Go back to Meowo and tap the link again.",
+    )
+}
+
+fn not_session_page(target_port: u16) -> Response<Body> {
+    page(
+        StatusCode::FORBIDDEN,
+        "这个端口不是本会话的",
+        &format!("电脑上 {target_port} 端口现在是别的程序在用，不是这个会话起的 dev server，Meowo 不会把它开给手机。"),
+        "This port isn't from this session",
+        &format!("Port {target_port} on your computer is now used by another program, not the dev server this session started, so Meowo won't open it to your phone."),
+    )
+}
+
+fn hostname_page() -> Response<Body> {
+    page(
+        StatusCode::MISDIRECTED_REQUEST,
+        "请用 IP 地址打开",
+        "预览只认电脑的 IP 地址。回到 Meowo 手机页，再点一次对话里的链接。",
+        "Open it by IP address",
+        "The preview only accepts your computer's IP address. Go back to Meowo on your phone and tap the link in the chat again.",
     )
 }
 
@@ -873,6 +1062,50 @@ mod tests {
     }
 
     #[test]
+    fn rewritten_redirect_cannot_leave_the_host() {
+        let mut h = HeaderMap::new();
+        h.insert(header::LOCATION, HeaderValue::from_static("http://localhost:5173//evil.example/x"));
+        rewrite_response_headers(&mut h, 5173);
+        assert_eq!(h[header::LOCATION], "/");
+    }
+
+    #[test]
+    fn origin_from_elsewhere_is_left_for_the_dev_server_to_judge() {
+        let mut h = HeaderMap::new();
+        h.insert(header::ORIGIN, HeaderValue::from_static("http://192.168.1.5:5199"));
+        rewrite_request_headers(&mut h, "192.168.1.5:5173", 5173, 5173);
+        assert_eq!(h[header::ORIGIN], "http://192.168.1.5:5199");
+    }
+
+    #[test]
+    fn session_dir_match_is_prefix_by_component() {
+        assert!(path_within("C:\\dev\\web-app", "C:/dev/web-app"));
+        assert!(path_within("C:\\dev\\web-app\\packages\\ui", "C:\\dev\\web-app\\"));
+        assert!(!path_within("C:\\dev\\web-app2", "C:\\dev\\web-app"));
+        assert!(!path_within("C:\\dev", "C:\\dev\\web-app"));
+        assert!(!path_within("C:\\dev\\web-app", ""));
+        #[cfg(windows)]
+        assert!(path_within("c:\\DEV\\Web-App", "C:\\dev\\web-app"));
+    }
+
+    /// dev server 自己开在所有网卡上时不占同号端口（Windows 上会把它的局域网入口抢走）。
+    #[test]
+    fn same_port_only_when_dev_server_is_loopback_only() {
+        let me = Owner::Session { roots: vec![std::process::id()], dir: None };
+        let local = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let p = local.local_addr().unwrap().port();
+        assert_eq!(resolve_target(p, &me).unwrap(), (SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), p), true));
+        let all = std::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).unwrap();
+        let q = all.local_addr().unwrap().port();
+        assert_eq!(resolve_target(q, &me).unwrap(), (SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), q), false));
+        // 不属于会话（根进程不是本进程）：拒。
+        let other = Owner::Session { roots: vec![u32::MAX - 7], dir: None };
+        assert_eq!(resolve_target(p, &other).unwrap_err(), "preview/not_session");
+        drop(local);
+        assert_eq!(resolve_target(p, &me).unwrap_err(), "preview/not_listening");
+    }
+
+    #[test]
     fn redirect_target_stays_on_this_host() {
         assert_eq!(safe_local_path("/a?b#c"), "/a?b#c");
         assert_eq!(safe_local_path("//evil.example/x"), "/");
@@ -949,12 +1182,37 @@ mod tests {
                     .min_by_key(|a| !a.is_ipv4())
                     .expect("目标端口没人监听");
                 let key = (IpAddr::V4(std::env::var("PV_LISTEN").ok().and_then(|s| s.parse().ok()).unwrap_or(Ipv4Addr::LOCALHOST)), t);
-                let port = ensure_proxy(key, target).await.unwrap();
+                let (_, same_port_ok) = resolve_target(t, &Owner::Anyone).unwrap();
+                let generation = { let mut inner = lock(); inner.bind = Some(key.0); inner.generation };
+                let port = ensure_proxy(key, target, Owner::Anyone, same_port_ok, generation).await.unwrap();
                 for n in 0..10 {
                     let code = if n == 0 { format!("pv-{t}") } else { format!("pv-{t}-{n}") };
                     lock().codes.insert(code, PendingCode { key, path: "/".into(), expires: Instant::now() + Duration::from_secs(secs) });
                 }
                 println!("PROXY {t} -> {port}");
+            }
+            tokio::time::sleep(Duration::from_secs(secs)).await;
+        });
+    }
+
+    /// 走真实的 open()（归属判定、一次性码、代次）验真 dev server：
+    /// `PV_LISTEN=<本机IP> PV_CASES="<url>|<根pid>|<会话目录>;..." cargo test --lib preview_open_manual -- --ignored --nocapture`。
+    /// 打印每个用例的预览地址（或错误码），然后挂 PV_SECS 秒。
+    #[test]
+    #[ignore]
+    fn preview_open_manual() {
+        let listen: IpAddr = std::env::var("PV_LISTEN").unwrap().parse().unwrap();
+        let cases = std::env::var("PV_CASES").unwrap_or_default();
+        let secs: u64 = std::env::var("PV_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(300);
+        tauri::async_runtime::block_on(async move {
+            bridge_started(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+            for case in cases.split(';').filter(|c| !c.trim().is_empty()) {
+                let parts: Vec<&str> = case.split('|').collect();
+                let owner = Owner::Session { roots: vec![parts[1].parse().unwrap()], dir: parts.get(2).map(|d| d.to_string()) };
+                match open(parts[0].to_string(), owner, true, Some(format!("{listen}:18620"))).await {
+                    Ok(t) => println!("OPEN {} -> http://{}:{}{}", parts[0], t.host, t.port, t.path),
+                    Err(e) => println!("OPEN {} -> ERR {e}", parts[0]),
+                }
             }
             tokio::time::sleep(Duration::from_secs(secs)).await;
         });
@@ -1027,12 +1285,16 @@ mod tests {
         tauri::async_runtime::block_on(async {
             let target_port = upstream().await;
             let target = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), target_port);
-            // 代理也开在 127.0.0.1：同号端口被上游占着，退到随机端口。
+            // 代理也开在 127.0.0.1：同号端口被上游占着，退到随机端口。归属按本测试进程认（上游就是它开的）。
             let key = (IpAddr::V4(Ipv4Addr::LOCALHOST), target_port);
-            let port = ensure_proxy(key, target).await.unwrap();
+            let owner = Owner::Session { roots: vec![std::process::id()], dir: None };
+            let generation = { let mut inner = lock(); inner.bind = Some(key.0); inner.generation };
+            let port = ensure_proxy(key, target, owner.clone(), true, generation).await.unwrap();
             assert_ne!(port, target_port);
             // 同一目标再开一次：同一个代理端口。
-            assert_eq!(ensure_proxy(key, target).await.unwrap(), port);
+            assert_eq!(ensure_proxy(key, target, owner.clone(), true, generation).await.unwrap(), port);
+            // 代次变了（桥在打开途中停过）：作废，不开出新代理。
+            assert_eq!(ensure_proxy((key.0, 1), target, owner, true, generation + 1).await.unwrap_err(), "preview/remote_off");
             let host = format!("127.0.0.1:{port}");
 
             // 没有 cookie：请他回 Meowo 点链接。
@@ -1040,6 +1302,9 @@ mod tests {
             assert!(resp.starts_with("HTTP/1.1 401"), "{resp}");
             // Host 是域名：拒。
             let resp = raw(port, format!("GET / HTTP/1.1\r\nHost: evil.example:{port}\r\nConnection: close\r\n\r\n")).await;
+            assert!(resp.starts_with("HTTP/1.1 421"), "{resp}");
+            // Host 是 IP 但不是代理监听的那个：同样拒。
+            let resp = raw(port, format!("GET / HTTP/1.1\r\nHost: 10.9.8.7:{port}\r\nConnection: close\r\n\r\n")).await;
             assert!(resp.starts_with("HTTP/1.1 421"), "{resp}");
             // 绝对 URI 形式（当跳板用）：拒。
             let resp = raw(port, format!("GET http://10.0.0.1/ HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n")).await;
@@ -1093,8 +1358,21 @@ mod tests {
                 assert_eq!(&push, b"yo");
             }
 
-            // 远程桥停了：代理一起关，连不上了。
+            // 留一条热更新隧道开着，看回收时它是否一起断。
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut tunnel = tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port)).await.unwrap();
+            let req = format!("GET /hmr HTTP/1.1\r\nHost: {host}\r\nCookie: {cookie}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n");
+            tunnel.write_all(req.as_bytes()).await.unwrap();
+            let mut first = vec![0u8; 512];
+            let n = tokio::time::timeout(Duration::from_secs(3), tunnel.read(&mut first)).await.unwrap().unwrap();
+            assert!(String::from_utf8_lossy(&first[..n]).starts_with("HTTP/1.1 101"));
+            tokio::time::sleep(Duration::from_millis(400)).await;
+
+            // 远程桥停了：代理一起关，连不上了；已建好的隧道也断。
             bridge_stopped();
+            let mut rest = Vec::new();
+            let closed = tokio::time::timeout(Duration::from_secs(3), tunnel.read_to_end(&mut rest)).await;
+            assert!(matches!(closed, Ok(Ok(_)) | Ok(Err(_))), "回收后隧道还通着");
             tokio::time::sleep(Duration::from_millis(200)).await;
             let gone = tokio::time::timeout(Duration::from_secs(1), tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))).await;
             assert!(!matches!(gone, Ok(Ok(_))), "代理端口还开着");

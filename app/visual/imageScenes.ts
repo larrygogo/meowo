@@ -462,7 +462,7 @@ export function imageSceneMock(part: string, lang: Lang, chat: (cmd: string) => 
     if (cmd === "preview_open") {
       const url = (args as { url?: string }).url ?? "";
       if (url.includes(":8787")) return Promise.reject(new Error("preview/not_listening"));
-      return { port: 5173, path: "/__meowo/preview?c=demo" };
+      return { host: "192.168.5.108", port: 5173, path: "/__meowo/preview?c=demo" };
     }
     // 交文件：old 开头的那份快照已被回收（卡片显示「已清理」）。
     if (cmd === "delivered_file_exists") return !((args as { path?: string }).path ?? "").includes("old000");

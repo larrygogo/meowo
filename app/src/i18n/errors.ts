@@ -101,6 +101,7 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "preview/disabled", exact: true, zh: "手机预览已在电脑的设置里关掉", en: "Phone preview is turned off in the desktop settings" },
   { m: "preview/remote_off", exact: true, zh: "电脑上的远程访问没开", en: "Remote access is off on your computer" },
   { m: "preview/loopback_bind", exact: true, zh: "远程访问只监听本机，手机连不到预览端口。在电脑设置里把监听改成局域网或 Tailscale", en: "Remote access only listens on this computer, so your phone can't reach the preview. Switch it to LAN or Tailscale in the desktop settings" },
+  { m: "preview/hostname", exact: true, zh: "手机是用主机名连的 Meowo，预览要用 IP：在电脑设置里扫二维码重新连一次", en: "Your phone reached Meowo by hostname, but the preview needs an IP address. Scan the QR code in the desktop settings to reconnect" },
   { m: "preview/https", exact: true, zh: "暂不支持 https 的本机地址", en: "Local https addresses aren't supported yet" },
   { m: "preview/not_local", exact: true, zh: "这不是电脑上的本机地址", en: "That isn't a local address on your computer" },
   { m: "preview/bad_url", exact: true, zh: "链接格式不对", en: "That link isn't valid" },

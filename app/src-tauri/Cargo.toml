@@ -125,6 +125,8 @@ hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 bytes = "1"
+# 预览代理的连接开 TCP 保活（手机断网留下的半开连接要能探测出来）。tokio 的传递依赖，lock 已锁 0.6。
+socket2 = "0.6"
 # 「更改」面板放弃未跟踪文件时移进系统回收站而不是永久删（git.rs discard_blocking）。
 # 钉在 5.2.x：5.3.0 发布不满两周；5.2.9 覆盖 Windows(IFileOperation)/macOS(Finder)/Linux(freedesktop)。
 trash = "~5.2.9"

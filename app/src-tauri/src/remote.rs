@@ -1120,22 +1120,25 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             let db_path = state.db_path.clone();
             let session_id = a.session_id;
             let pty_root = state.ptys.child_pid(session_id);
-            // 设置与会话 pid 都要读盘/开库：放进阻塞池。
+            // 设置、会话 pid 与会话目录都要读盘/开库：放进阻塞池。
             let prep = tauri::async_runtime::spawn_blocking(move || {
                 let enabled = crate::settings::load_settings().remote_preview_enabled;
-                let stored = crate::open_store(&db_path)
-                    .ok()
+                let store = crate::open_store(&db_path).ok();
+                let stored = store
+                    .as_ref()
                     .and_then(|s| s.session_pid(session_id).ok().flatten())
                     .and_then(|p| u32::try_from(p).ok());
-                (enabled, stored)
+                let dir = store.as_ref().and_then(|s| s.session_cwd(session_id).ok().flatten());
+                (enabled, stored, dir)
             })
             .await;
-            let Ok((enabled, stored)) = prep else {
+            let Ok((enabled, stored, dir)) = prep else {
                 return reply::<()>(Err("preview/owner_unknown".into()));
             };
             let roots: Vec<u32> = pty_root.into_iter().chain(stored).collect();
+            let owner = crate::remote_preview::Owner::Session { roots, dir };
             let phone_host = REQUEST_HOST.try_with(|h| h.clone()).ok().flatten();
-            reply(crate::remote_preview::open(a.url, roots, enabled, phone_host).await)
+            reply(crate::remote_preview::open(a.url, owner, enabled, phone_host).await)
         }
         "fork_session" => {
             let a = args!(ForkSessionArgs);

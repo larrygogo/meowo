@@ -41,9 +41,9 @@ describe("手机预览：点本机链接经电脑上的代理打开", () => {
     expect(win.document.body.textContent).toBe("正在打开预览…");
     expect(win.opener).toBeNull();
     expect(invoke).toHaveBeenCalledWith("preview_open", { sessionId: 42, url: "http://localhost:5173/app?x=1" });
-    resolve({ port: 5173, path: "/__meowo/preview?c=abc" });
+    resolve({ host: "192.168.5.108", port: 5173, path: "/__meowo/preview?c=abc" });
     await pending;
-    expect(win.location.replace).toHaveBeenCalledWith(`${window.location.protocol}//${window.location.hostname}:5173/__meowo/preview?c=abc`);
+    expect(win.location.replace).toHaveBeenCalledWith("http://192.168.5.108:5173/__meowo/preview?c=abc");
   });
 
   it("打不开：关掉空页，把后端的原因交给调用方就地显示", async () => {
@@ -65,9 +65,8 @@ describe("手机预览：点本机链接经电脑上的代理打开", () => {
     expect(invoke).not.toHaveBeenCalled();
   });
 
-  it("预览地址用手机此刻访问 Meowo 的主机名（局域网 IP、Tailscale、IPv6 都原样）", () => {
-    const ticket = { port: 5173, path: "/__meowo/preview?c=x" };
-    expect(previewUrl(ticket, { protocol: "http:", hostname: "192.168.5.108" })).toBe("http://192.168.5.108:5173/__meowo/preview?c=x");
-    expect(previewUrl(ticket, { protocol: "http:", hostname: "[fd7a::1]" })).toBe("http://[fd7a::1]:5173/__meowo/preview?c=x");
+  it("预览地址用后端给的代理 IP（IPv6 带方括号），不用地址栏里的主机名", () => {
+    expect(previewUrl({ host: "100.111.211.81", port: 5173, path: "/__meowo/preview?c=x" })).toBe("http://100.111.211.81:5173/__meowo/preview?c=x");
+    expect(previewUrl({ host: "[fd7a::1]", port: 5173, path: "/" })).toBe("http://[fd7a::1]:5173/");
   });
 });

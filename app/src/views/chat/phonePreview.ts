@@ -10,7 +10,7 @@ import { remoteUi } from "../../remoteMode";
 import { isLocalDevUrl } from "./panelLinks";
 import type { PreviewOpenArgs } from "../../generated/contracts/bridge/PreviewOpenArgs";
 
-type PreviewTicket = { port: number; path: string };
+type PreviewTicket = { host: string; port: number; path: string };
 
 // 当前打开的会话（ChatWindow 在手机端登记）：后端凭它认「这个端口是不是这个会话起的」。
 let currentSession: number | null = null;
@@ -19,9 +19,10 @@ export function setPreviewSession(sessionId: number | null): void {
   currentSession = sessionId !== null && sessionId >= 0 ? sessionId : null;
 }
 
-/** 预览地址：主机名用手机此刻访问 Meowo 的那个（局域网 IP 或 Tailscale），端口是代理端口。 */
-export function previewUrl(ticket: PreviewTicket, loc: Pick<Location, "protocol" | "hostname"> = window.location): string {
-  return `${loc.protocol}//${loc.hostname}:${ticket.port}${ticket.path}`;
+/** 预览地址：主机用后端给的代理地址（就是手机连 Meowo 用的那个 IP）。不用地址栏里的主机名——
+ *  经 MagicDNS、.local 名字连进来时，代理只认 IP（防 DNS rebinding）。 */
+export function previewUrl(ticket: PreviewTicket): string {
+  return `http://${ticket.host}:${ticket.port}${ticket.path}`;
 }
 
 /**
