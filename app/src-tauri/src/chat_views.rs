@@ -224,13 +224,14 @@ pub(crate) struct Served {
 /// 页面 CSP。`frame_ancestors` 由调用方给：桌面是 Meowo 主窗口的源，手机是 `'self'`。
 /// - `sandbox allow-scripts`：即使被直接打开成顶层页面，也是不透明源，读不到 Meowo 的存储、调不到接口；
 ///   iframe 那一侧另外也只给 allow-scripts，两道都要破才出得去。
-/// - 脚本 / 样式只许内联和 https（agent 常从 CDN 引图表库）；图片 / 字体 / 媒体许 data: blob: https:。
+/// - 不联网：脚本 / 样式只许内联，图片 / 字体 / 媒体只许 data: blob:。审查第 4 轮实测页面能自己抢焦点、收走用户
+///   正要往输入框打的字；放行任何外部地址（哪怕只是 https 图片）都能把收到的字带出去，所以连 CDN 也不放。
 /// - `connect-src 'none'`、`form-action 'none'`：不能 fetch / XHR / WebSocket / 提交表单往外送东西。
 /// - `frame-src 'none'`：页面里不能再嵌别的站。
 pub(crate) fn csp(frame_ancestors: &str) -> String {
     format!(
-        "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https: blob:; style-src 'unsafe-inline' https:; \
-img-src data: blob: https:; font-src data: https:; media-src data: blob: https:; worker-src blob:; \
+        "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' blob:; style-src 'unsafe-inline'; \
+img-src data: blob:; font-src data:; media-src data: blob:; worker-src blob:; \
 connect-src 'none'; form-action 'none'; frame-src 'none'; base-uri 'none'; \
 frame-ancestors {frame_ancestors}; sandbox allow-scripts"
     )
@@ -391,7 +392,7 @@ mod tests {
         assert!(csp.contains("form-action 'none';") && csp.contains("frame-src 'none';"), "{csp}");
         assert!(csp.trim_end().ends_with("sandbox allow-scripts"), "{csp}");
         assert_eq!(csp.matches("allow-").count(), 1, "沙箱只许 allow-scripts：{csp}");
-        assert!(!csp.contains("ipc:") && !csp.contains("asset:") && !csp.contains(" http:"), "{csp}");
+        assert!(!csp.contains("ipc:") && !csp.contains("asset:") && !csp.contains("http:") && !csp.contains("https:"), "不联网：{csp}");
         assert!(id_from_path("/../secret.html").is_none());
         assert!(id_from_path("/C:/x.html").is_none());
         assert!(id_from_path(&format!("/{}.html", id.to_uppercase())).is_none());

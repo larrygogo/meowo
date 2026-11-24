@@ -114,22 +114,39 @@ describe("视图卡沙箱与消息", () => {
     expect(value.fillPrompt).not.toHaveBeenCalled();
   });
 
-  it("页面要开链接：不自动打开，卡片出一条确认，点「打开」才开；javascript: 不认；刷屏也只有一条", () => {
+  it("页面要开链接：不自动打开，卡片出一条确认，点「打开」才开；先到先得，显示期间换地址不理", () => {
     openLink.mockClear();
     const { frame } = mount();
-    post(frame.contentWindow, { jsonrpc: "2.0", method: "ui/open-link", params: { url: "javascript:alert(1)" } });
+    const ask = (url: string) => post(frame.contentWindow, { jsonrpc: "2.0", method: "ui/open-link", params: { url } });
+    ask("javascript:alert(1)");
+    ask("https://github.com@evil.example/login");
     expect(document.querySelector(".chat-view-linkask")).toBeNull();
-    for (let i = 0; i < 5; i += 1) post(frame.contentWindow, { jsonrpc: "2.0", method: "ui/open-link", params: { url: `https://example.com/${i}` } });
+    for (let i = 0; i < 5; i += 1) ask(`https://docs.example.com/guide/${i}`);
     expect(openLink).not.toHaveBeenCalled();
     expect(document.querySelectorAll(".chat-view-linkask")).toHaveLength(1);
-    expect(screen.getByText("example.com/4")).toBeTruthy();
+    expect(document.querySelector(".chat-view-linkask-url b")?.textContent).toBe("docs.example.com");
+    expect(document.querySelector(".chat-view-linkask-url span")?.textContent).toBe("/guide/0");
     fireEvent.click(screen.getByText("打开"));
     expect(openLink).toHaveBeenCalledTimes(1);
-    expect(openLink).toHaveBeenCalledWith("https://example.com/4");
+    expect(openLink).toHaveBeenCalledWith("https://docs.example.com/guide/0");
     expect(document.querySelector(".chat-view-linkask")).toBeNull();
-    post(frame.contentWindow, { jsonrpc: "2.0", method: "ui/open-link", params: { url: "https://example.com/x" } });
+  });
+
+  it("点过「不打开」后页面不能马上再弹；用户的指针重新进入卡片才放行；超长主机名保留末尾", () => {
+    openLink.mockClear();
+    const { frame } = mount();
+    const ask = (url: string) => post(frame.contentWindow, { jsonrpc: "2.0", method: "ui/open-link", params: { url } });
+    ask("https://example.com/a");
     fireEvent.click(screen.getByLabelText("不打开"));
-    expect(openLink).toHaveBeenCalledTimes(1);
+    ask("https://example.com/b");
+    expect(document.querySelector(".chat-view-linkask")).toBeNull();
+    fireEvent.pointerEnter(document.querySelector(".chat-view-body")!);
+    const longHost = `github.com.login.secure-session-${"0".repeat(40)}.evil.example`;
+    ask(`https://${longHost}/x`);
+    const shown = document.querySelector(".chat-view-linkask-url b")?.textContent ?? "";
+    expect(shown.endsWith("evil.example")).toBe(true);
+    expect(shown.length).toBeLessThanOrEqual(48);
+    expect(openLink).not.toHaveBeenCalled();
   });
 
   it("换主题时告诉页面，不重载", async () => {

@@ -4857,9 +4857,12 @@ button.chat-choice-pick:focus-visible { outline: none; box-shadow: inset 0 0 0 2
 .chat-view-btn:hover { background: var(--fill-hover); color: var(--cc-text); }
 .chat-view-btn:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: -2px; }
 /* 页面想开链接的确认条：宿主自己画，在标题行下、页面上方。 */
-.chat-view-linkask { display: flex; align-items: center; gap: var(--sp-8); min-height: 36px; padding: 0 var(--sp-6) 0 var(--sp-12); border-bottom: var(--hairline) solid var(--line-subtle); background: var(--fill-hover); font-size: var(--text-sm); }
+/* 浮在页面上方、不占布局：出现时页面不被推下去，用户正要点的按钮不会跑位（审查第 4 轮，taste I2）。 */
+.chat-view-linkask { position: absolute; top: 0; left: 0; right: 0; z-index: var(--z-raised); display: flex; align-items: center; gap: var(--sp-8); min-height: 36px; padding: 0 var(--sp-6) 0 var(--sp-12); border-bottom: var(--hairline) solid var(--line-subtle); background: var(--cc-panel-raised); box-shadow: 0 4px 12px rgba(0, 0, 0, .18); font-size: var(--text-sm); }
 .chat-view-linkask-text { flex: none; color: var(--cc-text-dim); }
-.chat-view-linkask-url { flex: 1; min-width: 0; overflow: hidden; color: var(--cc-text); font-family: var(--cc-mono); font-size: var(--text-xs); white-space: nowrap; text-overflow: ellipsis; }
+.chat-view-linkask-url { flex: 1; min-width: 0; display: flex; align-items: baseline; font-family: var(--cc-mono); font-size: var(--text-xs); white-space: nowrap; }
+.chat-view-linkask-url b { flex: none; color: var(--cc-text); font-weight: var(--fw-semibold); }
+.chat-view-linkask-url span { min-width: 0; overflow: hidden; color: var(--cc-text-faint); text-overflow: ellipsis; }
 .chat-view-linkask-open { flex: none; height: 26px; padding: 0 var(--sp-10); border: 0; border-radius: var(--radius-sm); background: var(--cc-accent); color: var(--cc-on-accent); font-size: var(--text-sm); cursor: pointer; }
 .chat-view-linkask-open:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: 2px; }
 .chat-view-body { position: relative; flex: 1; min-height: 0; background: var(--cc-window-bg); }

@@ -29,8 +29,8 @@ const SEND_MAX = 2000;
 /** 没收到页面报高度之前的占位高度（页面加载通常几十毫秒，先占一块不至于跳得太狠）。 */
 const INITIAL_HEIGHT = 200;
 const MIN_HEIGHT = 48;
-/** 两次放进输入框之间至少隔多久。 */
-const ACTION_GAP_MS = 1000;
+/** 两次放进输入框之间至少隔多久（挡连发；太长会吞掉用户改主意的第二次点击，审查第 4 轮）。 */
+const ACTION_GAP_MS = 600;
 
 export function parseViewReceipt(text: string): ViewReceipt | null {
   const line = text.split("\n").map((entry) => entry.trim()).reverse().find((entry) => entry.startsWith(MARKER) && entry.endsWith("]"));
@@ -71,6 +71,8 @@ function asMessage(data: unknown): Message | null {
 function safeLink(href: string): string | null {
   try {
     const url = new URL(href);
+    // 带账号密码的地址（https://github.com@evil.example/）专门用来骗眼睛，不认。
+    if (url.username || url.password) return null;
     return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
   } catch {
     return null;
@@ -200,14 +202,37 @@ export function ViewFrame({ id, title, fixedHeight, maxHeight, onMissing, onEsca
   );
 }
 
+/** 链接确认的状态：先到先得（条显示期间页面换地址不理，审查第 4 轮实测能轮换欺骗）；点过「打开 / 不打开」后，
+ *  要等用户的指针重新进入这张卡，页面才能再请求（不然点了「不打开」，页面立刻又弹出来）。 */
+function useLinkAsk() {
+  const [url, setUrl] = useState<string | null>(null);
+  const allowed = useRef(true);
+  const request = useCallback((next: string) => {
+    if (!allowed.current) return;
+    setUrl((current) => current ?? next);
+  }, []);
+  const done = useCallback(() => {
+    allowed.current = false;
+    setUrl(null);
+  }, []);
+  const rearm = useCallback(() => {
+    allowed.current = true;
+  }, []);
+  return { url, request, done, rearm };
+}
+
 /** 页面想打开的链接：卡片上一条宿主自己画的确认，点「打开」才开（页面伪造不了这个按钮）。 */
 function LinkAsk({ url, onDone }: { url: string; onDone: () => void }) {
   const t = useT();
-  const shown = url.replace(/^https?:\/\//, "");
+  // 主机名单独显示、不截断，太长时保留末尾（真正的域名在末尾：github.com.login.xxx.evil.example）；路径弱化可截断。
+  const parsed = new URL(url);
+  const limit = remoteUi() ? 28 : 48;
+  const host = parsed.host.length > limit ? `…${parsed.host.slice(-(limit - 1))}` : parsed.host;
+  const rest = `${parsed.pathname === "/" ? "" : parsed.pathname}${parsed.search}`;
   return (
     <div className="chat-view-linkask" role="status">
       <span className="chat-view-linkask-text">{t.chat.viewLinkAsk}</span>
-      <span className="chat-view-linkask-url" title={url}>{shown}</span>
+      <span className="chat-view-linkask-url" title={url}><b>{host}</b>{rest && <span>{rest}</span>}</span>
       <button type="button" className="chat-view-linkask-open" onClick={() => { openFromView(url, t.chat.previewOpening); onDone(); }}>{t.chat.viewLinkOpen}</button>
       <button type="button" className="chat-view-btn" aria-label={t.chat.viewLinkDismiss} data-tip={t.chat.viewLinkDismiss} onClick={onDone}>✕</button>
     </div>
@@ -263,8 +288,8 @@ export function ViewCard({ view }: { view: ViewReceipt }) {
   const [zoomed, setZoomed] = useState(false);
   const [missing, setMissing] = useState(false);
   const [reload, setReload] = useState(0);
-  const [askLink, setAskLink] = useState<string | null>(null);
   const close = useCallback(() => setZoomed(false), []);
+  const ask = useLinkAsk();
   useZoomEsc(zoomed, close);
   // 上限约半屏：一张卡不该把对话挤得只剩它；页面更高时在卡内滚。
   const maxHeight = Math.max(240, Math.round(window.innerHeight * 0.55));
@@ -292,11 +317,11 @@ export function ViewCard({ view }: { view: ViewReceipt }) {
               aria-pressed={zoomed} onClick={() => setZoomed((v) => !v)}>{zoomed ? "✕" : "⤢"}</button>
           </span>
         </div>
-        {askLink && <LinkAsk url={askLink} onDone={() => setAskLink(null)} />}
-        <div className="chat-view-body">
+        <div className="chat-view-body" onPointerEnter={ask.rearm}>
+          {ask.url && <LinkAsk url={ask.url} onDone={ask.done} />}
           <ViewFrame key={reload} id={view.id} title={view.title} className="chat-view-frame"
             fixedHeight={zoomed ? null : view.height} maxHeight={zoomed ? undefined : maxHeight}
-            onMissing={() => setMissing(true)} onEscape={zoomed ? close : undefined} onLink={setAskLink} />
+            onMissing={() => setMissing(true)} onEscape={zoomed ? close : undefined} onLink={ask.request} />
         </div>
       </div>
     </>
@@ -325,7 +350,7 @@ export function ViewZoom({ id, title, caption, action, onClose }: {
 }) {
   const t = useT();
   const [missing, setMissing] = useState(false);
-  const [askLink, setAskLink] = useState<string | null>(null);
+  const ask = useLinkAsk();
   useZoomEsc(true, onClose);
   return createPortal(
     <>
@@ -339,11 +364,11 @@ export function ViewZoom({ id, title, caption, action, onClose }: {
             <button type="button" className="chat-view-btn" aria-label={t.chat.viewShrink} data-tip={t.chat.viewShrink} onClick={onClose}>✕</button>
           </span>
         </div>
-        {askLink && <LinkAsk url={askLink} onDone={() => setAskLink(null)} />}
-        <div className="chat-view-body">
+        <div className="chat-view-body" onPointerEnter={ask.rearm}>
+          {ask.url && <LinkAsk url={ask.url} onDone={ask.done} />}
           {missing
             ? <div className="chat-view-gone">{t.chat.viewMissing}</div>
-            : <ViewFrame id={id} title={title} fill className="chat-view-frame" onMissing={() => setMissing(true)} onEscape={onClose} onLink={setAskLink} />}
+            : <ViewFrame id={id} title={title} fill className="chat-view-frame" onMissing={() => setMissing(true)} onEscape={onClose} onLink={ask.request} />}
         </div>
       </div>
     </>,

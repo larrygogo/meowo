@@ -160,7 +160,7 @@ const SEND_IMAGE_HINT: &str = concat!(
     "
 
 ",
-    "要用户看动效、交互、可以悬停看数值的图，或者几种交互方案对比时，用 show_html 把一段 HTML 嵌进对话（静态画面还是截图用 send_image）。页面要自带全部内容：CSS、JS、SVG 都内联，不引用相对路径的文件，也不能请求网络接口；跟随深浅主题用 prefers-color-scheme。页面里调用 meowo.send(\"一句话\") 会把这句话放进用户的输入框，适合做「选这个」之类的按钮。offer_choices 的方案也可以给 html，交互方案放进方案卡里比。",
+    "要用户看动效、交互、可以悬停看数值的图，或者几种交互方案对比时，用 show_html 把一段 HTML 嵌进对话（静态画面还是截图用 send_image）。页面要自带全部内容：CSS、JS、SVG 都内联，页面不联网（CDN 也加载不了）；跟随深浅主题用 prefers-color-scheme。页面里调用 meowo.send(\"一句话\") 会把这句话放进用户的输入框，适合做「选这个」之类的按钮。offer_choices 的方案也可以给 html，交互方案放进方案卡里比。",
     "\n\n",
     "起了 dev server 让用户看效果时，把地址写成可点的 http://localhost:端口 链接：用户在手机上点它，Meowo 会把这个端口开给手机看。所以页面里请求后端用相对路径（配 dev server 的 proxy），不要写死 http://localhost:3000 这类别的端口，手机上那个地址指向的是手机自己。dev server 要用你自己的后台运行方式起（让它留在你的进程下面），不要用 & 、nohup 或 Start-Process 把它甩出去，否则 Meowo 认不出它是这个会话的，不会开给手机。",
 );
@@ -186,7 +186,7 @@ const INSTRUCTIONS_WITH_BROWSER: &str = concat!(
     "
 
 ",
-    "要用户看动效、交互、可以悬停看数值的图，或者几种交互方案对比时，用 show_html 把一段 HTML 嵌进对话（静态画面还是截图用 send_image）。页面要自带全部内容：CSS、JS、SVG 都内联，不引用相对路径的文件，也不能请求网络接口；跟随深浅主题用 prefers-color-scheme。页面里调用 meowo.send(\"一句话\") 会把这句话放进用户的输入框，适合做「选这个」之类的按钮。offer_choices 的方案也可以给 html，交互方案放进方案卡里比。",
+    "要用户看动效、交互、可以悬停看数值的图，或者几种交互方案对比时，用 show_html 把一段 HTML 嵌进对话（静态画面还是截图用 send_image）。页面要自带全部内容：CSS、JS、SVG 都内联，页面不联网（CDN 也加载不了）；跟随深浅主题用 prefers-color-scheme。页面里调用 meowo.send(\"一句话\") 会把这句话放进用户的输入框，适合做「选这个」之类的按钮。offer_choices 的方案也可以给 html，交互方案放进方案卡里比。",
     "\n\n",
     "起了 dev server 让用户看效果时，把地址写成可点的 http://localhost:端口 链接：用户在手机上点它，Meowo 会把这个端口开给手机看。所以页面里请求后端用相对路径（配 dev server 的 proxy），不要写死 http://localhost:3000 这类别的端口，手机上那个地址指向的是手机自己。dev server 要用你自己的后台运行方式起（让它留在你的进程下面），不要用 & 、nohup 或 Start-Process 把它甩出去，否则 Meowo 认不出它是这个会话的，不会开给手机。",
 );
@@ -435,7 +435,7 @@ fn ask_form_tool() -> Value {
 fn show_html_tool() -> Value {
     tool(
         SHOW_HTML,
-        "在用户的对话里嵌一块能点、能动的小页面（手机上也能看）：Meowo 存一份快照，页面直接显示在对话里，高度跟着内容走，用户可以放大看。用在截图说不清的时候：动效、交互、可以悬停看数值的图表、状态机或时序的演示、几种交互方案的对比。静态画面还是截图用 send_image；完整的应用起 dev server 让用户在浏览器里看。页面要自带全部内容：CSS、JS、SVG、小图都内联（大图转 data: 或 SVG），不能引用相对路径的文件，不能 fetch / XHR / WebSocket，也不能提交表单；可以从 https CDN 引脚本和样式，但用户网络不一定通，能内联就内联。用户也常在手机上看（卡宽约 340px），布局要能自适应窄屏，别写死三栏或固定宽度；卡片按内容高度显示，最外层容器别写死高度、别用 100vh。页面会拿到用户当前的深浅主题：用 prefers-color-scheme 或 html[data-theme=dark] 写两套颜色。页面里可以调 meowo.send(\"一句话\")，这句话会放进用户的输入框，用户自己决定发不发——适合做「选这个」「就按这个改」的按钮。交的是调用那一刻的内容，改了要重新调用。html 和 path 二选一，单页不超过 2MB。调用后立即返回一句确认，页面不会回传给你。",
+        "在用户的对话里嵌一块能点、能动的小页面（手机上也能看）：Meowo 存一份快照，页面直接显示在对话里，高度跟着内容走，用户可以放大看。用在截图说不清的时候：动效、交互、可以悬停看数值的图表、状态机或时序的演示、几种交互方案的对比。静态画面还是截图用 send_image；完整的应用起 dev server 让用户在浏览器里看。页面要自带全部内容：CSS、JS、SVG、小图都内联（大图转 data: 或 SVG），页面不联网：不能引用相对路径或网上的文件（CDN 上的脚本、样式、图片、字体都加载不了），不能 fetch / XHR / WebSocket，也不能提交表单，图表库这类要用就整段内联，或者直接用 SVG 画。用户也常在手机上看（卡宽约 340px），布局要能自适应窄屏，别写死三栏或固定宽度；卡片按内容高度显示，最外层容器别写死高度、别用 100vh。页面会拿到用户当前的深浅主题：用 prefers-color-scheme 或 html[data-theme=dark] 写两套颜色。页面里可以调 meowo.send(\"一句话\")，这句话会放进用户的输入框，用户自己决定发不发——适合做「选这个」「就按这个改」的按钮。交的是调用那一刻的内容，改了要重新调用。html 和 path 二选一，单页不超过 2MB。调用后立即返回一句确认，页面不会回传给你。",
         json!({
             "title": { "type": "string", "description": "卡片标题，几个字，比如「按钮动效对比」" },
             "html": { "type": "string", "description": "完整的 HTML 文本（可以只是一个片段，Meowo 会补上文档外壳）。和 path 二选一" },
