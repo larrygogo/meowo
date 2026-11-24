@@ -29,8 +29,10 @@ const SEND_MAX = 2000;
 /** 没收到页面报高度之前的占位高度（页面加载通常几十毫秒，先占一块不至于跳得太狠）。 */
 const INITIAL_HEIGHT = 200;
 const MIN_HEIGHT = 48;
-/** 两次放进输入框之间至少隔多久（挡连发；太长会吞掉用户改主意的第二次点击，审查第 4 轮）。 */
+/** 两次放进输入框之间至少隔多久：更快的那次不丢，排到间隔满了再放（只留最新一句），挡住刷屏又不吞掉改主意的点击。 */
 const ACTION_GAP_MS = 600;
+/** 点过「打开 / 不打开」后，这张卡多久内不再接受开链接请求。 */
+const LINK_COOLDOWN_MS = 3000;
 
 export function parseViewReceipt(text: string): ViewReceipt | null {
   const line = text.split("\n").map((entry) => entry.trim()).reverse().find((entry) => entry.startsWith(MARKER) && entry.endsWith("]"));
@@ -129,6 +131,8 @@ export function ViewFrame({ id, title, fixedHeight, maxHeight, onMissing, onEsca
   const missing = useRef(onMissing);
   missing.current = onMissing;
   const lastFill = useRef(Number.NEGATIVE_INFINITY);
+  const queued = useRef(0);
+  useEffect(() => () => clearTimeout(queued.current), []);
   const escape = useRef(onEscape);
   escape.current = onEscape;
   const link = useRef(onLink);
@@ -149,13 +153,19 @@ export function ViewFrame({ id, title, fixedHeight, maxHeight, onMissing, onEsca
           // 放进去以后焦点移到输入框，页面要再放一句就得等用户点回来。不再猜「刚点过没有」：父页看不到跨源
           // iframe 里的点击，靠焦点事件推断会漏判（审查第 3 轮：先点「保存」再点「选这个」被静默丢掉）。
           // 剩余风险：页面自己抢焦点后能放进一句话——看得见、不会自动发送（decisions.md）。
-          const now = performance.now();
-          if (!interactive || document.activeElement !== frame.current || now - lastFill.current < ACTION_GAP_MS) break;
+          if (!interactive || document.activeElement !== frame.current) break;
           const content = message.params.content as Record<string, unknown> | undefined;
           const text = typeof content?.text === "string" ? content.text.trim().slice(0, SEND_MAX) : "";
           if (!text || !fillPrompt) break;
-          lastFill.current = now;
-          fillPrompt(text);
+          const wait = ACTION_GAP_MS - (performance.now() - lastFill.current);
+          if (queued.current) clearTimeout(queued.current);
+          const put = () => {
+            queued.current = 0;
+            lastFill.current = performance.now();
+            fillPrompt(text);
+          };
+          if (wait <= 0) put();
+          else queued.current = window.setTimeout(put, wait);
           break;
         }
         case "ui/open-link": {
@@ -202,39 +212,39 @@ export function ViewFrame({ id, title, fixedHeight, maxHeight, onMissing, onEsca
   );
 }
 
-/** 链接确认的状态：先到先得（条显示期间页面换地址不理，审查第 4 轮实测能轮换欺骗）；点过「打开 / 不打开」后，
- *  要等用户的指针重新进入这张卡，页面才能再请求（不然点了「不打开」，页面立刻又弹出来）。 */
+/** 链接确认的状态：先到先得（条显示期间页面换地址不理，审查第 4 轮实测能轮换欺骗）；点过「打开 / 不打开」后
+ *  冷却 3 秒，被拒过的地址在这张卡上不再弹（不然点了「不打开」，页面立刻又弹出来）。
+ *  不用「指针重新进入」放行：Chromium 会补发 pointerenter，手机触摸则根本收不到（审查第 5 轮，两端都失效）。 */
 function useLinkAsk() {
   const [url, setUrl] = useState<string | null>(null);
-  const allowed = useRef(true);
+  const until = useRef(Number.NEGATIVE_INFINITY);
+  const refused = useRef(new Set<string>());
   const request = useCallback((next: string) => {
-    if (!allowed.current) return;
+    if (performance.now() < until.current || refused.current.has(next)) return;
     setUrl((current) => current ?? next);
   }, []);
-  const done = useCallback(() => {
-    allowed.current = false;
+  const settle = (current: string | null, accepted: boolean) => {
+    if (current && !accepted) refused.current.add(current);
+    until.current = performance.now() + LINK_COOLDOWN_MS;
     setUrl(null);
-  }, []);
-  const rearm = useCallback(() => {
-    allowed.current = true;
-  }, []);
-  return { url, request, done, rearm };
+  };
+  return { url, request, settle };
 }
 
 /** 页面想打开的链接：卡片上一条宿主自己画的确认，点「打开」才开（页面伪造不了这个按钮）。 */
-function LinkAsk({ url, onDone }: { url: string; onDone: () => void }) {
+function LinkAsk({ url, onOpen, onDismiss }: { url: string; onOpen: () => void; onDismiss: () => void }) {
   const t = useT();
   // 主机名单独显示、不截断，太长时保留末尾（真正的域名在末尾：github.com.login.xxx.evil.example）；路径弱化可截断。
   const parsed = new URL(url);
-  const limit = remoteUi() ? 28 : 48;
+  const limit = remoteUi() ? 22 : 48;
   const host = parsed.host.length > limit ? `…${parsed.host.slice(-(limit - 1))}` : parsed.host;
   const rest = `${parsed.pathname === "/" ? "" : parsed.pathname}${parsed.search}`;
   return (
     <div className="chat-view-linkask" role="status">
       <span className="chat-view-linkask-text">{t.chat.viewLinkAsk}</span>
       <span className="chat-view-linkask-url" title={url}><b>{host}</b>{rest && <span>{rest}</span>}</span>
-      <button type="button" className="chat-view-linkask-open" onClick={() => { openFromView(url, t.chat.previewOpening); onDone(); }}>{t.chat.viewLinkOpen}</button>
-      <button type="button" className="chat-view-btn" aria-label={t.chat.viewLinkDismiss} data-tip={t.chat.viewLinkDismiss} onClick={onDone}>✕</button>
+      <button type="button" className="chat-view-linkask-open" onClick={() => { openFromView(url, t.chat.previewOpening); onOpen(); }}>{t.chat.viewLinkOpen}</button>
+      <button type="button" className="chat-view-btn" aria-label={t.chat.viewLinkDismiss} data-tip={t.chat.viewLinkDismiss} onClick={onDismiss}>✕</button>
     </div>
   );
 }
@@ -317,8 +327,8 @@ export function ViewCard({ view }: { view: ViewReceipt }) {
               aria-pressed={zoomed} onClick={() => setZoomed((v) => !v)}>{zoomed ? "✕" : "⤢"}</button>
           </span>
         </div>
-        <div className="chat-view-body" onPointerEnter={ask.rearm}>
-          {ask.url && <LinkAsk url={ask.url} onDone={ask.done} />}
+        <div className="chat-view-body">
+          {ask.url && <LinkAsk url={ask.url} onOpen={() => ask.settle(ask.url, true)} onDismiss={() => ask.settle(ask.url, false)} />}
           <ViewFrame key={reload} id={view.id} title={view.title} className="chat-view-frame"
             fixedHeight={zoomed ? null : view.height} maxHeight={zoomed ? undefined : maxHeight}
             onMissing={() => setMissing(true)} onEscape={zoomed ? close : undefined} onLink={ask.request} />
@@ -364,8 +374,8 @@ export function ViewZoom({ id, title, caption, action, onClose }: {
             <button type="button" className="chat-view-btn" aria-label={t.chat.viewShrink} data-tip={t.chat.viewShrink} onClick={onClose}>✕</button>
           </span>
         </div>
-        <div className="chat-view-body" onPointerEnter={ask.rearm}>
-          {ask.url && <LinkAsk url={ask.url} onDone={ask.done} />}
+        <div className="chat-view-body">
+          {ask.url && <LinkAsk url={ask.url} onOpen={() => ask.settle(ask.url, true)} onDismiss={() => ask.settle(ask.url, false)} />}
           {missing
             ? <div className="chat-view-gone">{t.chat.viewMissing}</div>
             : <ViewFrame id={id} title={title} fill className="chat-view-frame" onMissing={() => setMissing(true)} onEscape={onClose} onLink={ask.request} />}

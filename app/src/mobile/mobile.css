@@ -1229,4 +1229,3 @@ body.remote-ui .chat-remote-type button { min-height: 44px; padding: 0 14px; col
 /* HTML 视图卡（ViewCard.tsx）：手机卡宽只有 340px 左右，「页面」标签让给标题。 */
 body.remote-ui .chat-view-tag { display: none; }
 body.remote-ui .chat-view.is-zoomed { inset: 0; border-radius: 0; }
-body.remote-ui .chat-view-linkask-text { display: none; }

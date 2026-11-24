@@ -92,19 +92,23 @@ describe("视图卡沙箱与消息", () => {
     expect(frame.style.height).toBe("260px");
   });
 
-  it("meowo.send 只放进输入框，不替用户发送；超长截断；一秒内连发只认一次", () => {
-    vi.useFakeTimers({ toFake: ["Date", "performance"] });
+  it("meowo.send 只放进输入框，不替用户发送；超长截断；太快的第二次排队放进去、不丢，连发只留最新一句", () => {
+    vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout"] });
     const { frame, value } = mount();
     const message = (text: string) => ({ jsonrpc: "2.0", method: "ui/message", params: { role: "user", content: { type: "text", text } } });
     clickInto(frame);
     post(frame.contentWindow, message("  就用「弹一下」 "));
     expect(value.fillPrompt).toHaveBeenCalledWith("就用「弹一下」");
     expect(value.sendText).not.toHaveBeenCalled();
-    post(frame.contentWindow, message("紧接着又来"));
+    post(frame.contentWindow, message("改主意了"));
+    post(frame.contentWindow, message("又改了"));
     expect(value.fillPrompt).toHaveBeenCalledTimes(1);
-    vi.advanceTimersByTime(1500);
+    act(() => { vi.advanceTimersByTime(700); });
+    expect(value.fillPrompt).toHaveBeenCalledTimes(2);
+    expect(value.fillPrompt).toHaveBeenLastCalledWith("又改了");
+    act(() => { vi.advanceTimersByTime(1500); });
     post(frame.contentWindow, message("长".repeat(5000)));
-    expect((value.fillPrompt as ReturnType<typeof vi.fn>).mock.calls[1][0]).toHaveLength(2000);
+    expect((value.fillPrompt as ReturnType<typeof vi.fn>).mock.calls[2][0]).toHaveLength(2000);
     vi.useRealTimers();
   });
 
@@ -132,7 +136,8 @@ describe("视图卡沙箱与消息", () => {
     expect(document.querySelector(".chat-view-linkask")).toBeNull();
   });
 
-  it("点过「不打开」后页面不能马上再弹；用户的指针重新进入卡片才放行；超长主机名保留末尾", () => {
+  it("点过「不打开」后 3 秒内不再弹、被拒的地址在这张卡上不再出现；点过「打开」后冷却过了还能再问；超长主机名保留末尾", () => {
+    vi.useFakeTimers({ toFake: ["Date", "performance"] });
     openLink.mockClear();
     const { frame } = mount();
     const ask = (url: string) => post(frame.contentWindow, { jsonrpc: "2.0", method: "ui/open-link", params: { url } });
@@ -140,13 +145,20 @@ describe("视图卡沙箱与消息", () => {
     fireEvent.click(screen.getByLabelText("不打开"));
     ask("https://example.com/b");
     expect(document.querySelector(".chat-view-linkask")).toBeNull();
-    fireEvent.pointerEnter(document.querySelector(".chat-view-body")!);
+    vi.advanceTimersByTime(3100);
+    ask("https://example.com/a");
+    expect(document.querySelector(".chat-view-linkask")).toBeNull();
+    ask("https://example.com/b");
+    expect(document.querySelector(".chat-view-linkask-url span")?.textContent).toBe("/b");
+    fireEvent.click(screen.getByText("打开"));
+    expect(openLink).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(3100);
     const longHost = `github.com.login.secure-session-${"0".repeat(40)}.evil.example`;
     ask(`https://${longHost}/x`);
     const shown = document.querySelector(".chat-view-linkask-url b")?.textContent ?? "";
     expect(shown.endsWith("evil.example")).toBe(true);
     expect(shown.length).toBeLessThanOrEqual(48);
-    expect(openLink).not.toHaveBeenCalled();
+    vi.useRealTimers();
   });
 
   it("换主题时告诉页面，不重载", async () => {
