@@ -620,9 +620,22 @@ fn claim(data: &Value, registry: &Path) -> Option<String> {
     let sid = data.get("session_id").and_then(Value::as_str)?;
     let task = ownership::claim_target(data)?;
     record_owner(&task, sid, registry);
-    let cwd = data.get("cwd").and_then(Value::as_str)?;
-    let hint = misplaced_hint(&task, cwd)?;
+    let hook_cwd = data.get("cwd").and_then(Value::as_str)?;
+    let cwd = panel_cwd(sid, crate::db_path().as_deref()).unwrap_or_else(|| hook_cwd.to_owned());
+    let hint = misplaced_hint(&task, &cwd)?;
     Some(json!({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": hint}}).to_string())
+}
+
+/// 面板拿来找任务的工作目录：Meowo 库里这个会话的 cwd（对话窗把它传给 lead_task_snapshot）。
+/// 不用 hook 带的 cwd：Claude 的 hook cwd 跟着 Bash 的 cd 走。实拍 2026-11-24：会话在 Desktop 启动，
+/// AI 先 `cd workspace/work-log/.lead` 再写任务文件，hook cwd 成了 work-log 仓库，任务就在它的 `.lead` 里，
+/// 「位置不对」的提醒没发出去；面板按 Desktop 找，一直显示不出来。库读不到（没有库、会话还没登记）时返回 None，
+/// 调用方退回 hook cwd。只读打开（sessions 的 cc_session_id、cwd 两列从 v1 就有，不必核对库版本）。
+fn panel_cwd(sid: &str, db: Option<&Path>) -> Option<String> {
+    let db = db.filter(|p| p.is_file())?;
+    let store = meowo_store::Store::open_readonly(db).ok()?;
+    let id = store.find_session_id_pub(sid).ok()??;
+    store.session_cwd(id).ok()?.filter(|cwd| !cwd.is_empty())
 }
 
 /// 任务所在的 `.lead` 不是面板会读的那几个（会话 cwd 的项目根、worktree 的主检出）时，返回一句挪动指引。
