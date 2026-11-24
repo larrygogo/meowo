@@ -225,6 +225,13 @@ export function leadTask(lang: "zh" | "en", kind: "B" | "C" | "rich" = "B"): unk
     ],
     gate: verify ? {
       id: "g2", kind: "C", status: "pending", answer: null, options: [],
+      // c1 的证据停在审查时的版本，交付版本之后又改过代码：卡片上会列出「证据版本与交付版本不一致」。
+      review: { revision: "1a2b3c4", checks: [
+        { id: "c1", check: zh ? "12 个测试全部通过" : "All 12 tests pass", passes: true, waived: null, leader: false, blocked: null,
+          evidence: [{ command: zh ? "lead-redteam 审查" : "lead-redteam review", result: zh ? "通过" : "Pass", revision: "9f8e7d6", reference: "agents/redteam-1.md", limitations: "" }] },
+        { id: "c2", check: zh ? "PR 已开并通过 CI" : "PR opened and CI green", passes: false, waived: null, leader: true, blocked: null },
+        { id: "c3", check: zh ? "beta 上用英文账户实发一条通知" : "Send a real notice to an English account on beta", passes: false, waived: null, leader: false, blocked: zh ? "要 beta 开机实测" : "Needs a beta host" },
+      ] },
       title: zh ? "登录校验统一完成" : "Sign-in validation unified",
       summary: zh
         ? "**怎么上手试**\n- 构建：分支 `refactor/login-schema`，重启 dev 实例\n- 打开登录页，邮箱填 `a@`，点登录\n- 应该看到：输入框下方提示「邮箱格式不对」，三个页面文案一致\n\n**结果**：12 个测试全过，三个表单共用 `src/schemas/login.ts`。"

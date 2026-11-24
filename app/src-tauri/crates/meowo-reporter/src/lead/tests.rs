@@ -1740,3 +1740,35 @@ fn snapshot_carries_resume_summary_even_when_progress_tail_drops_it() {
     assert_eq!(snap.resume_summary.as_deref(), Some("- 下一步：跑验收 2"));
     assert_eq!(snap.phase, "implement");
 }
+
+/// lead skill 要求派 redteam 前后对比任务目录时排除 Meowo 自己维护的点文件，并逐个列出了文件名（试跑 2026-11-24：
+/// 审查者写报告时 claim 刷新 `.owner`，前后对比每次都多出一处「越界」）。这里从 reporter 源码里扫出任务目录下
+/// 所有点文件名，新增一个就必须同步写进 skill，不然前后对比又会误报。
+#[test]
+fn skill_lists_every_task_dot_file_meowo_maintains() {
+    let sources = [
+        include_str!("../lead.rs"),
+        include_str!("publication.rs"),
+        include_str!("command.rs"),
+        include_str!("ownership.rs"),
+        include_str!("../lead_provider.rs"),
+        include_str!("../lead_waiter.rs"),
+        include_str!("../lead_kimi.rs"),
+        include_str!("../lead_mcp.rs"),
+    ];
+    let prefixes = ["owner", "stop-state", "delivered", "gate-", "provider-turn-"];
+    let mut names = std::collections::BTreeSet::new();
+    for src in sources {
+        for piece in src.split('"').skip(1).step_by(2) {
+            let Some(rest) = piece.strip_prefix('.') else { continue };
+            if prefixes.iter().any(|p| rest.starts_with(p)) && !piece.contains(' ') {
+                names.insert(piece.replace("{}", "*"));
+            }
+        }
+    }
+    assert!(names.contains(".owner") && names.contains(".gate-publications.json"), "{names:?}");
+    let skill = meowo_agent::lead_install::SKILL;
+    for name in &names {
+        assert!(skill.contains(&format!("`{name}`")), "skill 没列出 {name}");
+    }
+}

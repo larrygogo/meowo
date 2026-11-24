@@ -419,6 +419,26 @@ type GateChoice = { id: string; label: string; recommended?: boolean; detail?: s
 /// 确认、验收这类最常见的作答也得两下（2026-11-12 优化）。
 const DIRECT_KINDS = new Set(["A", "C", "D"]);
 
+/// 两个版本标识是不是同一个：去空白、不分大小写后相同，或者都是 7 位以上的十六进制、一个是另一个的前缀（短 SHA 对长 SHA）。
+function sameRevision(a: string, b: string): boolean {
+  const x = a.trim().toLowerCase();
+  const y = b.trim().toLowerCase();
+  if (!x || !y) return false;
+  if (x === y) return true;
+  const sha = /^[0-9a-f]{7,40}$/;
+  return sha.test(x) && sha.test(y) && (x.startsWith(y) || y.startsWith(x));
+}
+
+/// C 卡冻结的验收项里，标了通过、有证据，但没有一条证据是在交付版本（review.revision）上取得的那些。
+/// 试跑（2026-11-24）：审查之后主会话又改了代码，C 卡仍写「独立审查全部通过」，leader 以为当前代码审过了。
+/// lead skill 要求审查结论也记一条证据、版本写审查时的版本，这里把对不上的项摆到 leader 眼前。
+/// 没有证据的项不算：旧任务没有证据记录，不凭空报警。
+export function staleReviewChecks(review: NonNullable<LeadGateDto["review"]>): { id: string; check: string; revisions: string[] }[] {
+  return review.checks
+    .filter((check) => check.passes && check.evidence?.length && !check.evidence.some((e) => sameRevision(e.revision, review.revision)))
+    .map((check) => ({ id: check.id, check: check.check, revisions: [...new Set(check.evidence!.map((e) => e.revision.trim()))] }));
+}
+
 function gateChoices(gate: LeadGateDto, t: ReturnType<typeof useT>): GateChoice[] {
   if (gate.kind === "A") return [{ id: "revise", label: t.chat.leadGateRevise, requiresNote: true, negative: true }, { id: "confirm", label: t.chat.leadGateConfirm, primary: true }];
   if (gate.kind === "C") return [{ id: "reject", label: t.chat.leadGateReject, requiresNote: true, negative: true }, { id: "accept", label: t.chat.leadGateAccept, primary: true }];
@@ -448,6 +468,7 @@ export function LeadGateCard({ cwd, gate, onAnswered, onStale, returnFocusTo }: 
 }) {
   const t = useT();
   const direct = DIRECT_KINDS.has(gate.kind);
+  const stale = gate.kind === "C" && gate.review ? staleReviewChecks(gate.review) : [];
   // B、Q：选中的选项；A、C、D：点了否定按钮、正在写意见的那一项。不预选推荐项：复盘里关卡多是一路点过去的。
   const [choice, setChoice] = useState<string | null>(null);
   const [note, setNote] = useState("");
@@ -546,6 +567,14 @@ export function LeadGateCard({ cwd, gate, onAnswered, onStale, returnFocusTo }: 
               <li key={check.id}>{check.id} · {check.check}</li>
             ))}
           </ul>
+          {stale.length > 0 && (
+            <div className="lead-gate-stale" role="note">
+              <p>{t.chat.leadReviewStale(gate.review.revision)}</p>
+              <ul aria-label={t.chat.leadReviewStaleList}>
+                {stale.map((item) => <li key={item.id}>{item.id} · {item.check} · {t.chat.leadReviewStaleRevision(item.revisions.join(", "))}</li>)}
+              </ul>
+            </div>
+          )}
         </div>
       )}
       {gate.summary && (

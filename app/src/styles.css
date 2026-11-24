@@ -6589,6 +6589,9 @@ button.lead-entry-head:hover { background: var(--fill-hover); }
    离滚到底还差几像素，渐隐带正好压在框的下半截（量到框底 278.6、可视区底 278，底边 16px 被淡掉）。
    scroll-margin 让聚焦时多滚一段、框底离可视区留出间距。 */
 .lead-gate-card .chat-approval-copy:has(.lead-gate-note:focus) { -webkit-mask-image: none; mask-image: none; }
+/* 证据版本与交付版本对不上的验收项（2026-11-24 试跑）：提醒而不是报错，用弱色小字，不加彩色竖条。 */
+.lead-gate-stale { margin-top: var(--sp-6); color: var(--cc-text-dim); font-size: var(--text-xs); }
+.lead-gate-stale p { margin: 0 0 var(--sp-2); }
 .lead-gate-summary { max-height: 7.5em; overflow: hidden; font-size: var(--text-sm); }
 .lead-gate-summary.is-expanded { max-height: none; }
 /* 审批卡的标题圆点挂在 .chat-approval-copy strong 上；摘要是 markdown，加粗不该带圆点（实拍）。 */

@@ -46,7 +46,8 @@ pub(super) fn check(data: &Value) -> Option<String> {
     )
 }
 
-/// `…/.lead/<任务>/agents/<文件>`：路径里不能有 `..`（否则可以借报告目录跳出去）。
+/// `…/.lead/<任务>/agents/<文件>`：路径里不能有 `..`（否则可以借报告目录跳出去）。只认 agents/ 下一层：
+/// `agents/snapshots/` 是主会话放前后对比快照的地方，对比时会排除它，审查者不能写进去。
 fn report_path(path: &Path) -> bool {
     let mut parts = Vec::new();
     for c in path.components() {
@@ -56,9 +57,9 @@ fn report_path(path: &Path) -> bool {
             _ => {}
         }
     }
-    // 找最后一个 `.lead`：任务目录在它下一层，报告在任务目录的 agents/ 里，且必须是文件（后面还有一段）。
+    // 找最后一个 `.lead`：任务目录在它下一层，报告是任务目录 agents/ 里的文件（恰好再多一段）。
     parts.iter().rposition(|p| p.eq_ignore_ascii_case(".lead")).is_some_and(|i| {
-        parts.len() >= i + 4
+        parts.len() == i + 4
             && super::slug_ok(&parts[i + 1])
             && parts[i + 2].eq_ignore_ascii_case("agents")
     })
@@ -104,6 +105,7 @@ mod tests {
             "/p/proj/.lead/20261124-x/acceptance.json",
             "/p/proj/.lead/20261124-x/agents",
             "/p/proj/.lead/agents/x.md",
+            "/p/proj/.lead/20261124-x/agents/snapshots/redteam-1-after.txt",
             "/p/proj/.lead/20261124-x/agents/../progress.md",
             "/p/proj/.lead/20261124-x/agents/../../../src/main.rs",
             "../escape/.lead/t/agents/../../x.md",

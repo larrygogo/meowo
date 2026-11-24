@@ -18,7 +18,7 @@ vi.mock("../../api", async (importActual) => ({
 }));
 
 const { DockWork } = await import("./DockWork");
-const { LeadGateCard, LeadPanel, useLeadTask, gateWaiting, leadLatest, leadProgress, leadTaskTitle } = await import("./LeadPanel");
+const { LeadGateCard, LeadPanel, useLeadTask, gateWaiting, leadLatest, leadProgress, leadTaskTitle, staleReviewChecks } = await import("./LeadPanel");
 
 const history = { plan: undefined, agentModes: [], pendingReview: null, todos: [] };
 
@@ -775,4 +775,35 @@ it("只有接续摘要、还没有记录时显示摘要，不显示「暂无内�
   expect(container.querySelector(".lead-resume")?.textContent).toContain("正在写 SPEC");
   expect(container.querySelectorAll(".lead-timeline .lead-entry")).toHaveLength(0);
   expect(screen.queryByText(zh.chat.leadSectionEmpty)).toBeNull();
+});
+
+describe("C 卡标出证据版本与交付版本不一致的验收项", () => {
+  const ev = (revision: string) => ({ command: "lead-redteam 审查", result: "通过", revision, reference: "agents/redteam-1.md", limitations: "" });
+  const check = (id: string, over: Record<string, unknown> = {}) => ({ id, check: `检查 ${id}`, passes: true, waived: null, leader: false, blocked: null, ...over });
+
+  it("审查之后又改了代码：通过项的证据都停在旧版本，就列出来；短 SHA 对长 SHA、大小写不同不算不一致", () => {
+    const review = { revision: "ABC1234", checks: [
+      check("AC1", { evidence: [ev("9f8e7d6")] }),
+      check("AC2", { evidence: [ev("9f8e7d6"), ev("abc1234def5678")] }),
+      check("AC3"),
+      check("AC4", { passes: false, evidence: [ev("9f8e7d6")] }),
+      check("AC5", { evidence: [ev("修补前工作区"), ev(" 修补前工作区 ")] }),
+    ] };
+    expect(staleReviewChecks(review)).toEqual([
+      { id: "AC1", check: "检查 AC1", revisions: ["9f8e7d6"] },
+      { id: "AC5", check: "检查 AC5", revisions: ["修补前工作区"] },
+    ]);
+  });
+
+  it("卡片上显示提醒和对应的验收项；证据都对得上时不显示", () => {
+    const stale = gate("C", { review: { revision: "abc1234", checks: [
+      { id: "business", check: "确认业务范围", passes: false, leader: true, waived: null, blocked: null },
+      check("AC1", { evidence: [ev("9f8e7d6")] }),
+    ] } });
+    const { rerender } = render(<LeadGateCard cwd="C:/repo" gate={stale} onAnswered={() => {}} />);
+    expect(screen.getByText(zh.chat.leadReviewStale("abc1234"))).toBeTruthy();
+    expect(screen.getByRole("list", { name: zh.chat.leadReviewStaleList }).textContent).toContain("AC1 · 检查 AC1 · 证据版本 9f8e7d6");
+    rerender(<LeadGateCard cwd="C:/repo" gate={gate("C")} onAnswered={() => {}} />);
+    expect(screen.queryByRole("list", { name: zh.chat.leadReviewStaleList })).toBeNull();
+  });
 });

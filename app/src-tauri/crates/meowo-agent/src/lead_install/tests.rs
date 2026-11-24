@@ -52,6 +52,15 @@ fn shared_workflow_keeps_risk_permission_and_review_contracts() {
         "`lead-redteam` 只拿任务目录",
         // Claude 的 guard hook 只拦 Write/Edit，经 Bash 写文件和 codex 的审查角色靠这一条事后核对。
         "按审查越界处理",
+        // 2026-11-24 真实会话试跑发现的 7 个问题，逐条对应：
+        "不能用旧的审查结论为新代码背书",
+        "Meowo 自己维护的任务文件",
+        "派 redteam 后等它返回，再写任务目录和源码",
+        "判据必须在写产品代码之前定下来",
+        "不要自行告诉 leader「答复后回来说一声」",
+        "你看不到等待进程，不代表没有自动续跑",
+        "最多 5 个短句、总共不超过 300 字",
+        "`<任务目录>/agents/snapshots/",
         "`.lead/harness.md`",
     ] {
         assert!(SKILL.contains(rule), "{rule}");
@@ -65,6 +74,7 @@ fn shared_workflow_keeps_risk_permission_and_review_contracts() {
         "SPEC 没有验收判据时",
         // REVIEW 由 codex/kimi/gemini/opencode/claude 共用，只有 claude 版有写工具：只读角色必须有退路。
         "把完整报告直接作为答复返回",
+        "最多 5 个短句、总共不超过 300 字",
     ] {
         assert!(REVIEW.contains(rule), "{rule}");
     }
