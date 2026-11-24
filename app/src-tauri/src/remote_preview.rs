@@ -11,7 +11,8 @@
 //! # 安全收口（审计从这里开始）
 //! - 目标只认本机回环（127.0.0.1 / ::1）上的端口，映射在服务端，请求里不带目标；拒绝 CONNECT
 //!   与绝对 URI 形式的请求，代理不能被当成跳板。
-//! - 只代理「正在监听、而且监听进程在这个会话进程树下」的端口（[`listener_pids`] + 进程树），
+//! - 只代理「正在监听、而且监听进程在这个会话进程树下」的端口（[`listener_pids`] + 进程树）；被 `&`、
+//!   nohup 甩出进程树的不认（认目录会把同仓库里别人的服务也开出去），
 //!   电脑上别的服务（数据库管理页、别的项目）不会因为对话里出现了它的地址就被开出去。
 //! - 配对令牌不进预览地址：远程页经 /rpc（带令牌）领一个 60 秒、一次性的码，预览端口凭码种一个
 //!   按端口区分的 HttpOnly cookie，再 302 到干净地址。cookie 不区分端口，所以名字带端口、值是
@@ -62,16 +63,22 @@ struct Proxy {
     last_seen: Arc<AtomicU64>,
     /// 最近一次确认归属的时刻；[`NEEDS_CHECK`] = 下一个请求先重查。
     verified_at: Arc<AtomicU64>,
+    /// 回收循环发现端口没人监听（或查不了监听表）的起始时刻：dev server 重启要几秒到几分钟，
+    /// 这期间代理留着、请求给「预览没在运行」页，连续 [`MISSING_GRACE`] 都不在才回收。
+    missing_since: Option<u64>,
 }
+
+/// 端口持续没人监听多久才回收代理（AI 重启 dev server、装依赖期间手机刷新看到的是说明页，不是浏览器的连接错误）。
+const MISSING_GRACE: u64 = 5 * 60;
 
 const NEEDS_CHECK: u64 = u64::MAX;
 /// 归属确认后多久内不再重查（一次页面加载有上百个模块请求，不能每个都扫进程表）。
 const VERIFY_EVERY: u64 = 15;
 
-/// 端口归属：会话的根进程（托管 PTY 子进程、reporter 记下的 agent pid）与会话目录。
+/// 端口归属：会话的根进程（托管 PTY 子进程、reporter 记下的 agent pid）。监听进程得在它们的进程树里。
 #[derive(Clone, Debug)]
 pub(crate) enum Owner {
-    Session { roots: Vec<u32>, dir: Option<String> },
+    Session { roots: Vec<u32> },
     /// 测试与手动验证用：不查归属。
     #[cfg(test)]
     Anyone,
@@ -299,8 +306,8 @@ fn resolve_target(port: u16, owner: &Owner) -> Result<(SocketAddr, bool), String
     if reachable.is_empty() {
         return Err("preview/not_listening".into());
     }
-    let (roots, dir) = match owner {
-        Owner::Session { roots, dir } => (roots, dir),
+    let roots = match owner {
+        Owner::Session { roots } => roots,
         #[cfg(test)]
         Owner::Anyone => {
             let all: Vec<SocketAddr> = reachable.iter().map(|(a, _)| *a).collect();
@@ -316,64 +323,11 @@ fn resolve_target(port: u16, owner: &Owner) -> Result<(SocketAddr, bool), String
     if let Some(addr) = pick_owned(&reachable, &tree) {
         return Ok((addr, same_port_ok));
     }
-    // 进程树断了的情形：AI 用 `npm run dev &`、nohup、Start-Process 起服务时，中间那层 shell 退出，
-    // 从会话根往下找不到 dev server（独立审查实测 node <- bash <- 已退出）。这时按「断开处在会话之后
-    // 启动 + 工作目录在会话目录里」认领，见 [`orphan_owned`]。
-    let orphans: Vec<(SocketAddr, u32)> = reachable.iter().copied().filter(|(_, pid)| !tree.contains(pid)).collect();
-    if let Some(dir) = dir.as_deref().filter(|d| !d.trim().is_empty()) {
-        let owned = orphan_owned(&orphans, roots, dir);
-        if let Some(addr) = owned.iter().copied().min_by_key(|a| !a.is_ipv4()) {
-            return Ok((addr, same_port_ok));
-        }
-    }
+    // 进程树断开（`npm run dev &`、nohup、Start-Process 把服务甩出去，中间那层 shell 退出）的不认：
+    // 认「工作目录在会话目录里」会把同一仓库里别人起的服务也开出去（独立审查第二轮 A，实测），超出 leader
+    // 关卡 B 签的「只开放本会话自己起的端口」。改由 MCP 说明让 AI 用自己的后台运行功能起 dev server，
+    // 被拒时提示写清楚原因和改法。
     Err("preview/not_session".into())
-}
-
-/// 进程树断开的监听里，哪些可以认作会话起的。从监听进程沿父进程往上走，走到父进程已经退出
-/// （或父 pid 被复用成了更晚启动的进程）为止，断开处那个进程就是这一支的顶。认领条件：
-/// - 顶在会话根进程之后才启动：`npm run dev &` 的 npx/node 是这样；用户自己终端里起的服务往上会走到
-///   登录时就在的 explorer / 终端，比会话早，不认；
-/// - 监听进程的工作目录在会话目录里。
-fn orphan_owned(orphans: &[(SocketAddr, u32)], roots: &[u32], dir: &str) -> Vec<SocketAddr> {
-    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
-    if orphans.is_empty() {
-        return Vec::new();
-    }
-    let mut sys = System::new();
-    let kind = ProcessRefreshKind::new().with_cwd(UpdateKind::Always);
-    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
-    let Some(session_start) = roots.iter().filter_map(|r| sys.process(Pid::from_u32(*r))).map(|p| p.start_time()).min() else {
-        return Vec::new();
-    };
-    orphans
-        .iter()
-        .filter(|(_, pid)| {
-            let Some(listener) = sys.process(Pid::from_u32(*pid)) else { return false };
-            if !listener.cwd().is_some_and(|cwd| path_within(&cwd.to_string_lossy(), dir)) {
-                return false;
-            }
-            let mut top = listener;
-            for _ in 0..64 {
-                match top.parent().and_then(|pp| sys.process(pp)) {
-                    Some(parent) if parent.start_time() <= top.start_time() => top = parent,
-                    _ => break,
-                }
-            }
-            top.start_time() >= session_start
-        })
-        .map(|(addr, _)| *addr)
-        .collect()
-}
-
-/// `path` 是否就是 `dir` 或在它下面（Windows 不分大小写、两种斜杠都认）。
-fn path_within(path: &str, dir: &str) -> bool {
-    let norm = |s: &str| {
-        let s = s.replace('\\', "/");
-        let s = s.trim_end_matches('/').to_string();
-        if cfg!(windows) { s.to_lowercase() } else { s }
-    };
-    let (p, d) = (norm(path), norm(dir));
-    !d.is_empty() && (p == d || p.starts_with(&format!("{d}/")))
 }
 
 /// 在属于会话进程树的监听里挑一个，IPv4 优先（Node 18+ 的「localhost」可能只开在 ::1，所以两族都收）。
@@ -526,7 +480,7 @@ async fn ensure_proxy(key: Key, target: SocketAddr, owner: Owner, same_port_ok: 
         if let Some(p) = inner.proxies.get(&key) {
             return Ok(p.port);
         }
-        inner.proxies.insert(key, Proxy { port, target, owner, shutdown, active, last_seen, verified_at });
+        inner.proxies.insert(key, Proxy { port, target, owner, shutdown, active, last_seen, verified_at, missing_since: None });
         inner.last_ports.insert(key, port);
         !std::mem::replace(&mut inner.reaper, true)
     };
@@ -543,20 +497,46 @@ async fn reap_loop() {
         tokio::time::sleep(REAP_EVERY).await;
         let now = now_secs();
         let idle_limit = IDLE_REAP.as_secs();
-        // 端口不再监听、或者换成了不属于会话的程序：也回收（不只是闲置）。
-        let checks: Vec<(Key, Owner)> = lock().proxies.iter().map(|(k, p)| (*k, p.owner.clone())).collect();
-        let gone: Vec<Key> = tauri::async_runtime::spawn_blocking(move || {
-            checks.into_iter().filter(|(key, owner)| resolve_target(key.1, owner).is_err()).map(|(k, _)| k).collect()
+        // 除了闲置，还按端口现状回收：
+        // - 端口被不属于会话的程序接手：立即回收；
+        // - 代理占着同号端口，而 dev server 改成了对局域网开放（重启时加了 --host）：立即回收，下次打开换随机
+        //   端口，不再挡着它的局域网入口（独立审查第二轮 D）；
+        // - 没人监听 / 查不了：先记下起始时刻，连续 MISSING_GRACE 都这样才回收（第二轮 B）。
+        let checks: Vec<(Key, u16, Owner)> = lock().proxies.iter().map(|(k, p)| (*k, p.port, p.owner.clone())).collect();
+        let verdicts: Vec<(Key, Verdict)> = tauri::async_runtime::spawn_blocking(move || {
+            checks
+                .into_iter()
+                .map(|(key, port, owner)| {
+                    let v = match resolve_target(key.1, &owner) {
+                        Ok((_, same_port_ok)) if port == key.1 && !same_port_ok => Verdict::Drop,
+                        Ok(_) => Verdict::Fine,
+                        Err(code) if code == "preview/not_session" => Verdict::Drop,
+                        Err(_) => Verdict::Missing,
+                    };
+                    (key, v)
+                })
+                .collect()
         })
         .await
         .unwrap_or_default();
         let reaped: Vec<Proxy> = {
             let mut inner = lock();
+            for (key, verdict) in &verdicts {
+                if let Some(p) = inner.proxies.get_mut(key) {
+                    p.missing_since = match verdict {
+                        Verdict::Missing => Some(p.missing_since.unwrap_or(now)),
+                        _ => None,
+                    };
+                }
+            }
             let stale: Vec<Key> = inner
                 .proxies
                 .iter()
                 .filter(|(k, p)| {
-                    gone.contains(k) || (p.active.load(Ordering::SeqCst) == 0 && now.saturating_sub(p.last_seen.load(Ordering::SeqCst)) >= idle_limit)
+                    let dropped = verdicts.iter().any(|(key, v)| key == *k && matches!(v, Verdict::Drop));
+                    let missing_long = p.missing_since.is_some_and(|since| now.saturating_sub(since) >= MISSING_GRACE);
+                    let idle = p.active.load(Ordering::SeqCst) == 0 && now.saturating_sub(p.last_seen.load(Ordering::SeqCst)) >= idle_limit;
+                    dropped || missing_long || idle
                 })
                 .map(|(k, _)| *k)
                 .collect();
@@ -567,6 +547,13 @@ async fn reap_loop() {
             let _ = p.shutdown.send(true);
         }
     }
+}
+
+/// 回收循环对一个代理的判断。
+enum Verdict {
+    Fine,
+    Missing,
+    Drop,
 }
 
 struct Ctx {
@@ -580,7 +567,7 @@ struct Ctx {
     shutdown: tokio::sync::watch::Receiver<bool>,
 }
 
-/// websocket 隧道计数守卫：隧道结束时减一。
+/// 长连接计数守卫（websocket 隧道、SSE 响应）：结束时减一。
 struct ActiveGuard(Arc<AtomicUsize>);
 impl Drop for ActiveGuard {
     fn drop(&mut self) {
@@ -710,6 +697,24 @@ async fn handle(mut req: Request<Incoming>, ctx: &Ctx) -> Response<Body> {
         }
     }
     rewrite_response_headers(resp.headers_mut(), target_port);
+    // 用 SSE（text/event-stream）推热更新的页面开着时，这条响应一直在流，同样算「有人在看」，
+    // 不能 30 分钟后被闲置回收（独立审查第二轮 C）。守卫跟着响应体走，流结束或手机断开时减一。
+    let streaming = resp
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.trim_start().to_ascii_lowercase().starts_with("text/event-stream"));
+    if streaming {
+        ctx.active.fetch_add(1, Ordering::SeqCst);
+        let guard = ActiveGuard(ctx.active.clone());
+        return resp.map(move |b| {
+            b.map_frame(move |frame| {
+                let _hold = &guard;
+                frame
+            })
+            .boxed()
+        });
+    }
     resp.map(|b| b.boxed())
 }
 
@@ -951,9 +956,9 @@ fn not_session_page(target_port: u16) -> Response<Body> {
     page(
         StatusCode::FORBIDDEN,
         "这个端口不是本会话的",
-        &format!("电脑上 {target_port} 端口现在是别的程序在用，不是这个会话起的 dev server，Meowo 不会把它开给手机。"),
+        &format!("电脑上 {target_port} 端口现在是别的程序在用，或者 dev server 被放到了会话进程之外（比如用 & 或 nohup 在后台起的），Meowo 不会把它开给手机。可以让 AI 用它自己的后台运行方式重新起 dev server。"),
         "This port isn't from this session",
-        &format!("Port {target_port} on your computer is now used by another program, not the dev server this session started, so Meowo won't open it to your phone."),
+        &format!("Port {target_port} on your computer is used by another program, or the dev server was started outside this session's processes (for example with & or nohup), so Meowo won't open it to your phone. Ask the AI to restart the dev server with its own background-run feature."),
     )
 }
 
@@ -1077,21 +1082,10 @@ mod tests {
         assert_eq!(h[header::ORIGIN], "http://192.168.1.5:5199");
     }
 
-    #[test]
-    fn session_dir_match_is_prefix_by_component() {
-        assert!(path_within("C:\\dev\\web-app", "C:/dev/web-app"));
-        assert!(path_within("C:\\dev\\web-app\\packages\\ui", "C:\\dev\\web-app\\"));
-        assert!(!path_within("C:\\dev\\web-app2", "C:\\dev\\web-app"));
-        assert!(!path_within("C:\\dev", "C:\\dev\\web-app"));
-        assert!(!path_within("C:\\dev\\web-app", ""));
-        #[cfg(windows)]
-        assert!(path_within("c:\\DEV\\Web-App", "C:\\dev\\web-app"));
-    }
-
     /// dev server 自己开在所有网卡上时不占同号端口（Windows 上会把它的局域网入口抢走）。
     #[test]
     fn same_port_only_when_dev_server_is_loopback_only() {
-        let me = Owner::Session { roots: vec![std::process::id()], dir: None };
+        let me = Owner::Session { roots: vec![std::process::id()] };
         let local = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let p = local.local_addr().unwrap().port();
         assert_eq!(resolve_target(p, &me).unwrap(), (SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), p), true));
@@ -1099,7 +1093,7 @@ mod tests {
         let q = all.local_addr().unwrap().port();
         assert_eq!(resolve_target(q, &me).unwrap(), (SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), q), false));
         // 不属于会话（根进程不是本进程）：拒。
-        let other = Owner::Session { roots: vec![u32::MAX - 7], dir: None };
+        let other = Owner::Session { roots: vec![u32::MAX - 7] };
         assert_eq!(resolve_target(p, &other).unwrap_err(), "preview/not_session");
         drop(local);
         assert_eq!(resolve_target(p, &me).unwrap_err(), "preview/not_listening");
@@ -1196,7 +1190,7 @@ mod tests {
     }
 
     /// 走真实的 open()（归属判定、一次性码、代次）验真 dev server：
-    /// `PV_LISTEN=<本机IP> PV_CASES="<url>|<根pid>|<会话目录>;..." cargo test --lib preview_open_manual -- --ignored --nocapture`。
+    /// `PV_LISTEN=<本机IP> PV_CASES="<url>|<根pid>;..." cargo test --lib preview_open_manual -- --ignored --nocapture`。
     /// 打印每个用例的预览地址（或错误码），然后挂 PV_SECS 秒。
     #[test]
     #[ignore]
@@ -1208,7 +1202,7 @@ mod tests {
             bridge_started(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
             for case in cases.split(';').filter(|c| !c.trim().is_empty()) {
                 let parts: Vec<&str> = case.split('|').collect();
-                let owner = Owner::Session { roots: vec![parts[1].parse().unwrap()], dir: parts.get(2).map(|d| d.to_string()) };
+                let owner = Owner::Session { roots: vec![parts[1].parse().unwrap()] };
                 match open(parts[0].to_string(), owner, true, Some(format!("{listen}:18620"))).await {
                     Ok(t) => println!("OPEN {} -> http://{}:{}{}", parts[0], t.host, t.port, t.path),
                     Err(e) => println!("OPEN {} -> ERR {e}", parts[0]),
@@ -1287,7 +1281,7 @@ mod tests {
             let target = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), target_port);
             // 代理也开在 127.0.0.1：同号端口被上游占着，退到随机端口。归属按本测试进程认（上游就是它开的）。
             let key = (IpAddr::V4(Ipv4Addr::LOCALHOST), target_port);
-            let owner = Owner::Session { roots: vec![std::process::id()], dir: None };
+            let owner = Owner::Session { roots: vec![std::process::id()] };
             let generation = { let mut inner = lock(); inner.bind = Some(key.0); inner.generation };
             let port = ensure_proxy(key, target, owner.clone(), true, generation).await.unwrap();
             assert_ne!(port, target_port);

@@ -96,7 +96,7 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "remote/not_session_dir", exact: true, zh: "只能查看会话目录里的改动", en: "Only changes in the session folder can be viewed" },
   // 手机预览（remote_preview.rs）：点对话里的本机链接打不开时，就地显示在链接后面。
   { m: "preview/not_listening", exact: true, zh: "预览还没启动：电脑上这个端口现在没有程序在监听", en: "The preview isn't running: nothing is listening on that port on your computer" },
-  { m: "preview/not_session", exact: true, zh: "这个端口不是本会话起的程序，Meowo 不会把它开给手机", en: "That port wasn't opened by this session, so Meowo won't open it to your phone" },
+  { m: "preview/not_session", exact: true, zh: "这个端口不是本会话起的程序（用 & 或 nohup 在后台起的也认不出），Meowo 不会把它开给手机。可以让 AI 用它自己的后台运行方式重起 dev server", en: "That port wasn't opened by this session (servers started with & or nohup aren't recognized either), so Meowo won't open it to your phone. Ask the AI to restart the dev server with its own background-run feature" },
   { m: "preview/owner_unknown", exact: true, zh: "查不到这个端口是谁开的，没有打开", en: "Couldn't tell which program owns that port, so it wasn't opened" },
   { m: "preview/disabled", exact: true, zh: "手机预览已在电脑的设置里关掉", en: "Phone preview is turned off in the desktop settings" },
   { m: "preview/remote_off", exact: true, zh: "电脑上的远程访问没开", en: "Remote access is off on your computer" },
