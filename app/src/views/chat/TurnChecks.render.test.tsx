@@ -130,6 +130,13 @@ describe("本轮结果卡的检查段", () => {
       edit("e1", "front/src/pages/subscription/index.tsx"), ok("e1"),
     ]} />);
     expect(screen.getByText(zh.chat.checkStale(["测试"], ["subscription/index.tsx"]))).toBeTruthy();
+    cleanup();
+    // 实拍：`cd web && tsc hello.ts` 之后改了 web/hello.ts，命令里写的是相对 web 的路径，是同一个文件，不带目录。
+    render(<TurnChanges items={[
+      run("c1", "cd C:/demo/web && bunx tsc --noEmit hello.ts 2>&1 | tail -4"), ok("c1"),
+      edit("e1", "C:\\demo\\web\\hello.ts"), ok("e1"),
+    ]} />);
+    expect(screen.getByText(zh.chat.checkStale(["类型检查"], ["hello.ts"]))).toBeTruthy();
   });
 
   // 实拍：先通过，再 `git stash` 藏掉修复跑一遍确认用例会失败，再 pop 回来。卡片写「1 个没过」，用户让 AI 去修。

@@ -9,7 +9,7 @@ import { Icon } from "../../icons/Icon";
 import { icPencil } from "../../icons/glyphs";
 import { icSidebarRight } from "../../icons/glyphs.chat";
 import { RevealChangeContext } from "./panelReveal";
-import { collectTurnChecks, editAffectsCheck, filesModifiedByRun, isDocPath, type CheckKind, type TurnCheck } from "./turnChecks";
+import { collectTurnChecks, editAffectsCheck, filesModifiedByRun, isDocPath, normPath, type CheckKind, type TurnCheck } from "./turnChecks";
 import { revealItem } from "./foldMemory";
 import { RELEASE_FOLLOW_EVENT } from "./useStickToBottom";
 import { ChatActionsContext } from "./chatActions";
@@ -185,15 +185,19 @@ function editedAfterIndex(items: ChatItem[], after: number, cwd: string | null):
 /// 提示里点名的文件一般只写文件名；同名的会认错时带上上一级目录：改了几个同名文件，或检查命令里也出现了
 /// 这个名字（实拍 2026-11-24：eslint 查的是 activation-code/list/index.tsx，提示写「又改了 index.tsx」，
 /// 看着像在说同一个文件）。
-export function staleFileNames(paths: string[], checks: TurnCheck[]): string[] {
+export function staleFileNames(paths: string[], checks: TurnCheck[], cwd: string | null = null): string[] {
   const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
-  const commands = checks.flatMap((check) => check.parts).join("\n").replace(/\\/g, "/").toLowerCase();
+  const textOf = (check: TurnCheck) => check.parts.join("\n").replace(/\\/g, "/").toLowerCase();
+  const commands = checks.map(textOf).join("\n");
   return paths.map((path) => {
     const name = base(path);
     const lower = name.toLowerCase();
     const parts = path.split("/");
-    // 命令里点名的就是这个文件（带着同样的上一级目录）不算撞名。
-    const sameFile = parts.length > 1 && commands.includes(parts.slice(-2).join("/").toLowerCase());
+    const abs = normPath(/^(?:[A-Za-z]:)?\//.test(path) || !cwd ? path : `${cwd}/${path}`);
+    // 命令里点名的就是这个文件不算撞名：带着同样的上一级目录，或检查跑在它所在的目录、命令里写的是相对那里的路径
+    // （实拍 2026-11-24：`cd web && tsc hello.ts` 之后改了 web/hello.ts，提示多写成「web/hello.ts」）。
+    const sameFile = (parts.length > 1 && commands.includes(parts.slice(-2).join("/").toLowerCase()))
+      || checks.some((check) => !!check.dir && abs.startsWith(`${check.dir}/`) && textOf(check).includes(abs.slice(check.dir.length + 1)));
     const clash = paths.some((other) => other !== path && base(other).toLowerCase() === lower)
       || (!sameFile && new RegExp(`(?:^|[\\s/"'])${lower.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|[\\s"'])`, "m").test(commands));
     return clash && parts.length > 1 ? parts.slice(-2).join("/") : name;
@@ -216,6 +220,7 @@ function staleKinds(t: ReturnType<typeof useT>, checks: TurnCheck[], staleIds: S
 /// 点一行跳回过程里的那次命令：展开回合折叠和那一行，滚过去，看完整输出。
 function TurnChecks({ checks, replyId, editedAfter, staleIds, codeChanged }: { checks: TurnCheck[]; replyId: string | null; editedAfter: string[]; staleIds: Set<string>; codeChanged: boolean }) {
   const t = useT();
+  const cwd = useContext(ChatCwdContext);
   // 「已过时」「没跑」的出路：一句现成的要求填进输入框，用户看过再发（只填不发，避免误发）。
   const fill = useContext(ChatActionsContext)?.fillPrompt;
   const fillButton = (label: string, text: string) => fill && (
@@ -230,7 +235,7 @@ function TurnChecks({ checks, replyId, editedAfter, staleIds, codeChanged }: { c
       </div>
     ) : null;
   }
-  const staleNames = staleFileNames(editedAfter, checks);
+  const staleNames = staleFileNames(editedAfter, checks, cwd);
   const staleCommands = commandsOf(checks.filter((check) => staleIds.has(check.toolId)));
   // 没过、之后也没再改代码的检查：肯定还没修。没过但之后改过的可能已经修了，归到上面的「重跑」里。
   const failed = checks.filter((check) => check.status === "fail" && !staleIds.has(check.toolId));
