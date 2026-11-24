@@ -29,6 +29,8 @@ const SEND_MAX = 2000;
 /** 没收到页面报高度之前的占位高度（页面加载通常几十毫秒，先占一块不至于跳得太狠）。 */
 const INITIAL_HEIGHT = 200;
 const MIN_HEIGHT = 48;
+/** 两次放进输入框 / 开链接之间至少隔多久：挡住页面一次点击连发。 */
+const ACTION_GAP_MS = 1000;
 
 export function parseViewReceipt(text: string): ViewReceipt | null {
   const line = text.split("\n").map((entry) => entry.trim()).reverse().find((entry) => entry.startsWith(MARKER) && entry.endsWith("]"));
@@ -114,12 +116,20 @@ export function ViewFrame({ id, title, fixedHeight, maxHeight, onMissing, classN
   const fillPrompt = actions?.fillPrompt;
   const missing = useRef(onMissing);
   missing.current = onMissing;
+  const lastAction = useRef(0);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       if (!frame.current || event.source !== frame.current.contentWindow) return;
       const message = asMessage(event.data);
       if (!message) return;
+      // 放进输入框、开链接要「用户正在用这块页面」：焦点在这个 iframe 上（用户点进去过），不是缩略图，且限频。
+      // 桥里已按用户激活过滤；这里不信页面自己说的，按宿主看得到的事实再拦一道（页面可以绕过桥直接 postMessage）。
+      if (message.method === "ui/message" || message.method === "ui/open-link") {
+        const now = Date.now();
+        if (!interactive || document.activeElement !== frame.current || now - lastAction.current < ACTION_GAP_MS) return;
+        lastAction.current = now;
+      }
       switch (message.method) {
         case "ui/notifications/size-changed": {
           const height = Number(message.params.height);
@@ -143,7 +153,7 @@ export function ViewFrame({ id, title, fixedHeight, maxHeight, onMissing, classN
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [fillPrompt, opening]);
+  }, [fillPrompt, opening, interactive]);
 
   // 主题变了告诉页面（桥把它写到 <html data-theme> 与 color-scheme 上）。
   useEffect(() => {

@@ -614,7 +614,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             names(&list),
-            ["send_image", "compare_images", "offer_choices", "send_file", "notify_user", "ask_form"].map(String::from).to_vec()
+            ["send_image", "compare_images", "offer_choices", "send_file", "notify_user", "ask_form", "show_html"].map(String::from).to_vec()
         );
         let reply = respond(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "browser_snapshot" } }), Some(&channel), IMAGES_ONLY).unwrap();
         assert_eq!(reply["result"]["isError"], true);

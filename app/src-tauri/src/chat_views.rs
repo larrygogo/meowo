@@ -240,9 +240,11 @@ frame-ancestors {frame_ancestors}; sandbox allow-scripts"
 /// （文案在前端按界面语言出，这里不写死中文或英文）。
 pub(crate) fn serve(root: &Path, id: Option<&str>, frame_ancestors: &str) -> Served {
     let found = id.and_then(|id| std::fs::read(root.join(format!("{id}.html"))).ok());
+    // 找不到也回 200：失效页本身就是给宿主报信的小页面，WebView2 / 手机浏览器遇到 4xx 可能换成自己的错误页、
+    // 不执行这段脚本，卡片就停在空白框（审查第 1 轮指出未验证，干脆不赌）。
     let (status, body) = match found {
         Some(bytes) => (200, page(&bytes)),
-        None => (404, missing_page()),
+        None => (200, missing_page()),
     };
     Served {
         status,
@@ -383,13 +385,18 @@ mod tests {
         let ok = serve(&root, id_from_path(&format!("/{id}.html")), "'self'");
         assert_eq!(ok.status, 200);
         let csp = &ok.headers.iter().find(|h| h.0 == "content-security-policy").unwrap().1;
-        assert!(csp.contains("sandbox allow-scripts") && csp.contains("connect-src 'none'"), "{csp}");
-        assert!(!csp.contains("allow-same-origin"));
+        // 锁住沙箱：Windows 上 iframe 里拿得到带密钥的 invoke，挡住它的就是这几条（见模块注释）。
+        // 放宽 connect-src、给沙箱加任何 allow-* 例外，都会让页面直通 Meowo 的命令。
+        assert!(csp.contains("connect-src 'none';"), "{csp}");
+        assert!(csp.contains("form-action 'none';") && csp.contains("frame-src 'none';"), "{csp}");
+        assert!(csp.trim_end().ends_with("sandbox allow-scripts"), "{csp}");
+        assert_eq!(csp.matches("allow-").count(), 1, "沙箱只许 allow-scripts：{csp}");
+        assert!(!csp.contains("ipc:") && !csp.contains("asset:") && !csp.contains(" http:"), "{csp}");
         assert!(id_from_path("/../secret.html").is_none());
         assert!(id_from_path("/C:/x.html").is_none());
         assert!(id_from_path(&format!("/{}.html", id.to_uppercase())).is_none());
         let gone = serve(&root, id_from_path(&format!("/{}.html", "0".repeat(32))), "'self'");
-        assert_eq!(gone.status, 404);
+        assert_eq!(gone.status, 200);
         assert!(String::from_utf8(gone.body).unwrap().contains("meowo/view-missing"));
     }
 

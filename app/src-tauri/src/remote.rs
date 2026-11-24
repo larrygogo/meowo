@@ -844,11 +844,16 @@ fn build_router(app: tauri::AppHandle, token: String, file_token: String) -> Rou
             ctx.clone(),
             require_token,
         ));
+    let views = view_router(ViewState {
+        token: ctx.token.clone(),
+        file_token: ctx.file_token.clone(),
+        root: crate::chat_views::views_root(),
+    });
     Router::new()
         .merge(rpc)
+        .merge(views)
         .route("/file", get(file_handler))
         .route("/download", get(download_handler))
-        .route("/view/{name}", get(view_handler))
         .fallback(get(static_handler))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(ctx)
@@ -1912,7 +1917,19 @@ struct ViewQuery {
 /// 为什么绕一下：页面是 agent 写的任意脚本，读得到自己的地址。地址里若是降级凭据，页面能把它塞进一个
 /// https 图片地址带出去，拿到的人就能读 /file 和 /download；换成每页口令后，带出去的只够再看这一页。
 /// 页面响应头带 `sandbox allow-scripts`：与手机页同源也只是不透明源，读不到 localStorage 里的主 token。
-async fn view_handler(State(ctx): State<Ctx>, Path(name): Path<String>, Query(q): Query<ViewQuery>) -> Response {
+/// /view 只要两个凭据和视图目录，不碰 AppHandle：拆成独立小路由，测试能真起服务打（审查第 1 轮要求测真实路由）。
+#[derive(Clone)]
+struct ViewState {
+    token: Arc<str>,
+    file_token: Arc<str>,
+    root: PathBuf,
+}
+
+fn view_router<S: Clone + Send + Sync + 'static>(state: ViewState) -> Router<S> {
+    Router::new().route("/view/{name}", get(view_handler)).with_state(state)
+}
+
+async fn view_handler(State(ctx): State<ViewState>, Path(name): Path<String>, Query(q): Query<ViewQuery>) -> Response {
     let id = match view_decision(&ctx.token, &ctx.file_token, &name, &q) {
         ViewDecision::NotFound => return err_status(StatusCode::NOT_FOUND, "view/missing"),
         ViewDecision::Unauthorized => return err_status(StatusCode::UNAUTHORIZED, "remote/unauthorized"),
@@ -1925,8 +1942,9 @@ async fn view_handler(State(ctx): State<Ctx>, Path(name): Path<String>, Query(q)
         }
         ViewDecision::Serve(id) => id,
     };
+    let root = ctx.root.clone();
     let served = tauri::async_runtime::spawn_blocking(move || {
-        crate::chat_views::serve(&crate::chat_views::views_root(), Some(&id), "'self'")
+        crate::chat_views::serve(&root, Some(&id), "'self'")
     })
     .await;
     let Ok(served) = served else {
@@ -2280,6 +2298,56 @@ fn mime_for(ext: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+
+    /// 真起 /view 路由打一遍：带降级凭据 302 到每页口令、跟着口令拿到页面且响应头带沙箱 CSP；
+    /// 不带凭据 401、口令换页 401、越界 404；页面被清理时回失效页。
+    #[test]
+    fn view_route_serves_pages_over_real_http() {
+        use std::io::{Read, Write};
+        let root = std::env::temp_dir().join(format!("meowo-view-route-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let id = "ab".repeat(16);
+        std::fs::write(root.join(format!("{id}.html")), "<p>hello view</p>").unwrap();
+        let router: Router = view_router(ViewState { token: "main-token".into(), file_token: "file-token".into(), root: root.clone() });
+        let addr = tauri::async_runtime::block_on(async move {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            tauri::async_runtime::spawn(async move { axum::serve(listener, router).await.unwrap() });
+            addr
+        });
+        let get = |path: &str| -> String {
+            let mut s = std::net::TcpStream::connect(addr).unwrap();
+            write!(s, "GET {path} HTTP/1.1
+Host: 127.0.0.1
+Connection: close
+
+").unwrap();
+            let mut out = String::new();
+            s.read_to_string(&mut out).unwrap();
+            out
+        };
+        let status = |r: &str| r.split_whitespace().nth(1).unwrap_or("").to_string();
+        assert_eq!(status(&get(&format!("/view/{id}.html"))), "401");
+        assert_eq!(status(&get(&format!("/view/{id}.html?token=nope"))), "401");
+        assert_eq!(status(&get("/view/..%2F..%2Fboard.db?token=file-token")), "404");
+        let hop = get(&format!("/view/{id}.html?token=file-token&theme=dark"));
+        assert_eq!(status(&hop), "302", "{hop}");
+        let location = hop.lines().find_map(|l| l.strip_prefix("location: ")).unwrap().trim().to_string();
+        assert!(!location.contains("token"), "{location}");
+        let page = get(&location);
+        assert_eq!(status(&page), "200", "{page}");
+        assert!(page.contains("hello view") && page.contains("ui/notifications/size-changed"));
+        let lower = page.to_ascii_lowercase();
+        assert!(lower.contains("content-security-policy: default-src 'none'") && lower.contains("sandbox allow-scripts"));
+        assert!(lower.contains("x-content-type-options: nosniff") && lower.contains("cache-control: no-store"));
+        let key = location.split("k=").nth(1).unwrap().split('&').next().unwrap();
+        assert_eq!(status(&get(&format!("/view/{}.html?k={key}", "cd".repeat(16)))), "401");
+        std::fs::remove_file(root.join(format!("{id}.html"))).unwrap();
+        let gone = get(&location);
+        assert!(gone.contains("meowo/view-missing"), "{gone}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn view_route_trades_credentials_for_a_per_page_key() {

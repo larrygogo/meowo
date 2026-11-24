@@ -2,9 +2,11 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatItem } from "../../api";
 import { ChatActionsContext, type ChatActions } from "./chatActions";
-import { parseChoicesReceipt } from "./ChoiceCard";
+import { ChoiceMessage, parseChoicesReceipt } from "./ChoiceCard";
 import { isImageMessage } from "./imageTools";
 import { parseViewReceipt, ViewMessage } from "./ViewCard";
+import { formatChoiceAnswer } from "./choiceReply";
+import { zh } from "../../i18n/zh";
 
 afterEach(cleanup);
 
@@ -79,12 +81,39 @@ describe("视图卡沙箱与消息", () => {
   });
 
   it("meowo.send 只放进输入框，不替用户发送；超长截断", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
     const { frame, value } = mount();
+    act(() => frame.focus());
     post(frame.contentWindow, { jsonrpc: "2.0", method: "ui/message", params: { role: "user", content: { type: "text", text: "  就用「弹一下」 " } } });
     expect(value.fillPrompt).toHaveBeenCalledWith("就用「弹一下」");
     expect(value.sendText).not.toHaveBeenCalled();
+    vi.setSystemTime(Date.now() + 1500);
     post(frame.contentWindow, { jsonrpc: "2.0", method: "ui/message", params: { content: { type: "text", text: "长".repeat(5000) } } });
     expect((value.fillPrompt as ReturnType<typeof vi.fn>).mock.calls[1][0]).toHaveLength(2000);
+    vi.useRealTimers();
+  });
+
+  it("用户没在用这块页面时不收：焦点不在 iframe 上、一秒内连发", () => {
+    const { frame, value } = mount();
+    const message = { jsonrpc: "2.0", method: "ui/message", params: { content: { type: "text", text: "加载就塞" } } };
+    post(frame.contentWindow, message);
+    expect(value.fillPrompt).not.toHaveBeenCalled();
+    act(() => frame.focus());
+    post(frame.contentWindow, message);
+    post(frame.contentWindow, message);
+    post(frame.contentWindow, message);
+    expect(value.fillPrompt).toHaveBeenCalledTimes(1);
+  });
+
+  it("换主题时告诉页面，不重载", async () => {
+    const { frame } = mount();
+    const spy = vi.spyOn(frame.contentWindow!, "postMessage");
+    const src = frame.src;
+    // 主题经 MutationObserver 通知，回调是异步的。
+    await act(async () => { document.documentElement.setAttribute("data-theme", "light"); await Promise.resolve(); });
+    expect(spy).toHaveBeenCalledWith({ jsonrpc: "2.0", method: "ui/notifications/host-context-changed", params: { theme: "light" } }, "*");
+    expect(frame.src).toBe(src);
+    await act(async () => { document.documentElement.removeAttribute("data-theme"); await Promise.resolve(); });
   });
 
   it("别处来的消息（伪造来源、父窗口自己、格式不对）一律不理", () => {
@@ -118,5 +147,37 @@ describe("视图卡沙箱与消息", () => {
     render(<ViewMessage item={call()} result={result("没给 title：写一个几个字的标题", true)} />);
     expect(document.querySelector("iframe")).toBeNull();
     expect(screen.getByText(/没给 title/)).toBeTruthy();
+  });
+});
+
+describe("方案卡里的 HTML 方案", () => {
+  const choicesReceipt = `方案卡已显示给用户。
+[Choices: ${JSON.stringify({ question: "导出按钮用哪种？", options: [
+    { label: "实心", description: null, image: null, view: "3".repeat(32) },
+    { label: "胶囊", description: "更醒目", image: null, view: "4".repeat(32) },
+  ] })}]`;
+  const choiceCall = { type: "tool_use", id: "c1", timestamp: "t2", name: "mcp__meowo__offer_choices", kind: "other", summary: "" } as ToolUse;
+  const choiceResult: ToolResult = { type: "tool_result", id: "rc1", timestamp: null, tool_use_id: "c1", text: choicesReceipt, is_error: false };
+
+  it("缩略图不可交互，也不接收页面消息", () => {
+    const fillPrompt = vi.fn();
+    render(<ChatActionsContext.Provider value={{ sendText: vi.fn(async () => true), fillPrompt }}><ChoiceMessage item={choiceCall} result={choiceResult} followUps={[]} sessionId={1} /></ChatActionsContext.Provider>);
+    const thumb = document.querySelector("iframe.chat-view-thumb-frame") as HTMLIFrameElement;
+    expect(thumb.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(thumb.style.pointerEvents).toBe("none");
+    expect(thumb.tabIndex).toBe(-1);
+    post(thumb.contentWindow, { jsonrpc: "2.0", method: "ui/message", params: { content: { type: "text", text: "缩略图塞字" } } });
+    expect(fillPrompt).not.toHaveBeenCalled();
+  });
+
+  it("放大后能「选这个」，发出的消息和截图方案卡同一格式", async () => {
+    const sendText = vi.fn(async () => true);
+    render(<ChatActionsContext.Provider value={{ sendText }}><ChoiceMessage item={choiceCall} result={choiceResult} followUps={[]} sessionId={2} /></ChatActionsContext.Provider>);
+    fireEvent.click(screen.getByLabelText(zh.chat.choicesZoom(2)));
+    expect(document.querySelector(".chat-view.is-zoomed iframe")).not.toBeNull();
+    fireEvent.click(screen.getByText(zh.chat.choicesPickThis(2)));
+    expect(document.querySelector(".chat-view.is-zoomed")).toBeNull();
+    await act(async () => { fireEvent.click(screen.getByText(zh.chat.choicesSend(2))); });
+    expect(sendText).toHaveBeenCalledWith(formatChoiceAnswer({ kind: "picked", index: 1, note: null }, { question: "导出按钮用哪种？", labels: ["实心", "胶囊"] }, "zh"));
   });
 });

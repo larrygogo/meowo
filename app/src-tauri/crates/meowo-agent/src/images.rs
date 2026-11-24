@@ -1505,6 +1505,16 @@ pub fn readable_roots() -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    /// 视图卡与其他 Meowo 工具一样：gemini（mcp_meowo_）、opencode（meowo_）的名字换成统一名，前端只认这一种；
+    /// claude / kimi / codex 原样就是统一名。五家免审批都从 IMAGE_TOOLS 读，show_html 必须在里面。
+    #[test]
+    fn show_html_gets_the_unified_name_for_every_provider() {
+        assert_eq!(canonical_meowo_tool("mcp_meowo_show_html", "mcp_meowo_"), "mcp__meowo__show_html");
+        assert_eq!(canonical_meowo_tool("meowo_show_html", "meowo_"), "mcp__meowo__show_html");
+        assert_eq!(canonical_meowo_tool("mcp__meowo__show_html", "mcp_meowo_"), "mcp__meowo__show_html");
+        assert!(IMAGE_TOOLS.contains(&SHOW_HTML));
+    }
+
     use super::*;
 
     const PNG_1X1: &[u8] = &[
