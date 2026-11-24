@@ -637,7 +637,7 @@ describe("ChatSidebar", () => {
   it("工作空间页签:列出工作区,点击新建,菜单里可按工作区筛选会话", async () => {
     const pages: unknown[] = [];
     invoke.mockImplementation((command: string, args?: unknown) => {
-      if (command === "recent_cwds") return Promise.resolve(["C:/w/meowo", "C:/w/reverse-bot-gui"]);
+      if (command === "recent_cwds") return Promise.resolve(["C:/w/meowo", "C:/w/demo-app"]);
       if (command === "get_live_sessions_page") { pages.push(args); return Promise.resolve([session(1, "甲")]); }
       return Promise.resolve();
     });
@@ -660,7 +660,7 @@ describe("ChatSidebar", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "选项" })[1]);
     fireEvent.click(await screen.findByRole("menuitem", { name: "只看这个工作区的会话" }));
     expect(screen.getByRole("tab", { name: "进行中" }).getAttribute("aria-selected")).toBe("true");
-    await waitFor(() => expect(pages[pages.length - 1]).toMatchObject({ cwd: "C:/w/reverse-bot-gui" }));
+    await waitFor(() => expect(pages[pages.length - 1]).toMatchObject({ cwd: "C:/w/demo-app" }));
   });
 
   /** 用户要求（2026-11-09）：工作区可以「从列表中移除」——只是不显示，磁盘不动；点了立刻消失，

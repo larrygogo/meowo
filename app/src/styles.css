@@ -6241,7 +6241,7 @@ button.chat-image-chip.is-gated:hover > .chat-image-chip-reason { color: var(--c
 
 /* 工作区分组头（对照 Kimi WorkspaceHome）：名称 + 附加目录 + 操作按钮。 */
 .chat-workspace-head { display: flex; align-items: center; gap: var(--sp-6); }
-/* 名字单行、放不下打省略号：此前没设，侧栏窄时 reverse-bot-gui 在连字符处折成两行（用户实拍）。
+/* 名字单行、放不下打省略号：此前没设，侧栏窄时 demo-app 在连字符处折成两行（用户实拍）。
    组头按钮占满剩余宽度，各组的数字和行尾按钮才能上下对齐，不跟着名字长短错位。 */
 .chat-workspace-head > .chat-sidebar-group-head { flex: 1 1 auto; min-width: 0; }
 .chat-workspace-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--fw-medium); color: var(--cc-text); }
