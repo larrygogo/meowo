@@ -31,6 +31,10 @@ const INITIAL_HEIGHT = 200;
 const MIN_HEIGHT = 48;
 /** 两次放进输入框 / 开链接之间至少隔多久：挡住页面一次点击连发。 */
 const ACTION_GAP_MS = 1000;
+/** 点进页面后多久内的动作算这次点击的（再久就是页面攒着自己用）。 */
+const ARM_MS = 1500;
+/** 消息比「父窗口失焦」先到时，压住多久等它。 */
+const HOLD_MS = 300;
 
 export function parseViewReceipt(text: string): ViewReceipt | null {
   const line = text.split("\n").map((entry) => entry.trim()).reverse().find((entry) => entry.startsWith(MARKER) && entry.endsWith("]"));
@@ -93,7 +97,7 @@ function openFromView(href: string, opening: string) {
  * 一块沙箱页面。高度跟着页面报的走（上限 maxHeight，超出页面自己滚）；fixedHeight 给了就固定。
  * 放大不换 iframe（换了页面状态就丢了）：外层卡片切成铺满窗口的定位，iframe 原地变大。
  */
-export function ViewFrame({ id, title, fixedHeight, maxHeight, onMissing, className, interactive = true, fill = false }: {
+export function ViewFrame({ id, title, fixedHeight, maxHeight, onMissing, onEscape, className, interactive = true, fill = false }: {
   id: string;
   title: string;
   /** 撑满外层（缩略图、放大层）：高度交给 CSS，不跟页面报的走。 */
@@ -101,6 +105,8 @@ export function ViewFrame({ id, title, fixedHeight, maxHeight, onMissing, classN
   fixedHeight?: number | null;
   maxHeight?: number;
   onMissing?: () => void;
+  /** 焦点在页面里时按了 Esc（桥转告）：放大态用它收回。 */
+  onEscape?: () => void;
   className?: string;
   /** false：缩略图，页面照常渲染但不接收点击（方案卡里点缩略图是「选它」，不是点页面里的按钮）。 */
   interactive?: boolean;
@@ -116,19 +122,54 @@ export function ViewFrame({ id, title, fixedHeight, maxHeight, onMissing, classN
   const fillPrompt = actions?.fillPrompt;
   const missing = useRef(onMissing);
   missing.current = onMissing;
-  const lastAction = useRef(0);
-
+  const lastAction = useRef(Number.NEGATIVE_INFINITY);
+  const escape = useRef(onEscape);
+  escape.current = onEscape;
+  // 用户把焦点交给这块页面一次，页面只能做一个动作（审查第 2 轮：点一次后能每秒开一个浏览器标签）。
+  // 点进 iframe 时父窗口失焦、activeElement 变成这个 iframe，那一刻记下「上膛」时间；动作用掉就退膛并把焦点收回，
+  // 下一个动作要用户再点一次。膛只留 ARM_MS：过期作废，页面不能攒着一次点击、过一会儿再自己用。
+  // 跨源 iframe 在另一个进程，「父窗口失焦」和「页面发来的消息」到达父页的先后没有保证（2026-11-24 演示页实测
+  // 消息先到、被当成没点过丢掉）：没上膛时先把动作压住 HOLD_MS，等失焦到了再放行。
+  // 间隔都用 performance.now()：不受系统改时间影响（演示页把 Date.now 定死，实测限频永远算成 0）。
+  const armedAt = useRef(Number.NEGATIVE_INFINITY);
+  const pending = useRef<{ message: Message; at: number } | null>(null);
+  const run = useRef<(message: Message) => void>(() => {});
   useEffect(() => {
-    const onMessage = (event: MessageEvent) => {
-      if (!frame.current || event.source !== frame.current.contentWindow) return;
-      const message = asMessage(event.data);
-      if (!message) return;
-      // 放进输入框、开链接要「用户正在用这块页面」：焦点在这个 iframe 上（用户点进去过），不是缩略图，且限频。
+    const onBlur = () => {
+      if (document.activeElement !== frame.current) return;
+      armedAt.current = performance.now();
+      const held = pending.current;
+      pending.current = null;
+      if (held && performance.now() - held.at <= HOLD_MS) run.current(held.message);
+    };
+    // 两个信号都听：iframe 元素自己的 focus（父窗口本就没有焦点时，点进页面不会再触发父窗口 blur——
+    // 第一次动作后焦点被挪回输入框，但整个窗口的焦点仍留在 iframe 的进程里，2026-11-24 演示页实测），
+    // 以及父窗口 blur（老路径）。
+    const node = frame.current;
+    node?.addEventListener("focus", onBlur);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      node?.removeEventListener("focus", onBlur);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
+  useEffect(() => {
+    const handle = (message: Message) => {
+      if (!frame.current) return;
+      // 放进输入框、开链接要「用户正在用这块页面」：刚点进这个 iframe（上膛未过期）、焦点还在它上面、不是缩略图、限频。
       // 桥里已按用户激活过滤；这里不信页面自己说的，按宿主看得到的事实再拦一道（页面可以绕过桥直接 postMessage）。
       if (message.method === "ui/message" || message.method === "ui/open-link") {
-        const now = Date.now();
-        if (!interactive || document.activeElement !== frame.current || now - lastAction.current < ACTION_GAP_MS) return;
+        if (!interactive) return;
+        const now = performance.now();
+        if (now - lastAction.current < ACTION_GAP_MS) return;
+        const ready = now - armedAt.current <= ARM_MS && document.activeElement === frame.current;
+        if (!ready) {
+          pending.current = { message, at: now };
+          return;
+        }
         lastAction.current = now;
+        armedAt.current = Number.NEGATIVE_INFINITY;
+        frame.current.blur();
       }
       switch (message.method) {
         case "ui/notifications/size-changed": {
@@ -149,7 +190,16 @@ export function ViewFrame({ id, title, fixedHeight, maxHeight, onMissing, classN
         case "meowo/view-missing":
           missing.current?.();
           break;
+        case "meowo/escape":
+          escape.current?.();
+          break;
       }
+    };
+    run.current = handle;
+    const onMessage = (event: MessageEvent) => {
+      if (!frame.current || event.source !== frame.current.contentWindow) return;
+      const message = asMessage(event.data);
+      if (message) handle(message);
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
@@ -261,7 +311,7 @@ export function ViewCard({ view }: { view: ViewReceipt }) {
         <div className="chat-view-body">
           <ViewFrame key={reload} id={view.id} title={view.title} className="chat-view-frame"
             fixedHeight={zoomed ? null : view.height} maxHeight={zoomed ? undefined : maxHeight}
-            onMissing={() => setMissing(true)} />
+            onMissing={() => setMissing(true)} onEscape={zoomed ? close : undefined} />
         </div>
       </div>
     </>
@@ -306,7 +356,7 @@ export function ViewZoom({ id, title, caption, action, onClose }: {
         <div className="chat-view-body">
           {missing
             ? <div className="chat-view-gone">{t.chat.viewMissing}</div>
-            : <ViewFrame id={id} title={title} fill className="chat-view-frame" onMissing={() => setMissing(true)} />}
+            : <ViewFrame id={id} title={title} fill className="chat-view-frame" onMissing={() => setMissing(true)} onEscape={onClose} />}
         </div>
       </div>
     </>,

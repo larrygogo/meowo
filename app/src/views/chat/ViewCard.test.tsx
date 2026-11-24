@@ -8,6 +8,10 @@ import { parseViewReceipt, ViewMessage } from "./ViewCard";
 import { formatChoiceAnswer } from "./choiceReply";
 import { zh } from "../../i18n/zh";
 
+// 页面里点出来的外部链接走 api.openLink（系统浏览器）：换成计数，看越过门的有几个。
+const { openLink } = vi.hoisted(() => ({ openLink: vi.fn(async () => {}) }));
+vi.mock("../../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../../api")>()), openLink }));
+
 afterEach(cleanup);
 
 // 测试环境没有 Tauri：convertFileSrc 按 Windows 的 http://<协议>.localhost/ 形态给一个地址即可。
@@ -29,6 +33,14 @@ function mount(text = receipt(), actions: Partial<ChatActions> = {}) {
   render(<ChatActionsContext.Provider value={value}><ViewMessage item={call()} result={result(text)} /></ChatActionsContext.Provider>);
   const frame = document.querySelector("iframe.chat-view-frame") as HTMLIFrameElement;
   return { value, frame };
+}
+
+/** 用户点进 iframe：焦点落到 iframe 上、父窗口失焦（宿主在这一刻给这块页面一次动作机会）。 */
+function clickInto(frame: HTMLIFrameElement) {
+  act(() => {
+    frame.focus();
+    window.dispatchEvent(new Event("blur"));
+  });
 }
 
 function post(source: MessageEventSource | null, data: unknown) {
@@ -81,28 +93,67 @@ describe("视图卡沙箱与消息", () => {
   });
 
   it("meowo.send 只放进输入框，不替用户发送；超长截断", () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.useFakeTimers({ toFake: ["Date", "performance"] });
     const { frame, value } = mount();
-    act(() => frame.focus());
+    clickInto(frame);
     post(frame.contentWindow, { jsonrpc: "2.0", method: "ui/message", params: { role: "user", content: { type: "text", text: "  就用「弹一下」 " } } });
     expect(value.fillPrompt).toHaveBeenCalledWith("就用「弹一下」");
     expect(value.sendText).not.toHaveBeenCalled();
-    vi.setSystemTime(Date.now() + 1500);
+    vi.advanceTimersByTime(1500);
+    clickInto(frame);
     post(frame.contentWindow, { jsonrpc: "2.0", method: "ui/message", params: { content: { type: "text", text: "长".repeat(5000) } } });
     expect((value.fillPrompt as ReturnType<typeof vi.fn>).mock.calls[1][0]).toHaveLength(2000);
     vi.useRealTimers();
   });
 
-  it("用户没在用这块页面时不收：焦点不在 iframe 上、一秒内连发", () => {
+  it("用户没在用这块页面时不收：没点进来、点进来前很久发的、点一次连发", () => {
+    vi.useFakeTimers({ toFake: ["Date", "performance"] });
     const { frame, value } = mount();
     const message = { jsonrpc: "2.0", method: "ui/message", params: { content: { type: "text", text: "加载就塞" } } };
     post(frame.contentWindow, message);
     expect(value.fillPrompt).not.toHaveBeenCalled();
-    act(() => frame.focus());
+    // 隔了很久用户才点进来：之前压着的那条已过期，不能借这次点击放出去。
+    vi.advanceTimersByTime(5000);
+    clickInto(frame);
+    expect(value.fillPrompt).not.toHaveBeenCalled();
     post(frame.contentWindow, message);
     post(frame.contentWindow, message);
     post(frame.contentWindow, message);
     expect(value.fillPrompt).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it("消息比父窗口失焦先到（跨进程顺序不定）也认：压住等失焦；点击留下的机会 1.5 秒后作废", () => {
+    vi.useFakeTimers({ toFake: ["Date", "performance"] });
+    const { frame, value } = mount();
+    const message = (text: string) => ({ jsonrpc: "2.0", method: "ui/message", params: { content: { type: "text", text } } });
+    post(frame.contentWindow, message("先到的消息"));
+    expect(value.fillPrompt).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(100);
+    clickInto(frame);
+    expect(value.fillPrompt).toHaveBeenCalledWith("先到的消息");
+    // 再点一次，但页面攒着不用，过 2 秒再自己发：不认。
+    vi.advanceTimersByTime(1200);
+    clickInto(frame);
+    vi.advanceTimersByTime(2000);
+    post(frame.contentWindow, message("攒着的"));
+    expect(value.fillPrompt).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it("点一次只能开一个链接：开完焦点收回，后面的不放行（审查第 2 轮 linkSpam）", () => {
+    vi.useFakeTimers({ toFake: ["Date", "performance"] });
+    openLink.mockClear();
+    const { frame } = mount();
+    clickInto(frame);
+    for (let i = 0; i < 5; i += 1) {
+      post(frame.contentWindow, { jsonrpc: "2.0", method: "ui/open-link", params: { url: `https://example.com/${i}` } });
+      vi.advanceTimersByTime(1100);
+    }
+    expect(document.activeElement).not.toBe(frame);
+    expect(openLink).toHaveBeenCalledTimes(1);
+    expect(openLink).toHaveBeenCalledWith("https://example.com/0");
+    vi.useRealTimers();
   });
 
   it("换主题时告诉页面，不重载", async () => {
@@ -141,6 +192,16 @@ describe("视图卡沙箱与消息", () => {
     expect(document.querySelector(".chat-view.is-zoomed")).not.toBeNull();
     fireEvent.keyDown(document, { key: "Escape" });
     expect(document.querySelector(".chat-view.is-zoomed")).toBeNull();
+  });
+
+  it("焦点在页面里按 Esc（桥转告 meowo/escape）也收回放大；没放大时不理", () => {
+    const { frame } = mount();
+    post(frame.contentWindow, { jsonrpc: "2.0", method: "meowo/escape", params: {} });
+    fireEvent.click(screen.getByLabelText("放大"));
+    clickInto(frame);
+    post(frame.contentWindow, { jsonrpc: "2.0", method: "meowo/escape", params: {} });
+    expect(document.querySelector(".chat-view.is-zoomed")).toBeNull();
+    expect(document.querySelector("iframe.chat-view-frame")).toBe(frame);
   });
 
   it("回执是失败时给原因，不出 iframe", () => {
