@@ -1701,3 +1701,42 @@ pub(super) fn seed_legacy_receipt(task: &Path, id: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, gate.to_string()).unwrap();
 }
+
+/// 接续摘要写在 progress.md 开头，`progress` 只取末尾 6000 字，长任务里会被截掉：快照另取这一节。
+#[test]
+fn resume_summary_is_cut_from_the_head_of_progress() {
+    let text = "phase: implement\n\n## 接续摘要\n\n- 正在做：验收 3\n### 阻塞\n- 等 leader 授权\n```md\n## 代码块里的标题不算\n```\n\n## 2026-11-24 第一节\n- 旧记录\n";
+    assert_eq!(
+        resume_summary(text).as_deref(),
+        Some("- 正在做：验收 3\n### 阻塞\n- 等 leader 授权\n```md\n## 代码块里的标题不算\n```")
+    );
+    // 标题带补充说明也认；没有这一节、只有标题没有正文、`#tag` 这种不是标题的都没有摘要。
+    assert_eq!(resume_summary("# 接续摘要（11-24 更新）\n当前在 verify\n# 记录\nx").as_deref(), Some("当前在 verify"));
+    assert!(resume_summary("phase: verify\n## 2026-11-24 记录\n- 接续摘要在这里只是正文").is_none());
+    assert!(resume_summary("## 接续摘要\n\n## 下一节\n- x").is_none());
+    assert!(resume_summary("#接续摘要\n- x").is_none());
+    // 封顶 1500 字，截断时带提示。
+    let long = format!("## 接续摘要\n{}", "字".repeat(2000));
+    let cut = resume_summary(&long).unwrap();
+    assert!(cut.starts_with(&"字".repeat(RESUME_LIMIT)) && cut.contains("已截断"));
+}
+
+/// 端到端：长 progress.md 的末尾里已经没有摘要了，快照仍带着它；旧任务没有这一节，字段为空、序列化里不出现。
+#[test]
+fn snapshot_carries_resume_summary_even_when_progress_tail_drops_it() {
+    let e = env();
+    let root = e.d.join("p");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let t = make(&root);
+    let cwd = root.to_str().unwrap();
+    let old = snapshot_inner(cwd, None, true).unwrap();
+    assert!(old.resume_summary.is_none());
+    assert!(!serde_json::to_string(&old).unwrap().contains("resumeSummary"));
+
+    let filler = "- 很长的历史记录\n".repeat(1500);
+    fs::write(t.join("progress.md"), format!("phase: implement\n\n## 接续摘要\n- 下一步：跑验收 2\n\n## 2026-11-24 记录\n{filler}")).unwrap();
+    let snap = snapshot_inner(cwd, None, true).unwrap();
+    assert!(!snap.progress.contains("接续摘要"));
+    assert_eq!(snap.resume_summary.as_deref(), Some("- 下一步：跑验收 2"));
+    assert_eq!(snap.phase, "implement");
+}

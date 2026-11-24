@@ -989,6 +989,7 @@ export const en: Dict = {
     leadProgressUndated: "Undated",
     leadProgressEarlier: "Earlier entries",
     leadEarlierInFile: (file: string) => `Earlier entries are in ${file}`,
+    leadResumeTitle: "Where things stand",
     tasksBackground: "Background Bash",
     tasksSubagents: "Subtasks",
     toolDone: "Done",

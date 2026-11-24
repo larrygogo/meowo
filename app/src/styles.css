@@ -6556,6 +6556,10 @@ button.lead-entry-head:hover { background: var(--fill-hover); }
 .lead-entry-title { min-width: 0; color: var(--cc-text-dim); font-size: var(--text-sm); line-height: var(--leading-normal); overflow-wrap: anywhere; }
 .lead-entry.is-latest .lead-entry-title, .lead-entry.is-open .lead-entry-title { color: var(--cc-text); font-weight: var(--fw-medium); }
 .lead-entry .lead-note-body { padding: var(--sp-2) var(--sp-8) var(--sp-10); }
+/* 接续摘要（2026-11-24）：钉在进度时间线上面，版式同决定卡（底色块 + 小标题），不用左侧竖条（standards.md）。 */
+.lead-resume { display: flex; flex-direction: column; gap: var(--sp-6); margin: 0 0 var(--sp-12); padding: var(--sp-10) var(--sp-12); border-radius: var(--radius-md); background: var(--fill-hover); }
+.lead-resume-title { margin: 0; color: var(--cc-text-faint); font-size: var(--text-xs); font-weight: var(--fw-medium); line-height: var(--leading-normal); }
+.lead-resume .lead-note-body { color: var(--cc-text); }
 .lead-notes-earlier { margin: var(--sp-6) 0 0; padding-left: calc(16px + var(--sp-6) + var(--sp-8)); color: var(--cc-text-faint); font-size: var(--text-xs); }
 .lead-notes.is-decisions .lead-notes-earlier { padding-left: var(--sp-12); }
 @media (max-width: 600px) {

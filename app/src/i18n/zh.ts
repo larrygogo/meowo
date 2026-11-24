@@ -1153,6 +1153,7 @@ export const zh = {
     leadLatest: "最近：",
     leadDecisionQuote: "leader 原话",
     leadProgressLatest: "最新",
+    leadResumeTitle: "接续摘要",
     leadProgressCount: (count: number) => `${count} 条`,
     leadProgressUndated: "未注明日期",
     leadProgressEarlier: "更早的记录",

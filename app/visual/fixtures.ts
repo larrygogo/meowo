@@ -252,6 +252,18 @@ function leadRichTask(zh: boolean): unknown {
   const check = (id: string, text: string, over: Record<string, unknown> = {}) => ({ id, check: text, passes: false, waived: null, leader: false, blocked: null, ...over });
   return {
     slug: "20261118-multi-forge", phase: "verify", gate: null,
+    // 后端从 progress.md 开头另取的「接续摘要」：中文样例是尾部截断后的 progress，里面已经没有这一节了，正好是长任务的样子。
+    resumeSummary: (zh ? [
+      "- 正在做：M6 CI 全绿（Windows detect 计时测试偶发失败，重跑通过）",
+      "- 最近验证的版本：1315887c",
+      "- 下一步：等 leader 决定是否合并 #197、#198",
+      "- 阻塞：M5 要 leader 提供 gitlab.com 测试账号",
+    ] : [
+      "- Working on: M6 CI green (Windows detect timing test flaked once, passed on rerun)",
+      "- Last verified build: 1315887c",
+      "- Next: wait for the leader to decide on merging #197 and #198",
+      "- Blocked: M5 needs a gitlab.com test account from the leader",
+    ]).join("\n"),
     spec: zh ? "# 代码托管：多平台 PR（20261118-multi-forge）\n\n## 目的\n不只 GitHub。" : "# Code hosting: PRs beyond GitHub (20261118-multi-forge)\n\n## Goal\nNot only GitHub.",
     checks: [
       check("M1", zh ? "GitLab、Gitea、Bitbucket、Gitee 的 PR 列表、检查、合并、评论走统一接口" : "GitLab, Gitea, Bitbucket and Gitee PRs, checks, merge and comments go through one interface",

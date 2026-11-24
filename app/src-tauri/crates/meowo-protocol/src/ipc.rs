@@ -1550,6 +1550,11 @@ pub struct LeadTaskDto {
     pub decisions: String,
     /// progress.md 原文末尾。
     pub progress: String,
+    /// progress.md 里「接续摘要」一节的正文（不含标题行，封顶 1500 字）。`progress` 只取末尾，
+    /// 写在文件开头的摘要在长任务里会被截掉，面板单独取它钉在进度页最上面。没有这一节为 None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub resume_summary: Option<String>,
     /// 正在挂起或已作答未消费的关卡；没有关卡或 gate.json 损坏为 None。
     pub gate: Option<LeadGateDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

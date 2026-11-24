@@ -50,6 +50,8 @@ fn shared_workflow_keeps_risk_permission_and_review_contracts() {
         "摘要里不另写 phase 行",
         "由主会话原样存到同一路径",
         "`lead-redteam` 只拿任务目录",
+        // Claude 的 guard hook 只拦 Write/Edit，经 Bash 写文件和 codex 的审查角色靠这一条事后核对。
+        "按审查越界处理",
         "`.lead/harness.md`",
     ] {
         assert!(SKILL.contains(rule), "{rule}");

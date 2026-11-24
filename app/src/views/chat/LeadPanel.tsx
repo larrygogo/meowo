@@ -379,7 +379,7 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose, onOpenInPanel,
           <div className="chat-plan-doc">
             {section === "spec"
               ? <div className="chat-md"><ChatMarkdown text={task.spec || t.chat.leadSectionEmpty} /></div>
-              : section === "decisions" ? <LeadDecisions text={task.decisions} /> : <LeadProgress text={task.progress} slug={task.slug} />}
+              : section === "decisions" ? <LeadDecisions text={task.decisions} /> : <LeadProgress text={task.progress} slug={task.slug} resume={task.resumeSummary} />}
           </div>
         )}
       </div>

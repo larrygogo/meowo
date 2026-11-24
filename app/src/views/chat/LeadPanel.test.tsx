@@ -743,3 +743,36 @@ it("验收显示稳定编号，旧任务的决定表格拆成卡，进度使用�
   expect(document.querySelectorAll(".lead-timeline .lead-timeline-marker")).toHaveLength(2);
   expect(document.querySelectorAll(".lead-timeline .lead-entry")[0].textContent).toContain("第二节");
 });
+
+it("接续摘要钉在进度页最上面，时间线里不再重复；旧任务没有摘要时进度页和原来一样", () => {
+  const progress = "phase: implement\n\n## 接续摘要\n- 下一步：跑验收 2\n\n## 2026-11-24 第一节\n- 第一条记录\n\n## 2026-11-25 第二节\n- 第二条记录";
+  const { container, rerender } = render(<LeadPanel task={task({ progress, resumeSummary: "- 下一步：跑验收 2" })} onClose={() => {}} />);
+  fireEvent.click(screen.getByRole("tab", { name: "进度" }));
+  const notes = container.querySelector(".lead-notes.is-progress")!;
+  // 摘要在时间线前面（DOM 顺序即视觉顺序），带标题，正文可见。
+  expect(notes.firstElementChild?.className).toBe("lead-resume");
+  expect(screen.getByRole("region", { name: zh.chat.leadResumeTitle })).toBeTruthy();
+  expect(screen.getByText(visibleText("下一步：跑验收 2"))).toBeTruthy();
+  // 时间线只剩两节真实记录，倒序不变。
+  const entries = [...notes.querySelectorAll(".lead-timeline .lead-entry")];
+  expect(entries).toHaveLength(2);
+  expect(entries[0].textContent).toContain("第二节");
+  expect(notes.querySelector(".lead-timeline")?.textContent).not.toContain("接续摘要");
+
+  // 长任务：末尾 6000 字里已经没有摘要那一节了，摘要照样在最上面。
+  rerender(<LeadPanel task={task({ progress: "## 2026-11-25 第二节\n- 第二条记录", resumeSummary: "- 下一步：跑验收 2" })} onClose={() => {}} />);
+  expect(container.querySelector(".lead-resume")?.textContent).toContain("下一步：跑验收 2");
+
+  // 旧任务（后端不给 resumeSummary）：没有摘要块，文件里碰巧叫「接续摘要」的节也照常留在时间线里。
+  rerender(<LeadPanel task={task({ progress })} onClose={() => {}} />);
+  expect(container.querySelector(".lead-resume")).toBeNull();
+  expect(container.querySelectorAll(".lead-timeline .lead-entry")).toHaveLength(3);
+});
+
+it("只有接续摘要、还没有记录时显示摘要，不显示「暂无内容」", () => {
+  const { container } = render(<LeadPanel task={task({ progress: "phase: spec\n## 接续摘要\n- 正在写 SPEC", resumeSummary: "- 正在写 SPEC" })} onClose={() => {}} />);
+  fireEvent.click(screen.getByRole("tab", { name: "进度" }));
+  expect(container.querySelector(".lead-resume")?.textContent).toContain("正在写 SPEC");
+  expect(container.querySelectorAll(".lead-timeline .lead-entry")).toHaveLength(0);
+  expect(screen.queryByText(zh.chat.leadSectionEmpty)).toBeNull();
+});

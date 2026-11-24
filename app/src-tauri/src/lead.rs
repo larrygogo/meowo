@@ -235,6 +235,13 @@ fn add_lead_hooks(settings: &mut Value, reporter: &str) {
         "PostToolUse",
         json!({"matcher": "Write|Edit|MultiEdit|Bash|PowerShell", "hooks": [h("claim")]}),
     );
+    // PreToolUse：lead-redteam 只许写任务目录 agents/ 下的审查报告（reporter lead/guard.rs）。
+    // 不挂 Bash：每条命令都起一个进程太重，Bash 写文件由主会话前后对比 git status 事后核对。
+    push_group(
+        settings,
+        "PreToolUse",
+        json!({"matcher": "Write|Edit|NotebookEdit", "hooks": [h("guard")]}),
+    );
     // Stop：实施阶段拦截；有挂起关卡时 wait 在后台等答复，答了就唤醒。
     push_group(settings, "Stop", json!({"hooks": [h("stop"), wait]}));
 }
@@ -956,7 +963,7 @@ mod install_tests {
         assert_eq!(std::fs::read_to_string(dir.join("agents/lead-redteam.md")).unwrap(), format!("{REDTEAM_HEADER}{}", meowo_agent::lead_install::REVIEW));
         let v = settings_of(&dir);
         let cmds = lead_cmds(&v);
-        for mode in ["session", "claim", "stop", "wait"] {
+        for mode in ["session", "claim", "stop", "wait", "guard"] {
             assert!(
                 cmds.iter().any(|c| c.ends_with(&format!(" lead {mode}"))),
                 "{mode}: {cmds:?}"
@@ -964,7 +971,12 @@ mod install_tests {
         }
         assert_eq!(v["model"], "opus");
         assert_eq!(v["hooks"]["Stop"][0], original["hooks"]["Stop"][0]);
-        assert_eq!(v["hooks"]["PreToolUse"], original["hooks"]["PreToolUse"]);
+        // 用户自己的 PreToolUse 组原样留在前面，guard 只追加一组、只挂写文件的工具（不挂 Bash）。
+        let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(pre.len(), 2);
+        assert_eq!(pre[0], original["hooks"]["PreToolUse"][0]);
+        assert_eq!(pre[1]["matcher"], "Write|Edit|NotebookEdit");
+        assert!(pre[1]["hooks"][0]["command"].as_str().unwrap().ends_with(" lead guard"));
         let waits: Vec<&Value> = v["hooks"]["Stop"]
             .as_array()
             .unwrap()
@@ -1046,8 +1058,9 @@ mod install_tests {
         use meowo_agent::{
             CommandSpec, ConfigFormat, EnsureOutcome, HookEvent, HookSpec, MissingConfig,
         };
-        static EV: [HookEvent; 3] = [
+        static EV: [HookEvent; 4] = [
             HookEvent::matched("SessionStart", "*"),
+            HookEvent::matched("PreToolUse", "AskUserQuestion"),
             HookEvent::matched("PostToolUse", "*"),
             HookEvent::matched("Stop", "*"),
         ];
