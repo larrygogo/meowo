@@ -25,7 +25,7 @@ describe("会话管理页（对照 Kimi Code）", () => {
     archivedCalls = [];
     invoke.mockReset();
     invoke.mockImplementation((command: string, args: unknown) => {
-      if (command === "recent_cwds") return Promise.resolve(["C:/w/meowo", "C:/w/reverse-bot-gui"]);
+      if (command === "recent_cwds") return Promise.resolve(["C:/w/meowo", "C:/w/demo-app"]);
       if (command === "set_archived") { archivedCalls.push(args as { sessionId: number; archived: boolean }); return Promise.resolve(); }
       if (command === "get_session_admin_page") {
         const q = args as Query;
@@ -63,14 +63,14 @@ describe("会话管理页（对照 Kimi Code）", () => {
     render(<SessionAdmin onBack={() => {}} onOpen={() => {}} />);
     await screen.findByText("会话2");
     fireEvent.click(screen.getByRole("button", { name: "工作区" }));
-    fireEvent.click(await screen.findByRole("option", { name: "reverse-bot-gui" }));
+    fireEvent.click(await screen.findByRole("option", { name: "demo-app" }));
     fireEvent.click(screen.getByRole("button", { name: "状态" }));
     fireEvent.click(await screen.findByRole("option", { name: "进行中" }));
     fireEvent.click(screen.getByRole("button", { name: "更新时间" }));
     fireEvent.click(await screen.findByRole("option", { name: "7 天以前" }));
     expect(queries).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "查询" }));
-    await waitFor(() => expect(queries[queries.length - 1]).toEqual({ workspaces: ["C:/w/reverse-bot-gui"], status: "open", updatedBeforeDays: 7, page: 0, pageSize: 20 }));
+    await waitFor(() => expect(queries[queries.length - 1]).toEqual({ workspaces: ["C:/w/demo-app"], status: "open", updatedBeforeDays: 7, page: 0, pageSize: 20 }));
     fireEvent.click(screen.getByRole("button", { name: "重置" }));
     await waitFor(() => expect(queries[queries.length - 1]).toEqual({ workspaces: [], status: null, updatedBeforeDays: null, page: 0, pageSize: 20 }));
   });
@@ -228,7 +228,7 @@ describe("会话管理页（对照 Kimi Code）", () => {
     // 做空第二轮 N5（2026-11-12）：确认前要先走网络现取状态，原先没有进行中锁，连点两下弹两个确认、
     // 写两遍；单条按钮也逐页拉全部进行中会话。兄弟场景：批量「标记完成」「恢复进行中」与行内单条按钮共用一把锁。
     it("N5 进行中连点不重入，按钮标 aria-disabled 但焦点留在原处；现取只查目标所在工作区", async () => {
-      withPage([row(2, "会话2", { cwd: "C:/w/reverse-bot-gui" }), row(3, "会话3")]);
+      withPage([row(2, "会话2", { cwd: "C:/w/demo-app" }), row(3, "会话3")]);
       const base = invoke.getMockImplementation()!;
       const fetched: Query[] = [];
       let release: () => void = () => {};
@@ -245,7 +245,7 @@ describe("会话管理页（对照 Kimi Code）", () => {
       button.focus();
       fireEvent.click(button);
       await waitFor(() => expect(fetched).toHaveLength(1));
-      expect(fetched[0].workspaces).toEqual(["C:/w/reverse-bot-gui"]);
+      expect(fetched[0].workspaces).toEqual(["C:/w/demo-app"]);
       expect(button.getAttribute("aria-disabled")).toBe("true");
       expect(document.activeElement).toBe(button);
       fireEvent.click(button);

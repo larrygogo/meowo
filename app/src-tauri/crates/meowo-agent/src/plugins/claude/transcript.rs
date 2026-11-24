@@ -3101,7 +3101,7 @@ mod tests {
         }
     }
 
-    /// 签名取自 2.1.304 真机 transcript(reverse-bot-gui 会话 de5471ea):同一条消息里一块真 thinking
+    /// 签名取自 2.1.304 真机 transcript(demo-app 会话 de5471ea):同一条消息里一块真 thinking
     /// (文本隐去为空)紧跟一块旁白,终端把后者显示成正文。
     #[test]
     fn narration_thinking_block_renders_as_assistant_text() {

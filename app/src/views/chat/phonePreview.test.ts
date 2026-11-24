@@ -66,7 +66,7 @@ describe("手机预览：点本机链接经电脑上的代理打开", () => {
   });
 
   it("预览地址用后端给的代理 IP（IPv6 带方括号），不用地址栏里的主机名", () => {
-    expect(previewUrl({ host: "100.111.211.81", port: 5173, path: "/__meowo/preview?c=x" })).toBe("http://100.111.211.81:5173/__meowo/preview?c=x");
+    expect(previewUrl({ host: "100.64.0.10", port: 5173, path: "/__meowo/preview?c=x" })).toBe("http://100.64.0.10:5173/__meowo/preview?c=x");
     expect(previewUrl({ host: "[fd7a::1]", port: 5173, path: "/" })).toBe("http://[fd7a::1]:5173/");
   });
 });

@@ -15,9 +15,9 @@ const STOP_HOOK = '<task-notification>\n<summary>Stop hook feedback</summary>\n<
 describe("parseUserText", () => {
   /// 输入框里 `! 命令` 的落盘形态（实拍）：命令一条、输出一条，都是 user 消息。
   it("`!` 命令：命令成徽章，stdout / stderr 成输出，空的 stderr 不收", () => {
-    const input = parseUserText("<bash-input>ssh-copy-id -i ~/.ssh/id_ed25519.pub reversegame@192.168.5.111</bash-input>");
+    const input = parseUserText("<bash-input>ssh-copy-id -i ~/.ssh/id_ed25519.pub dev@192.168.1.20</bash-input>");
     expect(input.local).toBe(true);
-    expect(input.commands).toEqual([{ name: "!", args: "ssh-copy-id -i ~/.ssh/id_ed25519.pub reversegame@192.168.5.111" }]);
+    expect(input.commands).toEqual([{ name: "!", args: "ssh-copy-id -i ~/.ssh/id_ed25519.pub dev@192.168.1.20" }]);
     expect(input.text).toBe("");
     const output = parseUserText("<bash-stdout>/usr/bin/ssh-copy-id: INFO: Source of key(s)\nWARNING: All keys were skipped</bash-stdout><bash-stderr></bash-stderr>");
     expect(output.local).toBe(true);
@@ -281,9 +281,9 @@ describe("Message 渲染本地命令", () => {
   });
 
   it("`!` 命令和它的输出不再摊出 <bash-input> 等标签原文", () => {
-    render(<Message item={userText("<bash-input>ssh-copy-id reversegame@192.168.5.111</bash-input>")} />);
+    render(<Message item={userText("<bash-input>ssh-copy-id dev@192.168.1.20</bash-input>")} />);
     expect(screen.getByText("!")).toBeTruthy();
-    expect(screen.getByText("ssh-copy-id reversegame@192.168.5.111")).toBeTruthy();
+    expect(screen.getByText("ssh-copy-id dev@192.168.1.20")).toBeTruthy();
     expect(screen.queryByText(/bash-input/)).toBeNull();
     cleanup();
     render(<Message item={userText("<bash-stdout>All keys were skipped</bash-stdout><bash-stderr></bash-stderr>")} />);
