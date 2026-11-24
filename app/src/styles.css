@@ -6589,9 +6589,19 @@ button.lead-entry-head:hover { background: var(--fill-hover); }
    离滚到底还差几像素，渐隐带正好压在框的下半截（量到框底 278.6、可视区底 278，底边 16px 被淡掉）。
    scroll-margin 让聚焦时多滚一段、框底离可视区留出间距。 */
 .lead-gate-card .chat-approval-copy:has(.lead-gate-note:focus) { -webkit-mask-image: none; mask-image: none; }
-/* 证据版本与交付版本对不上的验收项（2026-11-24 试跑）：提醒而不是报错，用弱色小字，不加彩色竖条。 */
-.lead-gate-stale { margin-top: var(--sp-6); color: var(--cc-text-dim); font-size: var(--text-xs); }
-.lead-gate-stale p { margin: 0 0 var(--sp-2); }
+/* 证据版本与交付版本对不上的验收项（2026-11-24 第四轮）：提醒色底块（同 .ns-warn）+ 图标标题（同 .agent-mcp-unreadable-head），
+   明细直接摊开。提醒不是报错：不用报错红、不加彩色竖条（standards.md），也不拦「验收通过」。 */
+.lead-stale { margin-top: var(--sp-8); padding: var(--sp-8) var(--sp-10); border-radius: var(--radius-md); background: color-mix(in srgb, var(--cc-warn-vivid) 10%, transparent); color: var(--cc-text); font-size: var(--text-xs); line-height: var(--leading-normal); }
+.lead-stale p { margin: 0; }
+.lead-stale .lead-stale-head { display: flex; align-items: flex-start; gap: var(--sp-6); margin-bottom: var(--sp-4); font-size: var(--text-sm); }
+/* 图标对齐首行（标题折成两行时不居中到两行中间）：1.5 行高下首行中线约在 0.75em。 */
+.lead-stale-head svg { flex: none; margin-top: calc(0.75em - 7px); color: var(--cc-warn-text); }
+.lead-stale-title { color: var(--cc-warn-text); font-weight: var(--fw-semibold); }
+.lead-stale-hint { color: var(--cc-text-dim); }
+.lead-stale-list { margin: var(--sp-4) 0 0; padding-left: var(--sp-16); }
+.lead-stale-list li { margin: var(--sp-2) 0; overflow-wrap: anywhere; }
+.lead-stale-id { font-variant-numeric: tabular-nums; color: var(--cc-text-dim); }
+.lead-stale-rev { margin-left: var(--sp-6); color: var(--cc-text-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .lead-gate-summary { max-height: 7.5em; overflow: hidden; font-size: var(--text-sm); }
 .lead-gate-summary.is-expanded { max-height: none; }
 /* 审批卡的标题圆点挂在 .chat-approval-copy strong 上；摘要是 markdown，加粗不该带圆点（实拍）。 */

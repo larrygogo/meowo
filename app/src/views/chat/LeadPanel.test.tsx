@@ -801,9 +801,17 @@ describe("C 卡标出证据版本与交付版本不一致的验收项", () => {
       check("AC1", { evidence: [ev("9f8e7d6")] }),
     ] } });
     const { rerender } = render(<LeadGateCard cwd="C:/repo" gate={stale} onAnswered={() => {}} />);
-    expect(screen.getByText(zh.chat.leadReviewStale("abc1234"))).toBeTruthy();
-    expect(screen.getByRole("list", { name: zh.chat.leadReviewStaleList }).textContent).toContain("AC1 · 检查 AC1 · 证据版本 9f8e7d6");
+    // 不只靠颜色：整块是 role="note"，结论是文字标题，读屏能读到「几项没在哪个版本上验证过」。
+    const note = screen.getByRole("note");
+    expect(note.querySelector(".lead-stale-title")?.textContent).toBe(zh.chat.leadReviewStaleTitle(1, "abc1234"));
+    expect(note.textContent).toContain(zh.chat.leadReviewStaleHint);
+    const list = screen.getByRole("list", { name: zh.chat.leadReviewStaleList });
+    expect(list.textContent).toContain("检查 AC1");
+    expect(list.textContent).toContain("证据版本 9f8e7d6");
+    // 只是提醒：「验收通过」照常可点。
+    expect((screen.getByRole("button", { name: zh.chat.leadGateAccept }) as HTMLButtonElement).disabled).toBe(false);
     rerender(<LeadGateCard cwd="C:/repo" gate={gate("C")} onAnswered={() => {}} />);
+    expect(screen.queryByRole("note")).toBeNull();
     expect(screen.queryByRole("list", { name: zh.chat.leadReviewStaleList })).toBeNull();
   });
 });

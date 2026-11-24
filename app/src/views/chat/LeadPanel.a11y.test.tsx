@@ -109,3 +109,19 @@ describe("Lead 入口", () => {
     expect(screen.getByRole("button", { name: /待拍板/ })).toBeTruthy();
   });
 });
+
+describe("C 卡的证据版本提醒", () => {
+  it("提醒不只靠颜色：role=note、文字标题在前，图标对读屏隐藏，明细是带名字的列表", async () => {
+    const { LeadGateCard } = await import("./LeadPanel");
+    const { zh } = await import("../../i18n/zh");
+    const evidence = { command: "lead-redteam 审查", result: "通过", revision: "9f8e7d6", reference: "agents/redteam-1.md", limitations: "" };
+    render(<LeadGateCard cwd="C:/repo" onAnswered={() => {}} gate={{
+      id: "C-1", kind: "C", title: "验收", summary: "", options: [], status: "pending", answer: null,
+      review: { revision: "1a2b3c4", checks: [{ id: "c1", check: "测试全过", passes: true, waived: null, leader: false, blocked: null, evidence: [evidence] }] },
+    }} />);
+    const note = screen.getByRole("note");
+    expect(note.textContent?.startsWith(zh.chat.leadReviewStaleTitle(1, "1a2b3c4"))).toBe(true);
+    expect(note.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+    expect(screen.getByRole("list", { name: zh.chat.leadReviewStaleList }).querySelectorAll("li")).toHaveLength(1);
+  });
+});

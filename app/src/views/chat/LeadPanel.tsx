@@ -18,7 +18,7 @@ import { ApprovalCard } from "./ApprovalCard";
 import { useTablist } from "../useTablist";
 import { Icon } from "../../icons/Icon";
 import { icCircle, icClock, icFlag, icMinus, icSidebarRight } from "../../icons/glyphs.chat";
-import { icCheck } from "../../icons/glyphs";
+import { icAlert, icCheck } from "../../icons/glyphs";
 
 /// 轮询间隔：任务文件由 agent 随手改写，没有推送通道；读的是本地几个小文件，开销可忽略。
 const POLL_MS = 4000;
@@ -459,6 +459,29 @@ const STALE_GATE = /^lead\/gate_(?:changed|bad_choice|missing|closed)$/;
 
 /// returnFocusTo：提交成功、卡片随轮询收起时焦点的去处（输入框），同审批卡。
 /// onStale：提交被拒且原因是卡片过时（STALE_GATE），就地重读关卡。不复用 onAnswered：那是「答上了」。
+/// 证据版本与交付版本对不上的提醒（2026-11-24 第四轮，对照过三版，见 PR #224）：整块提醒色底 + 图标 + 一句结论当标题，
+/// 下面一句怎么办、逐项列出。跟 GitHub 合并框里「审查之后又有新提交」、Primer 的 warning Flash 一样，内容直接摊开，
+/// 不收进「查看」（leader 不点开就不知道是哪项）。颜色复用 .ns-warn 与本轮检查 is-stale 的提醒色，不用报错红；
+/// 不拦「验收通过」：这是提醒，接受与否由 leader 定。role="note" + 文字结论，读屏和色弱都不靠颜色。
+function LeadStaleNotice({ stale, revision }: { stale: ReturnType<typeof staleReviewChecks>; revision: string }) {
+  const t = useT();
+  if (stale.length === 0) return null;
+  return (
+    <div className="lead-stale" role="note">
+      <p className="lead-stale-head"><Icon glyph={icAlert} size={14} /><strong className="lead-stale-title">{t.chat.leadReviewStaleTitle(stale.length, revision)}</strong></p>
+      <p className="lead-stale-hint">{t.chat.leadReviewStaleHint}</p>
+      <ul className="lead-stale-list" aria-label={t.chat.leadReviewStaleList}>
+        {stale.map((item) => (
+          <li key={item.id}>
+            <span className="lead-stale-id">{item.id}</span> {item.check}
+            <span className="lead-stale-rev">{t.chat.leadReviewStaleRevision(item.revisions.join(", "))}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function LeadGateCard({ cwd, gate, onAnswered, onStale, returnFocusTo }: {
   cwd: string;
   gate: LeadGateDto;
@@ -567,14 +590,7 @@ export function LeadGateCard({ cwd, gate, onAnswered, onStale, returnFocusTo }: 
               <li key={check.id}>{check.id} · {check.check}</li>
             ))}
           </ul>
-          {stale.length > 0 && (
-            <div className="lead-gate-stale" role="note">
-              <p>{t.chat.leadReviewStale(gate.review.revision)}</p>
-              <ul aria-label={t.chat.leadReviewStaleList}>
-                {stale.map((item) => <li key={item.id}>{item.id} · {item.check} · {t.chat.leadReviewStaleRevision(item.revisions.join(", "))}</li>)}
-              </ul>
-            </div>
-          )}
+          <LeadStaleNotice stale={stale} revision={gate.review.revision} />
         </div>
       )}
       {gate.summary && (
