@@ -14,6 +14,8 @@ const api = vi.hoisted(() => ({
   leadWorkflowInstalled: vi.fn(),
   leadProviderInstallations: vi.fn(),
   listAgents: vi.fn(),
+  teamWorkflowState: vi.fn(),
+  setTeamWorkflow: vi.fn(),
 }));
 vi.mock("../api", async (o) => ({ ...(await o<typeof import("../api")>()), ...api }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(() => Promise.resolve(false)) }));
@@ -29,11 +31,16 @@ beforeEach(() => {
   api.setSettings.mockResolvedValue(undefined);
   api.listAgents.mockResolvedValue([]);
   api.leadProviderInstallations.mockResolvedValue([]);
+  api.teamWorkflowState.mockResolvedValue(team({}));
 });
 afterEach(() => {
   cleanup();
   Object.values(api).forEach((m) => m.mockReset());
 });
+
+const team = (over: Partial<{ installed: boolean; leadInstalled: boolean; conflict: string | null; personalDir: string | null }>) =>
+  ({ installed: false, leadInstalled: false, conflict: null, personalDir: "/home/u/.meowo/team", ...over });
+const teamSwitch = () => screen.findByRole<HTMLButtonElement>("switch", { name: zh.settings.team });
 
 const gateRow = () => screen.queryByRole("switch", { name: `${zh.settings.keepAwakeGroup} · ${zh.settings.keepAwakeLeadGate}` });
 
@@ -73,5 +80,40 @@ describe("网络代理在通用页最后", () => {
     expect(cards.at(-1)).toBe(modeRow);
     expect(cards[0]!.textContent).toContain(zh.settings.autoUpdate);
     expect(cards[0]!.textContent).not.toContain(zh.proxy.mode);
+  });
+});
+
+// 团队（team.rs）是 Lead 的扩展：Lead 关着不能开；关掉 Lead 时后端会一起卸掉团队，所以跟着 Lead 开关重读状态。
+describe("团队一行", () => {
+  it("Lead 没开：开关不可用，并说明先开 Lead", async () => {
+    api.leadWorkflowInstalled.mockResolvedValue(false);
+    render(<GeneralSection />);
+    expect((await teamSwitch()).disabled).toBe(true);
+    expect(screen.getByText(zh.settings.teamNeedsLead)).toBeTruthy();
+    expect(screen.getByText(zh.settings.teamDesc)).toBeTruthy();
+  });
+
+  it("Lead 开着：打开团队调用后端，装好后显示个人层位置", async () => {
+    api.leadWorkflowInstalled.mockResolvedValue(true);
+    api.teamWorkflowState.mockImplementation(() => Promise.resolve(team({ leadInstalled: true, installed: api.setTeamWorkflow.mock.calls.length > 0 })));
+    api.setTeamWorkflow.mockResolvedValue(undefined);
+    render(<GeneralSection />);
+    const sw = await teamSwitch();
+    await waitFor(() => expect(sw.disabled).toBe(false));
+    sw.click();
+    await waitFor(() => expect(api.setTeamWorkflow).toHaveBeenCalledWith(true));
+    await screen.findByText(zh.settings.teamPersonal("/home/u/.meowo/team"));
+  });
+
+  it("本机另有一份 team 插件：说清是哪个目录；后端拒绝时显示错误", async () => {
+    api.leadWorkflowInstalled.mockResolvedValue(true);
+    api.teamWorkflowState.mockResolvedValue(team({ leadInstalled: true, conflict: "D:/x/team" }));
+    api.setTeamWorkflow.mockRejectedValue("team/plugin_conflict：D:/x/team");
+    render(<GeneralSection />);
+    await screen.findByText(zh.settings.teamConflict("D:/x/team"));
+    const sw = await teamSwitch();
+    await waitFor(() => expect(sw.disabled).toBe(false));
+    sw.click();
+    await screen.findByText(/检测到另一份 team 插件，先从 CLAUDE_CODE_PLUGIN_DIRS 去掉它：D:\/x\/team$/);
   });
 });

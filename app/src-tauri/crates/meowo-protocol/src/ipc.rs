@@ -1585,6 +1585,22 @@ pub struct LeadDeliveryDto {
 }
 
 /// 设置页按 CLI 与账号隔离展示；资产安装状态不代表已具备自动续跑能力。
+/// 设置页「团队」一行的状态（team.rs）。只支持 Claude Code，所以没有按 provider 分行。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct TeamWorkflowStateDto {
+    /// 默认 Claude 配置目录里装着团队。
+    pub installed: bool,
+    /// 团队是 Lead 的扩展：Lead 没开时开关不可用。
+    pub lead_installed: bool,
+    /// 本机另一份名叫 team 的插件目录（CLAUDE_CODE_PLUGIN_DIRS 加载的）；有它就不装，免得两套角色同名。
+    pub conflict: Option<String>,
+    /// 个人层目录（品味清单路径、受保护目录、三档权限放这里），设置页给「打开文件夹」。
+    pub personal_dir: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]

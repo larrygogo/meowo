@@ -202,3 +202,5 @@ unexpected_cfgs = "allow"
 tokio = { version = "1", features = ["test-util", "macros", "rt", "time"] }
 # 已停用的「Meowo 托管」会话的回归测试要按旧表结构直插存量行（本版本已无写入口）；store 已依赖它，不新增 crate。
 rusqlite = { workspace = true }
+# 团队安装测试（team/tests.rs）在临时目录里装卸；reporter 已依赖它，不新增 crate。
+tempfile = "3"

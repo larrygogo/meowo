@@ -407,6 +407,11 @@ pub(crate) fn installed_in(claude_dir: &Path) -> bool {
     managed_file(&claude_dir.join("skills/lead/SKILL.md"))
 }
 
+/// 默认 Claude 配置目录（`~/.claude`）。团队开关的状态也以它为准。
+pub(crate) fn default_claude_dir() -> Option<PathBuf> {
+    claude_dir()
+}
+
 fn claude_dir() -> Option<PathBuf> {
     meowo_agent::home_dir().map(|h| h.join(".claude"))
 }
@@ -416,7 +421,7 @@ fn claude_dir() -> Option<PathBuf> {
 /// 账号靠 `CLAUDE_CONFIG_DIR` 把整个数据目录搬走，Claude Code 只读那里的 skills/agents/
 /// settings.json——只装默认目录的话，在新账号下开的会话既看不到 lead skill，也没有 lead hook，
 /// 整个流程静默失效（用户报障：「你有 lead 模式吗」）。
-fn all_claude_dirs() -> Vec<PathBuf> {
+pub(crate) fn all_claude_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = claude_dir().into_iter().collect();
     dirs.extend(crate::profile::existing_data_dirs(meowo_agent::id::CLAUDE.as_str()));
     dirs
@@ -456,6 +461,8 @@ pub(crate) fn install_into_profile_if_enabled(profile_dir: &Path) {
         if let Err(e) = install_into(profile_dir, &reporter, None) {
             eprintln!("Lead 工作流装进账号目录失败（{}）: {e}", profile_dir.display());
         }
+        // 团队跟着默认目录走：默认目录装着才补装（team::refresh_dirs 自己判断）。
+        crate::team::refresh_dirs(&[home, profile_dir.to_path_buf()], &reporter);
     }
 }
 
@@ -479,11 +486,14 @@ pub(crate) fn refresh_if_installed() {
     // Claude 装着 Lead 才刷新它；账号目录也在这里对齐：开关打开之后才建的账号、以及老账号，都靠它补上（#173）。
     // 不能像 main 那样在 Claude 没装时提前 return：下面还要刷新 codex/kimi/gemini/opencode 的 Lead。
     if claude_dir().is_some_and(|home| installed_in(&home)) {
-        for dir in all_claude_dirs() {
-            if let Err(e) = install_into(&dir, &reporter, None) {
+        let dirs = all_claude_dirs();
+        for dir in &dirs {
+            if let Err(e) = install_into(dir, &reporter, None) {
                 eprintln!("Lead 工作流启动时刷新失败（{}）: {e}", dir.display());
             }
         }
+        // 团队是 Lead 的扩展，同一时机刷新：reporter 路径变了守卫 hook 要跟着改，否则守卫悄悄失效。
+        crate::team::refresh_dirs(&dirs, &reporter);
     }
     let _guard = PROVIDER_INSTALL_LOCK
         .lock()
@@ -538,7 +548,12 @@ pub(crate) async fn set_lead_workflow(enabled: bool) -> Result<(), String> {
         } else {
             None
         };
-        apply_to_dirs(&all_claude_dirs(), reporter.as_deref(), lead_registry().as_deref())
+        let dirs = all_claude_dirs();
+        if reporter.is_none() {
+            // 团队离不开 Lead 的任务目录和关卡：关 Lead 时一起卸，不留一套没人管的角色和守卫。
+            crate::team::uninstall_dirs(&dirs);
+        }
+        apply_to_dirs(&dirs, reporter.as_deref(), lead_registry().as_deref())
     })
     .await
     .map_err(|e| e.to_string())?

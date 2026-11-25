@@ -1158,6 +1158,17 @@ export function setLeadWorkflow(enabled: boolean): Promise<void> {
   return invoke("set_lead_workflow", { enabled });
 }
 
+/// 团队（team.rs）：默认 Claude 目录是否装着、Lead 是否开着、本机是否另有同名插件、个人层目录。
+export type { TeamWorkflowStateDto } from "./generated/contracts/TeamWorkflowStateDto";
+export function teamWorkflowState(): Promise<import("./generated/contracts/TeamWorkflowStateDto").TeamWorkflowStateDto> {
+  return invoke("team_workflow_state");
+}
+
+/// 打开 = 把四个团队角色、两个技能、功底清单和守卫 hook 装进每个 Claude 配置目录；关闭 = 只删这些。
+export function setTeamWorkflow(enabled: boolean): Promise<void> {
+  return invoke("set_team_workflow", { enabled });
+}
+
 /// 回答关卡：A 用 confirm/revise，C 用 accept/reject，B 用方案 id；note 为附加意见。
 export function answerLeadGate(cwd: string, gateId: string, choice: string, note: string, version?: string): Promise<void> {
   return invoke("answer_lead_gate", { cwd, gateId, choice, note, ...(version ? { version } : {}) } satisfies AnswerLeadGateArgs);

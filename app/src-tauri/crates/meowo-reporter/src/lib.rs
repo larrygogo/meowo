@@ -14,6 +14,7 @@ pub mod media_guard;
 pub mod proc;
 pub mod statusline;
 pub mod tabtitle;
+pub mod team_guard;
 pub mod timing;
 
 use std::path::PathBuf;
@@ -30,6 +31,12 @@ pub fn db_path() -> Option<PathBuf> {
         std::env::var("USERPROFILE").ok().as_deref(),
         std::env::var("HOME").ok().as_deref(),
     )
+}
+
+/// 团队个人层目录 `<Meowo 数据目录>/team`：品味清单路径、受保护目录、三档权限、成长记录。
+/// Meowo 从不写它（团队规则 R2），守卫和角色只读；与库同目录，跟着 MEOWO_DB 走。
+pub fn team_personal_dir() -> Option<PathBuf> {
+    db_path().and_then(|p| p.parent().map(|d| d.join("team")))
 }
 
 /// 从 home 候选（USERPROFILE 优先，其次 HOME）拼库路径；都缺失即 None（见 `db_path` 说明）。

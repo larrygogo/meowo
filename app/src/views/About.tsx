@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAgentListRefresh } from "../useAgents";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { availableTerminals, exportDiagLog, leadWorkflowInstalled, setLeadWorkflow, leadProviderInstallations, setLeadProviderEnabled, type LeadProviderInstallationDto, listAgents, agentName, type AgentId, type AgentDescriptor, type ThemeMode, type ResumeTerminal, type SessionOpenIn, type CardMenuMode, type StickerStyle, type TerminalLineHeight, type ChatContentWidth, type IslandCompactStyle } from "../api";
+import { availableTerminals, exportDiagLog, leadWorkflowInstalled, setLeadWorkflow, teamWorkflowState, setTeamWorkflow, type TeamWorkflowStateDto, leadProviderInstallations, setLeadProviderEnabled, type LeadProviderInstallationDto, listAgents, agentName, type AgentId, type AgentDescriptor, type ThemeMode, type ResumeTerminal, type SessionOpenIn, type CardMenuMode, type StickerStyle, type TerminalLineHeight, type ChatContentWidth, type IslandCompactStyle } from "../api";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
 import { useShowWhenReady } from "../useShowWhenReady";
 import { languageOptions, useT } from "../i18n";
@@ -346,6 +346,7 @@ export function GeneralSection({ searching = false }: { searching?: boolean } = 
           </div>
           <Switch checked={!!leadOn} onChange={toggleLead} label={t.settings.leadWorkflow} />
         </div>
+        <TeamRow leadOn={leadOn} />
         <LeadProviderRows onInstalledChange={setProviderLeadOn} />
       </div>
 
@@ -366,6 +367,38 @@ export function GeneralSection({ searching = false }: { searching?: boolean } = 
       <SettingsError preformatted error={patchError} onDismiss={clearPatchError} />
       <SettingsError preformatted error={proxyError} onDismiss={() => setProxyError(null)} />
     </>
+  );
+}
+
+/// 团队一行（team.rs）：Lead 的扩展，Lead 关着时不可用；关掉 Lead 时后端会把团队一起卸掉，所以跟着 leadOn 重读。
+/// 只有开关，没有按 CLI 分行：第一版只支持 Claude Code（团队规则 R12），说明里写明。
+function TeamRow({ leadOn }: { leadOn: boolean | null }) {
+  const t = useT();
+  const [state, setState] = useState<TeamWorkflowStateDto | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    teamWorkflowState().then(setState).catch(() => setState(null));
+  }, [leadOn]);
+  const toggle = () => {
+    if (!state) return;
+    setError(null);
+    setTeamWorkflow(!state.installed)
+      .catch((e) => setError(formatBackendError(e, t.locale)))
+      .finally(() => teamWorkflowState().then(setState).catch(() => {}));
+  };
+  const blocked = !state?.leadInstalled;
+  return (
+    <div className="row row-sub">
+      <div className="row-text">
+        <div className="row-label">{t.settings.team}</div>
+        <div className="row-desc">{t.settings.teamDesc}</div>
+        {state && blocked && <div className="row-desc">{t.settings.teamNeedsLead}</div>}
+        {state?.installed && state.personalDir && <div className="row-desc">{t.settings.teamPersonal(state.personalDir)}</div>}
+        {state?.conflict && !state.installed && <div className="row-desc is-error" role="alert">{t.settings.teamConflict(state.conflict)}</div>}
+        {error && <div className="row-desc is-error" role="alert">{error}</div>}
+      </div>
+      <Switch checked={!!state?.installed} onChange={toggle} disabled={!state || (blocked && !state.installed)} label={t.settings.team} />
+    </div>
   );
 }
 

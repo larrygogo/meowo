@@ -96,6 +96,24 @@ fn main() {
         }
         std::process::exit(code);
     }
+    // 团队守卫 hook（用户在设置里打开「团队」后才装）：只管 team- 开头的子代理。吞掉一切错误、以 0 退出。
+    if args.first().is_some_and(|arg| arg == "team") {
+        let mut raw = String::new();
+        if args.get(1).map(String::as_str) == Some("guard") && std::io::stdin().read_to_string(&mut raw).is_ok() {
+            let personal = meowo_reporter::team_personal_dir();
+            let out = std::panic::catch_unwind(|| {
+                meowo_reporter::team_guard::check(
+                    &raw,
+                    || meowo_reporter::team_guard::Config::load(personal.as_deref()),
+                    &meowo_reporter::team_guard::default_temp_dirs(),
+                )
+            });
+            if let Ok(Some(text)) = out {
+                print!("{text}");
+            }
+        }
+        std::process::exit(0);
+    }
     if args.first().is_some_and(|arg| arg == "attach") {
         if let Err(error) = attach::run(&args) {
             eprintln!("Meowo attach failed: {error}");
