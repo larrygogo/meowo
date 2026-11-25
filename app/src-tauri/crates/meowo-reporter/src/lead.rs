@@ -903,9 +903,19 @@ fn notified_ids(content: &str) -> Option<(Option<&str>, Option<&str>)> {
         let len = rest[start..].find(&close)?;
         Some(rest[start..start + len].trim()).filter(|s| !s.is_empty())
     };
+    // 中途通知不算回报：子代理自己又起了后台活、先停下时，CC 照发一条 <status>completed</status>，
+    // 但 <note> 写明它还有后台工作在跑、之后同一个 task-id 会再通知。当成回报的话主 agent 只能空等，
+    // Stop hook 却以为不用等了，连拦 5 次（2026-11-25 会话 2c223974：第三轮做空审查等它起的 PM 回放时
+    // 出现，CC 2.1.331 实拍）。真正跑完那条的 note 是「…with no live background children…」，不受影响。
+    if tag("note").is_some_and(|n| n.contains(INTERIM_NOTE)) {
+        return None;
+    }
     let ids = (tag("task-id"), tag("tool-use-id"));
     (ids.0.is_some() || ids.1.is_some()).then_some(ids)
 }
+
+/// 子代理中途通知 <note> 里的原文（CC 2.1.331）。
+const INTERIM_NOTE: &str = "with background work of its own still running";
 
 /// transcript 时间戳（`2026-11-12T04:58:10.006Z`）→ Unix 秒。只认 UTC 的 Z 结尾，别的格式返回 None
 ///（None 当作「刚启动」，偏向放行）。为一个字段不值得引 chrono。

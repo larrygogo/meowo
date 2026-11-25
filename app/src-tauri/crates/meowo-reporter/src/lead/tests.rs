@@ -1327,6 +1327,15 @@ fn background_work_pending_does_not_block() {
     assert!(blocked(&e, write("unknown-done", &[&user, &edit, &agent_bg, &unknown, &unknown_done])));
     // 用户插话之前起的子代理还在跑：照样算在等（不只看本轮）
     assert!(!blocked(&e, write("cross-turn", &[&agent_launch, &user, &edit])));
+    // 子代理自己还有后台活时先发的中途通知（会话 2c223974 实拍原文，两种落盘形态都有）：不算回报，仍在等；
+    // 同一个 task-id 真正跑完的那条到了，照常拦
+    let interim_body = "<task-notification>\n<task-id>a7ae0d</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n<status>completed</status>\n<summary>Agent \"第三轮独立审查\" is waiting on its own background work</summary>\n<note>This agent stopped with background work of its own still running. It may resume on its own when that work completes or reports, and the same task-id notifies again if it does; the result below may be interim.</note>\n<result>PM 回放还在写产出。</result>\n</task-notification>";
+    let final_body = "<task-notification>\n<task-id>a7ae0d</task-id>\n<status>completed</status>\n<summary>Agent \"第三轮独立审查\" finished</summary>\n<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>\n<result>报告：…</result>\n</task-notification>";
+    let interim_user = json!({"type": "user", "origin": {"kind": "task-notification", "producer": "session-task"}, "message": {"content": interim_body}});
+    let interim_enq = json!({"type": "queue-operation", "operation": "enqueue", "content": interim_body});
+    let final_user = json!({"type": "user", "origin": {"kind": "task-notification", "producer": "session-task"}, "message": {"content": final_body}});
+    assert!(!blocked(&e, write("interim", &[&user, &edit, &agent_launch, &interim_enq, &interim_user])));
+    assert!(blocked(&e, write("interim-then-final", &[&user, &edit, &agent_launch, &interim_enq, &interim_user, &final_user])));
     // TaskOutput 取过结果、TaskStop 停掉的：不会再有通知，不算在等
     assert!(blocked(&e, write("output", &[&user, &edit, &agent_launch, &stop_tool("TaskOutput", "a7ae0d")])));
     assert!(blocked(&e, write("stopped", &[&user, &edit, &bash_launch, &stop_tool("TaskStop", "bh1x")])));
