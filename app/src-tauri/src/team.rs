@@ -168,6 +168,9 @@ pub(crate) fn install_into(claude_dir: &Path, reporter: &str, personal: &Path) -
     if let Some(path) = knowledge_blocked(claude_dir) {
         return Err(format!("team/user_file_exists：{}", path.display()));
     }
+    // 先挂守卫，再放角色：settings.json 坏了时守卫挂不上，这时角色一个也不能落盘（团队规则 R12：
+    // 没有守卫的角色等于没有权限边界；redteam-2 指出原先先写角色、最后才改 settings）。
+    edit_settings(claude_dir, Some(reporter))?;
     let previous = owned_list(claude_dir);
     for (relative, body) in ASSETS {
         if !is_ours(claude_dir, relative) {
@@ -184,7 +187,7 @@ pub(crate) fn install_into(claude_dir: &Path, reporter: &str, personal: &Path) -
     for stale in previous.iter().filter(|p| !ASSETS.iter().any(|(r, _)| r == p)) {
         remove_owned(claude_dir, stale);
     }
-    edit_settings(claude_dir, Some(reporter))
+    Ok(())
 }
 
 /// 卸载：只删托管文件和团队守卫 hook，用户在同目录放的东西原样保留。
@@ -389,7 +392,18 @@ pub(crate) async fn team_workflow_state() -> Result<meowo_protocol::ipc::TeamWor
         // 账号目录装失败只进日志（同 Lead，见 apply_to_dirs），所以设置页要从磁盘现状里把没装上的文件找出来，
         // 不然账号里有同名文件时开关显示装好、却没人知道哪个账号缺了角色（做空 redteam-1 I1）。
         let blocked = if installed {
-            crate::lead::all_claude_dirs().iter().flat_map(|d| blocked_files(d)).map(|p| p.to_string_lossy().into_owned()).collect()
+            crate::lead::all_claude_dirs()
+                .iter()
+                .flat_map(|d| {
+                    // 整个账号目录没装上（settings.json 坏了、没权限）：列出目录本身。
+                    let mut files = blocked_files(d);
+                    if files.is_empty() && !installed_in(d) {
+                        files.push(d.clone());
+                    }
+                    files
+                })
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect()
         } else {
             Vec::new()
         };

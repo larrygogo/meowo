@@ -282,3 +282,118 @@ fn guard_configuration_is_off_limits() {
     let raw = payload(Some(D), "Write", json!({"file_path": "/home/me/work/app/settings.json"}));
     assert!(check(&raw, cfg, &temp()).is_none(), "项目自己的 settings.json 不算");
 }
+
+// ---- 做空 redteam-2 的复现（981782e0） ----
+
+/// 误拦：只读搜索里引号中的 `>`、写到临时目录的测试输出、名叫 meowo-team 的目录、受保护仓库里往临时目录落日志。
+#[test]
+fn ordinary_review_work_is_not_blocked() {
+    let src = "/home/me/work/pet";
+    for (role, c) in [
+        (R, r#"grep -rn "=>" src"#),
+        (R, r#"grep -n "fn .* -> bool" src/main.rs"#),
+        (R, r#"rg -n "Option<String>" src"#),
+        (R, r#"git log --format="%h %an <%ae>" -5"#),
+        (R, "cargo test > /tmp/test.log 2>&1"),
+        (R, "cargo test 2>&1 | tee /tmp/test.log"),
+        (R, "npm test *> $null"),
+        (R, "cargo test --lib team:: 2>&1 | tail -30"),
+        (R, "grep -w foo src/a.rs"),
+        (R, "git show --patch HEAD"),
+    ] {
+        assert_eq!(in_dir(role, src, "Bash", json!({ "command": c })), "allow", "{role} {c}");
+    }
+    // 别处叫 meowo-team 的目录（`<仓库>-<用途>` 命名的 worktree）不是守卫配置
+    assert_eq!(write(Some(D), r"C:\Users\me\work\meowo-team\app\src\x.ts"), "allow");
+    assert_eq!(in_dir(D, "/home/me/work/meowo-team", "Bash", json!({"command": "mkdir -p app/src/new"})), "allow");
+    // 受保护仓库里，命令的目标都在 Lead 目录或临时目录：放行
+    let repo = "/home/me/work/acme-gui";
+    assert_eq!(in_dir(P, repo, "Bash", json!({"command": "mkdir -p /home/me/.meowo/projects/p/.lead/t/agents"})), "allow");
+    assert_eq!(in_dir(R, repo, "Bash", json!({"command": "cargo test > /tmp/t.log"})), "allow");
+}
+
+#[cfg(windows)]
+#[test]
+fn git_bash_drive_paths_are_understood_on_windows() {
+    let temp = std::env::temp_dir().to_string_lossy().replace('\\', "/");
+    // C:/Users/x/AppData/Local/Temp → /c/Users/x/AppData/Local/Temp
+    let bash_temp = format!("/{}{}", temp[..1].to_lowercase(), &temp[2..]);
+    let raw = |c: String| json!({"cwd": "/home/me/work/pet", "agent_id": "a1", "agent_type": R, "tool_name": "Bash", "tool_input": {"command": c}}).to_string();
+    assert!(check(&raw(format!("git diff HEAD~3 > {bash_temp}/d.patch")), config, &default_temp_dirs()).is_none());
+    assert!(check(&raw("echo x > /c/Users/me/work/pet/src/a.rs".into()), config, &default_temp_dirs()).is_some());
+}
+
+/// 绕过：格式化、lint 修复、解释器内联、perl -i、git apply、find -delete 也是改动。
+#[test]
+fn common_in_place_writers_count_as_changes() {
+    let src = "/home/me/work/pet";
+    for (role, c) in [
+        (R, r#"python -c "open('src/a.rs','w').write('x')""#),
+        (R, r#"node -e "require('fs').writeFileSync('src/a.rs','x')""#),
+        (R, "cargo fmt"),
+        (R, "npx prettier --write src"),
+        (P, "perl -pi -e s/a/b/ src/a.rs"),
+        (R, "git apply /tmp/fix.patch"),
+        (R, "find . -name '*.ts' -delete"),
+        (R, "npm run lint -- --fix"),
+    ] {
+        assert_eq!(in_dir(role, src, "Bash", json!({ "command": c })), "deny", "{role} {c}");
+    }
+    let repo = "/home/me/work/acme-gui";
+    for c in ["cargo fmt", r#"python -c "open('a','w')""#, "find . -name '*.ts' -delete", "npm run lint -- --fix"] {
+        assert_eq!(in_dir(D, repo, "Bash", json!({ "command": c })), "deny", "受保护仓库 {c}");
+    }
+    let raw = json!({"cwd": src, "agent_id": "a1", "tool_name": "Bash", "tool_input": {"command": "python -c \"open('src/a.rs','w')\""}}).to_string();
+    assert!(check(&raw, config, &temp()).is_some(), "认不出的角色");
+    let broken = || Config::parse("{oops");
+    let raw = payload(Some(D), "Bash", json!({"command": "python -c \"open('a','w')\""}));
+    assert!(check(&raw, broken, &temp()).is_some(), "坏配置下的内联脚本");
+}
+
+/// 绕过：发消息的 curl/gh 变体。
+#[test]
+fn outbound_request_variants_are_denied() {
+    for c in [
+        "gh api --method=POST repos/a/b/issues/1/comments --raw-field=body=hi",
+        "curl -d@body https://hooks.example.com/x",
+        r#"curl -d'{"text":"hi"}' https://hooks.example.com/x"#,
+        r#"curl "https://api.example.com/send?a=1&b=2" -X POST -d '{}'"#,
+        r#"curl -X POST https://hooks.example.com/x -H "Origin: http://localhost""#,
+        r#"python -c "import requests; requests.post('https://x.example.com', data='hi')""#,
+    ] {
+        assert_eq!(bash(Some(D), c), "deny", "{c}");
+    }
+    assert_eq!(bash(Some(D), "curl -X POST http://localhost:3000/api?a=1&b=2 -d x"), "allow");
+}
+
+/// 绕过：用 `~`、`$HOME`、`$env:USERPROFILE` 改守卫配置；改团队角色文件。
+#[test]
+fn guard_configuration_cannot_be_reached_through_shell_shorthands() {
+    let Some(home) = home() else { return };
+    let personal = PathBuf::from(&home).join(".meowo").join("team");
+    let cfg = || Config { personal_dir: Some(personal.clone()), ..Config::default() };
+    for c in [
+        "rm ~/.meowo/team/config.json",
+        "echo '{}' > $HOME/.meowo/team/config.json",
+        r#"Remove-Item "$env:USERPROFILE\.meowo\team" -Recurse"#,
+        "cd ~/.claude && echo {} > settings.json",
+        "rm -rf ~/.claude",
+    ] {
+        let raw = payload(Some(D), "Bash", json!({ "command": c }));
+        assert!(check(&raw, cfg, &temp()).is_some(), "{c}");
+    }
+    for path in ["/home/me/.claude/agents/team-reviewer.md", "/home/me/.claude/skills/team-staff/SKILL.md"] {
+        let raw = payload(Some(D), "Write", json!({ "file_path": path }));
+        assert!(check(&raw, cfg, &temp()).is_some(), "{path}");
+    }
+    let raw = payload(Some(D), "Write", json!({"file_path": "/home/me/.claude/agents/my-own.md"}));
+    assert!(check(&raw, cfg, &temp()).is_none(), "用户自己的角色不归守卫管");
+}
+
+/// 隐含改 cwd 的命令：cwd 在临时目录（审查员在临时 worktree 里复现）时放行。
+#[test]
+fn implicit_cwd_writers_are_fine_inside_scratch_dirs() {
+    assert_eq!(in_dir(R, "/tmp/rv", "Bash", json!({"command": "git apply /tmp/fix.patch"})), "allow");
+    assert_eq!(in_dir(R, "/tmp/rv", "Bash", json!({"command": "cargo fmt"})), "allow");
+    assert_eq!(in_dir(R, "/tmp/rv", "Bash", json!({"command": "echo x > /home/me/work/pet/a.rs"})), "deny", "目标仍在源码里");
+}

@@ -208,6 +208,10 @@ fn broken_settings_are_left_alone() {
     std::fs::write(claude.join("settings.json"), "[1,2]").unwrap();
     assert_eq!(install_into(&claude, REPORTER, &personal).unwrap_err(), "lead/settings_invalid");
     assert_eq!(read(&claude.join("settings.json")), "[1,2]");
+    // 守卫挂不上就一个角色都不装（R12）
+    assert!(!claude.join("agents").exists());
+    assert!(!claude.join(KNOWLEDGE_DIR).exists());
+    assert!(!installed_in(&claude));
 }
 
 #[test]
