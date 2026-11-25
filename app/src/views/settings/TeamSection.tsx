@@ -54,10 +54,18 @@ function occurrence(list: string[], index: number): number {
   return list.slice(0, index).filter((x) => x === list[index]).length;
 }
 
-/** 第 k 个叫 item 的条目在哪；没有第 k 个就取最后一个，一个都没有返回 -1。 */
+/**
+ * 第 k 个叫 item 的条目在哪；没有第 k 个返回 -1，这一步就跳过。不退而取最后一个：外部同时删掉了同名项时，
+ * 退而求其次会删掉用户想留的那一份，静默放宽（做空 redteam-3 R3-4）。跳过的结果保存后页面上看得见。
+ */
 function nth(list: string[], item: string, k: number): number {
-  const at = list.flatMap((x, i) => (x === item ? [i] : []));
-  return at.length ? at[Math.min(k, at.length - 1)] : -1;
+  let seen = 0;
+  for (let i = 0; i < list.length; i++) {
+    if (list[i] !== item) continue;
+    if (seen === k) return i;
+    seen++;
+  }
+  return -1;
 }
 
 function without(list: string[], i: number): string[] {
@@ -278,9 +286,12 @@ export function TeamSection({ onBack, draft, nudge = 0 }: { onBack: () => void; 
           {/* 没有行号时标题已经是原因本身，不再重复一遍 */}
           {dto.errorLine ? <div className="tp-note-body tp-mono-reason">{dto.error}</div> : null}
           <div className="tp-note-body">{p.brokenBody}</div>
+          {/* 写坏前页面上还有没保存的改动：说清楚没写进去，修好文件回来还能保存，也能直接放弃（做空 redteam-3 R3-F）。 */}
+          {pending.length > 0 && <div className="tp-note-body">{p.brokenPending(pending.length)}</div>}
           <div className="tp-note-actions">
             <button type="button" className="sbtn btn-primary" onClick={() => void openTeamPersonal("config")}>{p.openToFix}</button>
             <button type="button" className="sbtn" onClick={() => void reload()}>{p.reload}</button>
+            {pending.length > 0 && <button type="button" className="sbtn" onClick={() => { setPending([]); setConflict(null); }}>{p.discard}</button>}
           </div>
         </div>
         {advanced}
@@ -290,14 +301,16 @@ export function TeamSection({ onBack, draft, nudge = 0 }: { onBack: () => void; 
 
   // 页面上显示的是「文件内容 + 还没保存的改动」。
   const view = applyAll(dto, pending);
+  // 和后端 is_floor_like 同一条规则：以底线说法开头，且紧跟着结尾、标点或空格。
+  // 「删除数据（清理测试库）」算，「删除数据库表前先导出备份」不算（做空 redteam-3 R3-2）。
   const floorLike = (item: string) => {
     const low = item.trim().toLowerCase();
-    return dto.floorPrefixes.some((prefix) => low.startsWith(prefix));
+    return dto.floorPrefixes.some((prefix) => low.startsWith(prefix) && !/^[\p{L}\p{N}]/u.test(low.slice(prefix.length)));
   };
   const lists: Record<Tier, string[]> = { doAndReport: view.doAndReport, askAtEnd: view.askAtEnd, askFirst: view.askFirst };
   const voidIn = (tier: Tier, item: string) => tier !== "askFirst" && floorLike(item);
-  // 「动手前先问」里和底线同说法的条目并到锁组下只读展示（不重复成一条能换档的），保存时原样写回。
-  const echoes = lists.askFirst.filter(floorLike);
+  // 「动手前先问」里和底线说的是一件事的条目并到锁组下（不重复成一条能换档的），只能删，不删就原样写回。
+  const echoes = lists.askFirst.map((x, i) => [x, i] as const).filter(([x]) => floorLike(x));
   const shown = (tier: Tier) => (tier === "askFirst" ? lists.askFirst.map((x, i) => [x, i] as const).filter(([x]) => !floorLike(x)) : lists[tier].map((x, i) => [x, i] as const));
   const live = (tier: Tier) => shown(tier).map(([x]) => x).filter((x) => !voidIn(tier, x));
   const stillMisplaced = [...lists.doAndReport, ...lists.askAtEnd].filter(floorLike);
@@ -412,11 +425,12 @@ export function TeamSection({ onBack, draft, nudge = 0 }: { onBack: () => void; 
                         <span className="tp-item-text">{b}</span>
                       </div>
                     ))}
-                    {echoes.map((b, i) => (
+                    {echoes.map(([b, i]) => (
                       <div key={`echo-${i}`} className="tpc-it is-echo" title={p.echoTip}>
                         <span className="tpc-grip" />
                         <span className="tp-item-text">{b}</span>
                         <span className="tp-tag">{p.echoTag}</span>
+                        <ActionMenu glyph={icChevronsUpDown} label={p.remove} items={[{ key: "del", label: p.remove, danger: true, onSelect: () => removeAt(b, "askFirst", i) }]} />
                       </div>
                     ))}
                   </div>
@@ -501,7 +515,7 @@ export function TeamSection({ onBack, draft, nudge = 0 }: { onBack: () => void; 
       {error && <div className="row-desc is-error is-full" role="alert">{error}</div>}
 
       {conflict ? (
-        <div className="tp-savebar tp-conflict" role="alertdialog" aria-label={p.conflictTitle}>
+        <div ref={barRef} className={"tp-savebar tp-conflict" + (flash ? " is-nudge" : "")} role="alertdialog" aria-label={p.conflictTitle}>
           <div className="tp-note-title"><Icon glyph={icAlert} size={16} /><span>{p.conflictTitle}</span></div>
           <dl>
             <dt>{p.conflictTheirs}</dt><dd>{diffSummary(conflict.mine, conflict.theirs, t)}</dd>

@@ -100,7 +100,7 @@ fn floor_items_are_recognised_by_how_they_start() {
     for item in ["对外发消息（飞书群）", "上生产", "删除数据", "Deploy to production", "Deploy to prod on Fridays", "  花钱：开机器"] {
         assert!(is_floor_like(item), "{item}");
     }
-    for item in ["推 beta", "合并"] {
+    for item in ["推 beta", "合并", "删除数据库表前先导出备份", "花钱超过 100 元先问", "上生产前先跑冒烟", "Deleted data recovery runbook"] {
         assert!(!is_floor_like(item), "{item}");
     }
     // 界面拿到的是同一份清单（小写），前端按它做同样的判断

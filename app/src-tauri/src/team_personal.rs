@@ -70,11 +70,13 @@ fn strings(v: Option<&Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// 这一条是不是在说某条底线。界面用 DTO 里的 floor_prefixes 做同样的判断（前端 isFloorLike）。
+/// 这一条是不是在说某条底线：以底线说法开头，且紧跟着的是结尾、标点或空格（「删除数据（清理测试库）」
+/// 「花钱：开机器」算；「删除数据库表前先导出备份」「上生产前先跑冒烟」不算，做空 redteam-3 R3-2）。
+/// 界面用 DTO 里的 floor_prefixes 做同样的判断（TeamSection 的 floorLike）。
 #[cfg(test)]
 fn is_floor_like(item: &str) -> bool {
     let low = item.trim().to_lowercase();
-    FLOOR_PREFIXES.iter().any(|p| low.starts_with(p))
+    FLOOR_PREFIXES.iter().any(|p| low.strip_prefix(p).is_some_and(|rest| rest.chars().next().is_none_or(|c| !c.is_alphanumeric())))
 }
 
 /// 按原键序读：IndexMap 记住文件里的顺序，写回时已有的键留在原位，新键追加在后面。

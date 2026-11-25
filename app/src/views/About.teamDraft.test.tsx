@@ -13,6 +13,7 @@ const api = vi.hoisted(() => ({
   teamWorkflowState: vi.fn(),
   teamPersonalConfig: vi.fn(),
   saveTeamPersonalConfig: vi.fn(),
+  createTeamTaste: vi.fn(),
 }));
 const closed = vi.hoisted(() => ({ n: 0 }));
 vi.mock("../api", async (o) => ({ ...(await o<typeof import("../api")>()), ...api }));
@@ -89,6 +90,16 @@ describe("团队子页没保存的改动", () => {
     fireEvent.click(screen.getByRole("button", { name: p.discard }));
     fireEvent.click(screen.getByRole("button", { name: p.back }));
     await screen.findByText(zh.settings.teamSettings);
+  });
+
+  it("文件被写坏时不拦离开，窗口不会被困住", async () => {
+    await dirty();
+    api.createTeamTaste.mockRejectedValueOnce("team/config_changed");
+    api.teamPersonalConfig.mockResolvedValue({ ...dto, error: "不是合法的 JSON", errorLine: 2, errorFirstLine: 1, errorLines: ["{", "x"] });
+    fireEvent.click(screen.getByRole("button", { name: p.newTaste }));
+    await screen.findByText(p.brokenPending(1));
+    fireEvent.click(screen.getByRole("button", { name: zh.settings.close }));
+    await waitFor(() => expect(closed.n).toBe(1));
   });
 
   it("关窗被拦下，不丢改动", async () => {

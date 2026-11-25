@@ -198,12 +198,10 @@ pub(crate) fn open_settings_window(app: &tauri::AppHandle) {
                 #[cfg(target_os = "macos")]
                 {
                     let app_handle = app.clone();
+                    // 只在真正销毁时归还：设置窗的团队子页有没保存的改动时前端会拦下关窗，
+                    // 在 CloseRequested 就减计数，窗口还开着 Dock 图标却没了（做空 redteam-3 R3-K）。
                     _about_window.on_window_event(move |e| {
-                        if matches!(
-                            e,
-                            tauri::WindowEvent::CloseRequested { .. }
-                                | tauri::WindowEvent::Destroyed
-                        ) {
+                        if matches!(e, tauri::WindowEvent::Destroyed) {
                             crate::macos::menubar::settings_window_did_close(&app_handle, "about");
                         }
                     });

@@ -205,14 +205,15 @@ describe("团队设置子页", () => {
     expect(retry.doAndReport).toEqual(["编辑器里加的", "本地提交", "写测试"]);
   });
 
-  it("「动手前先问」里写着底线原文：并到锁组下只读展示、不重复成能换档的一条，保存时原样写回", async () => {
+  it("「动手前先问」里写着底线原文：并到锁组下、只能删不能换档，不删就原样写回", async () => {
     api.teamPersonalConfig.mockResolvedValue(dto({ askFirst: ["上生产", "花钱：开机器、买资源", "给客户发消息前先给我看草稿"] }));
     render(<TeamSection onBack={() => {}} />);
     const say = (await screen.findByText(p.floorPlus(5, 1))).closest("p")!;
     expect(say).toBeTruthy();
     const bed = screen.getByText(p.floorHead).closest(".tpc-bed") as HTMLElement;
     expect(within(bed).getAllByText(p.echoTag)).toHaveLength(2);
-    expect(within(bed).queryAllByRole("button")).toHaveLength(0);
+    // 内置的五条没有按钮，重复的两条各有一个只含「删掉」的菜单
+    expect(within(bed).queryAllByRole("button")).toHaveLength(2);
     // 能换档的只有用户自己的那条
     const rung = screen.getByText(p.tierName.askFirst).closest(".tpc-rung") as HTMLElement;
     expect(within(rung).getAllByRole("button", { name: p.move })).toHaveLength(1);
@@ -220,6 +221,42 @@ describe("团队设置子页", () => {
     fireEvent.click(screen.getByRole("button", { name: p.save }));
     await waitFor(() => expect(api.saveTeamPersonalConfig).toHaveBeenCalled());
     expect(api.saveTeamPersonalConfig.mock.calls[0][0].askFirst).toEqual(["上生产", "花钱：开机器、买资源", "给客户发消息前先给我看草稿"]);
+  });
+
+  it("开头碰巧是底线说法的普通规则照常可编辑，不并进锁组、不标不生效", async () => {
+    api.teamPersonalConfig.mockResolvedValue(dto({ doAndReport: ["删除数据库表前先导出备份"], askFirst: ["花钱超过 100 元先问", "上生产前先跑冒烟"] }));
+    render(<TeamSection onBack={() => {}} />);
+    for (const text of ["删除数据库表前先导出备份", "花钱超过 100 元先问", "上生产前先跑冒烟"]) {
+      const row = (await screen.findByText(text)).closest(".tpc-it") as HTMLElement;
+      expect(row.classList.contains("is-echo") || row.classList.contains("is-void")).toBe(false);
+      within(row).getByRole("button", { name: p.move });
+    }
+    expect(screen.queryByText(p.echoTag)).toBeNull();
+  });
+
+  it("冲突重放找不到第几个同名条目就跳过，不退而删掉另一份", async () => {
+    api.teamPersonalConfig.mockResolvedValue(dto({ protected: ["a-repo", "x", "a-repo"] }));
+    api.saveTeamPersonalConfig.mockRejectedValueOnce("team/config_changed");
+    render(<TeamSection onBack={() => {}} />);
+    await screen.findByText("x");
+    fireEvent.click(screen.getAllByRole("button", { name: p.removeDir("a-repo") })[1]);
+    api.teamPersonalConfig.mockResolvedValue(dto({ token: "t9", protected: ["a-repo", "x"] }));
+    fireEvent.click(screen.getByRole("button", { name: p.save }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: p.reapply }));
+    await waitFor(() => expect(api.saveTeamPersonalConfig).toHaveBeenCalledTimes(2));
+    expect(api.saveTeamPersonalConfig.mock.calls[1][0].protected).toEqual(["a-repo", "x"]);
+  });
+
+  it("有没保存的改动时文件被写坏：写坏页说明改动没写进去，并给「放弃」", async () => {
+    api.teamPersonalConfig.mockResolvedValue(dto({ taste: null, tasteExists: false }));
+    api.createTeamTaste.mockRejectedValueOnce("team/config_changed");
+    render(<TeamSection onBack={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: p.removeDir("acme-*") }));
+    api.teamPersonalConfig.mockResolvedValue(dto({ error: "不是合法的 JSON", errorLine: 3, errorFirstLine: 1, errorLines: ["{", "  x", "}"] }));
+    fireEvent.click(screen.getByRole("button", { name: p.newTaste }));
+    await screen.findByText(p.brokenPending(1));
+    fireEvent.click(screen.getByRole("button", { name: p.discard }));
+    expect(screen.queryByText(p.brokenPending(1))).toBeNull();
   });
 
   it("新加进宽松档的底线说法当场标「这里不生效」，不用等保存", async () => {

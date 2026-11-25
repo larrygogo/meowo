@@ -1039,7 +1039,8 @@ export function About() {
   // 团队子页没保存的改动放在这一层：搜索、切分区时子页卸载也不丢（做空 redteam-2 N1）。
   const teamDraft = useTeamDraft();
   const teamDirty = useRef(false);
-  teamDirty.current = teamDraft.dirty;
+  // 文件写坏时改动本来也存不进去，不拦离开（写坏页上另有放弃），免得把窗口困住（做空 redteam-3 R3-F）。
+  teamDirty.current = teamDraft.dirty && !teamDraft.dto?.error;
   const [teamNudge, setTeamNudge] = useState(0);
   // 返回、Esc 离开子页时还有没保存的改动：不走，让保存条闪一下（先保存或放弃）。
   const leaveTeam = () => (teamDirty.current ? setTeamNudge((n) => n + 1) : pickGeneralView("main"));
@@ -1048,7 +1049,14 @@ export function About() {
     if (generalView !== "team") return;
     let live = true;
     teamWorkflowState()
-      .then((s) => { if (live && !s.installed) pickGeneralView("main"); })
+      .then((s) => {
+        if (!live || s.installed) return;
+        // 团队已经不在了，子页的草稿也没处可存：丢掉再回主页，免得关窗被拦却看不到保存条（做空 redteam-3 R3-G）。
+        teamDraft.setPending([]);
+        teamDraft.setConflict(null);
+        teamDirty.current = false;
+        pickGeneralView("main");
+      })
       .catch(() => {});
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- pickGeneralView 每次渲染新建，只看子页切换
