@@ -2155,6 +2155,8 @@ export const zh = {
     teamNeedsLead: "先打开上面的 Lead 工作流",
     teamPersonal: (dir: string) => `品味清单、受保护目录和权限档写在 ${dir} 里的 config.json`,
     teamConflict: (dir: string) => `CLAUDE_CODE_PLUGIN_DIRS 已经加载了另一份 team 插件（${dir}）。两份同时在会有两套同名角色，先去掉它再打开`,
+    teamConfigBroken: (reason: string) => `个人层 config.json 读不出（${reason}）。修好之前，团队角色写文件和改动类命令都会被拦`,
+    teamBlocked: (files: string) => `这些位置已有你自己的同名文件，对应的角色或技能没装：${files}`,
     leadProviders: "其他 CLI",
     leadProvidersDesc: "分别安装 Lead，卸载只删 Meowo 装的文件",
     leadRefresh: "刷新",

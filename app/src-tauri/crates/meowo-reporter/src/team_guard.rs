@@ -28,6 +28,7 @@ const WRITE_LIMITED: [&str; 2] = ["team-pm", "team-reviewer"];
 const FORBIDDEN: &[(&str, &str)] = &[
     (r"\bgit\b[^\n;&|]*\bpush\b", "推送"),
     (r"\bgh\s+pr\s+(create|merge|review|comment|edit|close|reopen|ready)\b", "开、改、合并或评论 PR"),
+    (r"\bgh\s+(issue|discussion|gist)\s+(create|comment|edit|close|reopen|delete|lock|transfer|pin)\b", "在 GitHub 上发内容或改状态"),
     (r"\bgh\s+(release|workflow\s+run|run\s+rerun|repo\s+(create|delete|edit))\b", "发版或触发 CI"),
     (r"\bgh\s+api\b[^\n]*(-X\s*|--method\s+)(POST|PUT|PATCH|DELETE)\b", "发 GitHub 写请求"),
     (r"\bgh\s+api\b[^\n]*\s(-f|-F|--field|--raw-field|--input)\s", "发 GitHub 写请求"),
@@ -36,7 +37,7 @@ const FORBIDDEN: &[(&str, &str)] = &[
     (r"\blark-cli\b[^\n]*\+(messages-send|messages-reply)", "发聊天消息"),
 ];
 /// 碰到受保护目录时，哪些命令算「改动」。只读命令（ls、cat、git log）放行。
-const MUTATING: &str = r"(?i)\b(rm|mv|cp|del|rmdir|move|copy|sed\s+-i|tee|Set-Content|Out-File|Remove-Item|Move-Item|Copy-Item|New-Item|git\b[^\n;&|]*\b(commit|reset|checkout|switch|merge|rebase|stash|clean|add|restore|apply|worktree|push|pull|cherry-pick|revert))\b|>";
+const MUTATING: &str = r"(?i)\b(rm|mv|cp|del|rmdir|mkdir|touch|move|copy|sed\s+-i|tee|Set-Content|Add-Content|Out-File|Remove-Item|Move-Item|Copy-Item|New-Item|Rename-Item|git\b[^\n;&|]*\b(commit|reset|checkout|switch|merge|rebase|stash|clean|add|restore|apply|worktree|push|pull|cherry-pick|revert))\b|>";
 
 /// 个人层 `config.json` 里守卫关心的部分（其余字段给角色读，这里不管）。
 #[derive(Default, Debug)]
@@ -45,12 +46,19 @@ pub struct Config {
     pub protected: Vec<String>,
     /// 用户自己追加的禁止命令（正则），例如本机发消息的脚本。写错的正则跳过，不让守卫整体失效。
     pub blocked_commands: Vec<(String, String)>,
+    /// config.json 在却读不出（写坏了、读不了）：受保护目录无从确认，团队角色的写入和改动命令一律拦。
+    /// 当空配置放行的话，用户多打一个逗号受保护目录就静默失效（做空 redteam-1 G1-4）。
+    pub broken: Option<String>,
+    /// 个人层目录本身：守卫的配置在这里，团队角色不能改（redteam-1 G1-5）。
+    pub personal_dir: Option<PathBuf>,
 }
 
 impl Config {
     pub fn parse(text: &str) -> Self {
-        let Ok(v) = serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}')) else {
-            return Self::default();
+        let v = match serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}')) {
+            Ok(v) if v.is_object() => v,
+            Ok(_) => return Self { broken: Some("顶层不是 JSON 对象".into()), ..Self::default() },
+            Err(e) => return Self { broken: Some(format!("不是合法的 JSON：{e}")), ..Self::default() },
         };
         let protected = v
             .get("protected")
@@ -71,15 +79,25 @@ impl Config {
                     .collect()
             })
             .unwrap_or_default();
-        Self { protected, blocked_commands }
+        Self { protected, blocked_commands, broken: None, personal_dir: None }
     }
 
-    /// 个人层 `<Meowo 数据目录>/team/config.json`；读不到就是空配置（公开版默认没有受保护目录）。
+    /// 个人层 `<Meowo 数据目录>/team/config.json`。文件不存在 = 空配置（公开版默认没有受保护目录）；
+    /// 文件在却读不出 = broken。
     pub fn load(personal_dir: Option<&Path>) -> Self {
-        personal_dir
-            .and_then(|dir| std::fs::read_to_string(dir.join("config.json")).ok())
-            .map(|text| Self::parse(&text))
-            .unwrap_or_default()
+        let Some(dir) = personal_dir else { return Self::default() };
+        let mut config = match std::fs::read_to_string(dir.join("config.json")) {
+            Ok(text) => Self::parse(&text),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::default(),
+            Err(e) => Self { broken: Some(format!("读不出：{e}")), ..Self::default() },
+        };
+        config.personal_dir = Some(dir.to_path_buf());
+        config
+    }
+
+    /// 给设置页用：个人层 config.json 写坏时说明原因，没坏返回 None。
+    pub fn problem(personal_dir: &Path) -> Option<String> {
+        Self::load(Some(personal_dir)).broken
     }
 }
 
@@ -94,10 +112,11 @@ pub fn check(raw: &str, config: impl FnOnce() -> Config, temp_dirs: &[PathBuf]) 
     let config = config();
     let tool = data.get("tool_name").and_then(Value::as_str).unwrap_or("");
     let input = data.get("tool_input").cloned().unwrap_or(Value::Null);
+    let cwd = data.get("cwd").and_then(Value::as_str);
     let reason = match tool {
         "Bash" | "PowerShell" => {
             let command = input.get("command").and_then(Value::as_str).unwrap_or("");
-            check_command(&role, command, &config)
+            check_command(&role, command, cwd, &config, temp_dirs)
         }
         "Write" | "Edit" | "MultiEdit" | "NotebookEdit" => {
             let target = input
@@ -105,7 +124,6 @@ pub fn check(raw: &str, config: impl FnOnce() -> Config, temp_dirs: &[PathBuf]) 
                 .or_else(|| input.get("notebook_path"))
                 .and_then(Value::as_str)
                 .unwrap_or("");
-            let cwd = data.get("cwd").and_then(Value::as_str);
             check_write(&role, target, cwd, &config, temp_dirs)
         }
         _ => None,
@@ -136,24 +154,115 @@ fn limited(role: &str) -> bool {
     WRITE_LIMITED.contains(&role) || !role.starts_with(ROLE_PREFIX)
 }
 
-fn check_command(role: &str, command: &str, config: &Config) -> Option<String> {
+fn check_command(role: &str, command: &str, cwd: Option<&str>, config: &Config, temp_dirs: &[PathBuf]) -> Option<String> {
     let short: String = command.chars().take(80).collect();
     for (pattern, what) in FORBIDDEN {
         if Regex::new(&format!("(?i){pattern}")).is_ok_and(|re| re.is_match(command)) {
             return Some(format!("{role} 不能{what}（命令：{short}）"));
         }
     }
+    if outbound_request(command) {
+        return Some(format!("{role} 不能向外部服务发写入请求，可能是在发消息或改远端数据（命令：{short}）"));
+    }
     for (pattern, what) in &config.blocked_commands {
         if Regex::new(pattern).is_ok_and(|re| re.is_match(command)) {
             return Some(format!("{role} 不能{what}（个人层 blocked_commands；命令：{short}）"));
         }
     }
-    if let Some(hit) = protected_in_command(command, &config.protected) {
-        if Regex::new(MUTATING).is_ok_and(|re| re.is_match(command)) {
-            return Some(format!("{role} 不能改动受保护目录（个人层 protected 里的「{hit}」）"));
+    if !mutating(command) {
+        return None;
+    }
+    if let Some(problem) = &config.broken {
+        return Some(format!("个人层 config.json {problem}，受保护目录无法确认，{role} 先不能执行改动类命令。请用户修好 config.json"));
+    }
+    // 子代理的 cwd 继承主会话：主会话开在受保护仓库里时，`git commit -am x`、`rm -rf src` 这类命令不带路径，
+    // 只看命令文本会全部放行（做空 redteam-1 G1-1）。
+    let cwd_path = cwd.map(PathBuf::from);
+    let hit = protected_in_command(command, &config.protected)
+        .or_else(|| cwd_path.as_deref().and_then(|p| protected_hit(p, &config.protected)));
+    if let Some(hit) = hit {
+        return Some(format!("{role} 不能改动受保护目录（个人层 protected 里的「{hit}」）"));
+    }
+    let targets = path_tokens(command, cwd_path.as_deref());
+    if targets.iter().any(|p| guard_config(p, config.personal_dir.as_deref())) {
+        return Some(format!("{role} 不能改动团队守卫的配置（个人层、Claude 的 settings.json）"));
+    }
+    // 产品经理和审查员的写入范围不能只管 Write 工具：Bash 里的 `> file`、`sed -i`、`Set-Content` 一样能写源码
+    // （redteam-1 G1-2）。改动类命令里出现的路径都要在 Lead 目录或临时目录；一个路径都没有时，看所在目录。
+    if limited(role) {
+        let inside = if targets.is_empty() {
+            cwd_path.as_deref().is_some_and(|p| lead_or_temp(p, temp_dirs))
+        } else {
+            targets.iter().all(|p| lead_or_temp(p, temp_dirs))
+        };
+        if !inside {
+            return Some(format!(
+                "{role} 执行改动类命令时，命令里的路径都要在 Lead 目录（路径里有 .lead）或临时目录里；要落临时文件请整条命令都用临时目录的绝对路径（命令：{short}）"
+            ));
         }
     }
     None
+}
+
+/// 改动类命令：先去掉不落盘的重定向（`2>&1`、`>/dev/null`、`> $null`、`> NUL`），免得跑测试时
+/// 「cargo test 2>&1 | tail」被当成写文件。
+fn mutating(command: &str) -> bool {
+    let harmless = Regex::new(r"(?i)\d*>>?\s*&\s*\d+|\d*>>?\s*(/dev/null|\$null|nul\b)").expect("常量正则");
+    let cleaned = harmless.replace_all(command, " ");
+    Regex::new(MUTATING).is_ok_and(|re| re.is_match(&cleaned))
+}
+
+/// 向外部服务发写入请求：curl/wget/PowerShell 带 POST/PUT/PATCH/DELETE 或请求体。发聊天消息、webhook、
+/// 改远端数据都走这条路，只拦 lark-cli 对不用它的人等于没拦（redteam-1 G1-3）。本机地址放行：跑本地服务的测试要用。
+fn outbound_request(command: &str) -> bool {
+    let tools = [
+        r"(?i)\bcurl(\.exe)?\b[^\n;|&]*(-X\s*|--request\s+)(POST|PUT|PATCH|DELETE)\b",
+        r"(?i)\bcurl(\.exe)?\b[^\n;|&]*\s(-d|--data[\w-]*|--json|-F|--form|-T|--upload-file)(\s|=)",
+        r"(?i)\bwget\b[^\n;|&]*--(post-data|post-file|method|body-data|body-file)",
+        r"(?i)\b(Invoke-RestMethod|Invoke-WebRequest|irm|iwr)\b[^\n;|]*(-Method\s+['\x22]?(Post|Put|Patch|Delete)\b|-Body\b)",
+    ];
+    let local = Regex::new(r"(?i)(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)").expect("常量正则");
+    command
+        .split(['\n', ';', '|', '&'])
+        .filter(|segment| !segment.trim().is_empty())
+        .any(|segment| {
+            tools.iter().any(|t| Regex::new(t).is_ok_and(|re| re.is_match(segment))) && !local.is_match(segment)
+        })
+}
+
+/// 命令里像路径的片段（带分隔符、以点开头，或「名字.扩展名」），相对路径按 cwd 解析。
+/// 选项（`-x`）、网址和纯数字不算。
+fn path_tokens(command: &str, cwd: Option<&Path>) -> Vec<PathBuf> {
+    let file_like = Regex::new(r"^[\w.-]+\.[A-Za-z0-9]{1,8}$").expect("常量正则");
+    command
+        .split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '`' | ';' | '|' | '&' | '(' | ')' | '=' | ',' | '<'))
+        .map(|t| t.trim_start_matches('>'))
+        .filter(|t| !t.is_empty() && !t.starts_with('-') && !t.contains("://") && !t.starts_with('$'))
+        .filter(|t| t.contains('/') || t.contains('\\') || t.starts_with('.') || file_like.is_match(t))
+        .map(|t| {
+            let p = PathBuf::from(t);
+            match cwd {
+                Some(cwd) if p.is_relative() => cwd.join(p),
+                _ => p,
+            }
+        })
+        .collect()
+}
+
+/// 团队守卫自己的配置：个人层目录、Claude 配置目录里的 settings.json、托管的知识目录。
+/// 角色改得了它们，就能自己删掉受保护列表或守卫 hook（redteam-1 G1-5）。
+fn guard_config(path: &Path, personal_dir: Option<&Path>) -> bool {
+    let full = norm(&path.to_string_lossy());
+    if personal_dir.is_some_and(|dir| {
+        let dir = norm(&dir.to_string_lossy());
+        !dir.is_empty() && (full == dir || full.starts_with(&format!("{dir}/")))
+    }) {
+        return true;
+    }
+    let names: Vec<&str> = full.split('/').collect();
+    let file = names.last().copied().unwrap_or("");
+    let in_claude_config = names.contains(&".claude") || full.contains("/profiles/claude/");
+    (in_claude_config && matches!(file, "settings.json" | "settings.local.json")) || names.contains(&"meowo-team")
 }
 
 fn check_write(role: &str, target: &str, cwd: Option<&str>, config: &Config, temp_dirs: &[PathBuf]) -> Option<String> {
@@ -165,6 +274,12 @@ fn check_write(role: &str, target: &str, cwd: Option<&str>, config: &Config, tem
         if let Some(cwd) = cwd {
             path = Path::new(cwd).join(path);
         }
+    }
+    if let Some(problem) = &config.broken {
+        return Some(format!("个人层 config.json {problem}，受保护目录无法确认，{role} 先不能写文件。请用户修好 config.json"));
+    }
+    if guard_config(&path, config.personal_dir.as_deref()) {
+        return Some(format!("{role} 不能改团队守卫的配置（{target}）"));
     }
     if let Some(hit) = protected_hit(&path, &config.protected) {
         return Some(format!("{role} 不能写受保护目录里的文件（{target}；个人层 protected 里的「{hit}」）"));
@@ -264,7 +379,8 @@ fn glob(pattern: &str, text: &str) -> bool {
 
 /// 允许受限角色写入的临时目录：系统临时目录（Claude Code 的 scratchpad 也在它下面）。
 pub fn default_temp_dirs() -> Vec<PathBuf> {
-    vec![std::env::temp_dir()]
+    // Git Bash 里的 /tmp 就是系统临时目录，但字符串对不上，单列一项。
+    vec![std::env::temp_dir(), PathBuf::from("/tmp")]
 }
 
 #[cfg(test)]

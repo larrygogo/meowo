@@ -97,16 +97,23 @@ fn is_ours(claude_dir: &Path, relative: &str) -> bool {
     }
 }
 
-/// 第一处挡住安装的用户文件（团队规则 R5：不覆盖、报出是哪个文件）。
-fn first_user_file(claude_dir: &Path) -> Option<PathBuf> {
+/// 知识目录被用户的同名目录占着：所有角色都要读它，这时整个目录不装。
+fn knowledge_blocked(claude_dir: &Path) -> Option<PathBuf> {
     let knowledge = claude_dir.join(KNOWLEDGE_DIR);
-    if knowledge.exists() && !knowledge_owned(claude_dir) {
-        return Some(knowledge);
+    (knowledge.exists() && !knowledge_owned(claude_dir)).then_some(knowledge)
+}
+
+/// 挡住安装的用户文件（团队规则 R5：不覆盖、报出是哪个文件）。角色或技能被挡只跳过它自己，
+/// 其他照装（R5 边角 2）；设置页据此列出没装上的文件。
+pub(crate) fn blocked_files(claude_dir: &Path) -> Vec<PathBuf> {
+    if let Some(dir) = knowledge_blocked(claude_dir) {
+        return vec![dir];
     }
     ASSETS
         .iter()
-        .find(|(relative, _)| !is_ours(claude_dir, relative))
+        .filter(|(relative, _)| !is_ours(claude_dir, relative))
         .map(|(relative, _)| claude_dir.join(relative))
+        .collect()
 }
 
 /// 本机另一份名叫 team 的 Claude Code 插件（用户级环境变量 CLAUDE_CODE_PLUGIN_DIRS 加载的）。
@@ -148,8 +155,9 @@ fn plugin_dirs() -> Vec<PathBuf> {
         .collect()
 }
 
+/// 装着 = 知识目录归 Meowo。某个角色被用户同名文件挡住时也算装着，没装上的文件另外列出。
 pub(crate) fn installed_in(claude_dir: &Path) -> bool {
-    knowledge_owned(claude_dir) && owned_by_mark(&claude_dir.join("agents/team-pm.md"))
+    knowledge_owned(claude_dir)
 }
 
 /// 装进一个 Claude 配置目录。可重复执行：内容没变的文件不写，旧版本留下、这版不再有的托管文件删掉。
@@ -157,11 +165,14 @@ pub(crate) fn install_into(claude_dir: &Path, reporter: &str, personal: &Path) -
     if !claude_dir.is_dir() {
         return Err("lead/claude_missing".into());
     }
-    if let Some(path) = first_user_file(claude_dir) {
+    if let Some(path) = knowledge_blocked(claude_dir) {
         return Err(format!("team/user_file_exists：{}", path.display()));
     }
     let previous = owned_list(claude_dir);
     for (relative, body) in ASSETS {
+        if !is_ours(claude_dir, relative) {
+            continue; // 用户的同名角色或技能：不覆盖，只跳过这一个
+        }
         let path = claude_dir.join(relative);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -374,11 +385,22 @@ pub(crate) fn uninstall_dirs(dirs: &[PathBuf]) {
 pub(crate) async fn team_workflow_state() -> Result<meowo_protocol::ipc::TeamWorkflowStateDto, String> {
     tauri::async_runtime::spawn_blocking(|| {
         let home = crate::lead::default_claude_dir();
+        let installed = home.as_deref().is_some_and(installed_in);
+        // 账号目录装失败只进日志（同 Lead，见 apply_to_dirs），所以设置页要从磁盘现状里把没装上的文件找出来，
+        // 不然账号里有同名文件时开关显示装好、却没人知道哪个账号缺了角色（做空 redteam-1 I1）。
+        let blocked = if installed {
+            crate::lead::all_claude_dirs().iter().flat_map(|d| blocked_files(d)).map(|p| p.to_string_lossy().into_owned()).collect()
+        } else {
+            Vec::new()
+        };
+        let personal = personal_dir().ok();
         Ok(meowo_protocol::ipc::TeamWorkflowStateDto {
-            installed: home.as_deref().is_some_and(installed_in),
+            installed,
             lead_installed: home.as_deref().is_some_and(crate::lead::installed_in),
             conflict: conflicting_plugin().map(|p| p.to_string_lossy().into_owned()),
-            personal_dir: personal_dir().ok().map(|p| p.to_string_lossy().into_owned()),
+            personal_config_error: personal.as_deref().and_then(meowo_reporter::team_guard::Config::problem),
+            personal_dir: personal.map(|p| p.to_string_lossy().into_owned()),
+            blocked_files: blocked,
         })
     })
     .await

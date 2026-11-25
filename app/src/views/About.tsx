@@ -397,7 +397,9 @@ function TeamRow({ leadOn }: { leadOn: boolean | null }) {
         {state && blocked && <div className="row-desc">{t.settings.teamNeedsLead}</div>}
         {state?.installed && state.personalDir && <div className="row-desc">{t.settings.teamPersonal(state.personalDir)}</div>}
         {/* 路径是用户要去改的东西，不能被三行钳制吃掉（验收台截图里被截成「CLAUDE_CODE_PLUGIN_DIR…」）。 */}
-        {conflict && <div className="row-desc is-error is-full" role="alert">{t.settings.teamConflict(state.conflict!)}</div>}
+        {state?.conflict && <div className="row-desc is-error is-full" role="alert">{t.settings.teamConflict(state.conflict)}</div>}
+        {state?.personalConfigError && <div className="row-desc is-error is-full" role="alert">{t.settings.teamConfigBroken(state.personalConfigError)}</div>}
+        {!!state?.blockedFiles.length && <div className="row-desc is-error is-full">{t.settings.teamBlocked(state.blockedFiles.join("、"))}</div>}
         {error && <div className="row-desc is-error" role="alert">{error}</div>}
       </div>
       <Switch checked={!!state?.installed} onChange={toggle} disabled={!state || conflict || (blocked && !state.installed)} label={t.settings.team} />

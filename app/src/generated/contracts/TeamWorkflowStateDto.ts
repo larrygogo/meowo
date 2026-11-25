@@ -19,4 +19,12 @@ conflict: string | null,
 /**
  * 个人层目录（品味清单路径、受保护目录、三档权限放这里），设置页给「打开文件夹」。
  */
-personalDir: string | null, };
+personalDir: string | null, 
+/**
+ * 个人层 config.json 在却读不出时的原因：守卫这时会拦团队角色的写入，设置页要说「需要修复」。
+ */
+personalConfigError: string | null, 
+/**
+ * 各 Claude 配置目录里挡住安装的用户同名文件（那个角色或技能没装上）。
+ */
+blockedFiles: Array<string>, };

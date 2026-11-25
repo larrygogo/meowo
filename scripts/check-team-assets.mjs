@@ -28,13 +28,32 @@ export const RULES = [
   ["邮箱", /[\w.+-]+@[\w-]+\.[\w.]+/],
 ];
 
+/** 团队相关的代码文件也随仓库公开，测试夹具里最容易顺手写进真实项目名（做空 redteam-1 D1-2）。
+ * 它们本来就有工程注释里的日期和虚构的 /home/me 路径，所以只查私有词、邮箱和个人工作区路径。 */
+export const CODE_FILES = [
+  "app/src-tauri/crates/meowo-reporter/src/team_guard.rs",
+  "app/src-tauri/crates/meowo-reporter/src/team_guard/tests.rs",
+  "app/src-tauri/src/team.rs",
+  "app/src-tauri/src/team/tests.rs",
+  "scripts/check-team-assets.mjs",
+  "scripts/check-team-assets.test.mjs",
+];
+const CODE_RULES = new Set(["邮箱", "个人工作区路径"]);
+
+/** 私有词表：TEAM_PRIVATE_TERMS_LIST 直接给内容（CI 从仓库密钥注入，日志里看不到），
+ * 否则读 TEAM_PRIVATE_TERMS 指的文件，默认 ~/.meowo/team/private-terms.txt。 */
 export function loadPrivateTerms(file = process.env.TEAM_PRIVATE_TERMS || join(homedir(), ".meowo", "team", "private-terms.txt")) {
+  const inline = process.env.TEAM_PRIVATE_TERMS_LIST;
+  if (inline && inline.trim()) return { file: "环境变量 TEAM_PRIVATE_TERMS_LIST", terms: parseTerms(inline) };
   if (!existsSync(file)) return { file, terms: [] };
-  const terms = readFileSync(file, "utf8")
+  return { file, terms: parseTerms(readFileSync(file, "utf8")) };
+}
+
+function parseTerms(text) {
+  return text
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith("#"));
-  return { file, terms };
 }
 
 function* walk(dir) {
@@ -45,8 +64,8 @@ function* walk(dir) {
   }
 }
 
-/** 返回命中列表：{ file, line, rule, text }。 */
-export function scan(root, terms = []) {
+/** 返回命中列表：{ file, line, rule, text }。`files` 给定时只扫这些文件、只用 CODE_RULES 和私有词。 */
+export function scan(root, terms = [], files = null) {
   const hits = [];
   // 英文词按词边界匹配：短项目名（三个字母）当子串会误中 node 之类的常用词；中文没有词边界，按子串。
   const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -55,10 +74,12 @@ export function scan(root, terms = []) {
     const tail = /\w$/.test(term) ? "(?![A-Za-z0-9_])" : "";
     return new RegExp(head + escape(term) + tail, "i");
   });
-  for (const file of walk(root)) {
+  const list = files ? files.map((f) => join(root, f)).filter((f) => existsSync(f)) : walk(root);
+  for (const file of list) {
     const lines = readFileSync(file, "utf8").split(/\r?\n/);
     lines.forEach((text, index) => {
       for (const [rule, pattern] of RULES) {
+        if (files && !CODE_RULES.has(rule)) continue;
         if (pattern.test(text)) hits.push({ file: relative(root, file), line: index + 1, rule, text: text.trim() });
       }
       patterns.forEach((pattern, i) => {
@@ -74,6 +95,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const root = resolve(process.argv[2] || DEFAULT_ROOT);
   const { file, terms } = loadPrivateTerms();
   const hits = scan(root, terms);
+  // 不带参数（CI、提交前自查）时顺带扫团队相关的代码文件。
+  if (!process.argv[2]) hits.push(...scan(resolve(here, ".."), terms, CODE_FILES));
   for (const hit of hits) console.log(`${hit.file}:${hit.line} [${hit.rule}] ${hit.text}`);
   console.log(
     terms.length

@@ -1874,6 +1874,8 @@ export const en: Dict = {
     teamNeedsLead: "Turn on the Lead workflow above first",
     teamPersonal: (dir: string) => `Your taste list, protected folders and permission tiers go in config.json under ${dir}`,
     teamConflict: (dir: string) => `CLAUDE_CODE_PLUGIN_DIRS already loads another team plugin (${dir}). Two copies would give you duplicate roles, so remove it first`,
+    teamConfigBroken: (reason: string) => `Your personal config.json can't be read (${reason}). Until it's fixed, team roles can't write files or run commands that change things`,
+    teamBlocked: (files: string) => `You already have your own files here, so the matching roles or skills weren't installed: ${files}`,
     leadProviders: "Other CLIs",
     leadProvidersDesc: "Per CLI; uninstall removes only Meowo files",
     leadRefresh: "Refresh",

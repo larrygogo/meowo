@@ -1598,6 +1598,10 @@ pub struct TeamWorkflowStateDto {
     pub conflict: Option<String>,
     /// 个人层目录（品味清单路径、受保护目录、三档权限放这里），设置页给「打开文件夹」。
     pub personal_dir: Option<String>,
+    /// 个人层 config.json 在却读不出时的原因：守卫这时会拦团队角色的写入，设置页要说「需要修复」。
+    pub personal_config_error: Option<String>,
+    /// 各 Claude 配置目录里挡住安装的用户同名文件（那个角色或技能没装上）。
+    pub blocked_files: Vec<String>,
 }
 
 /// 设置页按 CLI 与账号隔离展示；资产安装状态不代表已具备自动续跑能力。

@@ -38,8 +38,8 @@ afterEach(() => {
   Object.values(api).forEach((m) => m.mockReset());
 });
 
-const team = (over: Partial<{ installed: boolean; leadInstalled: boolean; conflict: string | null; personalDir: string | null }>) =>
-  ({ installed: false, leadInstalled: false, conflict: null, personalDir: "/home/u/.meowo/team", ...over });
+const team = (over: Partial<{ installed: boolean; leadInstalled: boolean; conflict: string | null; personalDir: string | null; personalConfigError: string | null; blockedFiles: string[] }>) =>
+  ({ installed: false, leadInstalled: false, conflict: null, personalDir: "/home/u/.meowo/team", personalConfigError: null, blockedFiles: [] as string[], ...over });
 const teamSwitch = () => screen.findByRole<HTMLButtonElement>("switch", { name: zh.settings.team });
 
 const gateRow = () => screen.queryByRole("switch", { name: `${zh.settings.keepAwakeGroup} · ${zh.settings.keepAwakeLeadGate}` });
@@ -123,5 +123,15 @@ describe("团队一行", () => {
     await waitFor(() => expect(sw.disabled).toBe(false));
     sw.click();
     await screen.findByText("已有你自己的同名团队文件，没有覆盖，已停止安装：C:/u/.claude/agents/team-pm.md");
+  });
+
+  it("已装好时：列出被用户同名文件挡住的位置、个人层配置写坏的原因、仍在加载的旧插件", async () => {
+    api.leadWorkflowInstalled.mockResolvedValue(true);
+    api.teamWorkflowState.mockResolvedValue(team({ leadInstalled: true, installed: true, conflict: "D:/x/team", personalConfigError: "不是合法的 JSON：trailing comma", blockedFiles: ["C:/a/.claude/agents/team-pm.md", "C:/b/agents/team-pm.md"] }));
+    render(<GeneralSection />);
+    await screen.findByText(zh.settings.teamBlocked("C:/a/.claude/agents/team-pm.md、C:/b/agents/team-pm.md"));
+    screen.getByText(zh.settings.teamConfigBroken("不是合法的 JSON：trailing comma"));
+    screen.getByText(zh.settings.teamConflict("D:/x/team"));
+    expect((await teamSwitch()).disabled).toBe(false);
   });
 });

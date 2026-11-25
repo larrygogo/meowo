@@ -54,8 +54,11 @@ jobs:
       - name: 发布说明检查脚本
         run: node --test scripts/check-release-notes.test.mjs
       # 团队托管文件随 Meowo 公开发布，推上去就收不回：本机路径、出处日期、邮箱命中就失败。
-      # 项目名这类词不能写进公开仓库，CI 上没有私有词表，改团队文件的人在本机带词表再跑一次。
+      # 项目名、公司名这类词不能写进公开仓库：私有词表放在仓库密钥 TEAM_PRIVATE_TERMS 里（一行一个），
+      # 命中时日志只打印第几个词。fork 来的 PR 拿不到密钥，只跑通用规则。
       - name: 团队托管文件个人内容扫描
+        env:
+          TEAM_PRIVATE_TERMS_LIST: ${{ secrets.TEAM_PRIVATE_TERMS }}
         run: node --test scripts/check-team-assets.test.mjs && node scripts/check-team-assets.mjs
       - name: 构建前端(tsc + vite build)
         working-directory: app

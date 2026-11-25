@@ -163,3 +163,122 @@ fn main_session_never_loads_the_personal_config() {
     let out = check(&main, || panic!("主会话不该读个人层"), &temp());
     assert!(out.is_none());
 }
+
+// ---- 做空 redteam-1 的复现（4904c94a 上都被放行） ----
+
+fn in_dir(agent: &str, cwd: &str, tool: &str, input: Value) -> &'static str {
+    let raw = json!({"cwd": cwd, "hook_event_name": "PreToolUse", "agent_id": "a1", "agent_type": agent, "tool_name": tool, "tool_input": input}).to_string();
+    if check(&raw, config, &temp()).is_some() { "deny" } else { "allow" }
+}
+
+/// G1-1：主会话开在受保护仓库里，命令不带路径。
+#[test]
+fn mutating_commands_inside_a_protected_cwd_are_denied() {
+    let repo = "/home/me/work/acme-gui";
+    for c in ["git commit -am x", "rm -rf src", "git add -A", "echo x > a.txt", "git stash"] {
+        assert_eq!(in_dir(D, repo, "Bash", json!({ "command": c })), "deny", "{c}");
+    }
+    for c in ["git status", "git log --oneline", "cat README.md", "cargo test 2>&1 | tail -5", "ls > /dev/null"] {
+        assert_eq!(in_dir(D, repo, "Bash", json!({ "command": c })), "allow", "{c}");
+    }
+}
+
+/// G1-2：产品经理和审查员用 Bash/PowerShell 写源码。
+#[test]
+fn limited_roles_cannot_write_through_the_shell() {
+    let src = "/home/me/work/pet";
+    for (role, c) in [
+        (R, "echo x > /home/me/work/pet/src/a.rs"),
+        (R, "printf 'x' > src/a.rs"),
+        (P, "sed -i s/a/b/ src/a.rs"),
+        (P, "Set-Content -Path /home/me/work/pet/src/a.rs -Value x"),
+        (R, "rm -rf src"),
+        (R, "echo x > /tmp/ok.txt && echo y > src/b.rs"),
+    ] {
+        assert_eq!(in_dir(role, src, "Bash", json!({ "command": c })), "deny", "{role} {c}");
+    }
+    for (role, c) in [
+        (R, "echo x > /tmp/report.txt"),
+        (R, r"echo x > C:\Users\me\AppData\Local\Temp\x\report.txt"),
+        (P, "echo x > /home/me/.meowo/projects/p/.lead/t/agents/pm-1.md"),
+        (R, "cargo test 2>&1 | tail -20"),
+        (R, "npm test > $null"),
+        (R, "git diff --stat"),
+    ] {
+        assert_eq!(in_dir(role, src, "Bash", json!({ "command": c })), "allow", "{role} {c}");
+    }
+    // 开发不受这条限制
+    assert_eq!(in_dir(D, src, "Bash", json!({"command": "echo x > src/a.rs"})), "allow");
+    // 认不出身份的子代理同样受限
+    let raw = json!({"cwd": src, "agent_id": "a1", "tool_name": "Bash", "tool_input": {"command": "echo x > src/a.rs"}}).to_string();
+    assert!(check(&raw, config, &temp()).is_some());
+}
+
+/// G1-3：不用 lark-cli 也能发消息、改远端。
+#[test]
+fn outbound_write_requests_are_denied() {
+    for c in [
+        "gh issue comment 12 --body hi",
+        "gh issue create -t x -b y",
+        "curl -X POST https://open.example.com/hook/xxx -d '{}'",
+        "curl https://hooks.example.com/x --data '{\"text\":\"hi\"}'",
+        "curl.exe --json '{}' https://api.example.com/x",
+        "wget --post-data=a https://x.example.com",
+        "Invoke-RestMethod -Method Post -Uri https://hooks.example.com/x -Body $b",
+        "iwr https://x.example.com -Body 'a'",
+    ] {
+        assert_eq!(bash(Some(D), c), "deny", "{c}");
+    }
+    for c in [
+        "curl https://example.com/readme",
+        "curl -s http://localhost:3000/api -d '{}'",
+        "curl -X POST http://127.0.0.1:8080/x",
+        "Invoke-RestMethod http://localhost:5173 -Method Post",
+        "gh issue view 12",
+    ] {
+        assert_eq!(bash(Some(D), c), "allow", "{c}");
+    }
+}
+
+/// G1-4：config.json 写坏时不能当空配置放行。
+#[test]
+fn a_broken_personal_config_blocks_writes_instead_of_dropping_protection() {
+    let broken = || Config::parse(r#"{"protected":["acme-*",],}"#);
+    assert!(broken().broken.is_some());
+    let write = payload(Some(D), "Write", json!({"file_path": "/home/me/pet/a.rs"}));
+    assert!(check(&write, broken, &temp()).is_some());
+    let mutate = payload(Some(D), "Bash", json!({"command": "git commit -am x"}));
+    assert!(check(&mutate, broken, &temp()).is_some());
+    let read = payload(Some(D), "Bash", json!({"command": "git log"}));
+    assert!(check(&read, broken, &temp()).is_none(), "只读命令照常");
+    assert!(Config::parse("[1]").broken.is_some());
+    // 文件不存在不算坏
+    let dir = tempfile::tempdir().unwrap();
+    assert!(Config::load(Some(dir.path())).broken.is_none());
+    std::fs::write(dir.path().join("config.json"), "{oops").unwrap();
+    assert!(Config::problem(dir.path()).is_some());
+}
+
+/// G1-5：团队角色不能改守卫自己的配置。
+#[test]
+fn guard_configuration_is_off_limits() {
+    let dir = tempfile::tempdir().unwrap();
+    let personal = dir.path().join("team");
+    std::fs::create_dir_all(&personal).unwrap();
+    let cfg = || Config::load(Some(&personal));
+    let personal_file = personal.join("config.json").to_string_lossy().into_owned();
+    for path in [
+        personal_file.as_str(),
+        "/home/me/.claude/settings.json",
+        r"C:\Users\me\.claude\settings.local.json",
+        r"C:\Users\me\.meowo\profiles\claude\p2\settings.json",
+        "/home/me/.claude/meowo-team/knowledge/developer/craft.md",
+    ] {
+        let raw = payload(Some(D), "Write", json!({ "file_path": path }));
+        assert!(check(&raw, cfg, &temp()).is_some(), "{path}");
+    }
+    let raw = payload(Some(D), "Bash", json!({"command": "echo '{}' > /home/me/.claude/settings.json"}));
+    assert!(check(&raw, cfg, &temp()).is_some());
+    let raw = payload(Some(D), "Write", json!({"file_path": "/home/me/work/app/settings.json"}));
+    assert!(check(&raw, cfg, &temp()).is_none(), "项目自己的 settings.json 不算");
+}

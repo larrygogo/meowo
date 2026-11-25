@@ -121,18 +121,29 @@ fn user_files_with_the_same_name_are_never_overwritten() {
     let (_tmp, claude, personal) = dirs();
     std::fs::create_dir_all(claude.join("agents")).unwrap();
     std::fs::write(claude.join("agents/team-pm.md"), "---\nname: team-pm\n---\n我自己的").unwrap();
-    let err = install_into(&claude, REPORTER, &personal).unwrap_err();
-    assert!(err.starts_with("team/user_file_exists："), "{err}");
-    assert!(err.contains("team-pm.md"), "{err}");
+    // R5 边角 2：被挡住的只跳过它自己，其他角色照装，没装上的文件列给设置页。
+    install_into(&claude, REPORTER, &personal).unwrap();
     assert_eq!(read(&claude.join("agents/team-pm.md")), "---\nname: team-pm\n---\n我自己的");
-    assert!(!claude.join("agents/team-designer.md").exists(), "挡住了就一个都不装");
-    assert!(!claude.join("settings.json").exists());
+    assert!(owned_by_mark(&claude.join("agents/team-designer.md")));
+    assert!(installed_in(&claude));
+    assert_eq!(blocked_files(&claude), vec![claude.join("agents/team-pm.md")]);
+    assert_eq!(guard_hooks(&claude).len(), 1, "守卫照装");
+    // 刷新、卸载都不碰它
+    install_into(&claude, REPORTER, &personal).unwrap();
+    uninstall_from(&claude).unwrap();
+    assert_eq!(read(&claude.join("agents/team-pm.md")), "---\nname: team-pm\n---\n我自己的");
+    assert!(!claude.join("agents/team-designer.md").exists());
 
+    // 知识目录被占：所有角色都要读它，整个不装并报出目录
     let (_tmp, claude, personal) = dirs();
     std::fs::create_dir_all(claude.join(KNOWLEDGE_DIR)).unwrap();
     std::fs::write(claude.join(KNOWLEDGE_DIR).join("notes.md"), "我的").unwrap();
     let err = install_into(&claude, REPORTER, &personal).unwrap_err();
+    assert!(err.starts_with("team/user_file_exists："), "{err}");
     assert!(err.contains(KNOWLEDGE_DIR), "{err}");
+    assert!(!claude.join("agents/team-designer.md").exists());
+    assert!(!claude.join("settings.json").exists());
+    assert_eq!(blocked_files(&claude), vec![claude.join(KNOWLEDGE_DIR)]);
 }
 
 #[test]
