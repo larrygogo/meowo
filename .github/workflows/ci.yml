@@ -57,14 +57,20 @@ jobs:
       # 项目名、公司名这类词不能写进公开仓库：私有词表放在仓库密钥 TEAM_PRIVATE_TERMS 里（一行一个），
       # 命中时日志只打印第几个词。fork 来的 PR 拿不到密钥，只跑通用规则；本仓库的 PR 和 main 上缺密钥直接失败，
       # 免得密钥被删或改名后扫描悄悄退化成只查通用规则（做空 redteam-2 D1）。
+      # 密钥存的是词表的 base64（一整行）：GitHub 会把多行密钥的每一行分别打码，短词会在公开日志里到处变成
+      # 「***」（node 变成 ***e），等于告诉别人词表里有什么（2026-11-25 探针 run 实拍）。
       - name: 团队托管文件个人内容扫描
         env:
-          TEAM_PRIVATE_TERMS_LIST: ${{ secrets.TEAM_PRIVATE_TERMS }}
+          TEAM_PRIVATE_TERMS_B64: ${{ secrets.TEAM_PRIVATE_TERMS }}
           FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
         run: |
-          if [ -z "$TEAM_PRIVATE_TERMS_LIST" ] && [ "$FROM_FORK" != "true" ]; then
-            echo "::error::缺仓库密钥 TEAM_PRIVATE_TERMS（团队托管文件的私有词表，一行一个）。到仓库 Settings → Secrets and variables → Actions 里添加。"
+          if [ -z "$TEAM_PRIVATE_TERMS_B64" ] && [ "$FROM_FORK" != "true" ]; then
+            echo "::error::缺仓库密钥 TEAM_PRIVATE_TERMS（团队托管文件私有词表的 base64，一行一个词编码后存一整行）。到仓库 Settings → Secrets and variables → Actions 里添加。"
             exit 1
+          fi
+          if [ -n "$TEAM_PRIVATE_TERMS_B64" ]; then
+            TEAM_PRIVATE_TERMS_LIST="$(printf %s "$TEAM_PRIVATE_TERMS_B64" | base64 -d)" || { echo "::error::TEAM_PRIVATE_TERMS 不是合法的 base64"; exit 1; }
+            export TEAM_PRIVATE_TERMS_LIST
           fi
           node --test scripts/check-team-assets.test.mjs && node scripts/check-team-assets.mjs
       - name: 构建前端(tsc + vite build)
