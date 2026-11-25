@@ -46,7 +46,34 @@ function argsOf(dto: TeamPersonalConfigDto): SaveTeamPersonalConfigArgs {
 }
 
 function applyAll(dto: TeamPersonalConfigDto, edits: Edit[]): SaveTeamPersonalConfigArgs {
-  return edits.reduce((c, e) => e.apply(c), argsOf(dto));
+  return replay(dto, edits).args;
+}
+
+/** 按顺序重放；找不到目标条目的那一步原样返回（同一个对象），记进 skipped，保存后告诉用户。 */
+function replay(dto: TeamPersonalConfigDto, edits: Edit[]): { args: SaveTeamPersonalConfigArgs; skipped: Edit[] } {
+  const skipped: Edit[] = [];
+  const args = edits.reduce((c, e) => {
+    const next = e.apply(c);
+    if (next === c) skipped.push(e);
+    return next;
+  }, argsOf(dto));
+  return { args, skipped };
+}
+
+const FLOOR_SEPARATORS = "：:，,、；;。.（(！!？?/「【[";
+
+/**
+ * 这一条是不是在说某条底线：去掉首尾空白、转小写后以某个说法开头，且紧跟着结尾、空白或分隔标点。
+ * 连字符、撇号、下划线和汉字都不算分隔。和后端 is_floor_like 同一条规则，两边测试跑 team_floor.json
+ * 里同一组样例（做空 redteam-4 R4-1、R4-4）。
+ */
+export function isFloorLike(item: string, prefixes: readonly string[]): boolean {
+  const low = item.trim().toLowerCase();
+  return prefixes.some((prefix) => {
+    if (!low.startsWith(prefix)) return false;
+    const next = low.slice(prefix.length, prefix.length + 1);
+    return next === "" || /\s/u.test(next) || FLOOR_SEPARATORS.includes(next);
+  });
 }
 
 /** list[index] 是同名条目里的第几个（从 0 数）。 */
@@ -140,9 +167,12 @@ export function TeamSection({ onBack, draft, nudge = 0 }: { onBack: () => void; 
   const own = useTeamDraft();
   const { dto, setDto, pending, setPending, saving, setSaving, conflict, setConflict } = draft ?? own;
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const quiet = useRef(true);
   quiet.current = pending.length === 0 && !saving && !conflict;
+  const broken = useRef(false);
+  broken.current = !!dto?.error;
   // 想离开但还有没保存的改动：About 递增 nudge，保存条滚进视野并闪一下。
   const barRef = useRef<HTMLDivElement>(null);
   const [flash, setFlash] = useState(false);
@@ -168,7 +198,8 @@ export function TeamSection({ onBack, draft, nudge = 0 }: { onBack: () => void; 
   // 文件可能在编辑器里被改（写坏后修好、team-learn 追加）：窗口回到前台时重新读。
   // 页面上有没保存的改动时不读，免得把用户正看着的东西换掉；保存时指纹比对会发现冲突。
   useEffect(() => {
-    const onFocus = () => { if (quiet.current) void reload(); };
+    // 写坏页上没有能被换掉的编辑内容：有草稿也照样重读，修好文件回来就能接着保存（做空 redteam-4 R4-7）。
+    const onFocus = () => { if (quiet.current || broken.current) void reload(); };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [reload]);
@@ -178,10 +209,14 @@ export function TeamSection({ onBack, draft, nudge = 0 }: { onBack: () => void; 
     if (saving) return;
     setSaving(true);
     setError(null);
+    setNotice(null);
     try {
-      const next = await saveTeamPersonalConfig(applyAll(base, edits));
+      const { args, skipped } = replay(base, edits);
+      const next = await saveTeamPersonalConfig(args);
       setDto(next);
       setPending((cur) => cur.slice(edits.length));
+      // 找不到目标条目而跳过的改动（文件里那一条已经被改名或删掉）：说出来，别让收紧的意图悄悄丢掉（做空 redteam-4 R4-8/9）
+      if (skipped.length) setNotice(p.skipped(describeEdits(skipped, t)));
     } catch (e) {
       if (String(e) === "team/config_changed") {
         try {
@@ -303,10 +338,7 @@ export function TeamSection({ onBack, draft, nudge = 0 }: { onBack: () => void; 
   const view = applyAll(dto, pending);
   // 和后端 is_floor_like 同一条规则：以底线说法开头，且紧跟着结尾、标点或空格。
   // 「删除数据（清理测试库）」算，「删除数据库表前先导出备份」不算（做空 redteam-3 R3-2）。
-  const floorLike = (item: string) => {
-    const low = item.trim().toLowerCase();
-    return dto.floorPrefixes.some((prefix) => low.startsWith(prefix) && !/^[\p{L}\p{N}]/u.test(low.slice(prefix.length)));
-  };
+  const floorLike = (item: string) => isFloorLike(item, dto.floorPrefixes);
   const lists: Record<Tier, string[]> = { doAndReport: view.doAndReport, askAtEnd: view.askAtEnd, askFirst: view.askFirst };
   const voidIn = (tier: Tier, item: string) => tier !== "askFirst" && floorLike(item);
   // 「动手前先问」里和底线说的是一件事的条目并到锁组下（不重复成一条能换档的），只能删，不删就原样写回。
@@ -345,7 +377,10 @@ export function TeamSection({ onBack, draft, nudge = 0 }: { onBack: () => void; 
   };
   const removeAt = (item: string, tier: Tier, index: number) => {
     const k = occurrence(lists[tier], index);
-    change(p.removedDesc(item), (c) => ({ ...c, [tier]: without(c[tier], nth(c[tier], item, k)) }));
+    change(p.removedDesc(item), (c) => {
+      const i = nth(c[tier], item, k);
+      return i < 0 ? c : { ...c, [tier]: without(c[tier], i) };
+    });
   };
 
   return (
@@ -458,7 +493,10 @@ export function TeamSection({ onBack, draft, nudge = 0 }: { onBack: () => void; 
                       aria-label={p.removeDir(d)}
                       onClick={() => {
                         const k = occurrence(view.protected, i);
-                        change(p.dirRemovedDesc(d), (c) => ({ ...c, protected: without(c.protected, nth(c.protected, d, k)) }));
+                        change(p.dirRemovedDesc(d), (c) => {
+                          const j = nth(c.protected, d, k);
+                          return j < 0 ? c : { ...c, protected: without(c.protected, j) };
+                        });
                       }}
                     >×</button>
                   </span>
@@ -513,10 +551,11 @@ export function TeamSection({ onBack, draft, nudge = 0 }: { onBack: () => void; 
       {advanced}
 
       {error && <div className="row-desc is-error is-full" role="alert">{error}</div>}
+      {notice && <div className="row-desc is-warn is-full" role="status">{notice}</div>}
 
       {conflict ? (
         <div ref={barRef} className={"tp-savebar tp-conflict" + (flash ? " is-nudge" : "")} role="alertdialog" aria-label={p.conflictTitle}>
-          <div className="tp-note-title"><Icon glyph={icAlert} size={16} /><span>{p.conflictTitle}</span></div>
+          <div className="tp-note-title"><Icon glyph={icAlert} size={16} /><span>{p.conflictTitle}</span>{flash ? <span className="tp-savebar-text">{p.leaveFirst}</span> : null}</div>
           <dl>
             <dt>{p.conflictTheirs}</dt><dd>{diffSummary(conflict.mine, conflict.theirs, t)}</dd>
             {pending.length > 0 && <><dt>{p.conflictMine}</dt><dd>{describeEdits(pending, t)}</dd></>}

@@ -8906,6 +8906,7 @@ pre.tp-code .tp-caret { color: var(--cc-err-text); }
 .tpc-bed-head b { color: var(--cc-text); font-weight: var(--fw-semibold); }
 .tpc-bed .tpc-it { background: transparent; box-shadow: none; padding-top: var(--sp-4); padding-bottom: var(--sp-4); }
 .tpc-it.is-echo .tp-item-text { color: var(--cc-text-dim); }
+.row-desc.is-warn { color: var(--cc-warn-text); }
 .tpc-it.is-void { background: color-mix(in srgb, var(--cc-warn) 10%, var(--cc-panel-raised)); }
 .tpc-it.is-void .tp-item-text { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--cc-warn) 70%, transparent); color: var(--cc-text-dim); }
 @media (prefers-reduced-motion: reduce) { .tpc-it { transition: none; } }

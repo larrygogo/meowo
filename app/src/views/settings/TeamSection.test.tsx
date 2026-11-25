@@ -12,7 +12,8 @@ const api = vi.hoisted(() => ({
 vi.mock("../../api", async (o) => ({ ...(await o<typeof import("../../api")>()), ...api }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 
-import { TeamSection } from "./TeamSection";
+import { TeamSection, isFloorLike } from "./TeamSection";
+import floorTable from "../../../src-tauri/src/team_floor.json";
 import { zh } from "../../i18n/zh";
 import type { TeamPersonalConfigDto } from "../../api";
 
@@ -33,7 +34,7 @@ const dto = (over: Partial<TeamPersonalConfigDto> = {}): TeamPersonalConfigDto =
   doAndReport: ["本地提交", "写测试"],
   askAtEnd: ["合并到主分支"],
   askFirst: [],
-  floorPrefixes: ["上生产", "花钱", "删除数据", "对外发消息", "deploy to prod"],
+  floorPrefixes: floorTable.prefixes,
   blockedCommandCount: 1,
   ...over,
 });
@@ -245,6 +246,14 @@ describe("团队设置子页", () => {
     fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: p.reapply }));
     await waitFor(() => expect(api.saveTeamPersonalConfig).toHaveBeenCalledTimes(2));
     expect(api.saveTeamPersonalConfig.mock.calls[1][0].protected).toEqual(["a-repo", "x"]);
+    // 跳过的那一步要说出来
+    await screen.findByText(p.skipped(p.dirRemovedDesc("a-repo")));
+  });
+
+  it("认底线：和后端跑同一组样例（team_floor.json），出厂五条底线都认得出", () => {
+    for (const item of floorTable.floor) expect(isFloorLike(item, floorTable.prefixes), item).toBe(true);
+    for (const item of floorTable.not_floor) expect(isFloorLike(item, floorTable.prefixes), item).toBe(false);
+    for (const item of p.floorItems) expect(isFloorLike(item, floorTable.prefixes), item).toBe(true);
   });
 
   it("有没保存的改动时文件被写坏：写坏页说明改动没写进去，并给「放弃」", async () => {

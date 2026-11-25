@@ -24,10 +24,20 @@ use std::path::{Path, PathBuf};
 /// 「删除数据（清理测试库）」）。不按 production、secret、发消息这类词在句中出现来认：「读 production 日志排查」
 /// 「给客户发消息前先给我看草稿」是用户自己的普通规则，误认成底线会被标成「不生效」（做空 redteam-1 问题 2）。
 /// 认出来也只是提示，界面照常能换档、能删，文件里的原文不动。
-const FLOOR_PREFIXES: &[&str] = &[
-    "上生产", "部署到生产", "发布到生产", "花钱", "改生产配置", "改密钥", "对外发消息", "删除数据", "删数据",
-    "ship to production", "deploy to production", "deploy to prod", "spend money", "change production config", "send messages out", "delete data",
-];
+///
+/// 说法清单和前后端共用的样例都在 team_floor.json：界面的判断写在 TeamSection 的 floorLike，两边的测试
+/// 跑同一组样例，规则改了哪边没跟上测试就会红（做空 redteam-4 R4-4）。
+static FLOOR: std::sync::LazyLock<FloorTable> =
+    std::sync::LazyLock::new(|| serde_json::from_str(include_str!("team_floor.json")).expect("team_floor.json"));
+
+#[derive(serde::Deserialize)]
+struct FloorTable {
+    prefixes: Vec<String>,
+    #[cfg(test)]
+    floor: Vec<String>,
+    #[cfg(test)]
+    not_floor: Vec<String>,
+}
 
 /// 文件里没写三档时的默认值，和团队模板 contract.json 一致（team-staff 技能「缺某一档就用模板默认值」）。
 const DEFAULT_DO_AND_REPORT: &[&str] = &[
@@ -70,13 +80,14 @@ fn strings(v: Option<&Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// 这一条是不是在说某条底线：以底线说法开头，且紧跟着的是结尾、标点或空格（「删除数据（清理测试库）」
-/// 「花钱：开机器」算；「删除数据库表前先导出备份」「上生产前先跑冒烟」不算，做空 redteam-3 R3-2）。
-/// 界面用 DTO 里的 floor_prefixes 做同样的判断（TeamSection 的 floorLike）。
+/// 这一条是不是在说某条底线：以底线说法开头，且紧跟着结尾、空白或分隔标点（「删除数据（清理测试库）」
+/// 「花钱：开机器」算；「删除数据库表前先导出备份」「Deploy to prod-like staging」不算）。
+/// 连字符、撇号、下划线和汉字都不算分隔。界面的 floorLike 是同一条规则，样例见 team_floor.json。
 #[cfg(test)]
 fn is_floor_like(item: &str) -> bool {
+    const SEPARATORS: &str = "：:，,、；;。.（(！!？?/「【[";
     let low = item.trim().to_lowercase();
-    FLOOR_PREFIXES.iter().any(|p| low.strip_prefix(p).is_some_and(|rest| rest.chars().next().is_none_or(|c| !c.is_alphanumeric())))
+    FLOOR.prefixes.iter().any(|p| low.strip_prefix(p.as_str()).is_some_and(|rest| rest.chars().next().is_none_or(|c| c.is_whitespace() || SEPARATORS.contains(c))))
 }
 
 /// 按原键序读：IndexMap 记住文件里的顺序，写回时已有的键留在原位，新键追加在后面。
@@ -113,7 +124,7 @@ pub(crate) fn load_from(dir: &Path) -> Result<TeamPersonalConfigDto, String> {
         do_and_report: Vec::new(),
         ask_at_end: Vec::new(),
         ask_first: Vec::new(),
-        floor_prefixes: FLOOR_PREFIXES.iter().map(|p| (*p).to_owned()).collect(),
+        floor_prefixes: FLOOR.prefixes.clone(),
         blocked_command_count: 0,
     };
     let Some(text) = text else {

@@ -97,11 +97,16 @@ fn an_outside_edit_since_loading_blocks_the_save() {
 
 #[test]
 fn floor_items_are_recognised_by_how_they_start() {
-    for item in ["对外发消息（飞书群）", "上生产", "删除数据", "Deploy to production", "Deploy to prod on Fridays", "  花钱：开机器"] {
-        assert!(is_floor_like(item), "{item}");
+    // 样例和前端 TeamSection.test.tsx 共用（team_floor.json）
+    for item in &FLOOR.floor {
+        assert!(is_floor_like(item), "应认成底线：{item}");
     }
-    for item in ["推 beta", "合并", "删除数据库表前先导出备份", "花钱超过 100 元先问", "上生产前先跑冒烟", "Deleted data recovery runbook"] {
-        assert!(!is_floor_like(item), "{item}");
+    for item in &FLOOR.not_floor {
+        assert!(!is_floor_like(item), "不应认成底线：{item}");
+    }
+    // 界面锁组里出厂的五条底线文字本身都要认得出（做空 redteam-4 R4-1：「改生产配置或密钥」曾认不出）
+    for item in ["上生产", "花钱：开机器、买资源", "改生产配置或密钥", "对外发消息：聊天群、邮件、webhook", "删除数据"] {
+        assert!(is_floor_like(item), "出厂底线：{item}");
     }
     // 界面拿到的是同一份清单（小写），前端按它做同样的判断
     let (_t, d) = dir();
