@@ -105,15 +105,23 @@ describe("团队一行", () => {
     await screen.findByText(zh.settings.teamPersonal("/home/u/.meowo/team"));
   });
 
-  it("本机另有一份 team 插件：说清是哪个目录；后端拒绝时显示错误", async () => {
+  it("本机另有一份 team 插件：说清是哪个目录，开关置灰，不再重复报错", async () => {
     api.leadWorkflowInstalled.mockResolvedValue(true);
     api.teamWorkflowState.mockResolvedValue(team({ leadInstalled: true, conflict: "D:/x/team" }));
-    api.setTeamWorkflow.mockRejectedValue("team/plugin_conflict：D:/x/team");
     render(<GeneralSection />);
-    await screen.findByText(zh.settings.teamConflict("D:/x/team"));
+    const hint = await screen.findByText(zh.settings.teamConflict("D:/x/team"));
+    expect(hint.classList.contains("is-full")).toBe(true);
+    expect((await teamSwitch()).disabled).toBe(true);
+  });
+
+  it("后端拒绝时显示翻译后的原因和路径", async () => {
+    api.leadWorkflowInstalled.mockResolvedValue(true);
+    api.teamWorkflowState.mockResolvedValue(team({ leadInstalled: true }));
+    api.setTeamWorkflow.mockRejectedValue("team/user_file_exists：C:/u/.claude/agents/team-pm.md");
+    render(<GeneralSection />);
     const sw = await teamSwitch();
     await waitFor(() => expect(sw.disabled).toBe(false));
     sw.click();
-    await screen.findByText(/检测到另一份 team 插件，先从 CLAUDE_CODE_PLUGIN_DIRS 去掉它：D:\/x\/team$/);
+    await screen.findByText("已有你自己的同名团队文件，没有覆盖，已停止安装：C:/u/.claude/agents/team-pm.md");
   });
 });

@@ -2154,7 +2154,7 @@ export const zh = {
     teamDesc: "产品经理、设计师、开发、审查员分头干活；暂只支持 Claude Code",
     teamNeedsLead: "先打开上面的 Lead 工作流",
     teamPersonal: (dir: string) => `品味清单、受保护目录和权限档写在 ${dir} 里的 config.json`,
-    teamConflict: (dir: string) => `检测到另一份 team 插件（${dir}），先从 CLAUDE_CODE_PLUGIN_DIRS 去掉再打开`,
+    teamConflict: (dir: string) => `CLAUDE_CODE_PLUGIN_DIRS 已经加载了另一份 team 插件（${dir}）。两份同时在会有两套同名角色，先去掉它再打开`,
     leadProviders: "其他 CLI",
     leadProvidersDesc: "分别安装 Lead，卸载只删 Meowo 装的文件",
     leadRefresh: "刷新",

@@ -1873,7 +1873,7 @@ export const en: Dict = {
     teamDesc: "A product manager, designer, developer and reviewer split the work; Claude Code only for now",
     teamNeedsLead: "Turn on the Lead workflow above first",
     teamPersonal: (dir: string) => `Your taste list, protected folders and permission tiers go in config.json under ${dir}`,
-    teamConflict: (dir: string) => `Another team plugin was found (${dir}). Remove it from CLAUDE_CODE_PLUGIN_DIRS, then turn this on`,
+    teamConflict: (dir: string) => `CLAUDE_CODE_PLUGIN_DIRS already loads another team plugin (${dir}). Two copies would give you duplicate roles, so remove it first`,
     leadProviders: "Other CLIs",
     leadProvidersDesc: "Per CLI; uninstall removes only Meowo files",
     leadRefresh: "Refresh",

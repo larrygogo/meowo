@@ -387,6 +387,8 @@ function TeamRow({ leadOn }: { leadOn: boolean | null }) {
       .finally(() => teamWorkflowState().then(setState).catch(() => {}));
   };
   const blocked = !state?.leadInstalled;
+  // 另一份 team 插件在加载时开关点了也只会被后端拒绝，提示已经写在行里：直接置灰，免得同一句话再以报错出现一次。
+  const conflict = !!state?.conflict && !state.installed;
   return (
     <div className="row row-sub">
       <div className="row-text">
@@ -394,10 +396,11 @@ function TeamRow({ leadOn }: { leadOn: boolean | null }) {
         <div className="row-desc">{t.settings.teamDesc}</div>
         {state && blocked && <div className="row-desc">{t.settings.teamNeedsLead}</div>}
         {state?.installed && state.personalDir && <div className="row-desc">{t.settings.teamPersonal(state.personalDir)}</div>}
-        {state?.conflict && !state.installed && <div className="row-desc is-error" role="alert">{t.settings.teamConflict(state.conflict)}</div>}
+        {/* 路径是用户要去改的东西，不能被三行钳制吃掉（验收台截图里被截成「CLAUDE_CODE_PLUGIN_DIR…」）。 */}
+        {conflict && <div className="row-desc is-error is-full" role="alert">{t.settings.teamConflict(state.conflict!)}</div>}
         {error && <div className="row-desc is-error" role="alert">{error}</div>}
       </div>
-      <Switch checked={!!state?.installed} onChange={toggle} disabled={!state || (blocked && !state.installed)} label={t.settings.team} />
+      <Switch checked={!!state?.installed} onChange={toggle} disabled={!state || conflict || (blocked && !state.installed)} label={t.settings.team} />
     </div>
   );
 }
