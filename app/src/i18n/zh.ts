@@ -2151,7 +2151,7 @@ export const zh = {
     leadWorkflowDesc: "装进 Claude Code，agent 做事，只在关卡找你",
     // 团队（team.rs）：Lead 的扩展，只支持 Claude Code（团队规则 R12）。
     team: "团队",
-    teamDesc: "产品经理、设计师、开发、审查员分头干活；暂只支持 Claude Code",
+    teamDesc: "产品经理、设计师、开发、审查员分头干活。暂只支持 Claude Code",
     teamNeedsLead: "先打开上面的 Lead 工作流",
     teamPersonal: (dir: string) => `品味清单、受保护目录和权限档写在 ${dir} 里的 config.json`,
     teamConflict: (dir: string) => `CLAUDE_CODE_PLUGIN_DIRS 已经加载了另一份 team 插件（${dir}）。两份同时在会有两套同名角色，先去掉它再打开`,
