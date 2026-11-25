@@ -22,9 +22,11 @@ import { ActionMenu } from "../menu";
  * - 数据只有一份：个人层 config.json。改动先留在页面上，底部出现「改了 N 处，还没写进文件」，点「保存」
  *   才写（品味清单 I2：设置页要有明确的保存和放弃）。写前比对读到时的指纹；文件在这之后被别处改过
  *   （编辑器、team-learn），不覆盖，给出「用文件里的 / 载入后叠上我的改动」，叠上去就是在新内容上把
- *   这几处改动按顺序重放一遍。
- * - 底线五条按内置清单渲染、锁死，不从文件读文字；文件里把底线写进宽松档的，那一条标「这里不生效」，
- *   照样能换档、能删。
+ *   这几处改动按顺序重放一遍。重放按文字找条目（同名的按第几个），不按下标，外部在前面插删不会删错。
+ * - 没保存的改动放在设置窗这一层（useTeamDraft），搜索、切分区时子页卸载也不丢；返回、Esc、关窗由
+ *   About 拦下并让保存条闪一下（做空 redteam-2 N1）。
+ * - 底线五条按内置清单渲染、锁死，不从文件读文字。是不是在说底线按后端给的开头说法实时判断：写在宽松档
+ *   的标「这里不生效」，照样能换档、能删；写在「动手前先问」里的并到锁组下只读展示、原样写回。
  * - 写坏的文件只读展示原因和原文，不提供任何会写文件的按钮。
  */
 
@@ -46,6 +48,31 @@ function argsOf(dto: TeamPersonalConfigDto): SaveTeamPersonalConfigArgs {
 function applyAll(dto: TeamPersonalConfigDto, edits: Edit[]): SaveTeamPersonalConfigArgs {
   return edits.reduce((c, e) => e.apply(c), argsOf(dto));
 }
+
+/** list[index] 是同名条目里的第几个（从 0 数）。 */
+function occurrence(list: string[], index: number): number {
+  return list.slice(0, index).filter((x) => x === list[index]).length;
+}
+
+/** 第 k 个叫 item 的条目在哪；没有第 k 个就取最后一个，一个都没有返回 -1。 */
+function nth(list: string[], item: string, k: number): number {
+  const at = list.flatMap((x, i) => (x === item ? [i] : []));
+  return at.length ? at[Math.min(k, at.length - 1)] : -1;
+}
+
+function without(list: string[], i: number): string[] {
+  return i < 0 ? list : list.filter((_, j) => j !== i);
+}
+
+/** 没保存的改动和读到的文件放在设置窗这一层：子页卸载（搜索、切分区）再挂上时原样接着用。 */
+export function useTeamDraft() {
+  const [dto, setDto] = useState<TeamPersonalConfigDto | null>(null);
+  const [pending, setPending] = useState<Edit[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [conflict, setConflict] = useState<{ theirs: TeamPersonalConfigDto; mine: TeamPersonalConfigDto } | null>(null);
+  return { dto, setDto, pending, setPending, saving, setSaving, conflict, setConflict, dirty: pending.length > 0 || !!conflict };
+}
+export type TeamDraft = ReturnType<typeof useTeamDraft>;
 
 /** 两次读到的内容差在哪（冲突提示里的「文件里」那一行）。只比界面管的几项。 */
 function diffSummary(before: TeamPersonalConfigDto, after: TeamPersonalConfigDto, t: ReturnType<typeof useT>): string {
@@ -99,16 +126,25 @@ function dirname(path: string): string {
   return i > 0 ? path.slice(0, i) : "";
 }
 
-export function TeamSection({ onBack }: { onBack: () => void }) {
+export function TeamSection({ onBack, draft, nudge = 0 }: { onBack: () => void; draft?: TeamDraft; nudge?: number }) {
   const t = useT();
   const p = t.settings.teamPage;
-  const [dto, setDto] = useState<TeamPersonalConfigDto | null>(null);
-  const [pending, setPending] = useState<Edit[]>([]);
-  const [saving, setSaving] = useState(false);
+  const own = useTeamDraft();
+  const { dto, setDto, pending, setPending, saving, setSaving, conflict, setConflict } = draft ?? own;
   const [error, setError] = useState<string | null>(null);
-  const [conflict, setConflict] = useState<{ theirs: TeamPersonalConfigDto; mine: TeamPersonalConfigDto } | null>(null);
+  const [creating, setCreating] = useState(false);
   const quiet = useRef(true);
   quiet.current = pending.length === 0 && !saving && !conflict;
+  // 想离开但还有没保存的改动：About 递增 nudge，保存条滚进视野并闪一下。
+  const barRef = useRef<HTMLDivElement>(null);
+  const [flash, setFlash] = useState(false);
+  useEffect(() => {
+    if (!nudge) return;
+    barRef.current?.scrollIntoView?.({ block: "nearest" });
+    setFlash(true);
+    const id = window.setTimeout(() => setFlash(false), 1600);
+    return () => window.clearTimeout(id);
+  }, [nudge]);
 
   const reload = useCallback(async () => {
     try {
@@ -117,9 +153,10 @@ export function TeamSection({ onBack }: { onBack: () => void }) {
     } catch (e) {
       setError(formatBackendError(e, t.locale));
     }
-  }, [t.locale]);
+  }, [t.locale, setDto]);
 
-  useEffect(() => { void reload(); }, [reload]);
+  // 再次挂上时页面上还有没保存的改动，就沿用当时读到的内容，冲突留给保存时的指纹比对。
+  useEffect(() => { if (quiet.current) void reload(); }, [reload]);
   // 文件可能在编辑器里被改（写坏后修好、team-learn 追加）：窗口回到前台时重新读。
   // 页面上有没保存的改动时不读，免得把用户正看着的东西换掉；保存时指纹比对会发现冲突。
   useEffect(() => {
@@ -153,6 +190,25 @@ export function TeamSection({ onBack }: { onBack: () => void }) {
   };
   const change = (describe: string, apply: Edit["apply"]) => {
     if (dto && !dto.error) setPending((cur) => [...cur, { describe, apply }]);
+  };
+  const createTaste = async (base: TeamPersonalConfigDto) => {
+    if (creating) return;
+    setCreating(true);
+    setError(null);
+    try {
+      // 新建品味清单会马上写文件；页面上没保存的改动留着，叠在新读到的内容上。
+      setDto(await createTeamTaste(base.token));
+    } catch (e) {
+      if (String(e) === "team/config_changed") {
+        // 如实重读：没保存的改动照样留在页面上，叠在新内容上（做空 redteam-2 N5）
+        try { setDto(await teamPersonalConfig()); } catch { /* 下面的提示照样给 */ }
+        setError(p.tasteRetry);
+      } else {
+        setError(formatBackendError(e, t.locale));
+      }
+    } finally {
+      setCreating(false);
+    }
   };
 
   const sections = { tiers: useRef<HTMLElement>(null), dirs: useRef<HTMLElement>(null), taste: useRef<HTMLElement>(null) };
@@ -234,11 +290,17 @@ export function TeamSection({ onBack }: { onBack: () => void }) {
 
   // 页面上显示的是「文件内容 + 还没保存的改动」。
   const view = applyAll(dto, pending);
-  const misplaced = new Set(dto.floorMisplaced);
+  const floorLike = (item: string) => {
+    const low = item.trim().toLowerCase();
+    return dto.floorPrefixes.some((prefix) => low.startsWith(prefix));
+  };
   const lists: Record<Tier, string[]> = { doAndReport: view.doAndReport, askAtEnd: view.askAtEnd, askFirst: view.askFirst };
-  const voidIn = (tier: Tier, item: string) => tier !== "askFirst" && misplaced.has(item);
-  const live = (tier: Tier) => lists[tier].filter((x) => !voidIn(tier, x));
-  const stillMisplaced = [...lists.doAndReport, ...lists.askAtEnd].filter((x) => misplaced.has(x));
+  const voidIn = (tier: Tier, item: string) => tier !== "askFirst" && floorLike(item);
+  // 「动手前先问」里和底线同说法的条目并到锁组下只读展示（不重复成一条能换档的），保存时原样写回。
+  const echoes = lists.askFirst.filter(floorLike);
+  const shown = (tier: Tier) => (tier === "askFirst" ? lists.askFirst.map((x, i) => [x, i] as const).filter(([x]) => !floorLike(x)) : lists[tier].map((x, i) => [x, i] as const));
+  const live = (tier: Tier) => shown(tier).map(([x]) => x).filter((x) => !voidIn(tier, x));
+  const stillMisplaced = [...lists.doAndReport, ...lists.askAtEnd].filter(floorLike);
   const floor = p.floorItems;
   const taste = view.taste ?? null;
   const tasteExists = taste === dto.taste ? dto.tasteExists : true;
@@ -259,14 +321,19 @@ export function TeamSection({ onBack }: { onBack: () => void }) {
     hasDirs: view.protected.length > 0,
   });
 
-  const moveTo = (item: string, from: Tier, to: Tier) =>
+  // 记下「第几个同名条目」而不是下标：冲突后在新内容上重放，外部在前面插删也找得到同一条。
+  const moveTo = (item: string, from: Tier, to: Tier, index: number) => {
+    const k = occurrence(lists[from], index);
     change(p.movedDesc(item, p.tierName[to]), (c) => {
-      const i = c[from].indexOf(item);
+      const i = nth(c[from], item, k);
       if (i < 0) return c;
-      return { ...c, [from]: c[from].filter((_, j) => j !== i), [to]: [...c[to], item] };
+      return { ...c, [from]: without(c[from], i), [to]: [...c[to], item] };
     });
-  const removeAt = (item: string, tier: Tier, index: number) =>
-    change(p.removedDesc(item), (c) => ({ ...c, [tier]: c[tier].filter((x, j) => !(j === index && x === item)) }));
+  };
+  const removeAt = (item: string, tier: Tier, index: number) => {
+    const k = occurrence(lists[tier], index);
+    change(p.removedDesc(item), (c) => ({ ...c, [tier]: without(c[tier], nth(c[tier], item, k)) }));
+  };
 
   return (
     <div className="tp-page">
@@ -294,11 +361,11 @@ export function TeamSection({ onBack }: { onBack: () => void }) {
               className="sbtn"
               onClick={() =>
                 change(p.moveBackDesc, (c) => {
-                  const moved = [...c.doAndReport, ...c.askAtEnd].filter((x) => misplaced.has(x));
+                  const moved = [...c.doAndReport, ...c.askAtEnd].filter(floorLike);
                   return {
                     ...c,
-                    doAndReport: c.doAndReport.filter((x) => !misplaced.has(x)),
-                    askAtEnd: c.askAtEnd.filter((x) => !misplaced.has(x)),
+                    doAndReport: c.doAndReport.filter((x) => !floorLike(x)),
+                    askAtEnd: c.askAtEnd.filter((x) => !floorLike(x)),
                     askFirst: [...c.askFirst, ...moved.filter((x) => !c.askFirst.includes(x))],
                   };
                 })
@@ -318,7 +385,7 @@ export function TeamSection({ onBack }: { onBack: () => void }) {
                 <span className="tpc-rung-desc">{p.tierDesc[tier]}</span>
               </div>
               <div className="tpc-items">
-                {lists[tier].map((item, i) => {
+                {shown(tier).map(([item, i]) => {
                   const isVoid = voidIn(tier, item);
                   return (
                     <div key={`${i}:${item}`} className={"tpc-it" + (isVoid ? " is-void" : "")} title={isVoid ? p.voidTip : undefined}>
@@ -329,7 +396,7 @@ export function TeamSection({ onBack }: { onBack: () => void }) {
                         glyph={icChevronsUpDown}
                         label={p.move}
                         items={[
-                          ...TIERS.filter((to) => to !== tier).map((to) => ({ key: `to-${to}`, label: p.moveTo(p.tierName[to]), onSelect: () => moveTo(item, tier, to) })),
+                          ...TIERS.filter((to) => to !== tier).map((to) => ({ key: `to-${to}`, label: p.moveTo(p.tierName[to]), onSelect: () => moveTo(item, tier, to, i) })),
                           { key: "del", label: p.remove, danger: true, onSelect: () => removeAt(item, tier, i) },
                         ]}
                       />
@@ -343,6 +410,13 @@ export function TeamSection({ onBack }: { onBack: () => void }) {
                       <div key={b} className="tpc-it" title={p.lockTip}>
                         <span className="tpc-grip"><Icon glyph={icShieldLock} size={12} /></span>
                         <span className="tp-item-text">{b}</span>
+                      </div>
+                    ))}
+                    {echoes.map((b, i) => (
+                      <div key={`echo-${i}`} className="tpc-it is-echo" title={p.echoTip}>
+                        <span className="tpc-grip" />
+                        <span className="tp-item-text">{b}</span>
+                        <span className="tp-tag">{p.echoTag}</span>
                       </div>
                     ))}
                   </div>
@@ -364,7 +438,15 @@ export function TeamSection({ onBack }: { onBack: () => void }) {
                 {view.protected.map((d, i) => (
                   <span key={`${i}:${d}`} className="tp-chip">
                     {d}
-                    <button type="button" className="tp-chip-x" aria-label={p.removeDir(d)} onClick={() => change(p.dirRemovedDesc(d), (c) => ({ ...c, protected: c.protected.filter((x, j) => !(j === i && x === d)) }))}>×</button>
+                    <button
+                      type="button"
+                      className="tp-chip-x"
+                      aria-label={p.removeDir(d)}
+                      onClick={() => {
+                        const k = occurrence(view.protected, i);
+                        change(p.dirRemovedDesc(d), (c) => ({ ...c, protected: without(c.protected, nth(c.protected, d, k)) }));
+                      }}
+                    >×</button>
                   </span>
                 ))}
               </div>
@@ -397,10 +479,7 @@ export function TeamSection({ onBack }: { onBack: () => void }) {
                 <button
                   type="button"
                   className="sbtn btn-primary"
-                  {...busyProps(saving, () => {
-                    // 新建品味清单会马上写文件；页面上没保存的改动留着，叠在新读到的内容上。
-                    void createTeamTaste(dto.token).then(setDto, (e) => setError(formatBackendError(e, t.locale)));
-                  })}
+                  {...busyProps(saving || creating, () => void createTaste(dto))}
                 >{p.newTaste}</button>
               )}
               <button
@@ -439,8 +518,8 @@ export function TeamSection({ onBack }: { onBack: () => void }) {
           </div>
         </div>
       ) : pending.length > 0 ? (
-        <div className="tp-savebar" role="status">
-          <span className="tp-savebar-text"><b>{p.dirty(pending.length)}</b></span>
+        <div ref={barRef} className={"tp-savebar" + (flash ? " is-nudge" : "")} role="status">
+          <span className="tp-savebar-text"><b>{p.dirty(pending.length)}</b>{flash ? " " + p.leaveFirst : ""}</span>
           <button type="button" className="sbtn" {...busyProps(saving, () => setPending([]))}>{p.discard}</button>
           <button type="button" className="sbtn btn-primary" {...busyProps(saving, () => void save(dto, pending))}>{saving ? p.saving : p.save}</button>
         </div>

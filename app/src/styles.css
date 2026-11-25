@@ -8851,6 +8851,10 @@ pre.tp-code .tp-caret { color: var(--cc-err-text); }
 }
 .tp-savebar-text { flex: 1; min-width: 0; color: var(--cc-text-dim); }
 .tp-savebar-text b { font-weight: var(--fw-medium); color: var(--cc-text); }
+/* 有没保存的改动又想离开：保存条闪一下描边，说明要先保存或放弃。 */
+.tp-savebar.is-nudge { box-shadow: 0 0 0 2px var(--cc-warn), var(--shadow-md); animation: tp-nudge var(--dur-slow) ease-out 2; }
+@keyframes tp-nudge { 50% { translate: 0 -3px; } }
+@media (prefers-reduced-motion: reduce) { .tp-savebar.is-nudge { animation: none; } }
 .tp-conflict { flex-direction: column; align-items: stretch; gap: var(--sp-6); padding: var(--sp-12) var(--sp-14); }
 .tp-conflict .tp-note-title { color: var(--cc-warn-text); }
 .tp-conflict dl { margin: 0 0 0 22px; display: grid; grid-template-columns: auto 1fr; gap: var(--sp-4) var(--sp-10); font-size: var(--text-xs); line-height: 1.55; }
@@ -8901,6 +8905,7 @@ pre.tp-code .tp-caret { color: var(--cc-err-text); }
 .tpc-bed-head { display: flex; align-items: center; gap: var(--sp-6); padding: 0 var(--sp-6) var(--sp-4); font-size: var(--text-xs); color: var(--cc-text-dim); }
 .tpc-bed-head b { color: var(--cc-text); font-weight: var(--fw-semibold); }
 .tpc-bed .tpc-it { background: transparent; box-shadow: none; padding-top: var(--sp-4); padding-bottom: var(--sp-4); }
+.tpc-it.is-echo .tp-item-text { color: var(--cc-text-dim); }
 .tpc-it.is-void { background: color-mix(in srgb, var(--cc-warn) 10%, var(--cc-panel-raised)); }
 .tpc-it.is-void .tp-item-text { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--cc-warn) 70%, transparent); color: var(--cc-text-dim); }
 @media (prefers-reduced-motion: reduce) { .tpc-it { transition: none; } }

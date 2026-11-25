@@ -96,18 +96,18 @@ fn an_outside_edit_since_loading_blocks_the_save() {
 }
 
 #[test]
-fn floor_items_written_into_looser_tiers_are_flagged() {
+fn floor_items_are_recognised_by_how_they_start() {
+    for item in ["对外发消息（飞书群）", "上生产", "删除数据", "Deploy to production", "Deploy to prod on Fridays", "  花钱：开机器"] {
+        assert!(is_floor_like(item), "{item}");
+    }
+    for item in ["推 beta", "合并"] {
+        assert!(!is_floor_like(item), "{item}");
+    }
+    // 界面拿到的是同一份清单（小写），前端按它做同样的判断
     let (_t, d) = dir();
-    std::fs::create_dir_all(&d).unwrap();
-    std::fs::write(
-        d.join("config.json"),
-        r#"{"authority":{"do_and_report":["推 beta","对外发消息（飞书群）"],"ask_at_end":["上生产","合并"],"ask_first":["删除数据"]}}"#,
-    )
-    .unwrap();
     let dto = load_from(&d).unwrap();
-    assert_eq!(dto.floor_misplaced, vec!["对外发消息（飞书群）", "上生产"]);
-    std::fs::write(d.join("config.json"), r#"{"authority":{"do_and_report":["Deploy to production","Deploy to prod on Fridays"]}}"#).unwrap();
-    assert_eq!(load_from(&d).unwrap().floor_misplaced, vec!["Deploy to production", "Deploy to prod on Fridays"]);
+    assert!(dto.floor_prefixes.iter().any(|p| p == "deploy to prod"));
+    assert!(dto.floor_prefixes.iter().all(|p| *p == p.to_lowercase()));
 }
 
 #[test]
@@ -176,14 +176,11 @@ fn user_rules_in_ask_first_survive_an_unrelated_save() {
 /// 问题 2：普通规则里出现 production、secret、发消息、post to 不算底线；只认以底线说法开头的条目。
 #[test]
 fn ordinary_rules_mentioning_floor_words_are_not_flagged() {
-    let (_t, d) = dir();
-    std::fs::create_dir_all(&d).unwrap();
-    std::fs::write(
-        d.join("config.json"),
-        json!({"authority": {"do_and_report": ["读 production 日志排查问题", "在 PR 里 post to 评论区回复审查意见", "轮换测试环境的 secret", "删除数据（清理测试库）"]}}).to_string(),
-    )
-    .unwrap();
-    assert_eq!(load_from(&d).unwrap().floor_misplaced, vec!["删除数据（清理测试库）"]);
+    let flagged: Vec<&str> = ["读 production 日志排查问题", "在 PR 里 post to 评论区回复审查意见", "轮换测试环境的 secret", "删除数据（清理测试库）"]
+        .into_iter()
+        .filter(|i| is_floor_like(i))
+        .collect();
+    assert_eq!(flagged, vec!["删除数据（清理测试库）"]);
 }
 
 /// 问题 3：字段类型写错算写坏：界面只读说明原因，保存拒绝，守卫也按写坏处理（宁可拦）。

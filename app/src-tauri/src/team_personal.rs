@@ -70,16 +70,11 @@ fn strings(v: Option<&Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// 手改时把底线写进了「直接做」或「结尾一次问」的条目：界面提示「这里不生效，仍会先问」。
-fn floor_misplaced(items: &[String]) -> Vec<String> {
-    items
-        .iter()
-        .filter(|item| {
-            let low = item.trim().to_lowercase();
-            FLOOR_PREFIXES.iter().any(|p| low.starts_with(p))
-        })
-        .cloned()
-        .collect()
+/// 这一条是不是在说某条底线。界面用 DTO 里的 floor_prefixes 做同样的判断（前端 isFloorLike）。
+#[cfg(test)]
+fn is_floor_like(item: &str) -> bool {
+    let low = item.trim().to_lowercase();
+    FLOOR_PREFIXES.iter().any(|p| low.starts_with(p))
 }
 
 /// 按原键序读：IndexMap 记住文件里的顺序，写回时已有的键留在原位，新键追加在后面。
@@ -116,7 +111,7 @@ pub(crate) fn load_from(dir: &Path) -> Result<TeamPersonalConfigDto, String> {
         do_and_report: Vec::new(),
         ask_at_end: Vec::new(),
         ask_first: Vec::new(),
-        floor_misplaced: Vec::new(),
+        floor_prefixes: FLOOR_PREFIXES.iter().map(|p| (*p).to_owned()).collect(),
         blocked_command_count: 0,
     };
     let Some(text) = text else {
@@ -153,9 +148,6 @@ pub(crate) fn load_from(dir: &Path) -> Result<TeamPersonalConfigDto, String> {
     dto.ask_at_end = tier("ask_at_end", DEFAULT_ASK_AT_END);
     // 「动手前先问」里用户写的条目全部原样显示（包括和底线同义的那几条），保存时原样写回。
     dto.ask_first = tier("ask_first", &[]);
-    let mut loose = dto.do_and_report.clone();
-    loose.extend(dto.ask_at_end.clone());
-    dto.floor_misplaced = floor_misplaced(&loose);
     dto.blocked_command_count = v.get("blocked_commands").and_then(Value::as_array).map_or(0, |a| a.len() as u32);
     Ok(dto)
 }
@@ -234,16 +226,17 @@ fn to_pretty_ordered(root: &IndexMap<String, Value>, authority: &IndexMap<String
 /// 个人层里新建一份品味清单（已有同名文件就直接用，不覆盖），并把 config.json 的 taste 指过去。
 pub(crate) fn create_taste_in(dir: &Path, token: &str) -> Result<TeamPersonalConfigDto, String> {
     let taste = dir.join("taste.md");
-    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    if !taste.exists() {
-        meowo_agent::fsutil::write_atomic(&taste, TASTE_TEMPLATE).map_err(|e| e.to_string())?;
-    }
+    // 先核对 config.json，通过了再写 taste.md：失败时个人层里不留多余的文件（做空 redteam-2 N5）。
     let mut now = load_from(dir)?;
     if now.error.is_some() {
         return Err("team/config_broken".into());
     }
     if now.token != token {
         return Err("team/config_changed".into());
+    }
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    if !taste.exists() {
+        meowo_agent::fsutil::write_atomic(&taste, TASTE_TEMPLATE).map_err(|e| e.to_string())?;
     }
     now.taste = Some(taste.to_string_lossy().into_owned());
     save_to(

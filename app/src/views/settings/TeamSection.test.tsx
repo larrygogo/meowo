@@ -33,7 +33,7 @@ const dto = (over: Partial<TeamPersonalConfigDto> = {}): TeamPersonalConfigDto =
   doAndReport: ["本地提交", "写测试"],
   askAtEnd: ["合并到主分支"],
   askFirst: [],
-  floorMisplaced: [],
+  floorPrefixes: ["上生产", "花钱", "删除数据", "对外发消息", "deploy to prod"],
   blockedCommandCount: 1,
   ...over,
 });
@@ -174,7 +174,7 @@ describe("团队设置子页", () => {
   });
 
   it("底线被手改进宽松档：那一条标「这里不生效」，照样能换档；「移回去」是移到动手前先问，不是删掉", async () => {
-    api.teamPersonalConfig.mockResolvedValue(dto({ doAndReport: ["本地提交", "删除数据（清理测试库）"], floorMisplaced: ["删除数据（清理测试库）"] }));
+    api.teamPersonalConfig.mockResolvedValue(dto({ doAndReport: ["本地提交", "删除数据（清理测试库）"] }));
     render(<TeamSection onBack={() => {}} />);
     const row = (await screen.findAllByText("删除数据（清理测试库）")).map((n) => n.closest(".tpc-it")).find((n) => n?.classList.contains("is-void"))!;
     within(row as HTMLElement).getByText(p.voidTag);
@@ -185,6 +185,70 @@ describe("团队设置子页", () => {
     const args = api.saveTeamPersonalConfig.mock.calls[0][0];
     expect(args.doAndReport).toEqual(["本地提交"]);
     expect(args.askFirst).toEqual(["删除数据（清理测试库）"]);
+  });
+
+  it("冲突后叠上：删除按文字找条目，外部在前面插了一项也删的是同一条", async () => {
+    api.teamPersonalConfig.mockResolvedValue(dto({ protected: ["a-repo", "b-repo", "c-repo"], doAndReport: ["本地提交", "写测试", "跑基准"] }));
+    api.saveTeamPersonalConfig.mockRejectedValueOnce("team/config_changed");
+    render(<TeamSection onBack={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: p.removeDir("c-repo") }));
+    const row = screen.getByText("跑基准").closest(".tpc-it") as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: p.move }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: p.remove }));
+    api.teamPersonalConfig.mockResolvedValue(dto({ token: "t9", protected: ["from-editor", "a-repo", "b-repo", "c-repo"], doAndReport: ["编辑器里加的", "本地提交", "写测试", "跑基准"] }));
+    fireEvent.click(screen.getByRole("button", { name: p.save }));
+    const bar = await screen.findByRole("alertdialog");
+    fireEvent.click(within(bar).getByRole("button", { name: p.reapply }));
+    await waitFor(() => expect(api.saveTeamPersonalConfig).toHaveBeenCalledTimes(2));
+    const retry = api.saveTeamPersonalConfig.mock.calls[1][0];
+    expect(retry.protected).toEqual(["from-editor", "a-repo", "b-repo"]);
+    expect(retry.doAndReport).toEqual(["编辑器里加的", "本地提交", "写测试"]);
+  });
+
+  it("「动手前先问」里写着底线原文：并到锁组下只读展示、不重复成能换档的一条，保存时原样写回", async () => {
+    api.teamPersonalConfig.mockResolvedValue(dto({ askFirst: ["上生产", "花钱：开机器、买资源", "给客户发消息前先给我看草稿"] }));
+    render(<TeamSection onBack={() => {}} />);
+    const say = (await screen.findByText(p.floorPlus(5, 1))).closest("p")!;
+    expect(say).toBeTruthy();
+    const bed = screen.getByText(p.floorHead).closest(".tpc-bed") as HTMLElement;
+    expect(within(bed).getAllByText(p.echoTag)).toHaveLength(2);
+    expect(within(bed).queryAllByRole("button")).toHaveLength(0);
+    // 能换档的只有用户自己的那条
+    const rung = screen.getByText(p.tierName.askFirst).closest(".tpc-rung") as HTMLElement;
+    expect(within(rung).getAllByRole("button", { name: p.move })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: p.removeDir("acme-*") }));
+    fireEvent.click(screen.getByRole("button", { name: p.save }));
+    await waitFor(() => expect(api.saveTeamPersonalConfig).toHaveBeenCalled());
+    expect(api.saveTeamPersonalConfig.mock.calls[0][0].askFirst).toEqual(["上生产", "花钱：开机器、买资源", "给客户发消息前先给我看草稿"]);
+  });
+
+  it("新加进宽松档的底线说法当场标「这里不生效」，不用等保存", async () => {
+    render(<TeamSection onBack={() => {}} />);
+    await screen.findByText("合并到主分支");
+    fireEvent.click(screen.getAllByRole("button", { name: p.addItem })[0]);
+    const input = screen.getByPlaceholderText(p.addItemPlaceholder);
+    fireEvent.change(input, { target: { value: "Deploy to prod 周五" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    const row = (await screen.findByText("Deploy to prod 周五")).closest(".tpc-it") as HTMLElement;
+    expect(row.classList.contains("is-void")).toBe(true);
+    within(row).getByText(p.voidTag);
+  });
+
+  it("新建品味清单：连点只调一次；遇到外部改动如实重读，没保存的改动还在", async () => {
+    api.teamPersonalConfig.mockResolvedValue(dto({ taste: null, tasteExists: false }));
+    let release: (v: unknown) => void = () => {};
+    api.createTeamTaste.mockImplementationOnce(() => new Promise((_, reject) => { release = () => reject("team/config_changed"); }));
+    render(<TeamSection onBack={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: p.removeDir("acme-*") }));
+    const btn = screen.getByRole("button", { name: p.newTaste });
+    fireEvent.click(btn);
+    fireEvent.click(btn);
+    expect(api.createTeamTaste).toHaveBeenCalledTimes(1);
+    const reads = api.teamPersonalConfig.mock.calls.length;
+    release(null);
+    await screen.findByText(p.tasteRetry);
+    expect(api.teamPersonalConfig.mock.calls.length).toBe(reads + 1);
+    screen.getByText(p.dirty(1));
   });
 
   it("同名条目各删各的，不会一删删两条", async () => {

@@ -1612,8 +1612,9 @@ pub struct TeamPersonalConfigDto {
     pub ask_at_end: Vec<String>,
     /// 用户在底线五样之外追加的「动手前先问」。底线本身不存在这里，界面锁定展示。
     pub ask_first: Vec<String>,
-    /// 写进了「直接做」「结尾一次问」、但属于底线的条目：照样按「先问」处理，界面标出「底线不生效」。
-    pub floor_misplaced: Vec<String>,
+    /// 认底线用的开头说法（小写）。界面按它实时判断：写在「直接做」「结尾一次问」里的标「不生效」，
+    /// 写在「动手前先问」里的并到锁组下只读展示。只有一份清单，放在后端。
+    pub floor_prefixes: Vec<String>,
     /// 额外拦截的命令条数（正则，只在文件里编辑）。
     pub blocked_command_count: u32,
 }

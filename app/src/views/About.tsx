@@ -29,7 +29,7 @@ import { SETTINGS_SECTION_KEY } from "../settingsNav";
 import { Icon } from "../icons/Icon";
 import { icBell, icClose, icContrast, icSearch, icSettings } from "../icons/glyphs";
 import { icChevronRight } from "../icons/glyphs.scm";
-import { TeamSection } from "./settings/TeamSection";
+import { TeamSection, useTeamDraft } from "./settings/TeamSection";
 import { icBot, icCards, icGitPr, icInfo, icKeyboard, icSmartphone } from "../icons/glyphs.settings";
 import { busyProps } from "../busyButton";
 
@@ -1036,6 +1036,13 @@ export function About() {
     setGeneralView(view);
     try { localStorage.setItem(SETTINGS_SECTION_KEY, view === "team" ? "team" : "general"); } catch { /* 隐私模式禁写 */ }
   };
+  // 团队子页没保存的改动放在这一层：搜索、切分区时子页卸载也不丢（做空 redteam-2 N1）。
+  const teamDraft = useTeamDraft();
+  const teamDirty = useRef(false);
+  teamDirty.current = teamDraft.dirty;
+  const [teamNudge, setTeamNudge] = useState(0);
+  // 返回、Esc 离开子页时还有没保存的改动：不走，让保存条闪一下（先保存或放弃）。
+  const leaveTeam = () => (teamDirty.current ? setTeamNudge((n) => n + 1) : pickGeneralView("main"));
   // 记住的是团队子页，但团队已经关了（或在别处卸了）：回到通用主页，不停在一个没有入口的页面上。
   useEffect(() => {
     if (generalView !== "team") return;
@@ -1069,7 +1076,7 @@ export function About() {
       if (next) {
         setSec(next.sec);
         if (next.agentView) setAgentView(next.agentView);
-        setGeneralView(next.generalView ?? "main");
+        if (!teamDirty.current) setGeneralView(next.generalView ?? "main");
         setVisited((prev) => (prev.has(next.sec) ? prev : new Set(prev).add(next.sec)));
       }
     };
@@ -1078,10 +1085,36 @@ export function About() {
   }, []);
   const [query, setQuery] = useState("");
   const searching = query.trim() !== "";
-  const close = () => getCurrentWindow().close().catch(() => {});
+  // 关窗前团队子页还有没保存的改动：回到子页、清掉搜索，让保存条闪一下，不关。
+  const holdForTeam = () => {
+    setQuery("");
+    pickSec("general");
+    pickGeneralView("team");
+    setTeamNudge((n) => n + 1);
+  };
+  const close = () => (teamDirty.current ? holdForTeam() : getCurrentWindow().close().catch(() => {}));
   // 弹出式任务窗的基本预期：Esc 关窗（输入框内让位）。在子页里先返回上一层，和搜索框里 Esc 先清词同一个思路。
   const inTeamPage = sec === "general" && generalView === "team" && !searching;
-  useEscClose(() => (inTeamPage ? pickGeneralView("main") : close()));
+  useEscClose(() => (inTeamPage ? leaveTeam() : close()));
+  // 系统关窗（Alt+F4、任务栏）同样拦。
+  const holdRef = useRef(holdForTeam);
+  holdRef.current = holdForTeam;
+  useEffect(() => {
+    const win = getCurrentWindow();
+    if (typeof win.onCloseRequested !== "function") return;
+    let off: (() => void) | undefined;
+    let live = true;
+    void win
+      .onCloseRequested((event) => {
+        if (teamDirty.current) {
+          event.preventDefault();
+          holdRef.current();
+        }
+      })
+      .then((unlisten) => { if (live) off = unlisten; else unlisten(); })
+      .catch(() => {});
+    return () => { live = false; off?.(); };
+  }, []);
   // 设置窗口也服从自动更新开关；关闭时不做后台检查，用户仍可从「关于」手动打开更新窗口检查。
   const { status, version: newVersion } = useUpdate({ automatic: true });
 
@@ -1227,7 +1260,7 @@ export function About() {
               {!(s === "general" && inTeamPage) && <h1 className="sec-title">{t.settings.nav[s]}</h1>}
               {s === "general" ? (
                 inTeamPage ? (
-                  <TeamSection onBack={() => pickGeneralView("main")} />
+                  <TeamSection onBack={leaveTeam} draft={teamDraft} nudge={teamNudge} />
                 ) : (
                   <GeneralSection searching={searching} onOpenTeam={() => pickGeneralView("team")} />
                 )
