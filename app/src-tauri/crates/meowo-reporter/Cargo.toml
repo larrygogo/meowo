@@ -8,6 +8,8 @@ crossterm = "0.29.0"
 meowo-agent = { path = "../meowo-agent" }
 meowo-protocol = { path = "../meowo-protocol" }
 meowo-store = { path = "../meowo-store" }
+# 团队守卫按正则认对外命令（team_guard.rs）；regex 本就在工作区依赖树里。
+regex = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 sysinfo = "0.32"

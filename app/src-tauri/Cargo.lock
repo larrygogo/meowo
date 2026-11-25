@@ -2690,7 +2690,7 @@ dependencies = [
 
 [[package]]
 name = "meowo-app"
-version = "0.8.6"
+version = "0.8.7"
 dependencies = [
  "arboard",
  "axum",
@@ -2737,6 +2737,7 @@ dependencies = [
  "tauri-plugin-wdio-webdriver",
  "tauri-plugin-window-state",
  "tauri-winrt-notification",
+ "tempfile",
  "tokio",
  "toml_edit 0.22.27",
  "trash",
@@ -2771,6 +2772,7 @@ dependencies = [
  "meowo-agent",
  "meowo-protocol",
  "meowo-store",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",

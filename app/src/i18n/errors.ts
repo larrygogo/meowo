@@ -447,6 +447,10 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "lead/claude_missing", exact: true, zh: "没找到 Claude Code 的配置目录，请先安装并登录 Claude Code", en: "Claude Code's config folder wasn't found. Install and sign in to Claude Code first" },
   { m: "lead/reporter_missing", exact: true, zh: "找不到 meowo-reporter，请重新安装 Meowo", en: "meowo-reporter is missing. Reinstall Meowo" },
   { m: "lead/user_file_exists", exact: true, zh: "该账号已有你自己的同名 Lead 技能或审查角色，已停止安装以保留原文件", en: "This account already has your own Lead skill or reviewer role. Installation stopped to preserve your files" },
+  // 团队（team.rs）：用户文件和插件冲突的错误后面带着路径，按前缀匹配、把路径接在译文后。
+  { m: "team/user_file_exists", tail: true, zh: "已有你自己的同名团队文件，没有覆盖，已停止安装", en: "You already have your own team file with the same name. It was left untouched and installation stopped" },
+  { m: "team/plugin_conflict", tail: true, zh: "检测到另一份 team 插件，先从 CLAUDE_CODE_PLUGIN_DIRS 去掉它", en: "Another team plugin is loaded. Remove it from CLAUDE_CODE_PLUGIN_DIRS first" },
+  { m: "team/lead_required", exact: true, zh: "团队要和 Lead 工作流一起用，请先打开 Lead 工作流", en: "The team works on top of the Lead workflow. Turn on the Lead workflow first" },
   { m: "lead/settings_invalid", exact: true, zh: "CLI 配置格式不正确，未修改该配置", en: "The CLI configuration is malformed and was left unchanged" },
   { m: "lead/provider_missing", exact: true, zh: "未找到该 CLI，请先安装并完成设置", en: "This CLI was not found. Install it and complete its setup first" },
   { m: "lead/provider_unsupported", exact: true, zh: "该 CLI 暂不支持安装 Lead 工作流", en: "Lead installation is not supported for this CLI yet" },
