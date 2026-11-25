@@ -1169,6 +1169,23 @@ export function setTeamWorkflow(enabled: boolean): Promise<void> {
   return invoke("set_team_workflow", { enabled });
 }
 
+/// 团队设置子页（team_personal.rs）：个人层 config.json 里界面管的几项。界面和文件是同一份数据。
+export type { TeamPersonalConfigDto } from "./generated/contracts/TeamPersonalConfigDto";
+export type { SaveTeamPersonalConfigArgs } from "./generated/contracts/SaveTeamPersonalConfigArgs";
+export function teamPersonalConfig(): Promise<import("./generated/contracts/TeamPersonalConfigDto").TeamPersonalConfigDto> {
+  return invoke("team_personal_config");
+}
+/// 保存时带上读到时的 token：文件在那之后被别处改过，后端拒绝（team/config_changed），界面重新载入。
+export function saveTeamPersonalConfig(args: import("./generated/contracts/SaveTeamPersonalConfigArgs").SaveTeamPersonalConfigArgs): Promise<import("./generated/contracts/TeamPersonalConfigDto").TeamPersonalConfigDto> {
+  return invoke("save_team_personal_config", { args });
+}
+export function createTeamTaste(token: string): Promise<import("./generated/contracts/TeamPersonalConfigDto").TeamPersonalConfigDto> {
+  return invoke("create_team_taste", { token });
+}
+export function openTeamPersonal(target: "folder" | "config" | "taste"): Promise<void> {
+  return invoke("open_team_personal", { target });
+}
+
 /// 回答关卡：A 用 confirm/revise，C 用 accept/reject，B 用方案 id；note 为附加意见。
 export function answerLeadGate(cwd: string, gateId: string, choice: string, note: string, version?: string): Promise<void> {
   return invoke("answer_lead_gate", { cwd, gateId, choice, note, ...(version ? { version } : {}) } satisfies AnswerLeadGateArgs);

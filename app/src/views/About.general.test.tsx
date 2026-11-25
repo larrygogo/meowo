@@ -93,16 +93,19 @@ describe("团队一行", () => {
     expect(screen.getByText(zh.settings.teamDesc)).toBeTruthy();
   });
 
-  it("Lead 开着：打开团队调用后端，装好后显示个人层位置", async () => {
+  it("Lead 开着：打开团队调用后端，装好后出现「团队设置」入口，点进去走子页", async () => {
     api.leadWorkflowInstalled.mockResolvedValue(true);
     api.teamWorkflowState.mockImplementation(() => Promise.resolve(team({ leadInstalled: true, installed: api.setTeamWorkflow.mock.calls.length > 0 })));
     api.setTeamWorkflow.mockResolvedValue(undefined);
-    render(<GeneralSection />);
+    const onOpenTeam = vi.fn();
+    render(<GeneralSection onOpenTeam={onOpenTeam} />);
+    expect(screen.queryByText(zh.settings.teamSettings)).toBeNull();
     const sw = await teamSwitch();
     await waitFor(() => expect(sw.disabled).toBe(false));
     sw.click();
     await waitFor(() => expect(api.setTeamWorkflow).toHaveBeenCalledWith(true));
-    await screen.findByText(zh.settings.teamPersonal("/home/u/.meowo/team"));
+    (await screen.findByText(zh.settings.teamSettings)).click();
+    expect(onOpenTeam).toHaveBeenCalled();
   });
 
   it("本机另有一份 team 插件：说清是哪个目录，开关置灰，不再重复报错", async () => {
