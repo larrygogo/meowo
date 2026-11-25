@@ -130,8 +130,11 @@ fn plugin_dirs() -> Vec<PathBuf> {
     #[cfg(windows)]
     {
         use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+        // 验收台沙箱（debug 构建 + MEOWO_DEV_CLAUDE_HOME，见 lead::claude_dir）：只看进程环境变量，
+        // 由验收台决定有没有冲突，不读用户真实的注册表。
+        let sandbox = cfg!(debug_assertions) && std::env::var_os("MEOWO_DEV_CLAUDE_HOME").is_some_and(|v| !v.is_empty());
         // 用户级注册表读得到就以它为准：用户已经去掉了，就不能再拿进程里的旧值去挡。
-        if let Ok(key) = RegKey::predef(HKEY_CURRENT_USER).open_subkey("Environment") {
+        if let (false, Ok(key)) = (sandbox, RegKey::predef(HKEY_CURRENT_USER).open_subkey("Environment")) {
             values = key.get_value::<String, _>("CLAUDE_CODE_PLUGIN_DIRS").ok().into_iter().collect();
         }
     }
