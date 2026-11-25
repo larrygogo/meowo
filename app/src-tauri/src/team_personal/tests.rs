@@ -106,8 +106,8 @@ fn floor_items_written_into_looser_tiers_are_flagged() {
     .unwrap();
     let dto = load_from(&d).unwrap();
     assert_eq!(dto.floor_misplaced, vec!["对外发消息（飞书群）", "上生产"]);
-    std::fs::write(d.join("config.json"), r#"{"authority":{"do_and_report":["Deploy to production"]}}"#).unwrap();
-    assert_eq!(load_from(&d).unwrap().floor_misplaced, vec!["Deploy to production"]);
+    std::fs::write(d.join("config.json"), r#"{"authority":{"do_and_report":["Deploy to production","Deploy to prod on Fridays"]}}"#).unwrap();
+    assert_eq!(load_from(&d).unwrap().floor_misplaced, vec!["Deploy to production", "Deploy to prod on Fridays"]);
 }
 
 #[test]
@@ -145,16 +145,6 @@ fn missing_authority_falls_back_to_the_template_defaults() {
 }
 
 #[test]
-fn floor_synonyms_in_ask_first_merge_into_the_locked_group() {
-    let (_t, d) = dir();
-    std::fs::create_dir_all(&d).unwrap();
-    std::fs::write(d.join("config.json"), r#"{"authority":{"ask_first":["上生产","花钱：开云主机、买资源","改数据库结构"]}}"#).unwrap();
-    let dto = load_from(&d).unwrap();
-    assert_eq!(dto.ask_first, vec!["改数据库结构"]);
-    assert!(dto.floor_misplaced.is_empty());
-}
-
-#[test]
 fn a_broken_file_reports_the_line_and_its_neighbours() {
     let (_t, d) = dir();
     std::fs::create_dir_all(&d).unwrap();
@@ -163,4 +153,82 @@ fn a_broken_file_reports_the_line_and_its_neighbours() {
     assert_eq!(dto.error_line, Some(4));
     assert_eq!(dto.error_first_line, 2);
     assert_eq!(dto.error_lines, vec!["  \"protected\": [", "    \"a\"", "    \"b\"", "  ]"]);
+}
+
+// ---- 做空 redteam-1 的复现 ----
+
+/// 问题 1：用户写在「动手前先问」里的规则，哪怕含底线的词，也要原样显示、原样写回，不能在一次无关保存后消失。
+#[test]
+fn user_rules_in_ask_first_survive_an_unrelated_save() {
+    let (_t, d) = dir();
+    std::fs::create_dir_all(&d).unwrap();
+    let rules = ["改 production 分支的 CI 配置前先问", "给客户发消息前先给我看草稿", "动 secret-repo 之前先问", "花钱：开云主机、买资源", "重构公共模块"];
+    std::fs::write(d.join("config.json"), json!({"authority": {"ask_first": rules}}).to_string()).unwrap();
+    let dto = load_from(&d).unwrap();
+    assert_eq!(dto.ask_first, rules);
+    let mut a = args(&dto);
+    a.protected.push("acme-*".into());
+    save_to(&d, &a).unwrap();
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(d.join("config.json")).unwrap()).unwrap();
+    assert_eq!(v["authority"]["ask_first"], json!(rules));
+}
+
+/// 问题 2：普通规则里出现 production、secret、发消息、post to 不算底线；只认以底线说法开头的条目。
+#[test]
+fn ordinary_rules_mentioning_floor_words_are_not_flagged() {
+    let (_t, d) = dir();
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(
+        d.join("config.json"),
+        json!({"authority": {"do_and_report": ["读 production 日志排查问题", "在 PR 里 post to 评论区回复审查意见", "轮换测试环境的 secret", "删除数据（清理测试库）"]}}).to_string(),
+    )
+    .unwrap();
+    assert_eq!(load_from(&d).unwrap().floor_misplaced, vec!["删除数据（清理测试库）"]);
+}
+
+/// 问题 3：字段类型写错算写坏：界面只读说明原因，保存拒绝，守卫也按写坏处理（宁可拦）。
+#[test]
+fn wrong_field_types_count_as_broken_everywhere() {
+    let (_t, d) = dir();
+    std::fs::create_dir_all(&d).unwrap();
+    for (bad, hint) in [
+        (r#"{"protected": "D:/work/client"}"#, "protected"),
+        (r#"{"protected": ["ok", 42]}"#, "protected"),
+        (r#"{"authority": {"ask_first": "合并"}}"#, "authority.ask_first"),
+        (r#"{"authority": []}"#, "authority"),
+        (r#"{"taste": 3}"#, "taste"),
+        (r#"{"blocked_commands": [{"what": "没有 pattern"}]}"#, "blocked_commands"),
+    ] {
+        std::fs::write(d.join("config.json"), bad).unwrap();
+        let dto = load_from(&d).unwrap();
+        assert!(dto.error.as_deref().is_some_and(|e| e.contains(hint)), "{bad}: {:?}", dto.error);
+        assert_eq!(save_to(&d, &args(&dto)).unwrap_err(), "team/config_broken", "{bad}");
+        assert_eq!(std::fs::read_to_string(d.join("config.json")).unwrap(), bad, "不覆盖");
+        assert!(meowo_reporter::team_guard::Config::parse(bad).broken.is_some(), "守卫同一个判断：{bad}");
+    }
+}
+
+/// 问题 4：保存按原键序写回，说明键紧挨它说明的字段；新键追加在后面。
+#[test]
+fn a_save_keeps_the_original_key_order() {
+    let (_t, d) = dir();
+    std::fs::create_dir_all(&d).unwrap();
+    let original = r#"{
+  "_taste_说明": "x",
+  "taste": "D:/t.md",
+  "_protected_说明": "y",
+  "protected": [],
+  "zeta": 1,
+  "authority": { "note": "留着", "ask_first": [], "do_and_report": [], "ask_at_end": [] },
+  "_authority_说明": "z"
+}"#;
+    std::fs::write(d.join("config.json"), original).unwrap();
+    let mut a = args(&load_from(&d).unwrap());
+    a.protected.push("acme-*".into());
+    save_to(&d, &a).unwrap();
+    let text = std::fs::read_to_string(d.join("config.json")).unwrap();
+    let pos = |k: &str| text.find(&format!("\"{k}\"")).unwrap_or_else(|| panic!("{k}"));
+    let order = ["_taste_说明", "taste", "_protected_说明", "protected", "zeta", "authority", "_authority_说明"];
+    assert!(order.windows(2).all(|w| pos(w[0]) < pos(w[1])), "{text}");
+    assert!(pos("note") < pos("ask_first") && pos("ask_first") < pos("do_and_report"), "authority 里也按原序：{text}");
 }

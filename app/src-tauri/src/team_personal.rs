@@ -5,23 +5,28 @@
 //! - 只改界面管的字段（taste、protected、authority），其余字段（blocked_commands、用户自己加的键、
 //!   「_说明」）原样保留；
 //! - 文件写坏了不覆盖，报原因让用户去修；
-//! - 界面读到的版本和保存时磁盘上的版本不一样（用户在编辑器里改过），不覆盖，让界面重新载入。
+//! - 界面读到的版本和保存时磁盘上的版本不一样（用户在编辑器里改过），不覆盖，让界面重新载入；
+//! - 用户写的条目一条不藏、一条不删：界面显示的就是文件里的，保存写回的也就是这些（做空 redteam-1 问题 1）；
+//! - 按文件原来的键顺序写回：「_说明」键紧挨着它说明的字段，界面保存一次不能把手改的排版打乱（问题 4）。
 //!
 //! 个人层「Meowo 从不写」（团队规则 R2）指的是升级和刷新不碰它；这里是用户在界面上亲手保存，等同用户自己写。
 
 use meowo_protocol::ipc::{SaveTeamPersonalConfigArgs, TeamPersonalConfigDto};
-use serde_json::{json, Map, Value};
+use indexmap::IndexMap;
+use serde_json::{json, Value};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 /// 硬底线：永远「动手前先问」，个人层和契约都解不开（团队规则 R6）。不存进 config.json，界面锁定展示，
-/// 角色按 team-staff 技能总是带上。这里的关键词只用来发现用户手改时把底线写进了别的档。
-const FLOOR_KEYWORDS: &[&[&str]] = &[
-    &["上生产", "生产环境", "production", "prod deploy"],
-    &["花钱", "付费", "买资源", "开云主机", "spend money", "purchase"],
-    &["密钥", "生产配置", "secret", "credential"],
-    &["对外发消息", "发消息", "群里发", "webhook", "send message", "post to"],
-    &["删除数据", "删数据", "delete data", "drop table"],
+/// 角色按 team-staff 技能总是带上。
+///
+/// 这里只认「就是在说某条底线」的写法：条目以底线的说法开头（模板里的「花钱：开机器、买资源」、手改的
+/// 「删除数据（清理测试库）」）。不按 production、secret、发消息这类词在句中出现来认：「读 production 日志排查」
+/// 「给客户发消息前先给我看草稿」是用户自己的普通规则，误认成底线会被标成「不生效」（做空 redteam-1 问题 2）。
+/// 认出来也只是提示，界面照常能换档、能删，文件里的原文不动。
+const FLOOR_PREFIXES: &[&str] = &[
+    "上生产", "部署到生产", "发布到生产", "花钱", "改生产配置", "改密钥", "对外发消息", "删除数据", "删数据",
+    "ship to production", "deploy to production", "deploy to prod", "spend money", "change production config", "send messages out", "delete data",
 ];
 
 /// 文件里没写三档时的默认值，和团队模板 contract.json 一致（team-staff 技能「缺某一档就用模板默认值」）。
@@ -65,16 +70,31 @@ fn strings(v: Option<&Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// 手改时把底线写进了「直接做」或「结尾一次问」的条目：界面标出「底线不生效」。
+/// 手改时把底线写进了「直接做」或「结尾一次问」的条目：界面提示「这里不生效，仍会先问」。
 fn floor_misplaced(items: &[String]) -> Vec<String> {
     items
         .iter()
         .filter(|item| {
-            let low = item.to_lowercase();
-            FLOOR_KEYWORDS.iter().any(|keys| keys.iter().any(|k| low.contains(&k.to_lowercase())))
+            let low = item.trim().to_lowercase();
+            FLOOR_PREFIXES.iter().any(|p| low.starts_with(p))
         })
         .cloned()
         .collect()
+}
+
+/// 按原键序读：IndexMap 记住文件里的顺序，写回时已有的键留在原位，新键追加在后面。
+fn parse_ordered(text: &str) -> Option<IndexMap<String, Value>> {
+    serde_json::from_str::<IndexMap<String, Value>>(text.trim_start_matches('\u{feff}')).ok()
+}
+
+/// serde_json 的 Map 不保序；authority 按原文顺序单独读一遍，写回时用它。
+fn ordered_authority(text: &str) -> IndexMap<String, Value> {
+    #[derive(serde::Deserialize)]
+    struct Probe {
+        #[serde(default)]
+        authority: Option<IndexMap<String, Value>>,
+    }
+    serde_json::from_str::<Probe>(text.trim_start_matches('\u{feff}')).ok().and_then(|p| p.authority).unwrap_or_default()
 }
 
 pub(crate) fn load_from(dir: &Path) -> Result<TeamPersonalConfigDto, String> {
@@ -131,11 +151,8 @@ pub(crate) fn load_from(dir: &Path) -> Result<TeamPersonalConfigDto, String> {
     };
     dto.do_and_report = tier("do_and_report", DEFAULT_DO_AND_REPORT);
     dto.ask_at_end = tier("ask_at_end", DEFAULT_ASK_AT_END);
-    // 「动手前先问」里和底线同义的条目（模板里的「花钱：开机器、买资源」之类）并进界面的锁组，不重复显示；
-    // 保存时也就不再写回，底线本来就不靠这几行生效。
-    let extra = tier("ask_first", &[]);
-    let floorish = floor_misplaced(&extra);
-    dto.ask_first = extra.into_iter().filter(|i| !floorish.contains(i)).collect();
+    // 「动手前先问」里用户写的条目全部原样显示（包括和底线同义的那几条），保存时原样写回。
+    dto.ask_first = tier("ask_first", &[]);
     let mut loose = dto.do_and_report.clone();
     loose.extend(dto.ask_at_end.clone());
     dto.floor_misplaced = floor_misplaced(&loose);
@@ -151,14 +168,17 @@ pub(crate) fn save_to(dir: &Path, args: &SaveTeamPersonalConfigArgs) -> Result<T
     }
     let mut root = match &current {
         None => {
-            let mut m = Map::new();
-            m.insert("_说明".into(), json!("团队个人层设置。Meowo 设置页的「团队」子页和这个文件是同一份数据，两边改哪边都行。"));
+            let mut m = IndexMap::new();
+            m.insert("_说明".to_owned(), json!("团队个人层设置。Meowo 设置页的「团队」子页和这个文件是同一份数据，两边改哪边都行。"));
             m
         }
-        Some(text) => match serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}')) {
-            Ok(Value::Object(m)) => m,
-            _ => return Err("team/config_broken".into()),
-        },
+        Some(text) => {
+            // 写坏（含字段类型不对）不覆盖：和守卫、读取同一个判断。
+            if meowo_reporter::team_guard::Config::parse(text).broken.is_some() {
+                return Err("team/config_broken".into());
+            }
+            parse_ordered(text).ok_or("team/config_broken")?
+        }
     };
     let clean = |items: &[String]| -> Value {
         let mut seen = Vec::new();
@@ -171,25 +191,44 @@ pub(crate) fn save_to(dir: &Path, args: &SaveTeamPersonalConfigArgs) -> Result<T
     };
     match args.taste.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         Some(t) => {
-            root.insert("taste".into(), json!(t));
+            root.insert("taste".to_owned(), json!(t));
         }
         None => {
-            root.remove("taste");
+            root.shift_remove("taste");
         }
     }
-    root.insert("protected".into(), clean(&args.protected));
-    let mut authority = match root.remove("authority") {
-        Some(Value::Object(m)) => m,
-        _ => Map::new(),
-    };
-    authority.insert("do_and_report".into(), clean(&args.do_and_report));
-    authority.insert("ask_at_end".into(), clean(&args.ask_at_end));
-    authority.insert("ask_first".into(), clean(&args.ask_first));
-    root.insert("authority".into(), Value::Object(authority));
+    root.insert("protected".to_owned(), clean(&args.protected));
+    let mut authority = current.as_deref().map(ordered_authority).unwrap_or_default();
+    authority.insert("do_and_report".to_owned(), clean(&args.do_and_report));
+    authority.insert("ask_at_end".to_owned(), clean(&args.ask_at_end));
+    authority.insert("ask_first".to_owned(), clean(&args.ask_first));
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let text = serde_json::to_string_pretty(&Value::Object(root)).map_err(|e| e.to_string())? + "\n";
+    let text = to_pretty_ordered(&root, &authority)? + "\n";
     meowo_agent::fsutil::write_atomic(&path, &text).map_err(|e| e.to_string())?;
     load_from(dir)
+}
+
+/// serde_json 的对象不保序，所以顶层和 authority 都用 IndexMap 输出：顶层按原键序，authority 放回它原来的位置
+/// （文件里没有就追加在最后），authority 里也按原键序。
+fn to_pretty_ordered(root: &IndexMap<String, Value>, authority: &IndexMap<String, Value>) -> Result<String, String> {
+    #[derive(serde::Serialize)]
+    #[serde(untagged)]
+    enum Node<'a> {
+        Map(&'a IndexMap<String, Value>),
+        Plain(&'a Value),
+    }
+    let mut out: IndexMap<&str, Node> = IndexMap::new();
+    for (k, v) in root {
+        if k == "authority" {
+            out.insert("authority", Node::Map(authority));
+        } else {
+            out.insert(k.as_str(), Node::Plain(v));
+        }
+    }
+    if !out.contains_key("authority") {
+        out.insert("authority", Node::Map(authority));
+    }
+    serde_json::to_string_pretty(&out).map_err(|e| e.to_string())
 }
 
 /// 个人层里新建一份品味清单（已有同名文件就直接用，不覆盖），并把 config.json 的 taste 指过去。

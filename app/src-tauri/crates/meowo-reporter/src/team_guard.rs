@@ -70,6 +70,11 @@ impl Config {
             Ok(_) => return Self { broken: Some("顶层不是 JSON 对象".into()), ..Self::default() },
             Err(e) => return Self { broken: Some(format!("不是合法的 JSON：{e}")), ..Self::default() },
         };
+        // 字段类型写错（数组写成字符串、列表里混进数字）也算写坏：宽容地当空列表读，受保护目录就静默失效，
+        // 设置页还会显示「哪个目录都能进」（2026-11-25 团队设置子页做空 redteam-1 问题 3）。
+        if let Some(problem) = type_problem(&v) {
+            return Self { broken: Some(problem), ..Self::default() };
+        }
         let protected = v
             .get("protected")
             .and_then(Value::as_array)
@@ -109,6 +114,41 @@ impl Config {
     pub fn problem(personal_dir: &Path) -> Option<String> {
         Self::load(Some(personal_dir)).broken
     }
+}
+
+/// 个人层 config.json 里各字段该是什么类型。不认识的字段不管（用户可以自己加键）。
+fn type_problem(v: &Value) -> Option<String> {
+    let strings = |key: &str, val: Option<&Value>| -> Option<String> {
+        let val = val?;
+        match val.as_array() {
+            Some(items) if items.iter().all(Value::is_string) => None,
+            Some(_) => Some(format!("「{key}」里每一项都要是带引号的文字")),
+            None => Some(format!("「{key}」应该是一组文字，比如 [\"一项\", \"另一项\"]")),
+        }
+    };
+    if let Some(t) = v.get("taste") {
+        if !t.is_string() && !t.is_null() {
+            return Some("「taste」应该是一个文件路径（带引号的文字）".into());
+        }
+    }
+    if let Some(p) = strings("protected", v.get("protected")) {
+        return Some(p);
+    }
+    if let Some(b) = v.get("blocked_commands") {
+        let ok = b.as_array().is_some_and(|items| items.iter().all(|i| i.get("pattern").is_some_and(Value::is_string)));
+        if !ok {
+            return Some("「blocked_commands」应该是一组 {\"pattern\": \"正则\", \"what\": \"说明\"}".into());
+        }
+    }
+    if let Some(a) = v.get("authority") {
+        let Some(a) = a.as_object() else { return Some("「authority」应该是一个对象，里面放三档".into()) };
+        for tier in ["do_and_report", "ask_at_end", "ask_first"] {
+            if let Some(p) = strings(&format!("authority.{tier}"), a.get(tier)) {
+                return Some(p);
+            }
+        }
+    }
+    None
 }
 
 /// 入口：返回 Some(stdout) 表示拒绝；None 放行。`temp_dirs` 是允许受限角色写入的临时目录。

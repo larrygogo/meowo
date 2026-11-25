@@ -1036,6 +1036,16 @@ export function About() {
     setGeneralView(view);
     try { localStorage.setItem(SETTINGS_SECTION_KEY, view === "team" ? "team" : "general"); } catch { /* 隐私模式禁写 */ }
   };
+  // 记住的是团队子页，但团队已经关了（或在别处卸了）：回到通用主页，不停在一个没有入口的页面上。
+  useEffect(() => {
+    if (generalView !== "team") return;
+    let live = true;
+    teamWorkflowState()
+      .then((s) => { if (live && !s.installed) pickGeneralView("main"); })
+      .catch(() => {});
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- pickGeneralView 每次渲染新建，只看子页切换
+  }, [generalView]);
   const pickAgentView = (view: AgentView) => {
     setAgentView(view);
     try { localStorage.setItem(SETTINGS_SECTION_KEY, view === "extensions" ? "extensions" : "account"); } catch { /* 隐私模式禁写 */ }

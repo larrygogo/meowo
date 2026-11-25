@@ -2705,6 +2705,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "image",
+ "indexmap 2.14.0",
  "libc",
  "meowo-agent",
  "meowo-protocol",
