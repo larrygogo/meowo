@@ -1584,7 +1584,6 @@ pub struct LeadDeliveryDto {
     pub can_retry: bool,
 }
 
-/// 设置页按 CLI 与账号隔离展示；资产安装状态不代表已具备自动续跑能力。
 /// 设置页「团队」一行的状态（team.rs）。只支持 Claude Code，所以没有按 provider 分行。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -1601,6 +1600,7 @@ pub struct TeamWorkflowStateDto {
     pub personal_dir: Option<String>,
 }
 
+/// 设置页按 CLI 与账号隔离展示；资产安装状态不代表已具备自动续跑能力。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
