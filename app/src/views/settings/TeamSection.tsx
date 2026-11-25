@@ -219,7 +219,8 @@ export function TeamSection({ onBack }: { onBack: () => void }) {
               ))}
             </pre>
           )}
-          <div className="tp-note-body tp-mono-reason">{dto.error}</div>
+          {/* 没有行号时标题已经是原因本身，不再重复一遍 */}
+          {dto.errorLine ? <div className="tp-note-body tp-mono-reason">{dto.error}</div> : null}
           <div className="tp-note-body">{p.brokenBody}</div>
           <div className="tp-note-actions">
             <button type="button" className="sbtn btn-primary" onClick={() => void openTeamPersonal("config")}>{p.openToFix}</button>

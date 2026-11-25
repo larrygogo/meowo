@@ -8892,7 +8892,7 @@ pre.tp-code .tp-caret { color: var(--cc-err-text); }
 .tpc-rung-name { font-size: var(--text-sm); font-weight: var(--fw-semibold); }
 .tpc-rung-desc { font-size: var(--text-xs); color: var(--cc-text-faint); }
 .tpc-items { display: flex; flex-direction: column; gap: var(--sp-4); }
-.tpc-it { display: flex; align-items: flex-start; gap: var(--sp-8); padding: var(--sp-6) var(--sp-8) var(--sp-6) var(--sp-4); border-radius: var(--radius-md); background: var(--cc-panel-raised); box-shadow: var(--shadow-card); font-size: var(--text-sm); line-height: 1.5; }
+.tpc-it { display: flex; align-items: center; gap: var(--sp-8); padding: var(--sp-6) var(--sp-8) var(--sp-6) var(--sp-4); border-radius: var(--radius-md); background: var(--cc-panel-raised); box-shadow: var(--shadow-card); font-size: var(--text-sm); line-height: 1.5; }
 .tpc-grip { flex: none; width: 16px; height: 21px; display: grid; place-items: center; color: var(--cc-text-faint); cursor: grab; }
 .tpc-it .tp-item-text { padding-top: 0; }
 .tpc-it.is-drag { box-shadow: var(--edge-float), var(--shadow-lg); transform: translateX(6px) rotate(-.4deg); outline: 1px solid var(--cc-brand-line); }
