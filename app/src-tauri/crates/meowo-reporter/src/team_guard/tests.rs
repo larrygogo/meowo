@@ -397,3 +397,10 @@ fn implicit_cwd_writers_are_fine_inside_scratch_dirs() {
     assert_eq!(in_dir(R, "/tmp/rv", "Bash", json!({"command": "cargo fmt"})), "allow");
     assert_eq!(in_dir(R, "/tmp/rv", "Bash", json!({"command": "echo x > /home/me/work/pet/a.rs"})), "deny", "目标仍在源码里");
 }
+
+/// 审查员把要复现的版本检出到临时目录（redteam-2 M12）：worktree 的目标路径写在命令里，不算隐含改 cwd。
+#[test]
+fn reviewer_may_check_out_a_worktree_into_temp() {
+    assert_eq!(in_dir(R, "/home/me/work/pet", "Bash", json!({"command": "git worktree add /tmp/rv HEAD~1"})), "allow");
+    assert_eq!(in_dir(R, "/home/me/work/pet", "Bash", json!({"command": "git worktree remove ../pet-old"})), "deny");
+}

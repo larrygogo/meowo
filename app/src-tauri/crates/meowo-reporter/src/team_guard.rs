@@ -45,7 +45,7 @@ const FORBIDDEN: &[(&str, &str)] = &[
 const MUTATING: &str = r"(?i)\b(rm|mv|cp|del|rmdir|mkdir|touch|move|copy|ln|chmod|truncate|unzip|sed\s+-i|perl\b[^\n;|]*\s-p?i|tee|Set-Content|Add-Content|Out-File|Remove-Item|Move-Item|Copy-Item|New-Item|Rename-Item|Expand-Archive|fmt|gofmt|dd\b[^\n;|]*\bof=|tar\b[^\n;|]*\s-?x|git\b[^\n;&|]*\b(commit|reset|checkout|switch|merge|rebase|stash|clean|add|restore|apply|am|mv|rm|init|clone|worktree|push|pull|cherry-pick|revert))\b|(^|\s)(--fix|--write|-delete)\b|(^|[\s;|&(])patch\s";
 /// 隐含改当前目录的命令：命令里出现的路径是输入（补丁、归档），改的是 cwd（`git apply /tmp/x.patch`、
 /// `cargo fmt`、`find . -delete`）。这类命令只看 cwd，命令里的路径在临时目录也不算「只写临时文件」。
-const IMPLICIT_CWD: &str = r"(?i)\b(fmt|gofmt|unzip|git\b[^\n;&|]*\b(commit|reset|checkout|switch|merge|rebase|stash|clean|add|restore|apply|am|mv|rm|init|clone|worktree|pull|cherry-pick|revert))\b|\btar\b[^\n;|]*\s-?x|(^|\s)(--fix|--write|-delete)\b|(^|[\s;|&(])patch\s";
+const IMPLICIT_CWD: &str = r"(?i)\b(fmt|gofmt|unzip|git(\s+-[Cc]\s+\S+)*\s+(commit|reset|checkout|switch|merge|rebase|stash|clean|add|restore|apply|am|mv|rm|init|clone|pull|cherry-pick|revert))\b|\btar\b[^\n;|]*\s-?x|(^|\s)(--fix|--write|-delete)\b|(^|[\s;|&(])patch\s";
 /// 解释器内联脚本（`python -c`、`node -e`）：里面写什么文件看不出来，一律当改动（redteam-2 B01/B02）。
 const INLINE_SCRIPT: &str = r"(?i)\b(python3?|py|node|deno|bun|ruby|perl|php|pwsh|powershell)(\.exe)?\b[^\n;|]*\s-(c|e|Command)\b";
 
