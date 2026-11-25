@@ -1957,7 +1957,7 @@ export const en: Dict = {
       saving: "Saving",
       andMore: (n: number) => `and ${n} more`,
       leaveFirst: "Save or discard before leaving",
-      skipped: (what: string) => `Some changes could not be applied because the matching entries changed in the file: ${what}. Check the current settings and change them again if needed`,
+      skipped: (what: string) => `These changes were not applied because the matching entries were not found: ${what}. The file may already have them. Check the current settings and change them again if needed`,
       tasteRetry: "config.json was just changed elsewhere and has been read again. Click Create once more",
       echoTag: "same as a hard limit",
       echoTip: "This says the same as a hard limit above, which always asks first anyway. Remove it, or it stays in the file as written",

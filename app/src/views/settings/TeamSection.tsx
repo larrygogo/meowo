@@ -232,7 +232,9 @@ export function TeamSection({ onBack, draft, nudge = 0 }: { onBack: () => void; 
     }
   };
   const change = (describe: string, apply: Edit["apply"]) => {
-    if (dto && !dto.error) setPending((cur) => [...cur, { describe, apply }]);
+    if (!dto || dto.error) return;
+    setNotice(null);
+    setPending((cur) => [...cur, { describe, apply }]);
   };
   const createTaste = async (base: TeamPersonalConfigDto) => {
     if (creating) return;
