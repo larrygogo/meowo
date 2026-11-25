@@ -1933,6 +1933,7 @@ export const en: Dict = {
       tasteNone: "When you correct the team, it gets written here. Create one, or pick a file you already keep.",
       newTaste: "Create",
       pickTaste: "Choose file…",
+      changeTaste: "Change…",
       tasteChangedDesc: (name: string) => `Switched the taste list to ${name}`,
       advanced: "Advanced",
       blocked: "Extra blocked commands",

@@ -8913,3 +8913,4 @@ pre.tp-code .tp-caret { color: var(--cc-err-text); }
 .tpc-say.is-muted { color: var(--cc-text-dim); }
 .tp-add-item { margin: 0 var(--sp-8) var(--sp-8); }
 .tpc-it .dd { flex: none; }
+.tp-mono-reason { font-family: var(--cc-mono); font-size: var(--text-2xs); color: var(--cc-text-dim); overflow-wrap: anywhere; }

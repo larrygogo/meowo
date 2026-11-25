@@ -173,7 +173,8 @@ export function TeamSection({ onBack }: { onBack: () => void }) {
               ))}
             </pre>
           )}
-          <div className="tp-note-body">{dto.error} {p.brokenBody}</div>
+          <div className="tp-note-body tp-mono-reason">{dto.error}</div>
+          <div className="tp-note-body">{p.brokenBody}</div>
           <div className="tp-note-actions">
             <button type="button" className="sbtn btn-primary" onClick={() => void openTeamPersonal("config")}>{p.openToFix}</button>
             <button type="button" className="sbtn" onClick={() => void reload()}>{p.reload}</button>
@@ -335,7 +336,7 @@ export function TeamSection({ onBack }: { onBack: () => void }) {
                     if (typeof picked === "string" && picked) change(p.tasteChangedDesc(basename(picked)), (c) => ({ ...c, taste: picked }));
                   });
                 }}
-              >{p.pickTaste}</button>
+              >{dto.taste ? p.changeTaste : p.pickTaste}</button>
             </div>
           </div>
         </div>

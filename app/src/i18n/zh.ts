@@ -2215,6 +2215,7 @@ export const zh = {
       tasteNone: "团队被你纠正时会记进这里。新建一份，或者选一个你已经在写的文件。",
       newTaste: "新建",
       pickTaste: "选择文件…",
+      changeTaste: "更换…",
       tasteChangedDesc: (name: string) => `品味清单换成 ${name}`,
       advanced: "高级",
       blocked: "额外拦截的命令",
