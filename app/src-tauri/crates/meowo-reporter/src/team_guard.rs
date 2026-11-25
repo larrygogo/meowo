@@ -21,7 +21,7 @@
 
 use regex::Regex;
 use serde_json::{json, Value};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 pub const ROLE_PREFIX: &str = "team-";
 /// 只能写 Lead 目录和临时目录的角色：产出是方案、规则表、审查报告，不该碰源码。
@@ -303,7 +303,7 @@ fn shell_path(token: &str, cwd: Option<&Path>) -> PathBuf {
     }
     let p = PathBuf::from(&t);
     match cwd {
-        Some(cwd) if p.is_relative() && !t.starts_with('/') && !t.starts_with('\\') => cwd.join(p),
+        Some(cwd) if !is_absolute(&t) => PathBuf::from(format!("{}/{}", cwd.to_string_lossy().trim_end_matches(['/', '\\']), t)),
         _ => p,
     }
 }
@@ -366,9 +366,9 @@ fn check_write(role: &str, target: &str, cwd: Option<&str>, config: &Config, tem
         return None;
     }
     let mut path = PathBuf::from(target);
-    if path.is_relative() {
+    if !is_absolute(target) {
         if let Some(cwd) = cwd {
-            path = Path::new(cwd).join(path);
+            path = PathBuf::from(format!("{}/{}", cwd.trim_end_matches(['/', '\\']), target));
         }
     }
     if let Some(problem) = &config.broken {
@@ -391,17 +391,30 @@ fn check_write(role: &str, target: &str, cwd: Option<&str>, config: &Config, tem
 /// 路径里有 `.lead` 一段（Lead 目录在 Meowo 数据目录 `projects/<项目>/.lead/` 下，老项目在项目根），
 /// 或在临时目录下。带 `..` 的一律不算：不能借 `.lead/../` 跳出去。
 fn lead_or_temp(path: &Path, temp_dirs: &[PathBuf]) -> bool {
-    if path.components().any(|c| matches!(c, Component::ParentDir)) {
+    let lower = norm(&path.to_string_lossy());
+    let parts = segments(&lower);
+    if parts.contains(&"..") {
         return false;
     }
-    if path.components().any(|c| matches!(c, Component::Normal(s) if s.eq_ignore_ascii_case(".lead"))) {
+    if parts.contains(&".lead") {
         return true;
     }
-    let lower = norm(&path.to_string_lossy());
     temp_dirs.iter().any(|dir| {
         let dir = norm(&dir.to_string_lossy());
         !dir.is_empty() && (lower == dir || lower.starts_with(&format!("{dir}/")))
     })
+}
+
+/// 按 `/` 拆开已经 [`norm`] 过的路径。不用 `Path::components`：它只认本平台的分隔符和盘符，
+/// macOS 上 `C:\Users\x\.lead\a.md` 是一整段、还是相对路径（CI macOS 上测试失败）。
+fn segments(normalized: &str) -> Vec<&str> {
+    normalized.split('/').filter(|s| !s.is_empty()).collect()
+}
+
+/// 绝对路径：`/`、`\` 开头，或带盘符（`C:\`、`C:/`）。盘符写法在所有平台都认，理由同 [`segments`]。
+fn is_absolute(path: &str) -> bool {
+    let b = path.as_bytes();
+    path.starts_with('/') || path.starts_with('\\') || (b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'/' || b[2] == b'\\'))
 }
 
 fn norm(path: &str) -> String {
@@ -411,13 +424,7 @@ fn norm(path: &str) -> String {
 /// 一项受保护规则命中这个路径吗：含分隔符的按路径前缀，否则按任意一级目录名（`*` 通配）。
 fn protected_hit(path: &Path, protected: &[String]) -> Option<String> {
     let full = norm(&path.to_string_lossy());
-    let names: Vec<String> = path
-        .components()
-        .filter_map(|c| match c {
-            Component::Normal(s) => Some(s.to_string_lossy().to_lowercase()),
-            _ => None,
-        })
-        .collect();
+    let names: Vec<String> = segments(&full).into_iter().filter(|s| *s != "." && *s != "..").map(str::to_owned).collect();
     protected.iter().find(|rule| rule_matches(rule, &full, &names)).cloned()
 }
 
