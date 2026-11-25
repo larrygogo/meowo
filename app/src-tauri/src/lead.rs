@@ -413,6 +413,14 @@ pub(crate) fn default_claude_dir() -> Option<PathBuf> {
 }
 
 fn claude_dir() -> Option<PathBuf> {
+    // 只在 debug 构建认的验收台开关：dev 实例的数据目录和各 CLI 目录都隔离了（MEOWO_DB 等），唯独这里
+    // 跟着家目录走，在 dev 实例里点「Lead 工作流」「团队」就会改用户真实的 ~/.claude。改 USERPROFILE
+    // 来隔离不行：WebView2 起不来调试端口（2026-11-25 验收台实测）。正式版不读它。
+    if cfg!(debug_assertions) {
+        if let Some(dir) = std::env::var_os("MEOWO_DEV_CLAUDE_HOME").filter(|v| !v.is_empty()) {
+            return Some(PathBuf::from(dir));
+        }
+    }
     meowo_agent::home_dir().map(|h| h.join(".claude"))
 }
 
