@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 /// 扫描测试：前端不得再按工具名判断工具的类别。
 ///
 /// 类别由后端各家插件按自己的工具名表给出（ChatItem 的 `kind`）。前端按名字去猜的规则是照
-/// Claude 的命名调的：Gemini 的 read_file / replace 全落进「其他」，Codex 的 wait_agent 因为
+/// Claude 的命名调的：read_file / replace 这类别家命名全落进「其他」，Codex 的 wait_agent 因为
 /// 名字含 agent 被当成子任务，Claude 的 ToolSearch 被当成「搜索」。这里拦两类写法：
 /// 1. 对工具条目的 `.name` 做子串、前缀、大小写归一、正则判断；
 /// 2. 把 `.name` 与某个字面量比较（除了下面白名单里那几处——它们认的是**某一个具体工具的

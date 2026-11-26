@@ -26,7 +26,7 @@
 //! | codex | `CODEX_HOME` | 同上 |
 //! | kimi | `KIMI_CODE_HOME` | 同上。**不是** `KIMI_SHARE_DIR`——那在 kimi-code 里是「旧版 kimi-cli 的迁移来源」，设了它等于没隔离（实测出处见 `plugins/kimi` 的 `PROFILE`） |
 //! | opencode | `OPENCODE_CONFIG_DIR` + `XDG_DATA_HOME` | **要两个**，见下 |
-//! | gemini | —— | **不支持**：`GEMINI_DIR` 实测无效（设了照样读 `~/.gemini`） |
+//! | antigravity | —— | **不支持**：没有覆盖数据目录的环境变量（1.5.17 二进制里没有 GEMINI_CLI_HOME 一类的串），凭据又在系统钥匙串 |
 //!
 //! opencode 需要两个变量，是因为它把**配置**与**数据**分了家：插件读配置目录
 //! （`~/.config/opencode`），凭据却写数据目录（`~/.local/share/opencode/auth.json`）。只设一个的话，
@@ -279,13 +279,13 @@ mod tests {
         );
     }
 
-    /// gemini 不支持多账号——`GEMINI_DIR` 实测无效（设了它，gemini 照样读 `~/.gemini`）。
+    /// antigravity 不支持多账号：agy 没有覆盖数据目录的环境变量，凭据又在系统钥匙串里。
     /// 谎称支持的后果是：切了账号，两个 profile 却仍在共用同一份凭据。
     #[test]
-    fn gemini_declares_no_profile_support() {
+    fn antigravity_declares_no_profile_support() {
         assert!(
-            crate::by_id("gemini").unwrap().profile().is_none(),
-            "gemini 的数据目录不可被环境变量覆盖，不能谎称支持多账号"
+            crate::by_id("antigravity").unwrap().profile().is_none(),
+            "agy 的数据目录不可被环境变量覆盖，不能谎称支持多账号"
         );
     }
 

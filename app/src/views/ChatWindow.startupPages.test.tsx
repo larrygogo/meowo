@@ -223,7 +223,7 @@ describe("进程换代后，上一个进程留下的提示条清掉", () => {
   it.each([
     ["claude 切账号重启", 1111, "claude"],
     ["kimi 重启续接切模型", 1112, "kimi"],
-    ["gemini 重启续接切模型", 1113, "gemini"],
+    ["antigravity 重启续接切模型", 1113, "antigravity"],
   ] as const)("%s：pty-restarted 之后提示条消失", async (_name, id, provider) => {
     await leaveEndedNotice(id, provider);
     restart(id);

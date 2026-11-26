@@ -119,10 +119,10 @@ pub const USAGE_UNSUPPORTED: &str = "USAGE_UNSUPPORTED";
 
 /// API Key 登录能力：把用户提供的 key 落成该 agent 自己认得的持久配置。
 ///
-/// 为 gemini 而生：Google 已停掉个人版 Gemini Code Assist 的 OAuth（报
-/// *This client is no longer supported for Gemini Code Assist for individuals*），个人用户只剩
-/// API Key 一条路，而 gemini 没有「输入 key」的登录子命令——key 只能靠环境变量或 `~/.gemini/.env`。
-/// 交互式登录（拉终端走 OAuth）帮不上忙，必须由宿主替用户把 key 写到 CLI 认的位置。
+/// 通用能力，目前没有插件声明。给「交互式登录走不通、又没有输入 key 的登录子命令」的 CLI 用：
+/// 交互式登录（拉终端走 OAuth）帮不上忙，必须由宿主替用户把 key 写到 CLI 认的位置。最初为已移除的
+/// gemini 插件引入（Google 停掉了个人版 Gemini Code Assist 的 OAuth，key 只能靠环境变量或
+/// `~/.gemini/.env`）。
 ///
 /// 与 [`crate::RelayCap`] 不是一回事：中转改的是**端点**（附带才要 key），且只对 meowo 拉起的
 /// 会话生效；这里写的是 agent 自己的配置，用户在任何终端裸跑 CLI 同样生效。

@@ -48,13 +48,13 @@ pub enum McpAttach {
     /// 默认 `auto`：没有只读注解的 MCP 工具要审批）。
     TomlOverride { flag: &'static str },
     /// 没有临时挂 MCP 的启动参数，只能写进数据目录下的 JSON 文件（`mcpServers` 键）。
-    /// 多账号时每个账号的数据目录各写一份（kimi 2.x 的 `mcp.json`、gemini 的 `settings.json`）。
+    /// 多账号时每个账号的数据目录各写一份（kimi 2.x 的 `mcp.json`；antigravity 的 `mcp_config.json` 是全局的，只有一份）。
     DataDirJson {
         rel: &'static str,
         /// agent 不把 `MEOWO_PTY_*` 原样传给 MCP 子进程时为 true：服务器项里显式写
         /// `"env": {"MEOWO_PTY_TOKEN": "${MEOWO_PTY_TOKEN:-}", …}`，由 agent 读配置时按自己的
-        /// 进程环境展开（gemini 0.68 会从继承环境里删掉名字含 TOKEN 的变量，而 settings 支持
-        /// `${VAR:-默认}` 展开）。令牌因此不落盘；不在 Meowo 里跑时展开成空串，工具列表为空。
+        /// 进程环境展开（最初为已移除的 gemini 插件引入：0.68 会从继承环境里删掉名字含 TOKEN 的变量，
+        /// 而 settings 支持 `${VAR:-默认}` 展开；现役插件都不需要）。令牌因此不落盘；不在 Meowo 里跑时展开成空串，工具列表为空。
         expand_env: bool,
         /// 发图工具免审批写在哪（None = 这家默认就不审批 MCP 工具）。
         approval: Option<McpApproval>,
@@ -73,7 +73,8 @@ pub enum McpApproval {
     /// 其余规则原样保留（kimi 2.x 的 `config.toml`）。
     PermissionRules { rel: &'static str, prefix: &'static str },
     /// 整个文件归 Meowo 管的策略 TOML：`[[rule]] mcpName=<名> toolName=<工具> decision="allow"`
-    /// （gemini 的 `policies/*.toml`，用户级策略目录自动加载）。
+    /// （用户级策略目录自动加载的那种；通用能力，目前没有插件声明，最初为已移除的 gemini 插件的
+    /// `policies/*.toml` 引入）。
     PolicyFile { rel: &'static str },
 }
 
@@ -114,8 +115,8 @@ pub struct ModelCatalogEntry {
     pub default_effort: Option<String>,
     /// CLI 配置里的默认模型（kimi `default_model`、codex `isDefault`）。新建页据此预选。
     pub is_default: bool,
-    /// 这个模型能不能用要看服务端（Gemini 个人 Google 账号的预览模型取决于配额与实验开关，
-    /// 离线算不准，research-kimi-gemini §3.1），菜单如实标出。
+    /// 这个模型能不能用要看服务端（如个人账号的预览模型取决于配额与实验开关，离线算不准；
+    /// 出处是已移除的 gemini 插件，research-kimi-gemini §3.1），菜单如实标出。
     pub uncertain: bool,
 }
 
@@ -134,6 +135,18 @@ impl ModelCatalogEntry {
 }
 
 /// 一个 agent 插件。**必填的只有身份、变体表与进程名**；其余都是能力槽，不声明即由框架降级。
+/// [`AgentPlugin::normalize_hook_payload`] 的结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HookPayload {
+    /// 原样交给 reporter 解析。
+    Keep,
+    /// 换成这段规范形状的 JSON。
+    Rewrite(String),
+    /// 不归 Meowo 管（别的产品里的会话、不对应任何规范事件的中间事件）：reporter 什么都不写、
+    /// 不输出，以 0 退出。
+    Ignore,
+}
+
 pub trait AgentPlugin: Sync {
     fn id(&self) -> AgentId;
     fn display_name(&self) -> &'static str;
@@ -157,7 +170,7 @@ pub trait AgentPlugin: Sync {
     /// 某进程名是否是**本 agent** 的会话本体。与全局的 [`is_agent_process`] 刻意不同：那个问的是
     /// 「这是不是某个 agent」，这个问的是「这是不是**我**」。
     ///
-    /// 上溯抓 PID 必须用这一个。gemini 把 `node` 收进了自己的进程名（它没有别的可执行），于是全局
+    /// 上溯抓 PID 必须用这一个。前科：已移除的 gemini 插件把 `node` 收进了自己的进程名（它没有别的可执行），于是全局
     /// 判定下 `is_agent_process("node.exe")` 恒为真——若 reporter 拿它去上溯，任何 agent 的 hook 都
     /// 可能在父链上撞见一个**无关的** node 祖先（VS Code 的集成终端就是一个），把它误认成自己的
     /// 会话本体。更糟的是两个不同 agent 的会话会因此认领到**同一个** pid，而 `set_session_pid` 的
@@ -221,7 +234,7 @@ pub trait AgentPlugin: Sync {
     /// 原样送进 PTY——所以**宁缺毋滥**：只列常用且跨版本稳定的。空 = 前端不提供补全。
     ///
     /// 此前这张表硬编码在前端（按 provider 的 `Record`，未知 agent 落一份通用 fallback）。
-    /// fallback 恰恰是谎言：gemini 没有 `/status`（是 `/stats`）、opencode 没有 `/model`
+    /// fallback 恰恰是谎言：当时的 gemini 没有 `/status`（是 `/stats`）、opencode 没有 `/model`
     /// （是 `/models`），补出来的命令发进去只会报 unknown command。命令表是 agent 的事实，
     /// 归插件声明。
     fn slash_commands(&self) -> &'static [&'static str] {
@@ -316,8 +329,8 @@ pub trait AgentPlugin: Sync {
     /// 中断当前回合的按键序列。默认 None:未取证的 provider 不出中断按钮。现状是五家
     /// 都覆写成了 Esc,但证据分级不同——claude(官方文档)、codex(状态行自述 "esc to
     /// interrupt",真机 capture 在档,见 docs/research/tui-menu-captures-2026-07.md)、
-    /// kimi(2026-07 真机人工确认)为确证;gemini/opencode 是约定推断,各自插件里写明了
-    /// 存疑点。声明它的代价低(误发 Esc 至多是多停一个回合),但**发出去的消息撤不回**,
+    /// kimi(2026-07 真机人工确认)、antigravity(research-screen.md §3)为确证;opencode 是约定推断,
+    /// 插件里写明了存疑点。声明它的代价低(误发 Esc 至多是多停一个回合),但**发出去的消息撤不回**,
     /// 这个键是 GUI 上唯一能叫停当前回合的手段,故不取证也宁可给。
     fn interrupt_input(&self) -> Option<&'static str> {
         None
@@ -537,7 +550,7 @@ pub trait AgentPlugin: Sync {
 
     /// 附件是否可用该 CLI 的 `@路径` 提及注入。
     ///
-    /// 只有**实测**过该家把 @提及当自己的惯例处理的 agent 才该返回 true:claude/gemini
+    /// 只有**实测**过该家把 @提及当自己的惯例处理的 agent 才该返回 true:claude
     /// 是提交时原生附加(禁用读文件工具仍能答出内容);kimi 的 @ 是文本级一等语法
     /// (wire.jsonl 实测原样入 prompt、模型自行读取,与用户手敲等价);codex/opencode
     /// 同属文本级(@绝对路径 实测模型自行读取)。version 是宿主探测到的已装 CLI 版本——探测不到时应返回 false
@@ -548,8 +561,8 @@ pub trait AgentPlugin: Sync {
 
     /// 多账号（profile）的隔离规格。`None` = 该 agent **不支持**多账号。
     ///
-    /// 目前只有 gemini 是 None：它的数据目录无法被环境变量覆盖（`GEMINI_DIR` 实测无效，设了它
-    /// gemini 照样读 `~/.gemini`）。谎称支持的后果不是报错，而是**两个 profile 静默共用同一份凭据**
+    /// 目前只有 antigravity 是 None：它的数据目录没有可覆盖的环境变量（1.5.17 二进制里没有
+    /// GEMINI_CLI_HOME 一类的串），凭据又在系统钥匙串。谎称支持的后果不是报错，而是**两个 profile 静默共用同一份凭据**
     /// ——切了账号却毫无效果，且没有任何迹象。宁可如实说不支持。
     fn profile(&self) -> Option<&'static crate::profile::ProfileSpec> {
         None
@@ -571,13 +584,24 @@ pub trait AgentPlugin: Sync {
     /// 该 agent 的 hook 事件名 → **meowo 规范事件名**（`SessionStart` / `UserPromptSubmit` /
     /// `PostToolUse` / `Stop` / `SessionEnd` / `PermissionRequest` / `PreToolUse`，即 dispatch 的消化面）。
     ///
-    /// 默认原样透传——claude/codex/kimi/opencode 的事件名本就是规范名。**只有 gemini 需要它**：
-    /// 它把「用户提交」「回合结束」叫成 `BeforeAgent` / `AfterAgent`，而配置里必须写它认识的名字。
+    /// 默认原样透传——claude/codex/kimi/opencode 的事件名本就是规范名。目前没有插件覆盖它（最初为已移除的
+    /// gemini 插件引入：它把「用户提交」「回合结束」叫成 `BeforeAgent` / `AfterAgent`）。antigravity 的
+    /// 事件名翻译连同负载改写一起放在 [`normalize_hook_payload`](Self::normalize_hook_payload)。
     ///
     /// 翻译放在这里而不是 dispatch 里，是为了守住「加 agent 只动 `plugins/`」——否则 dispatch 的
     /// match 上迟早会长出一排 `if provider == "..."`。
     fn canonical_event<'a>(&self, raw: &'a str) -> &'a str {
         raw
+    }
+
+    /// hook 负载在 reporter 解析之前的改写（见 [`HookPayload`]）。默认原样。
+    ///
+    /// 负载形状与 Meowo 规范（claude 同款 `hook_event_name` / `session_id` / `cwd` …）不同、
+    /// 只靠事件名翻译接不上的 agent 才需要：antigravity 的负载是 camelCase，路径与工具调用是
+    /// JSON 编码后的字符串，还会把 App/IDE 里的会话也送进同一个 hook。放在插件里与
+    /// [`canonical_event`](Self::canonical_event) 同理：reporter 不按 agent 身份分支。
+    fn normalize_hook_payload(&self, _raw: &str) -> HookPayload {
+        HookPayload::Keep
     }
 
     // ═══ 能力槽 ═══
@@ -795,7 +819,7 @@ pub trait AgentPlugin: Sync {
     ///
     /// 默认 `true`：claude（statusLine）、codex/kimi（会话日志的 token_count）都拿得到。
     /// 返回 `false` 的 agent 前端会显式标注「上下文占用：不支持」，而不是留一片空白让用户以为是
-    /// bug——是官方不给数据 / 我们没在插件里实现，两种都如实告知。gemini/opencode 见各自插件的说明。
+    /// bug——是官方不给数据 / 我们没在插件里实现，两种都如实告知。opencode 见其插件的说明。
     fn provides_context(&self) -> bool {
         true
     }
@@ -907,11 +931,11 @@ pub trait AgentPlugin: Sync {
 static CLAUDE: crate::plugins::claude::Claude = crate::plugins::claude::Claude;
 static KIMI: crate::plugins::kimi::Kimi = crate::plugins::kimi::Kimi;
 static CODEX: crate::plugins::codex::Codex = crate::plugins::codex::Codex;
-static GEMINI: crate::plugins::gemini::Gemini = crate::plugins::gemini::Gemini;
+static ANTIGRAVITY: crate::plugins::antigravity::Antigravity = crate::plugins::antigravity::Antigravity;
 static OPENCODE: crate::plugins::opencode::Opencode = crate::plugins::opencode::Opencode;
 
 /// 全部 agent。五家均在插件层——加 agent 只写 `plugins/<new>/` 再在此补一行。
-static ALL: &[&dyn AgentPlugin] = &[&CLAUDE, &KIMI, &CODEX, &GEMINI, &OPENCODE];
+static ALL: &[&dyn AgentPlugin] = &[&CLAUDE, &KIMI, &CODEX, &ANTIGRAVITY, &OPENCODE];
 
 pub fn all() -> &'static [&'static dyn AgentPlugin] {
     ALL
@@ -965,8 +989,8 @@ fn basename_lower(name: &str) -> String {
 ///
 /// 供 meowo-app 的判活/清理使用（它问的是「这个 pid 还是个 agent 吗」）。
 ///
-/// **上溯抓 PID 不要用它**，用 [`AgentPlugin::owns_process`]：自 gemini 收了 `node` 起，这里对
-/// `node.exe` 恒为真，拿它上溯会让任意 agent 撞上无关的 node 祖先。原委见 `owns_process` 的文档。
+/// **上溯抓 PID 不要用它**，用 [`AgentPlugin::owns_process`]：已移除的 gemini 插件收过 `node`，
+/// 那时这里对 `node.exe` 恒为真，拿它上溯会让任意 agent 撞上无关的 node 祖先。原委见 `owns_process` 的文档。
 pub fn is_agent_process(name: &str) -> bool {
     let base = basename_lower(name);
     ALL.iter()
@@ -1034,7 +1058,7 @@ mod tests {
 
     #[test]
     fn by_id_matches_declared_id() {
-        for id in ["claude", "kimi", "codex", "gemini", "opencode"] {
+        for id in ["claude", "kimi", "codex", "antigravity", "opencode"] {
             assert_eq!(by_id(id).map(|p| p.id().as_str()), Some(id));
         }
         assert!(by_id("nope").is_none());
@@ -1045,7 +1069,7 @@ mod tests {
     fn registry_covers_every_provider_key() {
         let mut ids: Vec<&str> = all().iter().map(|p| p.id().as_str()).collect();
         ids.sort_unstable();
-        assert_eq!(ids, vec!["claude", "codex", "gemini", "kimi", "opencode"]);
+        assert_eq!(ids, vec!["antigravity", "claude", "codex", "kimi", "opencode"]);
     }
 
     /// 未知 provider 串**绝不**降级成默认插件——旧 `ProviderKey::from_str` 正是这么把未知 agent
@@ -1056,12 +1080,8 @@ mod tests {
         assert_eq!(resolve(None).map(|p| p.id().as_str()), Some("claude"));
         assert_eq!(resolve(Some("")).map(|p| p.id().as_str()), Some("claude"));
         assert_eq!(resolve(Some("  ")).map(|p| p.id().as_str()), Some("claude"));
-        // 曾以 "gemini" 作未注册反例——它现在是注册过的 agent 了。反例必须选一个**永远**不会被
-        // 注册的串，否则这条断言会随着新 agent 的加入悄悄失去意义。
-        assert_eq!(
-            resolve(Some("gemini")).map(|p| p.id().as_str()),
-            Some("gemini")
-        );
+        // 退役的 agent（gemini，2026-11 换成 antigravity）同样是未知串：库里的旧会话不能被冒名。
+        assert!(resolve(Some("gemini")).is_none());
         assert!(resolve(Some("nonsense")).is_none());
         assert!(resolve(Some("not-an-agent")).is_none());
     }
@@ -1123,61 +1143,36 @@ mod tests {
         assert!(!is_agent_process(""));
     }
 
-    /// `node` **算** agent 进程——这条曾经反着断言（`assert!(!is_agent_process("node"))`，当时
-    /// codex 的注释还写着「不收 node.exe，过宽」），gemini 进来后不得不翻转：它没有自己的可执行，
-    /// 会话本体就是一个跑 `bundle/gemini.js` 的 node 进程，不收它，owner_pid 上溯就抓不到宿主。
-    ///
-    /// 代价如实记在这里：判活对 node 从此变宽——某个 gemini 会话的 PID 被系统回收、又恰好落给
-    /// 另一个 node 进程时，那个已死的会话会被误判为仍活着。接受它，是因为反面（不收 node）意味着
-    /// 每个 gemini 会话从一开始就抓不到 PID：那是必然的坏，而这个是偶然的坏。详见 `plugins::gemini`。
+    /// `node` **不算** agent 进程。gemini（纯 JS，会话本体是 node）在时曾不得不收它，判活因此变宽、
+    /// 上溯时还和 opencode 抢过同一个 node 祖先；gemini 换成原生的 agy 之后不再有人收 node。
     #[test]
-    fn node_counts_as_agent_because_gemini_has_no_binary_of_its_own() {
-        assert!(is_agent_process("node"));
-        assert!(is_agent_process("node.exe"));
-        assert!(is_agent_process("C:/Program Files/nodejs/node.exe"));
-        // 变宽的只有「node 本身」：仍是精确 basename 比对，名字里含 node 的无关进程不会被误收。
-        assert!(!is_agent_process("nodemon"));
-        assert!(!is_agent_process("node-gyp.exe"));
+    fn node_is_not_an_agent_process() {
+        assert!(!is_agent_process("node"));
+        assert!(!is_agent_process("node.exe"));
+        assert!(!is_agent_process("C:/Program Files/nodejs/node.exe"));
+        assert!(is_agent_process("agy.exe"));
+        assert!(is_agent_process(r"C:\Users\u\AppData\Local\agy\bin\agy.exe"));
+        assert!(!is_agent_process("agy-helper.exe"));
     }
 
-    /// 上溯抓 PID 只认**自己**的进程名——这是 `owns_process` 与全局 `is_agent_process` 的分野。
-    ///
-    /// 回归背景（实测踩到的，不是假想）：gemini 没有自己的可执行，会话本体就是个 node 进程，于是
-    /// `node` 进了它的白名单。全局判定从此对 `node.exe` 恒为真；若 reporter 拿全局判定去上溯，
-    /// **任何** agent 的 hook 都会在父链上撞见无关的 node 祖先并认领它的 pid。两个不同 agent 的
-    /// 会话因此持有同一个 pid，而 `set_session_pid` 的 pid 独占语义会让后来者把前者收尾成
-    /// `ended`——两个活着的会话互相抹杀。gemini 与 opencode 当场就这么互抹了。
+    /// 上溯抓 PID 只认**自己**的进程名——这是 `owns_process` 与全局 `is_agent_process` 的分野：
+    /// 若 reporter 拿全局判定去上溯，某个 agent 的 hook 会在父链上认领别家的进程（已移除的 gemini 插件收 node 时
+    /// 与 opencode 互抹过）。
     #[test]
     fn owns_process_is_per_agent_not_global() {
-        let gemini = by_id("gemini").unwrap();
+        let antigravity = by_id("antigravity").unwrap();
         let claude = by_id("claude").unwrap();
         let opencode = by_id("opencode").unwrap();
-
-        // node 确实是 gemini 的会话本体。
-        assert!(gemini.owns_process("node.exe"));
-        assert!(gemini.owns_process("C:/Program Files/nodejs/node.exe"));
-
-        // 全局判定对 node 为真——正因如此，它不能被用来上溯。
-        assert!(is_agent_process("node.exe"));
-        // 而别的 agent 绝不把 node 当成自己的会话本体。
-        assert!(
-            !claude.owns_process("node.exe"),
-            "claude 的会话本体不是 node"
-        );
-        assert!(
-            !opencode.owns_process("node.exe"),
-            "opencode 是原生二进制，不是 node"
-        );
-        assert!(!by_id("codex").unwrap().owns_process("node.exe"));
-
-        // 各自只认自己，互不越界。
+        assert!(antigravity.owns_process("agy.exe"));
+        assert!(antigravity.owns_process("/home/u/.local/bin/agy"));
+        assert!(!antigravity.owns_process("node.exe"));
+        assert!(!antigravity.owns_process("claude.exe"));
         assert!(claude.owns_process("claude.exe"));
         assert!(opencode.owns_process("/usr/local/bin/opencode"));
         assert!(!claude.owns_process("opencode.exe"));
-        assert!(!opencode.owns_process("claude.exe"));
+        assert!(!opencode.owns_process("agy.exe"));
         // 仍是精确 basename 比对，不做子串匹配。
-        assert!(!gemini.owns_process("nodemon"));
-        assert!(!gemini.owns_process("node-gyp.exe"));
+        assert!(!antigravity.owns_process("agy-helper"));
     }
 
     /// 「复制恢复命令」的前缀用裸可执行名：用户在自己终端里敲的是 `claude`，不是安装路径。
@@ -1188,7 +1183,7 @@ mod tests {
             (crate::id::CLAUDE, "claude"),
             (crate::id::KIMI, "kimi"),
             (crate::id::CODEX, "codex"),
-            (crate::id::GEMINI, "gemini"),
+            (crate::id::ANTIGRAVITY, "agy"),
             (crate::id::OPENCODE, "opencode"),
         ];
         for (id, stem) in cases {
@@ -1206,7 +1201,7 @@ mod tests {
             (crate::id::CLAUDE, vec!["--resume"]),
             (crate::id::KIMI, vec!["-r"]),
             (crate::id::CODEX, vec!["resume"]),
-            (crate::id::GEMINI, vec!["--resume"]),
+            (crate::id::ANTIGRAVITY, vec!["--conversation"]),
             // `--continue` 只会续「最近一个」，恢复不了点开的那个——必须是接 id 的 `--session`。
             (crate::id::OPENCODE, vec!["--session"]),
         ];
@@ -1379,10 +1374,11 @@ mod tests {
         for p in all() {
             let argv = p.launch_argv();
             assert!(!argv.is_empty(), "{} 启动 argv 为空", p.id());
-            // codex 的 npm 形态是 ["node", "<...>/codex.js"]，故查「某个元素含 id」而非首元素。
+            // codex 的 npm 形态是 ["node", "<...>/codex.js"]，故查「某个元素含可执行名」而非首元素；
+            // 可执行名不一定等于 id（antigravity 的可执行是 agy）。
             assert!(
                 argv.iter()
-                    .any(|a| a.to_ascii_lowercase().contains(p.id().as_str())),
+                    .any(|a| a.to_ascii_lowercase().contains(p.launch_stem())),
                 "{} 的启动 argv 未指向自己：{argv:?}",
                 p.id()
             );
@@ -1485,14 +1481,15 @@ mod tests {
         }
 
         // 思考档在会话里怎么切：Claude / Kimi 打 `/effort`，Codex 随模型经会话服务下发
-        // （tms_probe_codex 实测 reasoning.effort 生效）；Gemini 没有思考档，OpenCode 的模型变体
-        // 只能在它自己的对话框里选、上游没有可调的接口，两家不出入口。
+        // （tms_probe_codex 实测 reasoning.effort 生效）；Antigravity 的 effort 编码在模型 id 里
+        // （每档一个 id，随切模型走），OpenCode 的模型变体只能在它自己的对话框里选、上游没有可调的接口，
+        // 两家不出入口。
         use crate::EffortSwitchKind;
         for (id, want) in [
             ("claude", Some(EffortSwitchKind::Command)),
             ("kimi", Some(EffortSwitchKind::Command)),
             ("codex", Some(EffortSwitchKind::ServerSettings)),
-            ("gemini", None),
+            ("antigravity", None),
             ("opencode", None),
         ] {
             assert_eq!(by_id(id).unwrap().effort_switch(), want, "{id}");
@@ -1501,13 +1498,13 @@ mod tests {
         // 对话页的切换会不会顺带改用户 CLI 的默认配置（走查输入 C1）：Claude `/model X` 的确认行
         // 原文「saved as your default for new sessions」；Kimi `/effort` 走 persistModelSelection
         // 改写 config.toml。其余通路（会话服务、带参重启、TUI 对话框）特意选了不改配置的路线。
-        for id in ["claude", "codex", "kimi", "gemini", "opencode"] {
+        for id in ["claude", "codex", "kimi", "antigravity", "opencode"] {
             let p = by_id(id).unwrap();
             assert_eq!(p.model_select_saves_default(), id == "claude", "{id}");
             assert_eq!(p.effort_saves_default(), id == "kimi", "{id}");
         }
         // 侧问命令进补全：只有声明了侧问能力的 Claude 有 /btw。
-        for id in ["claude", "codex", "kimi", "gemini", "opencode"] {
+        for id in ["claude", "codex", "kimi", "antigravity", "opencode"] {
             let ui = by_id(id)
                 .unwrap()
                 .chat_ui(&crate::chat_ui::ChatUiContext::default());
@@ -1523,17 +1520,19 @@ mod tests {
         let presets = by_id("claude").unwrap().model_presets();
         assert!(!presets.is_empty());
         assert!(presets.iter().any(|m| m.id == "sonnet"));
-        for id in ["codex", "kimi", "gemini", "opencode"] {
+        for id in ["codex", "kimi", "antigravity", "opencode"] {
             assert!(
                 by_id(id).unwrap().model_presets().is_empty(),
                 "{id} 的 /model 是交互式菜单，不该声明预设"
             );
         }
 
-        // @提及注入:只有实测过的 claude/gemini(提交时原生附加)、kimi(@ 是它自己的
+        // @提及注入:只有实测过的 claude(提交时原生附加)、kimi(@ 是它自己的
         // 文本级一等语法,模型自行读取)与 codex/opencode(@绝对路径 实测可读)声明,且版本
-        // 探测不到时必须兜底 false(宁可多一段指令文本,不可发出对方不认的语法)。
-        for id in ["claude", "codex", "gemini", "kimi", "opencode"] {
+        // 探测不到时必须兜底 false(宁可多一段指令文本,不可发出对方不认的语法)。antigravity 没有取证,
+        // 不声明。
+        assert!(!by_id("antigravity").unwrap().attachment_mention(Some("1.5.18")));
+        for id in ["claude", "codex", "kimi", "opencode"] {
             assert!(by_id(id).unwrap().attachment_mention(Some("1.0.0")), "{id}");
             assert!(
                 !by_id(id).unwrap().attachment_mention(None),
@@ -1559,8 +1558,8 @@ mod tests {
             by_id("kimi").unwrap().clipboard_image_paste(None).is_some(),
             "kimi 版本未知仍声明(探测失败不等于能力缺失)"
         );
-        // gemini 的贴图会落盘到用户工作目录的 .gemini-clipboard/,刻意不声明。
-        assert!(by_id("gemini")
+        // antigravity 的贴图没有取证,不声明。
+        assert!(by_id("antigravity")
             .unwrap()
             .clipboard_image_paste(Some("1.0.0"))
             .is_none());
@@ -1570,7 +1569,7 @@ mod tests {
         for id in ["claude", "codex"] {
             assert_eq!(by_id(id).unwrap().newline_input(), Some("\x1b\r"), "{id}");
         }
-        for id in ["gemini", "kimi", "opencode"] {
+        for id in ["antigravity", "kimi", "opencode"] {
             assert_eq!(by_id(id).unwrap().newline_input(), Some("\n"), "{id}");
         }
 
@@ -1578,7 +1577,7 @@ mod tests {
         // codex 的 hook 同为阻塞式,但 TUI 行为未取证——错声明 true 的代价是横幅不挂、
         // 用户对着空终端等满 300s,故保守 false。
         assert!(by_id("claude").unwrap().permission_prompt_races_hook());
-        for id in ["codex", "kimi", "gemini", "opencode"] {
+        for id in ["codex", "kimi", "antigravity", "opencode"] {
             assert!(
                 !by_id(id).unwrap().permission_prompt_races_hook(),
                 "{id} 的 TUI 权限框并行行为未经取证,不该声明"
@@ -1594,7 +1593,7 @@ mod tests {
             "collaboration"
         );
         assert_eq!(
-            by_id("gemini").unwrap().mode_controls()[0].dimension,
+            by_id("antigravity").unwrap().mode_controls()[0].dimension,
             "approval"
         );
         // opencode 的 Tab 轮换 primary agent;回显标记带 ` · ` 分隔,防止单词撞正文。
@@ -1663,22 +1662,28 @@ mod tests {
                 ("chat about this", SelectorAnchorKind::Chat)
             ]
         );
-        for id in ["codex", "kimi", "gemini", "opencode"] {
+        for id in ["codex", "kimi", "opencode"] {
             assert!(by_id(id).unwrap().selector_anchors().is_empty());
         }
+        // antigravity 的提问表单末项是要现场打字的写入项（run2/16_ask_form 的 `3. Write-in...`）。
+        assert_eq!(
+            by_id("antigravity").unwrap().selector_anchors().iter().map(|a| (a.marker, a.kind)).collect::<Vec<_>>(),
+            vec![("write-in", SelectorAnchorKind::Input)]
+        );
 
         // 中断键:五家都用 Esc。确证——claude(官方文档)/codex(状态行实测)/
-        // kimi(用户真机确认)/opencode(probe_tui_script 实测);约定推断——gemini(见其插件注释)。
+        // kimi(用户真机确认)/opencode(probe_tui_script 实测)/antigravity(research-screen.md §3)。
         // opencode 首按只提示 "esc again to interrupt",须连按两下;其余一下即停。
-        for id in ["claude", "codex", "kimi", "gemini", "opencode"] {
+        for id in ["claude", "codex", "kimi", "antigravity", "opencode"] {
             assert_eq!(by_id(id).unwrap().interrupt_input(), Some("\x1b"));
             let presses = if id == "opencode" { 2 } else { 1 };
             assert_eq!(by_id(id).unwrap().interrupt_presses(), presses, "{id}");
         }
         // 审批框的规则 id 沿用 `<agent>:command-approval`，但卡片形态只看 kind 与 details。
-        // gemini 的确认框有框线编号文法；opencode 是横排选项文法。
+        // antigravity 的审批面板是「问句 + `> 1. Yes…` 编号选项」，与 claude 的确认框同一种文法；
+        // opencode 是横排选项文法。
         for (id, details) in [
-            ("gemini", crate::chat_ui::AttentionDetails::FramedBox),
+            ("antigravity", crate::chat_ui::AttentionDetails::ProceedBox),
             ("opencode", crate::chat_ui::AttentionDetails::OptionRow),
         ] {
             let pattern = by_id(id).unwrap().attention_patterns()[0];
@@ -1707,27 +1712,25 @@ mod tests {
         );
         assert_eq!(kind_of("kimi", "kimi:command-approval"), Kind::Approval);
         assert_eq!(kind_of("kimi", "kimi:question"), Kind::Question);
-        assert_eq!(kind_of("gemini", "gemini:usage-limit"), Kind::Choice);
-        assert_eq!(kind_of("gemini", "gemini:question"), Kind::Question);
+        assert_eq!(kind_of("antigravity", "antigravity:command-approval"), Kind::Approval);
+        assert_eq!(kind_of("antigravity", "antigravity:question"), Kind::Question);
+        assert_eq!(kind_of("antigravity", "antigravity:trust"), Kind::Choice);
         // opencode 选 Allow always 后的确认页：单列一条规则，指明它确认的是权限框。
         let confirm = by_id("opencode").unwrap().attention_patterns()[1];
         assert_eq!(confirm.id, "opencode:always-allow-confirm");
         assert_eq!(confirm.confirms, Some("opencode:command-approval"));
         assert_eq!(confirm.kind, Kind::Choice);
         assert_eq!(confirm.details, crate::chat_ui::AttentionDetails::OptionRow);
-        // gemini 额度耗尽框取代输入框：不识别，对话页发出的正文会被它吞掉(插件注释有实测)。
-        let limit = by_id("gemini").unwrap().attention_patterns()[1];
-        assert_eq!(limit.id, "gemini:usage-limit");
-        assert_eq!(limit.details, crate::chat_ui::AttentionDetails::None);
-        // gemini 0.65 的 ask_user 提问表单走提问卡（框线表单文法），不是命令审批卡。
-        let question = by_id("gemini").unwrap().attention_patterns()[2];
-        assert_eq!(question.id, "gemini:question");
+        // antigravity 的提问表单（`Question 1/1:`，run2/16_ask_form）走提问卡，不是审批卡；没有可复用的
+        // 表单文法，详情整段展示。
+        let question = by_id("antigravity").unwrap().attention_patterns()[1];
+        assert_eq!(question.id, "antigravity:question");
         assert!(question.last);
-        assert_eq!(question.details, crate::chat_ui::AttentionDetails::FramedForm);
+        assert_eq!(question.details, crate::chat_ui::AttentionDetails::None);
         // 运行中排队:opencode 的 Enter 即排队(QUEUED 标记)。
         assert_eq!(by_id("opencode").unwrap().queue_input(), Some("\r"));
-        // gemini 空闲时 Tab 不提交，运行态又是推断：只能用两种状态都成立的回车。
-        assert_eq!(by_id("gemini").unwrap().queue_input(), Some("\r"));
+        // antigravity 运行中输入框仍可用，回车即排队（research-screen.md §2）。
+        assert_eq!(by_id("antigravity").unwrap().queue_input(), Some("\r"));
 
         // 草稿暂存键只有 claude 经真机取证(issue #72);别家没有这种键，用各自取证过的清空键。
         assert_eq!(
@@ -1738,19 +1741,19 @@ mod tests {
                 .map(|s| s.input),
             Some("\x13")
         );
-        for (id, version) in [
-            ("codex", "0.167.2"),
-            ("gemini", "0.68.0"),
-            ("opencode", "1.19.5"),
-        ] {
+        for (id, version) in [("codex", "0.167.2"), ("opencode", "1.19.5")] {
             let composer = by_id(id).unwrap().composer(Some(version)).unwrap();
             assert!(composer.stash.is_none());
             assert!(!composer.clear_inputs.is_empty(), "{id} 要有取证过的清空键");
         }
+        // antigravity：草稿能否原样读回没有取证（fidelity 为 None，任何草稿都按读不全处理），清空键
+        // 不会被用到，不声明；有草稿时对话页不替用户清，给出由人选择的出路。
+        let agy = by_id("antigravity").unwrap().composer(Some("1.5.18")).unwrap();
+        assert!(agy.stash.is_none() && agy.clear_inputs.is_empty() && agy.fidelity.is_none());
 
-        // 目录信任不是 Claude 私有概念：Gemini 当前使用同一标题，Codex 使用 directory
-        // 版本；Kimi/OpenCode 即便当前没有，也继承精确的通用标题以兼容后续版本。
-        for id in ["claude", "codex", "kimi", "gemini", "opencode"] {
+        // 目录信任不是 Claude 私有概念：Codex 使用 directory 版本，Antigravity 是 project 版本
+        // （由自己的提示规则认）；Kimi/OpenCode 即便当前没有，也继承精确的通用标题以兼容后续版本。
+        for id in ["claude", "codex", "kimi", "antigravity", "opencode"] {
             let markers = by_id(id).unwrap().startup_attention_markers();
             assert!(markers.iter().any(|marker| marker.contains("folder")));
             assert!(markers.iter().any(|marker| marker.contains("directory")));
@@ -1758,7 +1761,7 @@ mod tests {
 
         // 命令表如实反映各家差异（这正是硬编码 fallback 撒过谎的地方）。
         let has = |id: &str, c: &str| by_id(id).unwrap().slash_commands().contains(&c);
-        assert!(has("gemini", "/stats") && !has("gemini", "/status"));
+        assert!(has("antigravity", "/context") && !has("antigravity", "/stats"));
         assert!(has("opencode", "/models") && !has("opencode", "/model"));
         assert!(has("codex", "/model") && has("kimi", "/model"));
         assert!(
@@ -1770,10 +1773,11 @@ mod tests {
         // 如实不声明——瞎猜一个目录的后果是永远扫不出东西还装作支持。
         let spec = |id: &str| by_id(id).unwrap().custom_commands();
         assert!(spec("kimi").is_none());
+        // agy 没有单独的自定义命令文件：技能自动变成同名斜杠命令（skills.md），技能另有扩展页一栏。
+        assert!(spec("antigravity").is_none());
         for (id, ext, project) in [
             ("claude", "md", true),
             ("codex", "md", false),
-            ("gemini", "toml", true),
             ("opencode", "md", true),
         ] {
             let s = spec(id).unwrap_or_else(|| panic!("{id} 应声明自定义命令规格"));
@@ -1796,7 +1800,7 @@ mod tests {
                     .iter()
                     .find(|c| c.id == opt.default)
                     .unwrap_or_else(|| panic!("{}::{} 的 default 不在 choices 里", p.id(), opt.id));
-                // 例外：带统一说法的默认档是一个明确的模式（Gemini `--approval-mode default`），不是「交给
+                // 例外：带统一说法的默认档是一个明确的模式（Antigravity `--mode auto`），不是「交给
                 // CLI 配置」——不传参数时 CLI 会用配置里的默认档，与界面说法相反（做空审查 M1）。
                 assert!(
                     def.args.is_empty() || def.traits.is_some(),
@@ -1817,7 +1821,7 @@ mod tests {
             }
         }
 
-        // 矩阵：claude 有模型 + 权限两栏；codex/gemini 各一栏审批；kimi 有权限 + 计划两栏
+        // 矩阵：claude 有模型 + 权限两栏；codex/antigravity 各一栏审批；kimi 有权限 + 计划两栏
         // （`--auto` / `--yolo` / `--plan`，见 `kimi --help`），但**没有 model**——它的模型
         // 别名来自用户 config.toml，不是产品固定值。opencode 仍未调研到稳定 flag。
         let opts = |id: &str| by_id(id).unwrap().launch_options();
@@ -1832,7 +1836,7 @@ mod tests {
             vec!["approval", "collaboration"]
         );
         assert_eq!(
-            opts("gemini").iter().map(|o| o.id).collect::<Vec<_>>(),
+            opts("antigravity").iter().map(|o| o.id).collect::<Vec<_>>(),
             vec!["approval"]
         );
         assert_eq!(
@@ -1877,11 +1881,10 @@ mod tests {
             arg_of("codex", "approval", "approveForMe"),
             vec!["--sandbox", "workspace-write", "--ask-for-approval", "on-request", "-c", "approvals_reviewer=auto_review"]
         );
-        assert_eq!(arg_of("gemini", "approval", "yolo"), vec!["--yolo"]);
-        assert_eq!(
-            arg_of("gemini", "approval", "plan"),
-            vec!["--approval-mode", "plan"]
-        );
+        // agy 的 `--mode` 只收 accept-edits / auto / plan（`agy --help`）。
+        assert_eq!(arg_of("antigravity", "approval", "auto"), vec!["--mode", "auto"]);
+        assert_eq!(arg_of("antigravity", "approval", "accept-edits"), vec!["--mode", "accept-edits"]);
+        assert_eq!(arg_of("antigravity", "approval", "plan"), vec!["--mode", "plan"]);
         assert_eq!(arg_of("opencode", "agent", "plan"), vec!["--agent", "plan"]);
     }
 
@@ -1921,26 +1924,26 @@ mod tests {
             assert_eq!(kimi_yolo.commands, crate::Ask::Risky, "Kimi yolo 危险仍问");
             assert_eq!(traits("kimi", "permission", "auto").unwrap().commands, crate::Ask::Never);
         }
-        assert_eq!(traits("gemini", "approval", "yolo").unwrap().commands, crate::Ask::Never);
-        assert!(traits("gemini", "approval", "plan").unwrap().plan_only);
+        assert_eq!(traits("antigravity", "approval", "auto").unwrap().commands, crate::Ask::Risky);
+        assert!(traits("antigravity", "approval", "plan").unwrap().plan_only);
     }
 
     /// 动态模型参数只认清单里的 id；恢复时只有「带参重启」机制的 agent 回放模型参数。
     #[test]
     fn session_args_whitelist_models_and_skip_model_on_server_resume() {
-        let catalog = vec![ModelCatalogEntry::new("gemini-2.5-pro", "gemini-2.5-pro")];
+        let catalog = vec![ModelCatalogEntry::new("gemini-4-neon-high", "Gemini 4 Neon (High)")];
         let mut sel = std::collections::HashMap::new();
-        sel.insert("model".to_string(), "gemini-2.5-pro".to_string());
+        sel.insert("model".to_string(), "gemini-4-neon-high".to_string());
         sel.insert("approval".to_string(), "plan".to_string());
-        let gemini = by_id("gemini").unwrap();
+        let antigravity = by_id("antigravity").unwrap();
         assert_eq!(
-            resolve_session_args(gemini, &sel, &catalog, &[], true),
-            vec!["--approval-mode", "plan", "-m", "gemini-2.5-pro"]
+            resolve_session_args(antigravity, &sel, &catalog, &[], true),
+            vec!["--mode", "plan", "--model", "gemini-4-neon-high"]
         );
-        sel.insert("model".to_string(), "gemini-2.5-pro; calc".to_string());
+        sel.insert("model".to_string(), "gemini-4-neon-high; calc".to_string());
         assert_eq!(
-            resolve_session_args(gemini, &sel, &catalog, &[], false),
-            vec!["--approval-mode", "plan"]
+            resolve_session_args(antigravity, &sel, &catalog, &[], false),
+            vec!["--mode", "plan"]
         );
         let codex = by_id("codex").unwrap();
         let codex_catalog = vec![ModelCatalogEntry::new("gpt-5.5", "GPT-5.5")];
@@ -2003,7 +2006,7 @@ mod tests {
     #[test]
     fn runtime_slot_is_declared_only_where_background_sessions_exist() {
         assert!(by_id("claude").unwrap().runtime().is_some());
-        for id in ["kimi", "codex", "gemini", "opencode"] {
+        for id in ["kimi", "codex", "antigravity", "opencode"] {
             assert!(by_id(id).unwrap().runtime().is_none(), "{id} 没有后台会话");
         }
     }
@@ -2013,7 +2016,7 @@ mod tests {
         for id in ["claude", "kimi"] {
             assert!(by_id(id).unwrap().broker_question().is_some(), "{id}");
         }
-        for id in ["codex", "gemini", "opencode"] {
+        for id in ["codex", "antigravity", "opencode"] {
             assert!(by_id(id).unwrap().broker_question().is_none(), "{id}");
         }
     }
@@ -2023,7 +2026,7 @@ mod tests {
         for id in ["claude", "codex"] {
             assert!(by_id(id).unwrap().broker_approval().is_some(), "{id}");
         }
-        for id in ["kimi", "gemini", "opencode"] {
+        for id in ["kimi", "antigravity", "opencode"] {
             assert!(by_id(id).unwrap().broker_approval().is_none(), "{id}");
         }
     }

@@ -14,7 +14,7 @@ export function terminalInput(content: string, singleLinePaste?: RegExp | null):
   // 多行内容必须作为一次 bracketed paste 交给 TUI composer，否则附件列表中的换行可能被当成
   // 多次 Enter，导致第一行提前提交。单行保持原协议，兼容不启用 bracketed paste 的旧 CLI。
   // 例外由插件声明（ChatUi.single_line_paste_pattern）：有的 TUI 把一次写进来的一串字里的某些
-  // 字符当成快捷键吃掉（gemini 0.68.0 吞半角问号，真机取证见其插件），命中的单行也走粘贴。
+  // 字符当成快捷键吃掉（前科：已移除的 gemini 插件 0.68.0 吞半角问号；现役插件都不声明），命中的单行也走粘贴。
   return content.includes("\n") || singleLinePaste?.test(content) ? `\x1b[200~${content}\x1b[201~` : content;
 }
 

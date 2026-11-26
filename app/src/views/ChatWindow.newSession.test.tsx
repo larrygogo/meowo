@@ -38,7 +38,7 @@ describe("ChatWindow", () => {
     fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
     fireEvent.click(await screen.findByRole("menuitem", { name: "更多模型…" }));
     expect(await screen.findByText("复制到新会话 · Codex")).toBeTruthy();
-    // 未安装的 agent 不列(descriptors 里 kimi/gemini/opencode 均未装)。
+    // 未安装的 agent 不列(descriptors 里 kimi/antigravity/opencode 均未装)。
     expect(screen.queryByText(/Kimi/)).toBeNull();
 
     // Codex 无已学预设 → 分组内只提供「默认模型」。

@@ -1,7 +1,7 @@
 <div align="center">
   <img src="docs/images/logo.png" width="104" alt="Meowo logo" />
   <h1>Meowo / 喵呜</h1>
-  <p><b>同时使用多个 AI 编程 CLI 时用的桌面应用，支持 Claude Code、Codex、Kimi、Gemini CLI 和 OpenCode。</b></p>
+  <p><b>同时使用多个 AI 编程 CLI 时用的桌面应用，支持 Claude Code、Codex、Kimi、Antigravity CLI 和 OpenCode。</b></p>
   <p>
     <a href="https://github.com/larrygogo/meowo/actions/workflows/ci.yml"><img src="https://github.com/larrygogo/meowo/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
     <a href="https://github.com/larrygogo/meowo/releases/latest"><img src="https://img.shields.io/github/v/release/larrygogo/meowo?label=release&color=d97757" alt="Release" /></a>
@@ -64,22 +64,22 @@ AI 编程 CLI 可以等装好 Meowo 之后，在设置里安装和登录，所�
 
 ### 账号、额度与网络
 
-- Claude Code、Codex、Kimi 和 OpenCode 可以保存多个官方账号。切换账号时，Claude Code、Codex 和 Kimi 正在运行的会话可以一起切过去。Gemini CLI 只能有一个账号，用 API Key 登录。
-- 没有官方账号的，可以给这家 Agent 配 API 中转。
+- Claude Code、Codex、Kimi 和 OpenCode 可以保存多个官方账号。切换账号时，Claude Code、Codex 和 Kimi 正在运行的会话可以一起切过去。Antigravity CLI 只有一个账号，在 agy 自己的界面里登录。
+- 没有官方账号的，可以给这家 Agent 配 API 中转（Antigravity CLI 不支持）。
 - 显示 Claude Code、Codex 和 Kimi 的 5 小时和 7 天额度，Opus 这类模型单独计算的周额度也会列出，用到 85% 以上会变红。
-- 代理可以设一个默认值，也可以给每家 Agent 单独设置。支持 HTTP 代理和带认证的写法，SOCKS 只有 Kimi 和 Gemini CLI 支持。
+- 代理可以设一个默认值，也可以给每家 Agent 单独设置。支持 HTTP 代理和带认证的写法，SOCKS 只有 Kimi 和 Antigravity CLI 支持。
 
 ### 五家 Agent 的差别
 
-五家 CLI 能用的功能不完全一样。下表取自 0.8.1 各家插件的声明，完整对照见[官网功能页](https://meowo.io/features#agents)。
+五家 CLI 能用的功能不完全一样。下表取自各家插件的能力声明，完整对照见[官网功能页](https://meowo.io/features#agents)。
 
-| | Claude Code | Codex | Kimi Code | Gemini CLI | OpenCode |
+| | Claude Code | Codex | Kimi Code | Antigravity CLI | OpenCode |
 |---|:-:|:-:|:-:|:-:|:-:|
-| 在 Meowo 里登录 | 支持 | 支持 | 支持 | 填 API Key | 支持 |
+| 在 Meowo 里登录 | 支持 | 支持 | 支持 | 在 agy 里登录 | 支持 |
 | 在卡片上回答提问 | ✓ | – | ✓ | – | – |
-| Agent 操作面板浏览器 | ✓ | ✓ | ✓ | – | – |
+| Agent 操作面板浏览器 | ✓ | ✓ | ✓ | ✓ | – |
 | 额度读数 | 官方账号登录时 | ChatGPT 登录时 | 官方账号登录时 | – | – |
-| 上下文用量 | ✓ | ✓ | ✓ | – | – |
+| 上下文用量 | ✓ | ✓ | ✓ | ✓ | – |
 | 多个账号 | ✓ | ✓ | ✓ | – | ✓ |
 | SOCKS 代理 | – | – | ✓ | ✓ | – |
 
@@ -92,7 +92,7 @@ AI 编程 CLI 可以等装好 Meowo 之后，在设置里安装和登录，所�
 每家 CLI 用自己的 hook 机制把事件交给 `meowo-reporter`（OpenCode 没有 hook，改用一份自动生成的桥接插件），数据写进同一份本地数据库：
 
 ```
- AI CLI 会话（claude / codex / kimi / gemini / opencode）
+ AI CLI 会话（claude / codex / kimi / antigravity / opencode）
    │  触发 hooks；claude 另有 statusline 提供 Context 用量
    ▼
  meowo-reporter（一次性命令行进程，写完就退出）

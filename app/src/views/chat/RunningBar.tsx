@@ -35,7 +35,7 @@ export function runningActivityView(
 /// hook 写的 current_activity 只在工具**跑完**（PostToolUse）时更新——一条命令跑着的整段时间，
 /// 它停在上一条早已完成的命令上（实拍 2026-11-18：终端里在跑「Install Rust binary…」，运行条
 /// 还是前一条 Select-String）。transcript 在调用发出时就落了 tool_use，回执在跑完后才落，
-/// 「没回执」正是「在跑」。gemini/opencode 的记录只含已收场的调用，这里给不出，调用方退回 hook 值。
+/// 「没回执」正是「在跑」。antigravity/opencode 的记录只含已收场的调用，这里给不出，调用方退回 hook 值。
 /// 有说明（Bash/PowerShell 的 description）先给说明——终端里那一行显示的也是它，多行脚本的
 /// 首行往往只是个变量赋值；完整命令进 tooltip。
 /// 不露工具原名：按类别写人话（发图写「正在发图片」），其余用工具行同一个动作名（toolShortName：

@@ -3,7 +3,7 @@
 //!
 //! 每家的位置由各插件的 [`crate::registry::AgentPlugin::extensions`] 声明，这里只放通用的
 //! 扫描助手。位置都核对过对方自己的代码（2026-11）：Claude/Codex 取自 Kimi Code 内置的
-//! 「从 Claude/Codex 迁移」技能文档，Gemini 取自其 bundle 的 `Storage.getUser*Dir`，opencode
+//! 「从 Claude/Codex 迁移」技能文档，Antigravity 取自其官方文档（skills.md、mcp.md），opencode
 //! 取自其二进制里的 glob（`{skill,skills}/**/SKILL.md` 等），Kimi 取自同一份迁移文档。
 //!
 //! **隐私**：只取名字、描述、连接方式、开关。MCP 的命令参数、环境变量、URL 一律不读出
@@ -181,7 +181,7 @@ fn hidden(path: &Path) -> bool {
         .is_some_and(|n| n.starts_with('.'))
 }
 
-/// 技能目录：每个子目录里有 `SKILL.md` 就是一个技能（Claude、Codex、Kimi、Gemini、opencode
+/// 技能目录：每个子目录里有 `SKILL.md` 就是一个技能（Claude、Codex、Kimi、Antigravity、opencode
 /// 都只认这种目录形态，散放的 `.md` 不算）。点开头的目录跳过（Codex 的 `.system` 是它自带的）。
 pub fn skills_group(dir: &Path, shared: bool) -> Option<ExtensionGroupDto> {
     if !dir.is_dir() {
@@ -228,24 +228,6 @@ pub fn markdown_group(dir: &Path, kind: ExtensionKind) -> Option<ExtensionGroupD
             .unwrap_or_default();
         let mut entry = item(frontmatter_field(&head, "name").unwrap_or(stem));
         entry.description = frontmatter_field(&head, "description").or_else(|| first_line(&head));
-        entry
-    })
-}
-
-/// Gemini 的自定义命令：`commands/**/*.toml`，子目录用 `:` 拼成命名空间（`git/commit.toml`
-/// → `/git:commit`），描述在 `description` 字段。
-pub fn gemini_commands_group(dir: &Path) -> Option<ExtensionGroupDto> {
-    files_group(dir, ExtensionKind::Command, "toml", |path, rel| {
-        let name = rel.trim_end_matches(".toml").replace(['/', '\\'], ":");
-        let mut entry = item(name);
-        entry.description = std::fs::read_to_string(path)
-            .ok()
-            .and_then(|text| text.parse::<toml_edit::DocumentMut>().ok())
-            .and_then(|doc| {
-                doc.get("description")
-                    .and_then(|v| v.as_str())
-                    .and_then(clip)
-            });
         entry
     })
 }
@@ -320,8 +302,8 @@ fn mcp_transport(explicit: Option<&str>, has_command: bool, has_url: bool) -> Op
         .or_else(|| has_url.then(|| "http".to_string()))
 }
 
-/// JSON 里的 MCP 表（Claude `mcpServers`、Gemini `mcpServers`、Kimi `mcp.json`、opencode `mcp`）。
-/// 关闭标记三家写法不同：`disabled: true`（Claude/Gemini）、`enabled: false`（opencode）。
+/// JSON 里的 MCP 表（Claude `mcpServers`、Antigravity `mcp_config.json`、Kimi `mcp.json`、opencode `mcp`）。
+/// 关闭标记有两种写法：`disabled: true`（Claude）、`enabled: false`（opencode）。
 pub fn mcp_group_from_json(
     source: &Path,
     servers: Option<&serde_json::Value>,
@@ -418,7 +400,7 @@ fn hook_items(entries: Vec<(String, String)>) -> Vec<ExtensionItemDto> {
         .collect()
 }
 
-/// Claude / Codex / Gemini 同一种钩子写法：`hooks: { 事件: [ { matcher, hooks: [ { command } ] } ] }`。
+/// Claude / Codex 同一种钩子写法：`hooks: { 事件: [ { matcher, hooks: [ { command } ] } ] }`。
 pub fn hooks_group_from_json(
     source: &Path,
     hooks: Option<&serde_json::Value>,
@@ -547,7 +529,7 @@ pub(crate) fn strip_jsonc(text: &str) -> String {
     out
 }
 
-/// 几家共用的用户技能目录 `~/.agents/skills`（Codex、Kimi、Gemini、opencode 都读）。
+/// 几家共用的用户技能目录 `~/.agents/skills`（Codex、Kimi、Antigravity、opencode 的插件都把它列进扩展页）。
 pub fn shared_agent_skills() -> Option<ExtensionGroupDto> {
     let home = crate::home_dir()?;
     skills_group(&home.join(".agents").join("skills"), true)
@@ -598,45 +580,6 @@ pub fn claude_plugins_group(
     Some(ExtensionGroupDto {
         kind: ExtensionKind::Plugin,
         source: path_text(&plugins_dir),
-        shared: false,
-        items,
-    })
-}
-
-/// Gemini 的扩展：`extensions/<目录>/gemini-extension.json` 里的 name / version / description。
-pub fn gemini_extensions_group(dir: &Path) -> Option<ExtensionGroupDto> {
-    if !dir.is_dir() {
-        return None;
-    }
-    let items = sorted_entries(dir)
-        .into_iter()
-        .filter(|path| path.is_dir() && !hidden(path))
-        .filter_map(|path| {
-            let manifest = path.join("gemini-extension.json");
-            let json = read_json(&manifest)?;
-            let dir_name = path.file_name()?.to_string_lossy().into_owned();
-            let mut entry = item(
-                json.get("name")
-                    .and_then(|n| n.as_str())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| dir_name.clone()),
-            );
-            entry.description = json
-                .get("description")
-                .and_then(|d| d.as_str())
-                .and_then(clip);
-            entry.detail = json
-                .get("version")
-                .and_then(|v| v.as_str())
-                .map(str::to_string);
-            entry.rel = Some(format!("{dir_name}/gemini-extension.json"));
-            Some(entry)
-        })
-        .take(MAX_ITEMS)
-        .collect();
-    Some(ExtensionGroupDto {
-        kind: ExtensionKind::Plugin,
-        source: path_text(dir),
         shared: false,
         items,
     })
@@ -804,7 +747,7 @@ mod tests {
     }
 
     #[test]
-    fn markdown_and_gemini_command_groups() {
+    fn markdown_command_group() {
         let root = temp();
         std::fs::create_dir_all(root.join("commands/git")).unwrap();
         std::fs::write(
@@ -826,16 +769,6 @@ mod tests {
                 ("review", Some("审一遍改动"))
             ]
         );
-
-        std::fs::create_dir_all(root.join("gcmd/git")).unwrap();
-        std::fs::write(
-            root.join("gcmd/git/commit.toml"),
-            "description = \"提交\"\nprompt = \"x\"\n",
-        )
-        .unwrap();
-        let gemini = gemini_commands_group(&root.join("gcmd")).unwrap();
-        assert_eq!(gemini.items[0].name, "git:commit");
-        assert_eq!(gemini.items[0].description.as_deref(), Some("提交"));
         let _ = std::fs::remove_dir_all(root);
     }
 }

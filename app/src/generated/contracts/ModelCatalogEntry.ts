@@ -30,7 +30,7 @@ default_effort: string | null,
  */
 is_default: boolean, 
 /**
- * 这个模型能不能用要看服务端（Gemini 个人 Google 账号的预览模型取决于配额与实验开关，
- * 离线算不准，research-kimi-gemini §3.1），菜单如实标出。
+ * 这个模型能不能用要看服务端（如个人账号的预览模型取决于配额与实验开关，离线算不准；
+ * 出处是已移除的 gemini 插件，research-kimi-gemini §3.1），菜单如实标出。
  */
 uncertain: boolean, };

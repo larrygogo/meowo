@@ -162,7 +162,7 @@ export function readComposer(screen: readonly string[] | null, spec: ComposerSpe
     // 特殊输入模式先于提示符判断：shell 模式的提示符本来就不是普通的那个。
     const altMode = spec.alt_modes.find((mode) => (mode.prompt_pattern != null && new RegExp(mode.prompt_pattern).test(text[0]))
       || (mode.below_pattern != null && screen.slice(bottomRow + 1).some((line) => new RegExp(mode.below_pattern!).test(line))));
-    // prompt_prefix 可列几个提示符，用 `|` 分隔（Gemini 平常 `>`、YOLO `*`，做空 R2）；空串 = 没有提示符。
+    // prompt_prefix 可列几个提示符，用 `|` 分隔（为已移除的 gemini 插件引入：平常 `>`、YOLO `*`，做空 R2；现役插件都只有一个）；空串 = 没有提示符。
     const promptPrefix = spec.prompt_prefix.split("|").find((prefix) => text[0].startsWith(prefix));
     if (promptPrefix === undefined) {
       // 提示符对不上：只有认出是特殊模式（shell 的 `!`）时才算认出了框。
@@ -354,7 +354,7 @@ export async function stashComposerDraft(io: ComposerIo, spec: ComposerSpec): Pr
 
 /// 用 CLI 自己的清空键清掉输入框里的草稿。每按一下就看一眼：已经空了就不再按——这些键在空
 /// 输入框上另有含义（退出、打开回退菜单）。逐个分开写，两个 Esc 合成一次写入会被当成 Alt+Esc。
-/// 一轮清不完的（gemini 逐行删）按规格重复几轮，每轮后复核。返回是否确认清空。
+/// 一轮清不完的（如逐行删的，前科是已移除的 gemini 插件）按规格重复几轮，每轮后复核。返回是否确认清空。
 export async function clearComposerDraft(io: ComposerIo, spec: ComposerSpec): Promise<boolean> {
   if (spec.clear_inputs.length === 0) return false;
   const sleep = io.sleep ?? defaultSleep;
@@ -386,7 +386,7 @@ export async function clearComposerDraft(io: ComposerIo, spec: ComposerSpec): Pr
   return false;
 }
 
-/// 退出特殊输入模式（Gemini 的 shell 模式按 Esc、vim NORMAL 按 i）。返回是否确认回到普通输入框。
+/// 退出特殊输入模式（shell 模式按 Esc、vim NORMAL 按 i；现役插件都不声明）。返回是否确认回到普通输入框。
 export async function leaveAltMode(io: ComposerIo, spec: ComposerSpec, mode: ComposerAltMode): Promise<boolean> {
   const sleep = io.sleep ?? defaultSleep;
   try {

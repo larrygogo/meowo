@@ -1,7 +1,7 @@
 <div align="center">
   <img src="docs/images/logo.png" width="104" alt="Meowo logo" />
   <h1>Meowo / 喵呜</h1>
-  <p><b>A desktop app for using several AI coding CLIs at once. It works with Claude Code, Codex, Kimi, Gemini CLI and OpenCode.</b></p>
+  <p><b>A desktop app for using several AI coding CLIs at once. It works with Claude Code, Codex, Kimi, Antigravity CLI and OpenCode.</b></p>
   <p>
     <a href="https://github.com/larrygogo/meowo/actions/workflows/ci.yml"><img src="https://github.com/larrygogo/meowo/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
     <a href="https://github.com/larrygogo/meowo/releases/latest"><img src="https://img.shields.io/github/v/release/larrygogo/meowo?label=release&color=d97757" alt="Release" /></a>
@@ -64,22 +64,22 @@ You can install the AI coding CLIs after Meowo, from its Settings, and sign in t
 
 ### Accounts, quota and network
 
-- Claude Code, Codex, Kimi and OpenCode can keep several official accounts. When you switch accounts, running Claude Code, Codex and Kimi sessions can switch too. Gemini CLI can have only one account and signs in with an API key.
-- Without an official account, you can set up an API relay for that agent.
+- Claude Code, Codex, Kimi and OpenCode can keep several official accounts. When you switch accounts, running Claude Code, Codex and Kimi sessions can switch too. Antigravity CLI has one account, and you sign in inside agy itself.
+- Without an official account, you can set up an API relay for that agent (not available for Antigravity CLI).
 - Meowo shows 5-hour and 7-day quota for Claude Code, Codex and Kimi, including separate weekly quota for models such as Opus. Past 85% it turns red.
-- Set one default proxy or one per agent. HTTP proxies and authenticated proxies are supported; only Kimi and Gemini CLI support SOCKS.
+- Set one default proxy or one per agent. HTTP proxies and authenticated proxies are supported; only Kimi and Antigravity CLI support SOCKS.
 
 ### How the five agents differ
 
-The five CLIs don't all support the same features. The table below comes from each plugin's declared capabilities in 0.8.1; the full comparison is on the [features page](https://meowo.io/en/features#agents).
+The five CLIs don't all support the same features. The table below comes from each plugin's declared capabilities; the full comparison is on the [features page](https://meowo.io/en/features#agents).
 
-| | Claude Code | Codex | Kimi Code | Gemini CLI | OpenCode |
+| | Claude Code | Codex | Kimi Code | Antigravity CLI | OpenCode |
 |---|:-:|:-:|:-:|:-:|:-:|
-| Sign in from Meowo | yes | yes | yes | API key | yes |
+| Sign in from Meowo | yes | yes | yes | inside agy | yes |
 | Answer questions on the card | ✓ | – | ✓ | – | – |
-| Agent operates the panel browser | ✓ | ✓ | ✓ | – | – |
+| Agent operates the panel browser | ✓ | ✓ | ✓ | ✓ | – |
 | Quota readout | with official sign-in | with ChatGPT sign-in | with official sign-in | – | – |
-| Context usage | ✓ | ✓ | ✓ | – | – |
+| Context usage | ✓ | ✓ | ✓ | ✓ | – |
 | Multiple accounts | ✓ | ✓ | ✓ | – | ✓ |
 | SOCKS proxy | – | – | ✓ | ✓ | – |
 
@@ -92,7 +92,7 @@ Session data and settings are stored only in `~/.meowo/` on your machine (SQLite
 Each CLI hands its events to `meowo-reporter` through its own hook mechanism (OpenCode has no hooks, so Meowo generates a bridge plugin for it), and everything lands in one local database:
 
 ```
- AI CLI session (claude / codex / kimi / gemini / opencode)
+ AI CLI session (claude / codex / kimi / antigravity / opencode)
    │  fires hooks; claude's statusline also reports Context usage
    ▼
  meowo-reporter (one-shot CLI process, exits after writing)

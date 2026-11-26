@@ -5,7 +5,7 @@
 //!   调 `meowo-reporter`，探针在本机起一个端口当 broker，用 `meowo_protocol::broker` 的生产编解码收
 //!   `ApprovalRequest`、回 `ApprovalDecision::Allow`（对话页「允许一次」回的就是它）。应用里那一层
 //!   （入表、弹卡、窗口）不在这里，由 vitest 用这次抓到的请求回放。
-//! - 屏幕通道（kimi、gemini、opencode）：用插件声明的 `attention_patterns` 在整屏上认出审批框，
+//! - 屏幕通道（kimi、opencode）：用插件声明的 `attention_patterns` 在整屏上认出审批框，
 //!   按键取自 `app/src/test/fixtures/approval-frames.json` 里这家的 `allowOnceInput`。那个值不是手填了
 //!   就算数：vitest 拿同一份文件里的真机屏幕过一遍生产的识别与卡片模型，断言「允许一次」算出来的
 //!   按键就是它（`views/chat/approvalFrames.test.ts`）。
@@ -15,7 +15,6 @@
 //! - codex：插件声明的「只读」档（`--sandbox read-only`）下写文件；
 //! - kimi：用户配置的默认档是 Ask When Needed（删文件都直接执行），启动参数里没有更严的档。
 //!   会话里 `/permission` 选 Always Ask：只对本会话生效，不写 config.toml（隔离目录里验证过）；
-//! - gemini：`--approval-mode default` 下带重定向的 shell 命令；
 //! - opencode：读工作区外的文件（默认 agent 对工作区内的命令不问）。
 //!
 //! 每家调一次模型，提示词一句话。抓到的屏幕与请求写到 `PROBE_OUT`（缺省系统临时目录）下的
@@ -45,8 +44,8 @@ const SHELL_PROMPT: &str =
 const READ_PROMPT: &str = "Read the file C:/Windows/win.ini and reply with its first line only.";
 const TOKEN: &str = "meowo-approval-probe-token";
 
-/// 每段等待的上限（秒）。缺省 150；`PROBE_WAIT_SECS` 可调。Gemini 0.68.0 在 2026-11-20 从提交到
-/// 第一条回应用了 2 分 23 秒（会话记录 06:50:54 → 06:53:17），150 秒等不到审批框。
+/// 每段等待的上限（秒）。缺省 150；`PROBE_WAIT_SECS` 可调。慢的 CLI 从提交到第一条回应可能超过两分钟
+/// （2026-11-20 实测有过 2 分 23 秒），等不到审批框时先调大它。
 fn wait_secs() -> u64 {
     std::env::var("PROBE_WAIT_SECS")
         .ok()
@@ -89,7 +88,6 @@ fn plan(agent: &str) -> Plan {
         ),
         "codex" => (choice("approval", "readOnly"), SHELL_PROMPT, true),
         "kimi" => (Vec::new(), SHELL_PROMPT, true),
-        "gemini" => (choice("approval", "default"), SHELL_PROMPT, true),
         "opencode" => (Vec::new(), READ_PROMPT, false),
         other => panic!("没有 {other} 的走查方案"),
     };

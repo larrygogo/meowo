@@ -8,7 +8,7 @@ import {
   CLAUDE_APPROVAL_SCREEN,
   CLAUDE_BROKER_APPROVAL,
   CODEX_BROKER_APPROVAL,
-  GEMINI_APPROVAL_SCREEN,
+  ANTIGRAVITY_APPROVAL_SCREEN,
   KIMI_APPROVAL_SCREEN,
   OPENCODE_PERMISSION_SCREEN,
 } from "../../test/requestSamples";
@@ -37,7 +37,7 @@ function screenRequest(provider: string, screen: string, writable = true): { req
 const SCREENS: [string, string][] = [
   ["claude", CLAUDE_APPROVAL_SCREEN],
   ["kimi", KIMI_APPROVAL_SCREEN],
-  ["gemini", GEMINI_APPROVAL_SCREEN],
+  ["antigravity", ANTIGRAVITY_APPROVAL_SCREEN],
   ["opencode", OPENCODE_PERMISSION_SCREEN],
 ];
 
@@ -107,16 +107,17 @@ describe("审批卡模型：五家各一份样本，能力集合对得上", () =
     });
   });
 
-  it("gemini（屏幕）：Allow for this session 是持久放行；No, suggest changes 是拒绝，没有说明并拒绝", () => {
-    const model = approvalCardModel(screenRequest("gemini", GEMINI_APPROVAL_SCREEN).request, zh);
-    expect(model.tool).toBe("Shell");
-    expect(model.detail).toEqual({ label: "command", text: "echo meowo-probe > probe-out.txt" });
+  it("antigravity（屏幕）：本对话内放行与写进 settings.json 是两种持久放行；No, cancel 是拒绝，没有说明并拒绝", () => {
+    const model = approvalCardModel(screenRequest("antigravity", ANTIGRAVITY_APPROVAL_SCREEN).request, zh);
     expect(model.actions).toEqual({
       allowOnce: true,
       deny: true,
-      // 那一项的值是 cancel，与 Esc 相同，没有说明输入框（0.68.0 bundle）；接口不作答也没法真机验证。
+      // No, cancel 没有说明输入框（research-screen.md §3，拒绝后只回显 User declined）。
       denyWithReason: false,
-      persistent: [{ label: "本会话内允许", tip: "Allow for this session" }],
+      persistent: [
+        { label: "本会话内允许", tip: "Yes, and always allow in this conversation for commands that start with 'Get-ChildItem -Force'" },
+        { label: "允许并记住", tip: "Yes, and always allow for commands that start with 'Get-ChildItem -Force' (Persist to settings.json)" },
+      ],
       others: [],
       collapse: true,
     });
@@ -160,8 +161,8 @@ describe("审批卡模型：五家各一份样本，能力集合对得上", () =
     expect(keys("claude", CLAUDE_APPROVAL_SCREEN)).toEqual(["\r", "\x1b[B\r", "\x1b[B\x1b[B\x1b[B\r"]);
     // kimi：数字键直选。
     expect(keys("kimi", KIMI_APPROVAL_SCREEN)).toEqual(["1", "2", "3"]);
-    // gemini：● 焦点在第一项。
-    expect(keys("gemini", GEMINI_APPROVAL_SCREEN)).toEqual(["\r", "\x1b[B\r", "\x1b[B\x1b[B\r"]);
+    // antigravity：`>` 焦点在第一项，拒绝是第 4 项 No, cancel。
+    expect(keys("antigravity", ANTIGRAVITY_APPROVAL_SCREEN)).toEqual(["\r", "\x1b[B\r", "\x1b[B\x1b[B\x1b[B\r"]);
     // opencode：→ 切换，Esc 拒绝。
     expect(keys("opencode", OPENCODE_PERMISSION_SCREEN)).toEqual(["\r", "\x1b[C\r", "\x1b"]);
   });
@@ -181,7 +182,7 @@ describe("审批卡模型：五家各一份样本，能力集合对得上", () =
   });
 });
 
-/// 做空审查（2026-11-14）的三条：选项只认出一部分时「允许一次」被别的选项顶替；gemini 的外部编辑器项
+/// 做空审查（2026-11-14）的三条：选项只认出一部分时「允许一次」被别的选项顶替；认不出角色的选项
 /// 被归进持久放行还带数字键；屏幕通道的「说明并拒绝」按通道写死为没有。
 describe("选项按角色归位：角色由插件规则定，卡片模型不认文案、不顶替", () => {
   const model = (provider: string, attention: TerminalAttention) =>
@@ -203,7 +204,7 @@ describe("选项按角色归位：角色由插件规则定，卡片模型不认�
 
   it.each([
     ["kimi", KIMI_APPROVAL_SCREEN.replace("1. Approve once", "1. Something new")],
-    ["gemini", GEMINI_APPROVAL_SCREEN.replace("1. Allow once", "1. Something new")],
+    ["antigravity", ANTIGRAVITY_APPROVAL_SCREEN.replace("1. Yes, run command", "1. Something new")],
     ["claude", CLAUDE_APPROVAL_SCREEN.replace(" ❯ 1. Yes\n", " ❯ 1. Yes, and something new\n")],
   ])("%s 的第一项换成了别的：同样不出允许一次", (provider, screen) => {
     const attention = recognized(provider, screen);
@@ -212,34 +213,8 @@ describe("选项按角色归位：角色由插件规则定，卡片模型不认�
     expect(terminalInputForChoice(attention, "allow_once")).toBeNull();
   });
 
-  it("gemini 的 Modify with external editor：归其他选项，按终端原文列出，不进持久放行", () => {
-    const screen = [
-      "╭────────────────────────────────────────────╮",
-      "│ ? Edit  src/app.ts                         │",
-      "│ Apply this change?                         │",
-      "│                                            │",
-      "│ ● 1. Allow once                            │",
-      "│   2. Allow for this session                │",
-      "│   3. Modify with external editor           │",
-      "│   4. No, suggest changes (esc)             │",
-      "╰────────────────────────────────────────────╯",
-    ].join("\n");
-    const attention = recognized("gemini", screen);
-    expect(attention.options?.map((option) => option.role)).toEqual(["allow_once", "allow_persistent", "other", "deny"]);
-    const card = model("gemini", attention);
-    expect(card.actions.persistent).toEqual([{ label: "本会话内允许", tip: "Allow for this session" }]);
-    expect(card.actions.others).toEqual([{ label: "Modify with external editor", tip: "Modify with external editor" }]);
-    // 它有自己的决定词，按的是它在屏幕上那一项的键；数字键 3 不会落到它上面（数字键只管允许一次与持久放行）。
-    expect(terminalInputForChoice(attention, "option:0")).toBe("\x1b[B\x1b[B\r");
-    expect(terminalInputForChoice(attention, "suggestion:1")).toBeNull();
-  });
-
-  it("gemini 写进设置的放行项：说「允许并记住」，与只管本会话的分开", () => {
-    const screen = GEMINI_APPROVAL_SCREEN.replace(
-      "│   3. No, suggest changes (esc)            │",
-      "│   3. Allow this command for all future sessions │\n│   4. No, suggest changes (esc)            │",
-    );
-    const card = model("gemini", recognized("gemini", screen));
+  it("antigravity 写进 settings.json 的放行项：说「允许并记住」，与只管本对话的分开", () => {
+    const card = model("antigravity", recognized("antigravity", ANTIGRAVITY_APPROVAL_SCREEN));
     expect(card.actions.persistent.map((entry) => entry.label)).toEqual(["本会话内允许", "允许并记住"]);
   });
 
@@ -323,7 +298,7 @@ describe("屏幕通道的说明并拒绝：由拒绝项的打字流程决定，�
   });
 
   it.each([
-    ["gemini", GEMINI_APPROVAL_SCREEN],
+    ["antigravity", ANTIGRAVITY_APPROVAL_SCREEN],
     ["opencode", OPENCODE_PERMISSION_SCREEN],
   ])("%s 没有声明打字流程：不出说明并拒绝", (provider, screen) => {
     expect(terminalFeedbackFor(screenRequest(provider, screen).attention)).toBeNull();
@@ -345,16 +320,6 @@ describe("选项没认出来时的按键：只用插件声明过的，不猜", (
     expect(attention.options).toBeUndefined();
     const card = approvalCardModel(asTerminalRuntimeRequest({ sessionId: 7, provider: "opencode", attention, writable: true }), zh);
     expect(card.actions).toMatchObject({ allowOnce: false, deny: true, denyWithReason: false, persistent: [], others: [] });
-    expect(terminalInputForChoice(attention, "allow_once")).toBeNull();
-    expect(terminalInputForChoice(attention, "deny")).toBe("\x1b");
-  });
-
-  it("gemini 没认出焦点（不出选项）：只有拒绝（Esc），不给允许一次", () => {
-    // 焦点标记 ● 没抓到：回车选的是哪一项不知道。
-    const attention = bare("gemini", GEMINI_APPROVAL_SCREEN.replace("│ ● 1. Allow once", "│   1. Allow once"));
-    expect(attention.options).toBeUndefined();
-    const card = approvalCardModel(asTerminalRuntimeRequest({ sessionId: 7, provider: "gemini", attention, writable: true }), zh);
-    expect(card.actions).toMatchObject({ allowOnce: false, deny: true });
     expect(terminalInputForChoice(attention, "allow_once")).toBeNull();
     expect(terminalInputForChoice(attention, "deny")).toBe("\x1b");
   });
@@ -429,8 +394,8 @@ describe("标题与徽章只由种类决定", () => {
     expect(cardBadge("question", "expired", en)).toBe("Expired");
   });
 
-  /// 走查 输入 A3：kimi 提问卡徽章曾是「待批准」，gemini 额度耗尽曾被说成「启动步骤」。
-  it("kimi 提问是「待回答」，gemini 额度耗尽是「终端正在等待你的选择」而不是启动步骤", () => {
+  /// 走查 输入 A3：kimi 提问卡徽章曾是「待批准」，「等你选择」类提示曾被说成「启动步骤」。
+  it("kimi 提问是「待回答」，antigravity 信任页是「终端正在等待你的选择」而不是启动步骤", () => {
     const kimi = terminalAttention([
       " ────────────────────────────────────────",
       "  question",
@@ -443,15 +408,18 @@ describe("标题与徽章只由种类决定", () => {
     expect(cardBadge(cardKindOfAttention(kimi!.kind), "pending", zh)).toBe("待回答");
     expect(asTerminalRuntimeRequest({ sessionId: 7, provider: "kimi", attention: kimi!, writable: true }).kind).toBe("question");
 
-    const gemini = terminalAttention([
-      "╭──────────────────────────────────────────────╮",
-      "│ Usage limit reached for gemini-3.8-flash.    │",
-      "│ /stats model for usage details               │",
-      "│ ● 1. Keep trying                             │",
-      "│   2. Stop                                    │",
-      "╰──────────────────────────────────────────────╯",
-    ].join("\n"), [], false, false, grammar("gemini"));
-    const kind = cardKindOfAttention(gemini!.kind);
+    // antigravity 1.5.17 信任页原文（run1/01_trust_prompt.txt），插件声明为 choice。
+    const trust = terminalAttention([
+      "Accessing workspace:",
+      "C:/work/demo",
+      "Do you trust the contents of this project?",
+      "Antigravity CLI requires permission to read, edit, and execute files here.",
+      "> Yes, I trust this folder",
+      "  No, exit",
+      "  ↑/↓ Navigate · enter Confirm",
+    ].join("\n"), [], false, false, grammar("antigravity"));
+    const kind = cardKindOfAttention(trust!.kind);
+
     expect(cardTitle(kind, zh)).toBe("终端正在等待你的选择");
     expect(cardTitle(kind, zh)).not.toBe(zh.chat.terminalPromptTitle);
     expect(cardBadge(kind, "pending", zh)).toBe("待选择");

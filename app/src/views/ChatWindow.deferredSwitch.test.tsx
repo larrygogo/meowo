@@ -143,10 +143,10 @@ describe("回合进行中选的切换，回合结束后真的执行", () => {
   it.each([
     ["codex", "server_settings"],
     ["kimi", "restart_resume"],
-    ["gemini", "restart_resume"],
+    ["antigravity", "restart_resume"],
     ["opencode", "tui_dialog"],
   ])("%s（%s）：模型排队后在回合结束时交给后端执行", async (provider, _mechanism) => {
-    const sessionId = 710 + ["codex", "kimi", "gemini", "opencode"].indexOf(provider);
+    const sessionId = 710 + ["codex", "kimi", "antigravity", "opencode"].indexOf(provider);
     const session = runningSession(sessionId, provider, (command) => {
       if (command === "agent_model_catalog") return Promise.resolve([
         { id: "vendor/model-a", label: "当前模型", group: "g", efforts: [] },

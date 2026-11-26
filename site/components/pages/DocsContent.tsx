@@ -52,7 +52,7 @@ function EnDocs() {
   return (
     <article className="prose">
       <h2 id="how">How it works</h2>
-      <p>Using Claude Code as the example; Codex / Kimi / Gemini CLI use their own CLI hook mechanisms (OpenCode uses a bridge plugin instead), and the data all lands in the same local database.</p>
+      <p>Using Claude Code as the example; Codex / Kimi / Antigravity CLI use their own CLI hook mechanisms (OpenCode uses a bridge plugin instead), and the data all lands in the same local database.</p>
       <div className="codeblock"><pre>{FLOW_EN}</pre></div>
       <ul>
         <li><strong>meowo-reporter</strong> is a one-shot process with no state. It starts on each hook, reads the event, writes the DB, and exits, so it never blocks the session.</li>
@@ -82,7 +82,7 @@ bun scripts/install-hooks.mjs "<repo-abs-path>/app/src-tauri/target/release/meow
       <p>The script attaches the reporter to the hook events it needs (SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd / PermissionRequest, plus PreToolUse's AskUserQuestion / ExitPlanMode; normal hooks get a 5s timeout, PermissionRequest 310s so it can wait for your approval). Running it again with the same path won't duplicate entries or break your existing hooks.</p>
       <div className="callout">
         <span className="ci"><InfoIcon /></span>
-        <span>This script only handles Claude Code. codex, kimi, and gemini connect through their own native hook config (the hook command carries <code className="inline">--provider codex|kimi|gemini</code>); opencode has no hook mechanism, so Meowo generates a bridge plugin under <code className="inline">~/.config/opencode/plugin/</code> instead. None of them go through this script.</span>
+        <span>This script only handles Claude Code. codex, kimi, and antigravity connect through their own native hook config (the hook command carries <code className="inline">--provider codex|kimi|antigravity</code>); opencode has no hook mechanism, so Meowo generates a bridge plugin under <code className="inline">~/.config/opencode/plugin/</code> instead. None of them go through this script.</span>
       </div>
 
       <h2 id="remote">Phone access</h2>
@@ -115,7 +115,7 @@ function ZhDocs() {
   return (
     <article className="prose">
       <h2 id="how">工作原理</h2>
-      <p>以 Claude Code 为例；Codex / Kimi / Gemini CLI 走各自 CLI 的 hook 机制（OpenCode 走桥接插件），数据最终都落到同一份本地数据库。</p>
+      <p>以 Claude Code 为例；Codex / Kimi / Antigravity CLI 走各自 CLI 的 hook 机制（OpenCode 走桥接插件），数据最终都落到同一份本地数据库。</p>
       <div className="codeblock"><pre>{FLOW}</pre></div>
       <ul>
         <li><strong>meowo-reporter</strong> 是一次性进程，不保存状态。每次触发 hook 时启动，读取事件、写库，然后退出，不会阻塞会话。</li>
@@ -145,7 +145,7 @@ bun scripts/install-hooks.mjs "<仓库绝对路径>/app/src-tauri/target/release
       <p>脚本会把 reporter 挂到需要的 hook 事件上（SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd / PermissionRequest，以及 PreToolUse 的 AskUserQuestion / ExitPlanMode；普通 hook 带 5s 超时，PermissionRequest 要等你审批，为 310s）。用同一个路径重复运行不会重复追加，也不会破坏已有的 hooks。</p>
       <div className="callout">
         <span className="ci"><InfoIcon /></span>
-        <span>这个脚本只管 Claude Code。codex、kimi、gemini 的接入走各自 CLI 的原生 hook 配置（hook 命令带 <code className="inline">--provider codex|kimi|gemini</code>）；opencode 没有 hook 机制，Meowo 改为在 <code className="inline">~/.config/opencode/plugin/</code> 下生成桥接插件。它们都不经过这个脚本。</span>
+        <span>这个脚本只管 Claude Code。codex、kimi、antigravity 的接入走各自 CLI 的原生 hook 配置（hook 命令带 <code className="inline">--provider codex|kimi|antigravity</code>）；opencode 没有 hook 机制，Meowo 改为在 <code className="inline">~/.config/opencode/plugin/</code> 下生成桥接插件。它们都不经过这个脚本。</span>
       </div>
 
       <h2 id="remote">手机远程</h2>

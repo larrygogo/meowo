@@ -1653,315 +1653,152 @@
       "name": "Codex"
     },
     {
-      "command": "gemini",
+      "command": "agy",
       "declared_complete": true,
       "entries": [
         {
           "legacy": false,
-          "needle": "do you trust the files in this folder",
-          "note": "",
+          "needle": "",
+          "note": "通用信任表（chat_ui.rs）里的句子；agy 的信任页说的是 contents of this project，程序文件里本来就没有，不搜",
           "rule": "literal:do you trust the files in this folder",
           "source": "app/src-tauri/crates/meowo-agent/src/chat_ui.rs:25"
         },
         {
           "legacy": false,
           "needle": "",
-          "note": "通用信任表（chat_ui.rs）里的句子，给别的 CLI 用；gemini 0.65.0 的信任页是 `Do you trust the files in this folder`（能搜到），这句 0 处",
+          "note": "通用信任表（chat_ui.rs）里的句子；agy 用的是 this project，不搜",
           "rule": "literal:do you trust the contents of this directory",
           "source": "app/src-tauri/crates/meowo-agent/src/chat_ui.rs:27"
         },
         {
-          "legacy": true,
-          "needle": "shift+tab to accept edits",
-          "note": "0.65.0 bundle 里是整句；0.68.0 里 0 处（按键提示改成运行时格式化）",
-          "rule": "literal:shift+tab to accept edits",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:447"
-        },
-        {
           "legacy": false,
-          "max_gap": 1600,
           "needle": "",
-          "note": "0.68.0 真机 2026-11-14（composer-frames gemini-0.68-g2-0）：default 档底栏。bundle ApprovalModeIndicator.tsx 的模板 `${cycleHint} to accept edits` 每个 interactiveCli chunk 1 处，离 formatCommand(\"app.cycleApprovalMode\") 782 字节",
-          "parts": [
-            " to accept edits",
-            "app.cycleApprovalMode"
-          ],
-          "rule": "literal:shift+tab to accept edits",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:447"
+          "note": "运行时拼接：状态栏右侧的模式名、模型名、effort 分别渲染，中间点由模板插入；`auto` 在程序文件里是通用词，不搜",
+          "rule": "literal:auto · ",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:265"
         },
         {
           "legacy": false,
-          "max_gap": 140,
           "needle": "",
-          "note": "0.68.0 bundle keyBindings：`[\"app.cycleApprovalMode\", [new KeyBinding(\"shift+tab\")]]`，键与命令相距 66 字节（三个 chunk 各一份）；formatKeyBinding 把它格式化成 `Shift+Tab`。0.65.0 未核对（本机已无该版本）",
-          "parts": [
-            "\"shift+tab\"",
-            "app.cycleApprovalMode"
-          ],
-          "rule": "literal:shift+tab to accept edits",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:447"
+          "note": "运行时拼接：同 auto · ",
+          "rule": "literal:accept-edits · ",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:269"
         },
         {
           "legacy": false,
-          "needle": "auto-accept edits",
+          "needle": "",
+          "note": "运行时拼接：同 auto · ",
+          "rule": "literal:plan · ",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:273"
+        },
+        {
+          "legacy": false,
+          "needle": "write-in",
           "note": "",
-          "rule": "literal:auto-accept edits",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:451"
-        },
-        {
-          "legacy": true,
-          "needle": "yolo ctrl+y",
-          "note": "0.65.0 bundle 里是整句；0.68.0 里 0 处（按键提示改成运行时格式化）",
-          "rule": "literal:yolo ctrl+y",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:455"
+          "rule": "literal:write-in",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:427"
         },
         {
           "legacy": false,
-          "max_gap": 1000,
-          "needle": "",
-          "note": "0.68.0 真机 2026-11-14（composer-frames gemini-0.68-g7-2-yolo）：yolo 档底栏。bundle ApprovalModeIndicator.tsx 里 `textContent = \"YOLO\"` 离 formatCommand(\"app.toggleYolo\") 最远的一个 chunk 是 509 字节",
-          "parts": [
-            "\"yolo\"",
-            "app.toggleYolo"
-          ],
-          "rule": "literal:yolo ctrl+y",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:455"
-        },
-        {
-          "legacy": false,
-          "max_gap": 100,
-          "needle": "",
-          "note": "0.68.0 bundle keyBindings：`[\"app.toggleYolo\", [new KeyBinding(\"ctrl+y\")]]`，键与命令相距 51 字节；formatKeyBinding 把它格式化成 `Ctrl+Y`。0.65.0 未核对（本机已无该版本）",
-          "parts": [
-            "\"ctrl+y\"",
-            "app.toggleYolo"
-          ],
-          "rule": "literal:yolo ctrl+y",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:455"
-        },
-        {
-          "legacy": true,
-          "needle": "shift+tab to manual",
-          "note": "0.65.0 bundle 里 `shift+tab to manual` 是整句；0.68.0 里 0 处（按键提示改成运行时格式化）",
-          "rule": "literal:plan shift+tab to manual",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:459"
-        },
-        {
-          "legacy": false,
-          "max_gap": 80,
-          "needle": "",
-          "note": "0.68.0 真机 2026-11-14（composer-frames gemini-0.68-g8-0）：plan 档底栏。bundle ApprovalModeIndicator.tsx 里 `textContent = \"plan\"` 与下一行模板 `${cycleHint} to manual` 相距 35 到 37 字节",
-          "parts": [
-            "\"plan\"",
-            " to manual"
-          ],
-          "rule": "literal:plan shift+tab to manual",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:459"
-        },
-        {
-          "legacy": false,
-          "max_gap": 140,
-          "needle": "",
-          "note": "0.68.0 bundle keyBindings：`[\"app.cycleApprovalMode\", [new KeyBinding(\"shift+tab\")]]`，键与命令相距 66 字节（三个 chunk 各一份）；formatKeyBinding 把它格式化成 `Shift+Tab`。0.65.0 未核对（本机已无该版本）",
-          "parts": [
-            "\"shift+tab\"",
-            "app.cycleApprovalMode"
-          ],
-          "rule": "literal:plan shift+tab to manual",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:459"
-        },
-        {
-          "legacy": false,
-          "needle": "waiting for user confirmation",
+          "needle": "do you trust the contents of this project?",
           "note": "",
-          "rule": "literal:waiting for user confirmation",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:22"
+          "rule": "literal:do you trust the contents of this project?",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/screen.rs:59"
         },
         {
           "legacy": false,
-          "needle": "apply this change",
-          "note": "0.65.0 bundle 里有这句；框线 `│` 是运行时画的边框，去掉框线再搜",
-          "rule": "literal:│ apply this change",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:33"
+          "needle": "auto mode: edits",
+          "note": "1.5.18 真机 run2/27：auto 档空输入框的占位；plan / accept-edits 档各有一句，default 档没有占位",
+          "rule": "composer.empty",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:323"
         },
         {
           "legacy": false,
-          "needle": "allow execution",
-          "note": "0.65.0 bundle 里有这句；框线 `│` 是运行时画的边框，去掉框线再搜",
-          "rule": "literal:│ allow execution",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:34"
+          "needle": "run this command?",
+          "note": "1.5.18 真机 run2/05、21；agy.exe 里 2 处。文件审批的问句 `Allow creation of this file?` 1 处",
+          "rule": "screen:approval_panel",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/screen.rs:25"
         },
         {
           "legacy": false,
-          "needle": "do you want to proceed",
-          "note": "0.65.0 bundle 里有这句；框线 `│` 是运行时画的边框，去掉框线再搜",
-          "rule": "literal:│ do you want to proceed",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:45"
+          "needle": "",
+          "note": "1.5.18 真机 run2/16。agy.exe 里是格式串 `Question %d/%d`（1 处），题号运行时填，样例里没有原样，不搜",
+          "rule": "screen:question_form",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/screen.rs:41"
         },
         {
           "legacy": false,
-          "needle": "do you want to proceed?",
-          "note": "",
-          "rule": "literal:do you want to proceed?",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:46"
-        },
-        {
-          "legacy": false,
-          "needle": "allow",
-          "note": "",
-          "rule": "literal:allow",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/lead.rs:236"
+          "needle": "yes, i trust this folder",
+          "note": "1.5.18 真机 run1/00_start 的备用屏；agy.exe 1 处",
+          "rule": "screen:trust_prompt",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/screen.rs:54"
         },
         {
           "legacy": false,
           "needle": "esc to cancel",
-          "note": "",
-          "rule": "literal:esc to cancel",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:87"
+          "note": "1.5.18 真机 run2/26：运行中状态栏左侧；agy.exe 8 处。盲文 spinner 帧是运行时画的，不搜",
+          "rule": "screen:spinner_working",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/screen.rs:68"
         },
         {
           "legacy": false,
-          "needle": "Type your message or @path/to/file",
-          "note": "0.68.0 真机 2026-11-14（probe_tui_script cells）：空输入框的灰色占位",
-          "rule": "composer.empty",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:354"
+          "needle": "for shortcuts",
+          "note": "1.5.18 真机 run2/27：空闲状态栏左侧；agy.exe 2 处",
+          "rule": "screen:shortcuts_hint_idle",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/screen.rs:80"
         },
         {
           "legacy": false,
-          "needle": "for NORMAL mode.",
-          "note": "0.68.0 真机 2026-11-14：general.vimMode 打开、INSERT 模式下空输入框的占位",
-          "rule": "composer.empty",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:354"
+          "needle": "run this command?",
+          "note": "同 screen:approval_panel",
+          "rule": "attention:antigravity:command-approval",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:344"
         },
         {
           "legacy": false,
-          "needle": "for INSERT mode.",
-          "note": "0.68.0 真机 2026-11-14：general.vimMode 打开、NORMAL 模式下空输入框的占位",
-          "rule": "composer.empty",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:354"
+          "needle": "yes, run command",
+          "note": "1.5.18 真机 run2/05；agy.exe 1 处。文件审批 `Yes, allow creation`、访问 `Yes, allow access`、工具 `Yes, allow tool call` 各 1 处",
+          "rule": "option:antigravity:command-approval#0",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:360"
         },
         {
           "legacy": false,
-          "needle": "[Pasted Text: ",
-          "note": "0.68.0 真机 2026-11-14（tests/probe_draft_fidelity.rs）：粘贴 60 行后输入框里只剩这个占位，5120 字单行是 `[Pasted Text: 5120 chars]`；bundle/chunk-ASDLQWJU.js 48836 行的模板",
-          "rule": "composer.paste",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:383"
+          "needle": "in this conversation for commands that start with",
+          "note": "1.5.18 真机 run2/05；agy.exe 格式串 `Yes, and always allow in this conversation for commands that start with '%s'`",
+          "rule": "option:antigravity:command-approval#1",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:366"
         },
         {
           "legacy": false,
-          "needle": "Type your shell command",
-          "note": "0.68.0 真机 2026-11-14：按 ! 进 shell 模式后提示符变成 `!`，占位是这句；规则认的是提示符，占位用来在程序文件里定位这个模式还在",
-          "rule": "composer.alt:shell",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:364"
+          "needle": "(persist to %s)",
+          "note": "1.5.18 真机 run2/05；agy.exe 里 4 个格式串都以 `(Persist to %s)` 结尾",
+          "rule": "option:antigravity:command-approval#2",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:372"
+        },
+        {
+          "legacy": false,
+          "needle": "no, cancel",
+          "note": "1.5.18 真机 run2/05；agy.exe 1 处。另有 `No, deny creation` / `No, deny access` / `No, deny tool call`",
+          "rule": "option:antigravity:command-approval#3",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:378"
         },
         {
           "legacy": false,
           "needle": "",
-          "note": "0.68.0 真机 2026-11-14：vim NORMAL 模式下状态行最左侧的标记（INSERT 时是 [INSERT]）。方括号是运行时拼的，bundle 里没有原样的 `[NORMAL]`；vim 模式是否还在由 composer.empty 的两句占位（for NORMAL mode. 与 for INSERT mode.）盯着",
-          "rule": "composer.alt:vim_normal",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:371"
+          "note": "同 screen:question_form：格式串 `Question %d/%d`，不搜",
+          "rule": "attention:antigravity:question",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:394"
         },
         {
           "legacy": false,
-          "needle": "Allow once",
-          "note": "0.68.0 bundle ToolConfirmationMessage 2026-11-14；0.61 真机屏幕",
-          "rule": "option:gemini:command-approval#0",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:545"
-        },
-        {
-          "legacy": false,
-          "needle": "Allow for this session",
-          "note": "0.68.0 bundle 2026-11-14（另有 Allow tool for this session、Allow all server tools for this session）；0.61 真机屏幕",
-          "rule": "option:gemini:command-approval#1",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:551"
-        },
-        {
-          "legacy": false,
-          "needle": "Allow for all future sessions",
-          "note": "0.68.0 bundle 2026-11-14（另有 Allow this command for all future sessions、Allow for this file in all future sessions）；没有真机屏幕",
-          "rule": "option:gemini:command-approval#2",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:557"
-        },
-        {
-          "legacy": false,
-          "needle": "No, suggest changes (esc)",
-          "note": "0.68.0 bundle 2026-11-14：值是 cancel，与 Esc 相同；0.61 真机屏幕",
-          "rule": "option:gemini:command-approval#3",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:563"
-        },
-        {
-          "legacy": false,
-          "needle": "allow execution of",
-          "note": "0.65.0 bundle：`Allow execution of` 在工具确认框里；同规则还认 Apply this change? / Do you want to proceed? / 沙箱扩权 To run [Shell] …",
-          "rule": "attention:gemini:command-approval",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:519"
-        },
-        {
-          "legacy": false,
-          "needle": "usage limit reached",
-          "note": "0.65.0 bundle：`Usage limit reached`；高负载框 `We are currently experiencing high demand for ${model}.` 同规则",
-          "rule": "attention:gemini:usage-limit",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:580"
-        },
-        {
-          "legacy": false,
-          "needle": "answer questions",
-          "note": "0.65.0 bundle：ask_user 提问表单表头 `Answer Questions`",
-          "rule": "attention:gemini:question",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:597"
-        },
-        {
-          "legacy": false,
-          "needle": "(esc to cancel",
-          "note": "0.65.0 bundle：运行中 spinner 行尾 `(esc to cancel`",
-          "rule": "screen:spinner_line_working",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:16"
-        },
-        {
-          "legacy": false,
-          "needle": "allow once",
-          "note": "0.65.0 bundle：确认框首个选项 `Yes, allow once`；编号与圆点是运行时画的",
-          "rule": "screen:apply_or_allow_change",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:27"
-        },
-        {
-          "legacy": false,
-          "needle": "answer questions",
-          "note": "0.65.0 bundle：表头 `Answer Questions`，底部提示 `Enter to select` 各段以 ` \\xB7 ` 连接，整串搜不到原样",
-          "rule": "screen:ask_user_dialog",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:70"
-        },
-        {
-          "legacy": false,
-          "needle": "Request cancelled.",
-          "note": "0.6x 会话日志实样（用户按 Esc 后的 info 记录，对话页据此画中断分隔条）；0.68.0 bundle 里 18 处",
-          "rule": "record:Request cancelled.",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/transcript.rs:1191"
-        },
-        {
-          "legacy": false,
-          "needle": "inlineData",
-          "note": "0.68.0 bundle mcp-tool.js transformImageAudioBlock（MCP 图片块转 inlineData，回执里的截图据此显示）；2026-11-21 探针真机实样（gemini-3-flash-preview，functionResponse.parts）",
-          "rule": "record:inlineData",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/transcript.rs:618"
-        },
-        {
-          "legacy": false,
-          "needle": "</untrusted_context>",
-          "note": "0.68.0 bundle mcp-tool.js wrapUntrusted（MCP 文字块包进 <untrusted_context>，标签各占一行；对话页去掉整行标签）；2026-11-21 探针真机实样（gemini.probe-send-image）",
-          "rule": "record:untrusted_context",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/transcript.rs:871"
-        },
-        {
-          "legacy": false,
-          "needle": "' provided the following ",
-          "note": "0.68.0 bundle mcp-tool.js transformImageAudioBlock（图片块前给模型的一句说明，模板 `[Tool '${toolName}' provided the following ${block.type} data with mime-type: …]`；图换成引用行后对话页去掉这一行）；2026-11-21 探针真机实样（gemini.probe-screenshot）",
-          "rule": "record:mcp_image_note",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/transcript.rs:893"
+          "needle": "do you trust the contents of this project?",
+          "note": "1.5.18 真机 run1/00_start；agy.exe 1 处",
+          "rule": "attention:antigravity:trust",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:407"
         }
       ],
-      "id": "gemini",
-      "name": "Gemini CLI"
+      "id": "antigravity",
+      "name": "Antigravity CLI"
     },
     {
       "command": "opencode",

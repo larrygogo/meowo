@@ -127,13 +127,7 @@ fn draft_is_put_away_and_the_message_lands() {
         argv.extend(extra.split_whitespace().map(String::from));
     }
     let temp = std::env::temp_dir().join(format!("meowo-composer-probe-{}", std::process::id()));
-    std::fs::create_dir_all(temp.join(".gemini")).unwrap();
-    // gemini 关自更新只有 settings 一条路；项目级覆盖用户级，不改用户装机。
-    std::fs::write(
-        temp.join(".gemini/settings.json"),
-        r#"{"general":{"enableAutoUpdate":false,"enableAutoUpdateNotification":false}}"#,
-    )
-    .unwrap();
+    std::fs::create_dir_all(&temp).unwrap();
     let pair = native_pty_system()
         .openpty(PtySize {
             rows: ROWS,
@@ -247,7 +241,7 @@ fn walk(agent: &str, tui: &Tui) {
     tui.send("What is 17+25? Reply with just the number.");
     pause(500);
     tui.send("\r");
-    // 上游服务不可用时（本机 Gemini 的接口 2026-11-14 持续返回 503）只核对到「消息已提交」：
+    // 上游服务不可用时（比如模型接口持续返回 503）只核对到「消息已提交」：
     // 正文离开输入框、进了对话区、CLI 开始处理。后面的步骤要模型作答，跳过。
     if std::env::var("PROBE_NO_MODEL").is_ok() {
         assert!(tui.wait("消息已提交（输入框空了，正文进了对话区）", 30, |tui| {

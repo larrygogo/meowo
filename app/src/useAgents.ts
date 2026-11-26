@@ -18,7 +18,7 @@ export function useAgentListRefresh(reload: () => void) {
  * 后端下发的 agent 名单（展示名 + 安装态）。前端不再自己维护这份名单——加一个 agent 不必改前端。
  *
  * 返回 `agents === null` 表示尚未 resolve：调用方据此避免首帧误判「未安装」而闪一下安装按钮。
- * `name(id)` 对未知 id 回退成 id 本身（显示 `"gemini"` 好过显示 `"Claude Code"`）。
+ * `name(id)` 对未知 id 回退成 id 本身（显示 `"gemini"`（已退役的旧会话）好过显示 `"Claude Code"`）。
  */
 export function useAgents(): {
   agents: AgentDescriptor[] | null;

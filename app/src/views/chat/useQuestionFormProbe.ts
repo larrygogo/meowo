@@ -60,7 +60,7 @@ export function useQuestionFormProbe({ sessionId, active, othersSeeForm, grammar
       if (cancelled) return;
       const text = (screen ?? []).join("\n");
       // 只认提问表单：其它提示（审批框、信任页）各有自己的通道，这里不越俎代庖。
-      // 按种类认，不按规则 id：claude 的编号选择器、gemini 的框线表单、kimi 的方括号表单都是提问。
+      // 按种类认，不按规则 id：claude 的编号选择器、kimi 的方括号表单、antigravity 的提问表单都是提问。
       // 此前只认编号选择器的 id，kimi 的表单被丢掉，手机上（没有 xterm，这里是唯一的识别源）一直认不出。
       const attention = text ? terminalAttention(text, [], true, false, grammarRef.current(), false) : null;
       if (attention?.kind === "question") {

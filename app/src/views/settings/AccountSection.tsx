@@ -191,12 +191,12 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
    */
   supportsAccount: boolean;
   /**
-   * 该 agent 能否用 API Key 登录（gemini：OAuth 被官方停用，key 是唯一活路）。
+   * 该 agent 能否用 API Key 登录（ApiKeyLoginCap；通用能力，目前没有插件声明，最初为已移除的 gemini 插件引入）。
    * true → 未登录时在「登录」旁边多一个「API Key 登录」入口。
    */
   supportsApiKeyLogin: boolean;
   /**
-   * 该 agent 能否有多个账号。false（gemini：数据目录不可被环境变量覆盖）→ 不显示账号列表。
+   * 该 agent 能否有多个账号。false（antigravity：数据目录没有可覆盖的环境变量）→ 不显示账号列表。
    *
    * 不能靠「列表只有一条」推断——那与「只建了默认账号」长得一模一样。
    */
@@ -208,7 +208,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
    * **不得按 id 判断**——覆盖面是插件声明的事实，会随取证进展变。
    */
   movesSessionsAcrossAccounts: boolean;
-  /** meowo 能否显示该 agent 的上下文占用。false（gemini/opencode）→ 卡片显式标注「不支持」。 */
+  /** meowo 能否显示该 agent 的上下文占用。false（opencode）→ 卡片显式标注「不支持」。 */
   supportsContext: boolean;
   relay: AgentDescriptor["relay"];
   payload: ProviderAccountPayload | null;
@@ -695,8 +695,8 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
             {loginBusy ? t.account.cancelLogin : t.account.login}
           </button>
         )}
-        {/* API Key 登录：交互式 OAuth 之外的第二入口（gemini 的 OAuth 已被官方停用，这是
-            唯一走得通的一条）。点击开合输入区，不打断旁边的交互式登录等待。 */}
+        {/* API Key 登录：交互式 OAuth 之外的第二入口（给 OAuth 走不通的 CLI；最初为已移除的
+            gemini 插件引入）。点击开合输入区，不打断旁边的交互式登录等待。 */}
         {isInstalled && !isLoggedIn && !relayEnabled && supportsAccount && supportsApiKeyLogin && (
           <button
             type="button"
@@ -912,7 +912,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
       )}
 
 
-      {/* 多账号：已装且支持时才给。不支持的（gemini）连列表都不显示——它只有一个账号，
+      {/* 多账号：已装且支持时才给。不支持的（antigravity）连列表都不显示——它只有一个账号，
           列一个孤零零的「默认账号」除了占地方没有任何信息。
           中转模式下也不给：账号列表管的是官方登录身份，中转与之互斥，列出来只会误导。 */}
       {isInstalled && supportsProfiles && !relayEnabled && (
@@ -1569,7 +1569,7 @@ export function AccountSection({ view = "account", onViewChange, showAll = false
           value={eff}
           options={list.map((a) => {
             // claude 的徽标是 currentColor 绘制的裸 logomark，得由容器给它品牌色（--cc-claude），
-            // 否则在下拉里会继承文字色、变成灰白。自带固定色的（kimi/codex/gemini/opencode）tint 为空。
+            // 否则在下拉里会继承文字色、变成灰白。自带固定色的（kimi/codex/antigravity/opencode）tint 为空。
             const { Icon, tint } = agentAssets(a.id);
             const icon = (
               <span style={{ display: "flex", color: tint ? `var(${tint})` : undefined }}>

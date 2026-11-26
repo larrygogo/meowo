@@ -51,7 +51,7 @@ export type TerminalAttentionOption = {
 /// arrow_panel = 「▶ 标题」面板式（数字键直选、记住=仅本会话）；
 /// framed_box = 圆角外框对话框式（● 焦点光标移动选择，选项行带框线）。
 /// bracket_form = 方括号编号表单（kimi 提问：`[1] 选项` / `[✓] 选项`，数字键直选）。
-/// framed_form = 圆角外框提问表单（gemini 0.65 ask_user：● 焦点光标移动 + 回车）。
+/// framed_form = 圆角外框提问表单（● 焦点光标移动 + 回车；取证自已移除的 gemini 插件 0.65 ask_user）。
 /// option_row = 横排选项行（opencode 权限框：→ 切换、回车选中、Esc 等于末项）。缺省/none = 不做结构化拆解。
 export type AttentionDetailsStyle = "none" | "proceed_box" | "arrow_panel" | "framed_box" | "bracket_form" | "framed_form" | "option_row";
 /// 这条提示是什么事。卡片的标题、徽章、形态只看它，不看 id。
@@ -78,7 +78,16 @@ export type TerminalAttention = {
 export function visibleTerminalText(text: string): string {
   // backlog 可能保留已经处理过的旧提示。只看最后一次整屏清除之后的内容，避免重新挂载
   // ManagedTerminal 时把历史信任页再次报成当前状态。
-  const clearAt = Math.max(text.lastIndexOf("\x1b[2J"), text.lastIndexOf("\x1b[3J"));
+  // 退出备用屏同样算一次「换屏」：备用屏里画的东西随之消失，主屏回来后不一定再发清屏。
+  // agy 1.5.18 的信任页就画在备用屏里（`ESC[?1049h` + `ESC[2J`），确认后 `ESC[?1049l` 直接回主屏重画，
+  // 只按清屏切会把信任页一直当成当前屏幕：卡片答完不消失、首条消息永远排队（接入 antigravity 的
+  // Lead 任务 research-screen-work/run1 原始流，2026-11-26 dev 实例复现）。
+  const clearAt = Math.max(
+    text.lastIndexOf("\x1b[2J"),
+    text.lastIndexOf("\x1b[3J"),
+    text.lastIndexOf("\x1b[?1049l"),
+    text.lastIndexOf("\x1b[?1047l"),
+  );
   const currentScreen = clearAt >= 0 ? text.slice(clearAt) : text;
   // OSC 体内不能跨过 ESC:claude 2.1.304 开屏先发 ST 结尾的标题 `ESC]0;claude ESC\`,
   // 屏末再发 BEL 结尾的 `ESC]7501;?BEL`。原先 `[^\x07]*` 贪婪吞到后一个 BEL,整屏文字被删光,
@@ -400,7 +409,7 @@ function detectCursorMenu(
   };
 }
 
-/// 框线数字菜单——gemini `/model` 对话框的形态(真机 PTY 取证,gemini-cli 0.51,2026-07):
+/// 框线数字菜单——取证自已移除的 gemini 插件 `/model` 对话框(真机 PTY,gemini-cli 0.51,2026-07):
 /// 全框线包裹(内容行首尾都是 │)、编号项、`●` 标记焦点、无导航提示行、Esc 关闭;
 /// ↑/↓ 移动焦点、Enter 确认经按键探针证实(tests/capture_model_menu.rs,
 /// MEOWO_CAPTURE_PROBE_KEYS=1)。只认框内行,普通正文的编号列表不会进来;
@@ -538,7 +547,7 @@ function parseBracketForm(visible: string, matchIndex: number): { text: string; 
   return { text, options: options.map((option, position) => ({ ...option, position })), multi };
 }
 
-/// 圆角外框提问表单（gemini 0.65 的 ask_user，npm bundle 源码取证 2026-11-12，未实拍）。
+/// 圆角外框提问表单（取证自已移除的 gemini 插件 0.65 的 ask_user，npm bundle 源码 2026-11-12，未实拍）。
 /// 命中行是绿框头行 `│ Answer Questions`，表单从它往下到外框底边 `╰`。三种页：
 ///   选择题  问句 + `│ ● 1.  选项`（多选在编号后带 `[ ]`/`[x]`，末尾多一行无编号的 `Done`）
 ///   文本题  问句 + `> ` 输入行，没有编号项
@@ -868,7 +877,7 @@ export function terminalAttention(
       options: cursorMenuOptions(cursorMenu.lines, cursorMenu.focused),
     };
   }
-  // 框线数字菜单(gemini 的 /model 对话框):无导航提示行,光标菜单认不出;形态与
+  // 框线数字菜单(出自已移除的 gemini 插件的 /model 对话框):无导航提示行,光标菜单认不出;形态与
   // 交互语义均经真机取证,复用同一个卡片通道(选项按钮 = 相对移动 + 回车)。
   const framedMenu = !best && expectMenu ? detectFramedNumberedMenu(visible) : null;
   if (framedMenu) {
@@ -891,7 +900,7 @@ export function terminalAttention(
   };
   // 详情区文法风格由插件随 AttentionPattern 声明（此前按 pattern id 猜，是变相身份分支）。
   const detailsStyle: AttentionDetailsStyle = best.details ?? "none";
-  // 框线对话框式(gemini 审批框):选项行形如 `│ ● 1. Allow once │`,行首的框线让下面按行首
+  // 框线对话框式(出自已移除的 gemini 插件的审批框):选项行形如 `│ ● 1. Allow once │`,行首的框线让下面按行首
   // 编号提取的通用路径认不出。详情取命中行所在的**外框**整块(内框行以 │ 开头,向上/向下
   // 找到的第一条 ╭/╰ 行就是外框边),选项复用 /model 对话框的框线解析——同样以 ● 焦点做
   // 相对移动,找不到焦点不出按钮。
@@ -927,6 +936,11 @@ export function terminalAttention(
     return form ? { id: "interactive:numbered-selector", kind: best.kind, text: form.text, options: form.options } : null;
   }
   const approvalCard = detailsStyle !== "none";
+  // 插件规则认出的提问表单、又没有专属文法（agy 的 `Question 1/1:` + `> 1. 选项` 编号列表）：选项与
+  // 单选编号选择器同形（`>` 焦点、编号连续、末项是要现场打字的写入项），走同一条解析，按钮从焦点
+  // 做相对移动。锚点（写入项）由插件的 selector_anchors 声明。
+  const questionForm = Boolean(rule) && best.kind === "question" && detailsStyle === "none";
+  const selectorLike = best.id === "interactive:numbered-selector" || questionForm;
   // 面板式的详情从标题行(▶ Run this command?)起取:best 可能命中面板底部的
   // 按键提示行,从那里截会把命令正文裁掉。同样取最后一个标题——首个会落在重绘残影上。
   const panelHeader = detailsStyle === "arrow_panel"
@@ -934,6 +948,9 @@ export function terminalAttention(
     : null;
   const snippetInfo = best.id === "interactive:numbered-selector"
     ? { text: visible, anchor: 0 }
+    : questionForm
+      // 从问句那一行取到屏底：上方是历史（里面的编号列表不能变成按钮）。
+      ? { text: visible.slice(visible.lastIndexOf("\n", best.index) + 1), anchor: 0 }
     : panelHeader
       ? { text: visible.slice(panelHeader.index), anchor: 0 }
       : promptSnippet(visible, best.index, approvalCard ? 12 : 1);
@@ -951,12 +968,32 @@ export function terminalAttention(
   const displayText = approvalCard && firstOptionLine >= 0
     ? snippetLines.slice(0, firstOptionLine).join("\n").trim()
     : snippet;
-  const labels = snippetLines.flatMap((line, index) => {
-    if (index < optionsFrom) return [];
+  const labels: { index: number; label: string; focused: boolean }[] = [];
+  // 屏宽估计：片段里最长的一行（agy 面板头下面就是一条满宽分隔线）。折行按词断开，被折的那行
+  // 离屏宽最多差一个词；差得多的说明它本来就在那里结束，下一行顶格的是页脚（`esc to cancel`）。
+  const widest = Math.max(0, ...snippetLines.map((line) => line.length));
+  const wrapped = (line: string) => line.length >= 40 && line.length >= widest - 20;
+  let continuing = false;
+  snippetLines.forEach((line, index) => {
+    if (index < optionsFrom) return;
     const match = line.match(/^\s*([❯›>▶]?)\s*(\d+)[.)]\s*(.+?)\s*$/);
-    return match ? [{ index: Number(match[2]) - 1, label: match[3], focused: Boolean(match[1]) }] : [];
+    if (match) {
+      labels.push({ index: Number(match[2]) - 1, label: match[3], focused: Boolean(match[1]) });
+      continuing = wrapped(line);
+      return;
+    }
+    // 选项文字超过终端宽度时折到下一行，续行顶格、不带编号（agy 1.5.18：`  3. Yes, and always
+    // allow for commands that start with '…' (Persist to` / `settings.json)`，dev 实例窄窗口实拍
+    // 2026-11-26）。不并回去，「记住」和「本会话」两种放行只差在折下去的那半句，按钮就认不出范围、
+    // 照搬英文原文。只并顶格行：claude 等选项下方的说明行都有缩进，不会被吞进选项文字。
+    if (continuing && /^\S/.test(line) && labels.length > 0) {
+      labels[labels.length - 1].label += ` ${line.trim()}`;
+      continuing = wrapped(line);
+      return;
+    }
+    continuing = false;
   });
-  if (best.id === "interactive:numbered-selector") {
+  if (selectorLike) {
     const lines = snippet.split("\n");
     // 编号项分两种形态：复选框（多选题，`1. [ ] xxx`）和纯编号（单选题，`1. xxx`——
     // AskUserQuestion 的单选/多问题标签页形态就长这样）。会话正文也常有普通的
@@ -1076,7 +1113,12 @@ export function terminalAttention(
     // 又给不了任何动作。返回 null 让发送侧的「未识别交互」软拦接手。
     if (choices.length === 0) return null;
     const questionLine = [...lines].reverse().find((line) => /[?？]/.test(line) && !/enter to select/i.test(line));
-    const question = questionLine?.split(/→|->/).at(-1)?.trim() ?? "";
+    // agy 的问句写在 `Question 1/1: …` 行（中文问句常以全角冒号结尾，不带问号）。
+    const numberedQuestion = lines
+      .map((line) => line.match(/^\s*question \d+\/\d+:\s*(.+?)\s*$/i)?.[1])
+      .filter((text): text is string => Boolean(text))
+      .at(-1);
+    const question = numberedQuestion ?? questionLine?.split(/→|->/).at(-1)?.trim() ?? "";
     // 没有锚点的框只有一句问话不够看（「要装这个插件吗」没说是哪个插件）：带上框体，
     // 从选项上方最近的分隔线取到第一个选项之前。
     const liveBody = liveGroup != null && !anchoredGroups.has(liveGroup)
@@ -1124,7 +1166,7 @@ export function terminalAttention(
       })),
     };
   }
-  // 整框带框线的编号选项（gemini 的额度耗尽框：`│ ● 1. Keep trying │`）：行首是框线，上面按行首
+  // 整框带框线的编号选项（出自已移除的 gemini 插件的额度耗尽框：`│ ● 1. Keep trying │`）：行首是框线，上面按行首
   // 编号提取的路径认不出，此前这张卡只有「确认 / 取消」两键，回车选的是哪一项要去看原文，
   // 手机上（没有终端页）选不到 Stop（做空审查 2026-11-14）。取命中行所在的外框，复用框线数字菜单的
   // 解析：同一个 RadioButtonSelect 组件（0.68.0 bundle 的 ProQuotaDialog 与工具确认框、/model 对话框

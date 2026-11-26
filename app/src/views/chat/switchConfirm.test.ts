@@ -36,7 +36,7 @@ describe("对话中途切换的二次确认框", () => {
 
   it("只有 claude 声明了这种框", () => {
     expect(chatUi("claude")?.switch_confirm).toEqual(SPECS.claude);
-    for (const provider of ["codex", "kimi", "gemini", "opencode"]) {
+    for (const provider of ["codex", "kimi", "antigravity", "opencode"]) {
       expect(chatUi(provider)?.switch_confirm ?? null).toBeNull();
     }
   });

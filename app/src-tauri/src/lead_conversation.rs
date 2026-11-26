@@ -143,7 +143,7 @@ pub(crate) fn delivery_status(db: &Path, cwd: &str, gate_id: &str) -> Option<Lea
 
 /// 关卡归原生终端会话时的送达状态。答复只保存、不代投（不猜按键、不接管）；
 /// claude 的原生 wait hook 会自己唤醒模型，照旧不显示投递条。其余 provider 的原生 hook
-/// 不能自行开新回合（codex/kimi/gemini/opencode 实测），此前这里返回 None、面板什么都不说，
+/// 不能自行开新回合（codex/kimi/opencode 与已移除的 gemini 插件实测），此前这里返回 None、面板什么都不说，
 /// 手机上答完的人以为模型会自己接着做（做空指出的静默降级）。如实说下一步：在会话里发一句话。
 fn native_session_status(
     store: &meowo_store::Store,
@@ -182,7 +182,7 @@ fn native_session_status(
 /// `.owner` 记的会话在库里找不到时的面板状态（做空 N4：原先返回 None，手机上答完什么提示都没有）。
 ///
 /// 什么时候会这样（2026-11-13 核实）：
-/// - kimi / gemini：认领走 hook，reporter 对带 agent_id / agentId≠main 的子代理载荷一律不处理
+/// - kimi / antigravity：认领走 hook，reporter 对带 agent_id / agentId≠main 的子代理载荷一律不处理
 ///   （lead_provider::normalize），子代理当不了 owner；owner 不在库只会是会话本身没被 Meowo 记录
 ///   （Meowo 的 hook 没装到那个账号、库被清过）。
 /// - opencode：认领看 `tool.execute.after` 的 sessionID，子代理（task 工具派出的子会话）改 .lead 时
@@ -550,7 +550,7 @@ mod tests {
         store.set_session_provider(legacy, "opencode").unwrap();
         let status = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();
         assert_ne!(status.state, "native_manual");
-        for provider in ["kimi", "gemini"] {
+        for provider in ["kimi", "antigravity"] {
             store.set_session_provider(legacy, provider).unwrap();
             let status = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();
             // TUI 不在：只保存，提示打开会话后说一句（leader 2026-11-13「不需要离线」）。
@@ -573,7 +573,7 @@ mod tests {
 
         // 做空 M6：CLI 版本低于续跑机制查证过的版本时不起等待器，面板如实给手动提示。
         std::fs::remove_file(f.task.join(".delivered")).unwrap();
-        for (provider, old) in [("kimi", "2.5.3"), ("gemini", "0.67.0")] {
+        for (provider, old) in [("kimi", "2.5.3"), ("antigravity", "1.5.17")] {
             store.set_session_provider(legacy, provider).unwrap();
             crate::lead_native::test_version::set(Some(Some(old)));
             let status = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();

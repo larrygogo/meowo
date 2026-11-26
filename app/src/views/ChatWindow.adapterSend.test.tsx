@@ -12,7 +12,7 @@ import { markRemoteUi } from "../remoteMode";
 describe("ChatWindow 适配回归", () => {
   const { history, snapshot, setup, box, writes } = adapter;
 
-  // 2026-11-13 改定：认出输入框、只看到占位时照常发送（严格口径下 codex/gemini/opencode 永远
+  // 2026-11-13 改定：认出输入框、只看到占位时照常发送（严格口径下 codex/opencode 这类有占位的永远
   // 判不出空框，对话页就永远发不出去，main 上可发）。草稿与认不出画面的处理见 chat/composerPrepare.test.ts。
   it("codex 原生只有占位符时照常发送", async () => {
     const base = setup(501, "codex", "running");
@@ -133,9 +133,9 @@ describe("ChatWindow 适配回归", () => {
   });
 
   // 状态空闲只能决定提交键，不能证明CLI输入框没有草稿；2026-11-12实拍占位符仍须保守拒发。
-  it("gemini 屏幕空闲且仅有占位符时照常发送，不用 Tab", async () => {
-    const base = setup(507, "gemini", "running", "idle");
-    invoke.mockImplementation((command, args) => command === "managed_terminal_frame" ? Promise.resolve(emptyComposerFrame("gemini")) : base(command, args));
+  it("antigravity 屏幕空闲且输入框为空时照常发送，不用 Tab", async () => {
+    const base = setup(507, "antigravity", "running", "idle");
+    invoke.mockImplementation((command, args) => command === "managed_terminal_frame" ? Promise.resolve(emptyComposerFrame("antigravity")) : base(command, args));
     render(<ChatWindow />);
     await screen.findByText("适配-507");
     await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
@@ -576,7 +576,8 @@ describe("持久队列的真实投递", () => {
   });
 
   it.each([
-    ["claude", "\r"], ["kimi", "\r"], ["codex", "\t"], ["gemini", "\r"], ["opencode", "\r"],
+    ["claude", "\r"], ["kimi", "\r"], ["codex", "\t"], ["antigravity", "\r"], ["opencode", "\r"],
+
   ])("%s 提前执行只用本家队列键，不隐式中断", async (provider, submit) => {
     const sessionId = 780 + invoke.mock.calls.length;
     const base = adapter.setup(sessionId, provider, "running");

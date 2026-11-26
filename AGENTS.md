@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Meowo — 桌面看板应用，托管多个 AI CLI（claude/kimi/codex/gemini/opencode）会话。Tauri v2：前端 React/TS（`app/`），Rust 后端（`app/src-tauri/`，workspace 含 `meowo-store` / `meowo-agent` / `meowo-reporter` / `meowo-protocol` 四个 crate），官网在 `site/`。
+Meowo — 桌面看板应用，托管多个 AI CLI（claude/kimi/codex/antigravity/opencode）会话。Tauri v2：前端 React/TS（`app/`），Rust 后端（`app/src-tauri/`，workspace 含 `meowo-store` / `meowo-agent` / `meowo-reporter` / `meowo-protocol` 四个 crate），官网在 `site/`。
 
 ## 构建与验证（改动后必跑）
 

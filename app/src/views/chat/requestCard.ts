@@ -121,7 +121,7 @@ export type ApprovalCardModel = {
     /// 持久放行，下标 n 对应决定 `suggestion:<n>`。
     persistent: { label: string; tip: string }[];
     /// 认不出角色的选项，下标 n 对应决定 `option:<n>`。按钮上是终端原文，不带数字快捷键，
-    /// 不冒充允许或拒绝（gemini 的 `Modify with external editor`、kimi 计划审阅里计划自带的选项）。
+    /// 不冒充允许或拒绝（kimi 计划审阅里计划自带的选项；前科还有已移除的 gemini 插件的 `Modify with external editor`）。
     others: { label: string; tip: string }[];
     /// 仅收起：屏幕识别是启发式的，认错或过期的卡要有不发按键的出口；
     /// broker 请求收起等于让 Agent 干等到超时，不给。

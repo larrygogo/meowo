@@ -2,7 +2,7 @@ import { agentAssets } from "../../providers";
 
 /// Agent 的「应用图标」：统一外框里摆品牌图标，几家视觉大小一致。
 /// - 自带方块 / 位图的（codex、opencode、kimi）铺满外框；
-/// - 裸 logomark 里，claude 可套官方珊瑚橙方底（tiled），gemini 收一圈边。
+/// - 裸 logomark 里，claude 可套官方珊瑚橙方底（tiled），antigravity 收一圈边。
 /// 设置页 agent 卡片、新建会话页头部、空会话欢迎面板共用这一份（provider-card-icon 一套样式），
 /// 外框尺寸由调用方的 className 定。
 export function AgentAppIcon({ provider, className, tiled = false }: {

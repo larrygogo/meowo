@@ -252,7 +252,7 @@ function ProviderUsageSection({ account, switchError, refreshOnMount, onSwitchSt
   // 换账号靠父级换 key 重挂载拿新缓存；这里不跟随 account.usage 变化——别家切换时父级会重读
   // 整份快照，跟随的话刚刷新到的新值会被缓存旧值盖回去。
 
-  // 账号列表：只读本地文件。多于一条才出列表（gemini 这类单账号家恒为一条）。
+  // 账号列表：只读本地文件。多于一条才出列表（antigravity 这类单账号家恒为一条）。
   const [profiles, setProfiles] = useState<ProfileView[] | null>(null);
   const [profilesFailed, setProfilesFailed] = useState(false);
   useEffect(() => {

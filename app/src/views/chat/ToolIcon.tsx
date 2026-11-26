@@ -7,7 +7,7 @@ import { icGlobe, icPencil, icSearch, icTerminal } from "../../icons/glyphs";
 import { icAgents, icFile, icImage, icList } from "../../icons/glyphs.chat";
 
 /// 工具的语义类别。它由后端各家插件按自己的工具名表给出（ChatItem 的 `kind`），这里只消费：
-/// 前端不看工具名去猜类别。此前按名字子串猜，规则是照 Claude 的命名调的，Gemini 的
+/// 前端不看工具名去猜类别。此前按名字子串猜，规则是照 Claude 的命名调的，当时 gemini 的
 /// read_file / replace 全落进「其他」，Codex 的 wait_agent 因为含 agent 被当成子任务。
 /// 有扫描测试（toolKindSource.test.ts）拦着，别把按名字判断的写法加回来。
 export type { ToolKind };

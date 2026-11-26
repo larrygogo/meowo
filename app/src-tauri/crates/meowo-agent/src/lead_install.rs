@@ -17,7 +17,13 @@ pub enum LeadHookFormat {
     Json,
     Toml,
     Plugin,
+    /// agy 的 `~/.gemini/config/hooks.json`：顶层「命名 hook → 事件 → handler」。Lead 只占顶层
+    /// [`AGY_LEAD_HOOK_NAME`] 一块（与上报 hook 的 `meowo` 块分开，装卸互不影响），用户的命名 hook 不动。
+    AgyJson,
 }
+
+/// Lead 在 agy hooks.json 里占用的顶层键。
+pub const AGY_LEAD_HOOK_NAME: &str = "meowo-lead";
 
 #[derive(Clone, Copy)]
 pub struct LeadHook {
@@ -52,8 +58,8 @@ pub struct LeadConfigChange {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NativeContinue {
     /// TUI 里有一个后台等待进程（`meowo-reporter lead wait`），答复落盘它就退出，CLI 在空闲时
-    /// 收到「后台任务完成」自己开新回合（kimi 后台 Bash + notify；gemini 后台 shell + inject +
-    /// modelSteering）。只在 TUI 开着时生效：TUI 不在时宿主只保存答复，不起任何后台进程
+    /// 收到「后台任务完成」自己开新回合（kimi 后台 Bash + notify；antigravity 后台任务结束
+    /// 唤醒 agent）。只在 TUI 开着时生效：TUI 不在时宿主只保存答复，不起任何后台进程
     /// （leader 2026-11-13「不需要离线」），用户打开会话后说一句话由 hook 把答复交给模型。
     InSessionWaiter {
         /// CLI 执行后台命令用的 shell：决定等待器命令怎么引用 reporter 路径（[`waiter_command_prefix`]）。
@@ -69,7 +75,8 @@ pub enum WaiterShell {
     /// 处处都是 POSIX `sh -c`（Windows 上是 Git Bash）：路径用正斜杠、双引号包住。正斜杠也让
     /// kimi permission 规则（picomatch）里不出现反斜杠（它在 picomatch 里是转义符）。
     PosixDoubleQuoted,
-    /// Windows 上用 PowerShell（gemini 0.68 getShellConfiguration）：`& '路径'`；其余平台 POSIX 单引号。
+    /// Windows 上用 PowerShell（antigravity 的 run_command，真机样本 `Get-ChildItem -Force`）：`& '路径'`；
+    /// 其余平台 POSIX 单引号。
     PowerShellOnWindows,
 }
 
@@ -102,11 +109,17 @@ pub enum LeadBindingPolicy {
 }
 
 pub trait LeadCap: Sync {
+    /// Lead 资产（技能、审查角色、hook 文件、托管文件）的相对路径以哪个目录为根。默认是数据目录。
+    /// agy 的 hook 与审查角色在数据目录（`~/.gemini/antigravity-cli`）的上一层（`~/.gemini/config`、
+    /// `~/.gemini/agents`），相对路径又不许带 `..`（asset_path 防越界），所以它把根换成 `~/.gemini`。
+    fn asset_root(&self, installation: &Installation) -> PathBuf {
+        installation.data_dir.clone()
+    }
     fn binding_policy(&self) -> LeadBindingPolicy {
         LeadBindingPolicy::Unavailable
     }
-    /// 原生终端会话里，关卡答复能否不经用户输入就让模型开新回合。codex/kimi/gemini/opencode
-    /// 的原生 hook 都不能自行起新回合（2026-11-12/13 实测），默认 false；能做到的插件覆盖它。
+    /// 原生终端会话里，关卡答复能否不经用户输入就让模型开新回合。codex/kimi/opencode（及已移除的
+    /// gemini 插件）的原生 hook 都不能自行起新回合（2026-11-12/13 实测），默认 false；能做到的插件覆盖它。
     /// 宿主据此决定是否提示「在会话里发一句话即可继续」，不按 provider 身份分支。
     fn native_auto_continue(&self) -> bool {
         self.native_continue().is_some()
@@ -150,7 +163,7 @@ pub trait LeadCap: Sync {
         Ok(Vec::new())
     }
     /// hook 编辑之后对同一个配置文件（`spec.hook_rel`）的附加编辑：打开自动续跑依赖的 CLI 设置
-    /// （kimi 的 permission 放行规则、gemini 的后台完成注入与 modelSteering）。只动 Meowo 自己的项，
+    /// （如 kimi 的 permission 放行规则）。只动 Meowo 自己的项，
     /// 卸载时还原。`saved` 是首次安装时记下的原值（[`Self::saved_settings_rel`] 文件内容）；返回
     /// （新文本，首次安装要记下的原值）。必须幂等：inspect 靠「再编辑一次不变」判断已安装。
     fn edit_hook_file(
@@ -168,7 +181,7 @@ pub trait LeadCap: Sync {
     fn saved_settings_rel(&self) -> Option<&'static str> {
         None
     }
-    /// 其余整文件托管的附加文件（相对 data_dir，如 gemini 的放行策略）。正文必须含 [`MANAGED_MARK`]。
+    /// 其余整文件托管的附加文件（相对 data_dir，如放行策略文件；现役插件都不声明）。正文必须含 [`MANAGED_MARK`]。
     fn managed_file_rels(&self) -> &'static [&'static str] {
         &[]
     }
@@ -213,7 +226,7 @@ pub fn parse_version(line: Option<&str>) -> Option<(u32, u32, u32)> {
 
 /// 版本门：同主版本、且不低于已实测的最低版本即放行。
 ///
-/// 为什么不卡精确版本：2026-11-13 一天内 gemini 0.65→0.68、kimi 2.5.3→2.6.0、
+/// 为什么不卡精确版本：2026-11-13 一天内 gemini 0.65→0.68（插件现已移除）、kimi 2.5.3→2.6.0、
 /// opencode 1.19.3→1.19.5，精确匹配让用户一升级就装不上 Lead。
 /// 新版本破坏协议/布局靠 CLI 漂移扫描与回归测试提前发现，确认破坏时在插件里单独拒绝该版本。
 /// 低于下限的旧版本没有实测过协议形状，照旧拒绝。
@@ -328,7 +341,7 @@ pub fn waiter_shell(provider: &str) -> Option<WaiterShell> {
 
 /// 按本机 CLI 版本过滤后的等待器 shell。宿主（lead_native::mechanism → [`native_continue_for`]）与
 /// reporter（hook 里要求启动等待器）用同一个判定：做空 N5——原先 reporter 不看版本，kimi 2.5 /
-/// gemini 0.67 仍被 hook 要求起等待器，面板却按版本门说「手动继续」，两边对不上。
+/// gemini 0.67（插件现已移除）仍被 hook 要求起等待器，面板却按版本门说「手动继续」，两边对不上。
 pub fn waiter_shell_for(provider: &str, version: Option<&str>) -> Option<WaiterShell> {
     shell_of(native_continue_for(crate::by_id(provider)?.lead()?, version)?)
 }
@@ -437,6 +450,46 @@ fn edit_json(
     }
 }
 
+/// agy hooks.json 里 Lead 那一块：开时整块生成（工具事件 matcher 分组，其余事件直接是 handler 列表，
+/// timeout 单位是秒），关时整块删掉。空文件当 `{}`（agy 会先建 0 字节的配置文件）。
+fn edit_agy_json(
+    spec: &LeadInstallSpec,
+    before: &str,
+    reporter: &str,
+    enabled: bool,
+) -> Result<String, String> {
+    let text = before.trim_start_matches('\u{feff}');
+    let mut root: Value = if text.trim().is_empty() {
+        json!({})
+    } else {
+        serde_json::from_str(text).map_err(|_| "lead/settings_invalid")?
+    };
+    let map = root.as_object_mut().ok_or("lead/settings_invalid")?;
+    let original = map.get(AGY_LEAD_HOOK_NAME).cloned();
+    if enabled {
+        let mut block = serde_json::Map::new();
+        block.insert("enabled".into(), json!(true));
+        for hook in spec.hooks {
+            let handler = json!({"type":"command","command":hook_command(spec, reporter, hook.mode)?,"timeout":hook.timeout});
+            let entry = if matches!(hook.event, "PreToolUse" | "PostToolUse") {
+                json!([{"matcher":"*","hooks":[handler]}])
+            } else {
+                json!([handler])
+            };
+            block.insert(hook.event.into(), entry);
+        }
+        map.insert(AGY_LEAD_HOOK_NAME.into(), Value::Object(block));
+    } else {
+        map.remove(AGY_LEAD_HOOK_NAME);
+    }
+    if map.get(AGY_LEAD_HOOK_NAME).cloned() == original {
+        return Ok(before.into());
+    }
+    serde_json::to_string_pretty(&root)
+        .map(|text| format!("{text}\n"))
+        .map_err(|_| "lead/settings_invalid".into())
+}
+
 fn edit_toml(
     spec: &LeadInstallSpec,
     before: &str,
@@ -518,6 +571,7 @@ fn hook_edit(
     match spec.format {
         LeadHookFormat::Json => edit_json(spec, before, reporter, enabled),
         LeadHookFormat::Toml => edit_toml(spec, before, reporter, enabled),
+        LeadHookFormat::AgyJson => edit_agy_json(spec, before, reporter, enabled),
         LeadHookFormat::Plugin => {
             if enabled {
                 cap.plugin(reporter)
@@ -543,7 +597,7 @@ fn full_edit(
         return Ok((after, None));
     }
     let saved = match cap.saved_settings_rel() {
-        Some(relative) => read(&asset_path(&installation.data_dir, relative)?)?,
+        Some(relative) => read(&asset_path(&cap.asset_root(installation), relative)?)?,
         None => None,
     };
     cap.edit_hook_file(installation, &after, reporter, enabled, saved.as_deref())
@@ -622,7 +676,7 @@ pub fn install(
     ];
     let mut plans = Vec::new();
     for (relative, body) in assets {
-        let path = asset_path(&installation.data_dir, relative)?;
+        let path = asset_path(&cap.asset_root(installation), relative)?;
         let before = read(&path)?;
         if before
             .as_ref()
@@ -638,7 +692,7 @@ pub fn install(
         });
     }
     for relative in cap.managed_file_rels() {
-        let path = asset_path(&installation.data_dir, relative)?;
+        let path = asset_path(&cap.asset_root(installation), relative)?;
         let before = read(&path)?;
         if before
             .as_ref()
@@ -654,7 +708,7 @@ pub fn install(
             backup: false,
         });
     }
-    let path = asset_path(&installation.data_dir, spec.hook_rel)?;
+    let path = asset_path(&cap.asset_root(installation), spec.hook_rel)?;
     let existing = read(&path)?;
     if matches!(spec.format, LeadHookFormat::Plugin)
         && existing
@@ -664,7 +718,7 @@ pub fn install(
         return Err("lead/user_file_exists".into());
     }
     let before = existing.clone().unwrap_or_else(|| {
-        if matches!(spec.format, LeadHookFormat::Json) {
+        if matches!(spec.format, LeadHookFormat::Json | LeadHookFormat::AgyJson) {
             "{}".into()
         } else {
             String::new()
@@ -672,7 +726,7 @@ pub fn install(
     });
     let (after, record) = full_edit(cap, installation, spec, &before, reporter, true)?;
     if let (Some(record), Some(relative)) = (record, cap.saved_settings_rel()) {
-        let saved = asset_path(&installation.data_dir, relative)?;
+        let saved = asset_path(&cap.asset_root(installation), relative)?;
         // 原值只记第一次：重装/刷新时配置里已是 Meowo 写的值，再记就把用户原值冲掉了。
         if read(&saved)?.is_none() {
             plans.push(WritePlan {
@@ -707,7 +761,7 @@ pub fn uninstall(cap: &dyn LeadCap, installation: &Installation) -> Result<(), S
     let spec = cap.spec(installation).ok_or("lead/variant_unsupported")?;
     let mut plans = Vec::new();
     for relative in [spec.skill_rel, spec.reviewer_rel] {
-        let path = asset_path(&installation.data_dir, relative)?;
+        let path = asset_path(&cap.asset_root(installation), relative)?;
         if managed_file(&path) {
             plans.push(WritePlan {
                 before: read(&path)?,
@@ -718,7 +772,7 @@ pub fn uninstall(cap: &dyn LeadCap, installation: &Installation) -> Result<(), S
         }
     }
     for relative in cap.managed_file_rels() {
-        let path = asset_path(&installation.data_dir, relative)?;
+        let path = asset_path(&cap.asset_root(installation), relative)?;
         if managed_file(&path) {
             plans.push(WritePlan {
                 before: read(&path)?,
@@ -728,7 +782,7 @@ pub fn uninstall(cap: &dyn LeadCap, installation: &Installation) -> Result<(), S
             });
         }
     }
-    let path = asset_path(&installation.data_dir, spec.hook_rel)?;
+    let path = asset_path(&cap.asset_root(installation), spec.hook_rel)?;
     if let Some(before) = read(&path)? {
         if matches!(spec.format, LeadHookFormat::Plugin) {
             if before.contains(MANAGED_MARK) {
@@ -759,7 +813,7 @@ pub fn uninstall(cap: &dyn LeadCap, installation: &Installation) -> Result<(), S
     }
     // 还原完原值才删记录：上面的编辑已在规划时读过它。
     if let Some(relative) = cap.saved_settings_rel() {
-        let saved = asset_path(&installation.data_dir, relative)?;
+        let saved = asset_path(&cap.asset_root(installation), relative)?;
         if let Some(before) = read(&saved)? {
             plans.push(WritePlan {
                 path: saved,
@@ -789,11 +843,11 @@ pub fn inspect(
         };
     };
     let supported = version_matches(version, spec.version_family);
-    let assets_present = fs::read_to_string(installation.data_dir.join(spec.skill_rel))
+    let assets_present = fs::read_to_string(cap.asset_root(installation).join(spec.skill_rel))
         .is_ok_and(|body| skill_body(reporter).is_ok_and(|expected| body == expected))
-        && fs::read_to_string(installation.data_dir.join(spec.reviewer_rel))
+        && fs::read_to_string(cap.asset_root(installation).join(spec.reviewer_rel))
             .is_ok_and(|body| body == cap.reviewer());
-    let hooks_present = read(&installation.data_dir.join(spec.hook_rel))
+    let hooks_present = read(&cap.asset_root(installation).join(spec.hook_rel))
         .ok()
         .flatten()
         .is_some_and(|before| {
@@ -807,7 +861,7 @@ pub fn inspect(
         && cap.managed_file_rels().iter().all(|relative| {
             cap.managed_file_body(installation, relative, reporter)
                 .is_ok_and(|body| {
-                    read(&installation.data_dir.join(relative))
+                    read(&cap.asset_root(installation).join(relative))
                         .ok()
                         .flatten()
                         .as_ref()
@@ -845,14 +899,14 @@ pub fn managed_present(cap: &dyn LeadCap, installation: &Installation) -> bool {
     if [spec.skill_rel, spec.reviewer_rel]
         .iter()
         .chain(cap.managed_file_rels())
-        .any(|relative| managed_file(&installation.data_dir.join(relative)))
+        .any(|relative| managed_file(&cap.asset_root(installation).join(relative)))
         || cap
             .saved_settings_rel()
-            .is_some_and(|relative| installation.data_dir.join(relative).is_file())
+            .is_some_and(|relative| cap.asset_root(installation).join(relative).is_file())
     {
         return true;
     }
-    let Ok(Some(before)) = read(&installation.data_dir.join(spec.hook_rel)) else {
+    let Ok(Some(before)) = read(&cap.asset_root(installation).join(spec.hook_rel)) else {
         return false;
     };
     match spec.format {

@@ -33,29 +33,29 @@ pub struct AgentDescriptor {
     /// `login_argv()` 是 `None`，按钮点下去只会得到一句「拉起登录失败」。
     ///
     /// 没有这个字段时，前端只能靠「账号查不出来」推断，而那与「真的没登录」长得一模一样：
-    /// gemini / opencode 因此被判成「未登录」，亮出一个必然失败的按钮。**给出走不通的入口，
+    /// 当时没有账号概念的 agent（已移除的 gemini、早期的 opencode）因此被判成「未登录」，亮出一个必然失败的按钮。**给出走不通的入口，
     /// 比不给入口更糟**——用户会以为是自己的问题，反复去点。
     pub supports_account: bool,
     /// 这个 agent 能不能**用 API Key 登录**（＝插件声明了 `ApiKeyLoginCap`）。
     ///
-    /// 为 gemini 而设：Google 停掉了个人版 Code Assist 的 OAuth（交互式登录必然失败），
-    /// API Key 是唯一活路，而它没有「输入 key」的登录子命令——必须由 meowo 提供入口。
+    /// 通用能力，目前没有插件声明。给交互式登录走不通、又没有「输入 key」登录子命令的 CLI 用，
+    /// 必须由 meowo 提供入口。最初为已移除的 gemini 插件引入（Google 停掉了个人版 Code Assist 的 OAuth）。
     /// 为 true 时，前端在未登录状态额外给出「填 API Key」输入。
     pub supports_api_key_login: bool,
     /// 这个 agent 能不能有**多个账号**（＝插件声明了 `ProfileSpec`）。
     ///
-    /// false（gemini：数据目录不可被环境变量覆盖）→ 前端不给「添加账号」入口。「只有一个默认账号」
+    /// false（antigravity：数据目录没有可覆盖的环境变量）→ 前端不给「添加账号」入口。「只有一个默认账号」
     /// 与「压根不支持多账号」在账号列表上长得一模一样（都只有一条），必须由后端如实说清，
     /// 否则会给一个点了必然报错的按钮。
     pub supports_profiles: bool,
     /// meowo 能否显示这个 agent 的**上下文占用**（贴纸上的百分比液柱）。
     ///
-    /// 为 false（gemini：官方 hook 不给 token；opencode：会话 token 在它自己库里，不经 hook）时，
+    /// 为 false（opencode：会话 token 在它自己库里，不经 hook）时，
     /// 前端显式标注「上下文占用：不支持」——不留空白让用户以为是 bug。
     pub supports_context: bool,
     /// 这个 agent 的会话历史能不能**导出交接**（＝transcript 能力槽 + `supports_chat()`）。
     ///
-    /// 决定「切换引擎」入口的可见性：为 false（gemini/opencode：无结构化 transcript）的
+    /// 决定「切换引擎」入口的可见性：为 false（无结构化 transcript；现役五家都有）的
     /// 会话没有可交接的历史，跨 provider 切换只能以它为**目标**、不能以它为来源。
     /// 前端不得按 id 判断——这正是守卫测试盯着的那类分支。
     pub supports_chat_export: bool,
@@ -75,7 +75,7 @@ pub struct AgentDescriptor {
     /// 插件显式声明才存在；None 时前端不显示中转入口。
     pub relay: Option<crate::relay::RelayUi>,
     /// Meowo 发图工具（与面板浏览器）要登记进这个 agent 自己的配置文件，但那份文件 Meowo 读不懂
-    /// （gemini 的 settings.json 允许注释，带注释的 JSONC 不能安全改写）时，这里是那份文件的路径；
+    /// （如用户手写坏了、或带注释的 JSONC，不能安全改写）时，这里是那份文件的路径；
     /// 设置页据此提示「没能接上发图工具」。接上了、或这家不靠配置文件接线时不出现。
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]

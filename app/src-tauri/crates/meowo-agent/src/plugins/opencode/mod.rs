@@ -5,7 +5,7 @@
 //! opencode 的事件，把负载 spawn 给 meowo-reporter。生成与认领见 [`ConfigFormat::OpencodeTs`]。
 //!
 //! 这条路看着绕，实则**是五家里 reporter 侧最干净的一个**：负载由我们自己构造，直接吐成 claude
-//! 同款的 `{hook_event_name, session_id, cwd}`，dispatch 一行都不用改（对比 gemini 还得译事件名）。
+//! 同款的 `{hook_event_name, session_id, cwd}`，dispatch 一行都不用改（对比 antigravity 还得把负载改写成规范形状、译事件名）。
 //!
 //! 事件映射（左：opencode 的事件/hook；右：我们构造的规范名）：
 //!
@@ -122,7 +122,7 @@ static HOOKS: HookSpec = HookSpec {
 };
 
 /// opencode 是 **bun 编译出的原生二进制**（实测 1.17.20：npm 包的 `bin` 直指 `bin/opencode.exe`，
-/// 184 MB，postinstall 拉平台包）。所以不像 gemini 那样要 node 包装，也因此有个干净的进程名可查。
+/// 184 MB，postinstall 拉平台包）。所以不要 node 包装，也因此有个干净的进程名可查。
 static LAUNCH: LaunchSpec = LaunchSpec {
     stem: "opencode",
     candidates: &[
@@ -214,7 +214,7 @@ impl AgentPlugin for Opencode {
             env: "OPENCODE_CONFIG_CONTENT",
         })
     }
-    /// 原生二进制，进程名就是它自己——不必像 gemini 那样把 `node` 收进来。
+    /// 原生二进制，进程名就是它自己——不必把 `node` 收进来（已移除的 gemini 插件曾不得不收）。
     /// reporter 由插件在 opencode 进程内 `Bun.spawn` 派生，故父链上第一个 agent 进程必是它。
     fn process_names(&self) -> &'static [&'static str] {
         &["opencode", "opencode.exe"]

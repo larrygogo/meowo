@@ -39,8 +39,8 @@
 //! 不要凭想象改**——已经因此栽过：手工枚举 spinner 字符集漏了六帧、把 `\s+` 写成单个
 //! 空格、漏掉审批行必须以 `?` 结尾的约束，每一处都表现为状态悄悄判错而无人察觉。
 
+pub mod antigravity;
 pub mod claude;
 pub mod codex;
-pub mod gemini;
 pub mod kimi;
 pub mod opencode;

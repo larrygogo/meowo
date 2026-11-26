@@ -109,8 +109,8 @@ pub fn ensure_lead_home_in(projects: &Path, cwd: &Path) -> Option<PathBuf> {
 }
 
 /// 怎么让 CLI 能写本项目的 Lead 目录（它在工作目录之外）。不放行时 Claude 每写一次任务文件弹一次审批，
-/// Codex 的 workspace-write 沙箱直接拦（hook 进程继承沙箱，连 `.owner` 都写不进），Gemini 的文件工具拒绝
-/// 工作区外的路径（调研 explore-1，任务 20261124-lead-store-in-meowo）。只放行这一个目录，不放行整个数据根。
+/// Codex 的 workspace-write 沙箱直接拦（hook 进程继承沙箱，连 `.owner` 都写不进），已移除的 gemini 插件的文件工具
+/// 拒绝工作区外的路径（调研 explore-1，任务 20261124-lead-store-in-meowo）。只放行这一个目录，不放行整个数据根。
 #[derive(Debug, Clone, PartialEq)]
 pub enum LeadDirGrant {
     /// 追加到启动命令的参数。

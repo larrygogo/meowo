@@ -188,7 +188,7 @@ export function qaFlowMock(scene: string, lang: Lang, chat: (cmd: string) => unk
     if (cmd === "get_session_admin_page") {
       const titles = zh ? ["重构登录页表单校验", "修支付回调的重复扣款", "补齐导出接口的单测，顺带把超长标题在这一行里的省略也验一下看看效果到底怎么样", "升级依赖", "排查夜间构建失败"] : ["Refactor login form validation", "Fix duplicate charge in payment callback", "Add tests for the export API and check how a very long title is truncated in this row", "Upgrade dependencies", "Investigate the nightly build failure"];
       const items = titles.map((title, i) => {
-        const one = makeSession({ title, project: ["web-app", "billing", "api", "web-app", "infra"][i], provider: (["claude", "codex", "kimi", "claude", "gemini"] as const)[i], status: "waiting", agoMin: 5 + i * 47 });
+        const one = makeSession({ title, project: ["web-app", "billing", "api", "web-app", "infra"][i], provider: (["claude", "codex", "kimi", "claude", "antigravity"] as const)[i], status: "waiting", agoMin: 5 + i * 47 });
         one.session.id = 100 + i;
         if (i > 2) { one.archived = true; one.archived_at = FIXED_NOW - i * 3_600_000; }
         return one;

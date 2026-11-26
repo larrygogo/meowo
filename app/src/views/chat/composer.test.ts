@@ -82,7 +82,8 @@ describe("读框的实拍边界", () => {
  });
 });
 
-// 根代理 2026-11-12 无模型实拍：codex-62104、gemini-64784、gemini-48516，只裁完整输入区。
+// 根代理 2026-11-12 无模型实拍：codex-62104，只裁完整输入区。水平边框的两帧是合成样本（原 gemini-64784、
+// gemini-48516 实拍随 provider 移除），只测读法本身。
 const moreCaptures = {
   "codexEmpty": [
     "› Ask Codex to do anything",
@@ -96,12 +97,12 @@ const moreCaptures = {
     "",
     "  GPT-6.1-Sol default · ~\\Desktop\\workspace\\meowo\\target\\provider-compat-lead\\target\\lead-provider-probes\\composer\\runs…"
   ],
-  "geminiEmpty": [
+  "horizontalEmpty": [
     "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
-    " >   Type your message or @path/to/file",
+    " >   Type a message",
     "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────"
   ],
-  "geminiDraft": [
+  "horizontalDraft": [
     "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
     " > DRAFT-FIRST",
     "   DRAFT-SECOND",
@@ -120,7 +121,8 @@ const codex: ComposerSpec = { ...OPS,
   "tail_pattern": null,
   "empty_pattern": "^(?:Ask Codex to do anything)?$"
 };
-const gemini: ComposerSpec = { ...OPS,
+/// 上下各一条水平边框、`>` 提示符、占位文字前多缩进两格的合成规格。
+const horizontal: ComposerSpec = { ...OPS,
   "prompt_footer": false,
   "input_start_pattern": "^(\\s*> )",
   "top_pattern": "^─+$",
@@ -129,16 +131,16 @@ const gemini: ComposerSpec = { ...OPS,
   "prompt_prefix": ">",
   "tail_rows": 0,
   "tail_pattern": null,
-  "empty_pattern": "^(?:Type your message or @path/to/file)?$"
+  "empty_pattern": "^(?:Type a message)?$"
 };
 describe("无边框与水平边框的光标候选", () => {
  it("Codex 无边框从 prompt 到最后 footer 保留整段", () => {
   expect(readComposer(moreCaptures.codexEmpty,codex)).toMatchObject({state:"empty",inputRow:0,inputCol:2,isPlaceholder:true});
   expect(readComposer(moreCaptures.codexDraft,codex).state).toBe("occupied");
  });
- it("Gemini 输入起点在 > 后，不能移到额外缩进的灰字首字", () => {
-  expect(readComposer(moreCaptures.geminiEmpty,gemini)).toMatchObject({state:"empty",inputRow:1,inputCol:3,isPlaceholder:true});
-  expect(readComposer(moreCaptures.geminiDraft,gemini).state).toBe("occupied");
+ it("水平边框：输入起点在 > 后，不能移到额外缩进的灰字首字", () => {
+  expect(readComposer(moreCaptures.horizontalEmpty,horizontal)).toMatchObject({state:"empty",inputRow:1,inputCol:3,isPlaceholder:true});
+  expect(readComposer(moreCaptures.horizontalDraft,horizontal).state).toBe("occupied");
  });
  it("缺 prompt 或框内出现陌生形态不能跳到最后续行", () => {
   expect(readComposer(moreCaptures.codexDraft.slice(1),codex).state).toBe("unknown");
@@ -146,10 +148,10 @@ describe("无边框与水平边框的光标候选", () => {
   expect(readComposer(interrupted,codex).state).toBe("unknown");
  });
  it("已识别正文框但没有可靠输入前缀也不可写", () => {
-  expect(readComposer(moreCaptures.geminiEmpty,{...gemini,input_start_pattern:"never matches"}).state).toBe("unknown");
+  expect(readComposer(moreCaptures.horizontalEmpty,{...horizontal,input_start_pattern:"never matches"}).state).toBe("unknown");
  });
  it("候选坐标以完整屏幕为准，不以裁图为准", () => {
-  expect(readComposer(["history",...moreCaptures.geminiEmpty],gemini).inputRow).toBe(2);
+  expect(readComposer(["history",...moreCaptures.horizontalEmpty],horizontal).inputRow).toBe(2);
  });
 });
 
@@ -157,9 +159,9 @@ const codexWithShortcuts = ["› Ask Codex to do anything", "", "  GPT-6.1-Sol d
 it("Codex 最下方的快捷键提示不是模型 footer", () => expect(readComposer(codexWithShortcuts,codex).state).toBe("empty"));
 
 // 做空 N2：与宿主 meowo_agent::composer::read 读同一份实拍帧与规格（Rust 测试另核对规格与插件声明一致），
-// 两边对每一帧必须给出同样的结论。Gemini 0.68 的输入框边框是 ▄/▀ 半块字符。
+// 两边对每一帧必须给出同样的结论。
 // 带 draft 的帧还要对草稿保真的结论（读全的原文逐字相等，读不全的原因一致）；rawOnly 的帧去掉行尾空格后
-// 本来就认不出（Gemini 草稿里的空行是一串空格），只按原样判。
+// 本来就认不出（草稿里的空行是一串空格的那种输入框），只按原样判。
 type SharedFrame = { name: string; provider: string; lines: string[]; expect: string; text?: string; cols?: number; rows?: number; rawOnly?: boolean; draft?: ComposerDraft; suggestion?: string; cursor?: { row: number; col: number; visible: boolean; dim: boolean } };
 describe("前后端输入框判定一致", () => {
   const specs = sharedFrames.specs as unknown as Record<string, ComposerSpec>;
@@ -180,7 +182,7 @@ describe("前后端输入框判定一致", () => {
     });
   }
   it("五家都有实拍帧", () => {
-    expect([...new Set(sharedFrames.frames.map((frame) => frame.provider))].sort()).toEqual(["claude", "codex", "gemini", "kimi", "opencode"]);
+    expect([...new Set(sharedFrames.frames.map((frame) => frame.provider))].sort()).toEqual(["antigravity", "claude", "codex", "kimi", "opencode"]);
   });
 });
 
@@ -191,7 +193,7 @@ describe("占位与同文草稿", () => {
   const frame = (name: string) => (sharedFrames.frames as SharedFrame[]).find((entry) => entry.name === name)!;
   it.each([
     ["codex", "codex-0.167.2-placeholder-cursor", "codex-0.167.2-same-text-draft"],
-    ["gemini", "gemini-0.68-placeholder-cursor", "gemini-0.68-same-text-draft"],
+
   ])("%s 占位算空，同一句真实草稿算有字", (provider, placeholder, draft) => {
     const empty = frame(placeholder);
     const typed = frame(draft);

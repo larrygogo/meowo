@@ -3,6 +3,6 @@ import type { Ask } from "./Ask";
 
 /**
  * 一档模式的统一说法：改文件 / 跑命令要不要问、是否只规划。各家原名不同、语义有错位
- * （Kimi `--yolo` 是「危险仍问」，Gemini `--yolo` 才是「都不问」），界面一律按这三维说。
+ * （Kimi `--yolo` 是「危险仍问」、`--auto` 才是「都不问」，Antigravity 的 `auto` 又是「危险命令才问」），界面一律按这三维说。
  */
 export type ModeTraits = { edits: Ask, commands: Ask, plan_only: boolean, };

@@ -3,7 +3,7 @@
 //! 只有插件声明过的字面量。
 //!
 //! 这与斜杠命令同一条原则：flag 表是 agent 的事实（claude 是 `--permission-mode plan`，
-//! codex 是 `-a never -s workspace-write`，gemini 是 `--yolo`），归插件声明，GUI 零知识。未声明的 agent
+//! codex 是 `-a never -s workspace-write`，antigravity 是 `--mode auto`），归插件声明，GUI 零知识。未声明的 agent
 //! 面板上就没有这一栏——不给一个点了没效果的下拉。
 
 use serde::Serialize;
@@ -26,8 +26,8 @@ pub struct LaunchChoice {
     /// 统一说法（改文件/跑命令要不要问、是否只规划）。None = 这档的行为取决于 CLI 配置
     /// （「默认」档），前端改按 [`crate::LaunchDefaults`] 解析出的那一档来说。
     pub traits: Option<crate::ModeTraits>,
-    /// 一句话说明的 i18n 键（前端 `t.modes.desc[键]`）。按 provider 起名：同叫 yolo 的两档
-    /// 在 Kimi 与 Gemini 是两回事，不能共用一句。
+    /// 一句话说明的 i18n 键（前端 `t.modes.desc[键]`）。按 provider 起名：同名的两档在不同
+    /// CLI 里可能是两回事（Kimi 的 `auto` 都不问，Antigravity 的 `auto` 危险命令仍问），不能共用一句。
     pub desc: Option<&'static str>,
     /// [`crate::ModeSwitch::Server`] 时发给会话服务的设置片段（JSON 对象，宿主合并后交给会话服务；
     /// 取值用 CLI 参数写法）。字面量，不含用户输入。

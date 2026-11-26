@@ -6,9 +6,9 @@
 /// 精确匹配进程名（非子串），避免名字恰好含 "claude"/"kimi" 的包装进程被误认。
 /// 找不到则返回 None（宁可不记 PID，也不记错的）。
 ///
-/// **只认 `provider` 自己的进程名**，不是「任一 agent」。区别自 gemini 起变得要命：它没有自己的
-/// 可执行，会话本体就是个 node 进程，故 `node` 进了它的白名单——而全局判定下 `node.exe` 从此对
-/// **所有** agent 为真。用全局判定上溯，任何 agent 的 hook 都可能在父链上撞见一个无关的 node
+/// **只认 `provider` 自己的进程名**，不是「任一 agent」。区别自已移除的 gemini 插件起变得要命：
+/// 它没有自己的可执行，会话本体就是个 node 进程，故 `node` 进了它的白名单——而全局判定下 `node.exe`
+/// 当时对**所有** agent 为真。用全局判定上溯，任何 agent 的 hook 都可能在父链上撞见一个无关的 node
 /// 祖先（VS Code 的集成终端就是），把它当成自己的会话本体；两个不同 agent 的会话于是认领到同一个
 /// pid，而 `set_session_pid` 的 pid 独占语义会让后来者把前者收尾成 `ended`——两个活着的会话互相抹杀。
 ///
@@ -98,7 +98,7 @@ pub fn record_owner_pid(
                 store.set_session_shared_pid(session_id, i64::from(pid), now_ms)?
             }
             // 认不出作用域时仍要记下进程号：不记则判活失败，「接管」看不到原进程会再起一个
-            // 同会话进程（做空复现：gemini 带 --max-old-space-size 重启自身时）。按共享记，
+            // 同会话进程（做空复现：已移除的 gemini 插件带 --max-old-space-size 重启自身时）。按共享记，
             // 判活照常、又不会被当成独占进程去结束或驱逐别的会话。
             ProcessScope::Unknown => {
                 store.set_session_shared_pid(session_id, i64::from(pid), now_ms)?
@@ -167,13 +167,9 @@ mod scope_tests {
             merge_scopes([ProcessScope::Shared, ProcessScope::Exclusive].into_iter()),
             ProcessScope::Unknown
         );
-        let args = [
-            "node.exe",
-            "C:/npm/node_modules/@google/gemini-cli/bundle/gemini.js",
-        ]
-        .map(str::to_owned);
+        // node 不再是任何 agent 的进程（收 node 的 gemini 已退役）：无关脚本认不出。
         assert_eq!(
-            scope_for_command("node.exe", &args),
+            scope_for_command("agy.exe", &["C:/Users/test/AppData/Local/agy/bin/agy.exe".into()]),
             ProcessScope::Exclusive
         );
         assert_eq!(

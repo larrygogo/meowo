@@ -56,12 +56,12 @@ pub struct AuthScheme {
     ///
     /// - `Some(&["auth", "login"])` —— claude（没有 `claude login`）、opencode。
     /// - `Some(&["login"])` —— codex / kimi。
-    /// - `Some(&[])` —— **裸启动即登录**。gemini 压根没有登录子命令（0.50 的子命令只有
-    ///   mcp / extensions / skills / hooks / gemma），首次运行 `gemini` 本身就会引导你选认证方式。
-    ///   这个空切片与下面的 `None` 是两回事：它是「有入口，且入口就是启动它自己」。
+    /// - `Some(&[])` —— **裸启动即登录**：CLI 没有登录子命令、首次运行它本身就引导认证。目前没有
+    ///   插件声明（最初为已移除的 gemini 插件引入）。这个空切片与下面的 `None` 是两回事：它是「有入口，
+    ///   且入口就是启动它自己」。
     /// - `None` —— 无登录入口，[`crate::variant::Installation::login_argv`] 返回 None。
     ///
-    /// 这里曾经是个裸切片，空切片即「无入口」——于是 gemini 这种「裸启动即登录」的 agent 无从表达，
+    /// 这里曾经是个裸切片，空切片即「无入口」——于是「裸启动即登录」的 agent（当时的 gemini）无从表达，
     /// 只能被判成没有登录入口，前端却仍旧亮出登录按钮，点下去只得到一句「拉起登录失败」。
     pub login: Option<&'static [&'static str]>,
     /// 非交互式退出登录子命令。空切片表示 CLI 没有登出入口，宿主只能删除凭据文件。

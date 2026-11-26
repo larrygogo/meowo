@@ -44,7 +44,7 @@ describe("新建会话页（对话窗主区，对照 Kimi）", () => {
   // 新建会话一律原生 TUI（leader 2026-11-13：对话依托官方 CLI，托管会话路线已删除）。Lead 关卡的自动继续
   // 由原生会话自己完成（lead_native）。兄弟场景：四家无论装没装 Lead 都走原生、保留启动选项，
   // 新建页也不查 Lead 安装状态。
-  it.each(["codex", "kimi", "gemini", "opencode"])("%s always starts a native TUI session with its launch options, Lead or not", async (provider) => {
+  it.each(["codex", "kimi", "antigravity", "opencode"])("%s always starts a native TUI session with its launch options, Lead or not", async (provider) => {
     api.leadProviderInstallations.mockResolvedValue([{ provider, automaticContinue: true }]);
     api.listAgents.mockResolvedValue(descriptors([provider]));
     api.getSettings.mockResolvedValue({ default_agent: provider });

@@ -6,7 +6,7 @@ import { en } from "../../i18n/en";
 import { slashCommandMechanism, slashEntryAvailability, slashSendAvailability } from "./availability";
 import { undoConfirmMessage } from "./undoTerminal";
 
-const PROVIDERS = ["claude", "codex", "kimi", "gemini", "opencode"] as const;
+const PROVIDERS = ["claude", "codex", "kimi", "antigravity", "opencode"] as const;
 
 describe("菜单型斜杠命令此刻的状态（五家）", () => {
   it.each(PROVIDERS)("%s：声明为菜单型的命令回合中置灰带原因，空闲可用，普通命令不受影响", (provider) => {

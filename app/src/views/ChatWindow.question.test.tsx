@@ -1073,7 +1073,7 @@ describe("ChatWindow", () => {
   });
 
   /**
-   * 附件注入按 agent 能力分流:声明了 attachment_mention(claude/gemini,实测 @绝对路径
+   * 附件注入按 agent 能力分流:声明了 attachment_mention(claude 等,实测 @绝对路径
    * 在提交时被原生附加)就用 `@路径` 提及;图片优先走剪贴板原生附加(Ctrl-V),写不进
    * 剪贴板时退回指令文本;含空白的路径同样退回(提及会在空白处截断)。
    */

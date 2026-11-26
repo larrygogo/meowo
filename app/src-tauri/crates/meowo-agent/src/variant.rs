@@ -11,7 +11,8 @@ pub struct DataDirSpec {
     /// 环境变量覆盖名（如 `KIMI_CODE_HOME` / `CODEX_HOME` / `CLAUDE_CONFIG_DIR`）。
     /// 设了就优先于候选目录；少数 CLI 覆盖 home 而非数据目录，由 env_suffix 描述。
     pub env: Option<&'static str>,
-    /// Gemini 0.65 的 Storage 在 GEMINI_CLI_HOME 后追加 .gemini（本机 bundle 取证）。
+    /// 追加在环境变量值后面的子路径；现役插件都留空（最初为已移除的 gemini 插件引入：
+    /// 0.65 的 Storage 在 GEMINI_CLI_HOME 后追加 .gemini）。
     pub env_suffix: &'static str,
     /// 相对 home 的候选目录，按优先级排列。`probe` 取第一个**已存在**的。
     pub candidates: &'static [&'static str],
@@ -169,8 +170,8 @@ impl Installation {
     /// 该变体无鉴权、或未声明登录入口（`login: None`）→ None。与 `launch_argv` 同源，故同样是
     /// 绝对路径优先。
     ///
-    /// **空子命令是合法的**：`login: Some(&[])` 表示「裸启动即登录」——gemini 没有登录子命令，
-    /// 跑 `gemini` 本身就会引导认证。此前空切片被当成「无入口」而返回 None，gemini 因此无从表达，
+    /// **空子命令是合法的**：`login: Some(&[])` 表示「裸启动即登录」——CLI 没有登录子命令，跑它本身
+    /// 就会引导认证（已移除的 gemini 插件即如此）。此前空切片被当成「无入口」而返回 None，这种 agent 无从表达，
     /// 前端的登录按钮点下去只能得到一句「拉起登录失败」。
     pub fn login_argv(&self) -> Option<Vec<String>> {
         let args = self.auth?.login?;
@@ -298,7 +299,7 @@ mod tests {
         login: None,
         logout_args: &[],
     };
-    /// **裸启动即登录**（gemini：没有登录子命令，跑它自己就会引导认证）。
+    /// **裸启动即登录**（没有登录子命令，跑它自己就会引导认证；已移除的 gemini 插件即如此）。
     static AUTH_LOGIN_ON_LAUNCH: AuthScheme = AuthScheme {
         credentials: CredentialSource::File("cred.json"),
         refresh: None,
@@ -355,8 +356,8 @@ mod tests {
     }
 
     /// **裸启动即登录**必须能表达出来。这条曾经是反的：空子命令被当成「无登录入口」而返回 None
-    /// （注释还写着「不能拉起一个只有可执行名的终端」）。gemini 恰恰就是这种 agent——它没有登录
-    /// 子命令，跑 `gemini` 本身就会引导认证。于是它被判成没有入口，而前端仍旧亮出登录按钮，
+    /// （注释还写着「不能拉起一个只有可执行名的终端」）。已移除的 gemini 插件恰恰就是这种 agent——
+    /// 它没有登录子命令，跑 `gemini` 本身就会引导认证。于是它被判成没有入口，而前端仍旧亮出登录按钮，
     /// 点下去只得到一句「拉起登录失败」。
     ///
     /// `login: None`（真的没有入口）与 `login: Some(&[])`（入口就是启动它自己）必须泾渭分明。
@@ -403,30 +404,6 @@ mod tests {
             ])
         );
         assert_eq!(inst_with_auth(Some(&AUTH_NO_LOGIN)).logout_argv(), None);
-    }
-
-    #[test]
-    fn compatibility_gemini_home_contains_dot_gemini() {
-        let _env = crate::env_guard();
-        let root = tmp("gemini-home");
-        let spec = crate::by_id("gemini").unwrap().variants()[0].data_dir;
-        let old = std::env::var_os("GEMINI_CLI_HOME");
-        std::env::set_var("GEMINI_CLI_HOME", &root);
-        let actual = spec.default_dir(Path::new("/unrelated"));
-        let absent = spec.probe(Path::new("/unrelated"));
-        std::fs::create_dir_all(root.join(".gemini")).unwrap();
-        let present = spec.probe(Path::new("/unrelated"));
-        std::env::set_var("GEMINI_CLI_HOME", "");
-        let empty = spec.default_dir(&root);
-        match old {
-            Some(old) => std::env::set_var("GEMINI_CLI_HOME", old),
-            None => std::env::remove_var("GEMINI_CLI_HOME"),
-        }
-        assert_eq!(actual, Some(root.join(".gemini")));
-        assert_eq!(absent, None);
-        assert_eq!(present, Some(root.join(".gemini")));
-        assert_eq!(empty, Some(root.join(".gemini")));
-        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

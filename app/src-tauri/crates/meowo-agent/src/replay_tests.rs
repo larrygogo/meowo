@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 
 use crate::transcript::{ChatItem, ToolKind, TranscriptSpec};
 
-const PROVIDERS: [&str; 5] = ["claude", "kimi", "codex", "gemini", "opencode"];
+const PROVIDERS: [&str; 5] = ["claude", "kimi", "codex", "antigravity", "opencode"];
 
 fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/chat-replay")
@@ -59,8 +59,9 @@ fn samples(agent: &str) -> Vec<String> {
 
 /// 一份样本走完整解析。
 /// - claude / kimi / codex：样本就是 CLI 写的会话文件的摘录。
-/// - gemini：样本是 CLI 的原始日志（带 `$set` 行），先经插件自己的物化（归并成稳定快照）再读，
-///   与应用里的路径一致；物化到临时目录，不碰用户数据目录。
+/// - antigravity：对话在 agy 的 SQLite 库里（每个对话一个库，正文是 protobuf），样本是 Meowo 导出器
+///   对本机真实库的导出行（对话页读的就是导出文件），路径里的用户名已换成占位；库 → 导出行这一步
+///   由 `plugins::antigravity::store` 自己的测试覆盖。
 /// - opencode：对话在它的 SQLite 库里，样本是 Meowo 导出器对真实库的导出行（对话页读的
 ///   就是导出文件）；库 → 导出行这一步由 `plugins::opencode::store` 自己的测试覆盖。
 fn replay(agent: &str, sample: &str) -> Vec<ChatItem> {
@@ -77,16 +78,11 @@ fn replay_all(agent: &str) -> Vec<ChatItem> {
         .collect()
 }
 
-/// 对话页实际读的那个文件：gemini 是物化后的快照，opencode 的探针样本是导出后的导出行，
-/// 其余就是样本本身。
+/// 对话页实际读的那个文件：opencode 的探针样本是导出后的导出行，其余就是样本本身。
 fn sample_path(agent: &str, sample: &str) -> PathBuf {
     let source = fixture_dir().join(format!("{sample}.jsonl"));
     assert!(source.is_file(), "缺样本 {}", source.display());
-    let derive = match agent {
-        "gemini" => true,
-        "opencode" => is_raw_opencode_parts(&source),
-        _ => false,
-    };
+    let derive = agent == "opencode" && is_raw_opencode_parts(&source);
     if !derive {
         return source;
     }
@@ -99,11 +95,7 @@ fn sample_path(agent: &str, sample: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("meowo_replay_{sample}_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let path = if agent == "gemini" {
-        crate::plugins::gemini::materialize_for_test(&source, &dir).expect("gemini 样本物化失败")
-    } else {
-        export_opencode_parts(&source, &dir)
-    };
+    let path = export_opencode_parts(&source, &dir);
     done.push((sample.to_string(), path.clone()));
     path
 }
@@ -298,7 +290,7 @@ fn replay_samples_keep_the_original_order() {
 ///   可带；它由前端测试按「所在回合已被新回合越过」断言成已中断。本机 171 份主链只有这 1 次。
 /// - codex：被 Esc 打断的命令回执写着 `aborted by user`；另有一场会话里 3 次调用到回合收尾、
 ///   到文件末尾都没有回执（`codex.01a13ed0`），同样由前端测试断言。
-/// - gemini：没有。调用连同结果一起落盘（本机 44 次调用全部带结果）。
+/// - antigravity：被用户在审批面板上拒绝的写文件（库里是 ERROR + "user denied permission"），按被打断显示。
 /// - opencode：被 Esc 打断的工具以 `Tool execution aborted` 收场（本机 3 次）。停在 running 的
 ///   工具本机有 4 次：3 次之后再无消息（导出器不导出），1 次在私有项目的会话里，不能入库。
 #[test]
@@ -323,10 +315,11 @@ fn replay_samples_cover_the_expected_blocks() {
                 "写", "改", "命令", "网页", "子任务", "其他", "发图", "失败回执", "没跑完的调用", "中断",
             ],
         ),
-        // 缺「子任务」：本机 Gemini 会话没有派过子任务。
+        // 本机真实对话库只有两场（2026-11-26 取证）：缺「改」「搜索」「网页」「子任务」「发图」「失败回执」
+        // 「出错」「中断」——这些场景还没在真机上出现过，不能手编。
         (
-            "gemini",
-            &["读", "写", "改", "命令", "搜索", "其他", "发图", "失败回执", "出错", "中断"],
+            "antigravity",
+            &["读", "写", "命令", "其他", "没跑完的调用"],
         ),
         // 缺「搜索」「子任务」：搜索只出现在一个私有项目的会话里（不能入库），task 一次都没有。
         (
@@ -349,7 +342,8 @@ fn replay_samples_cover_the_expected_blocks() {
 ///
 /// 五家都声明了分析能力——此前 codex 与 opencode 没有，回合出错只出现在时间线里，
 /// 侧栏写着「等待输入」、也不弹通知（走查 A8）。codex 本机没有回合出错的真实记录，
-/// 它的判据由 `plugins::codex::telemetry` 里按 rollout 记录形态写的单测覆盖。
+/// 它的判据由 `plugins::codex::telemetry` 里按 rollout 记录形态写的单测覆盖；antigravity 同理
+/// （本机两场真实对话没有出错），由 `plugins::antigravity::telemetry` 的单测覆盖。
 #[test]
 fn replay_session_error_matches_the_timeline_error_card() {
     for agent in PROVIDERS {
@@ -358,7 +352,7 @@ fn replay_session_error_matches_the_timeline_error_card() {
             "{agent} 没有分析能力：它的回合出错进不了侧栏、灵动岛和通知"
         );
     }
-    for agent in ["claude", "kimi", "gemini", "opencode"] {
+    for agent in ["claude", "kimi", "opencode"] {
         let spec = spec(agent);
         let mut checked = 0;
         for sample in samples(agent) {

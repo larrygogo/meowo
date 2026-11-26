@@ -1,0 +1,54 @@
+[
+  {
+    "type": "user_text",
+    "id": "step-0",
+    "timestamp": "2026-11-26T07:20:46.546Z",
+    "text": "Run the shell command: echo hello-probe . Then reply with one short sentence."
+  },
+  {
+    "type": "tool_use",
+    "id": "call_9209557172472505258",
+    "timestamp": "2026-11-26T07:20:51.557Z",
+    "name": "run_command",
+    "kind": "run",
+    "summary": "echo hello-probe",
+    "detail": {
+      "kind": "command",
+      "command": "echo hello-probe",
+      "description": "Echo hello-probe"
+    }
+  },
+  {
+    "type": "tool_result",
+    "id": "call_9209557172472505258:result",
+    "timestamp": "2026-11-26T07:20:53.611Z",
+    "tool_use_id": "call_9209557172472505258",
+    "text": "Command exited with code 0.\n\nCommand output:\nhello-probe\r\n",
+    "is_error": false,
+    "exit_code": 0
+  },
+  {
+    "type": "assistant_text",
+    "id": "step-3",
+    "timestamp": "2026-11-26T07:20:53.796Z",
+    "text": "The command ran and printed `hello-probe`."
+  },
+  {
+    "type": "assistant_text",
+    "id": "step-5",
+    "timestamp": "2026-11-26T07:20:57.907Z",
+    "text": "BANANA"
+  },
+  {
+    "type": "user_text",
+    "id": "step-6",
+    "timestamp": "2026-11-26T07:21:47.520Z",
+    "text": "say ok"
+  },
+  {
+    "type": "assistant_text",
+    "id": "step-7",
+    "timestamp": "2026-11-26T07:21:47.713Z",
+    "text": "ok"
+  }
+]

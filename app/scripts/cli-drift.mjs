@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// CLI 漂移检查：在本机已装的 claude / codex / kimi / gemini / opencode 的程序文件里，
+// CLI 漂移检查：在本机已装的 claude / codex / kimi / antigravity（agy）/ opencode 的程序文件里，
 // 逐条搜 Meowo 识别规则依赖的输出文案，缺了就报出来。
 //
 // 为什么：CLI 升级后改一句提示，Meowo 的识别规则就静默失效（2026-11-12 调研五个 CLI

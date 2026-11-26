@@ -11,7 +11,8 @@ import type { ChatItem } from "../api";
 
 const FIXTURES = join(__dirname, "../../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay");
 
-export const REPLAY_AGENTS = ["claude", "kimi", "codex", "gemini", "opencode"] as const;
+// antigravity 还没有回放样本（后端 chat-replay 下没有 antigravity.*），有了再加进来。
+export const REPLAY_AGENTS = ["claude", "kimi", "codex", "opencode"] as const;
 export type ReplayAgent = typeof REPLAY_AGENTS[number];
 export type ReplaySample = { name: string; items: ChatItem[] };
 

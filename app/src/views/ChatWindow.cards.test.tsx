@@ -12,7 +12,7 @@ import {
   CLAUDE_APPROVAL_SCREEN,
   CLAUDE_BROKER_APPROVAL,
   CODEX_BROKER_APPROVAL,
-  GEMINI_APPROVAL_SCREEN,
+  ANTIGRAVITY_APPROVAL_SCREEN,
   KIMI_APPROVAL_SCREEN,
   OPENCODE_ALWAYS_CONFIRM_SCREEN,
   OPENCODE_PERMISSION_SCREEN,
@@ -51,7 +51,7 @@ const CARDS: [string, number, (id: number) => Promise<void>][] = [
   ["claude（broker）", 901, async (id) => { setup(id, "claude", CLAUDE_BROKER_APPROVAL); render(<ChatWindow />); }],
   ["codex（broker）", 902, async (id) => { setup(id, "codex", CODEX_BROKER_APPROVAL); render(<ChatWindow />); }],
   ["kimi（屏幕）", 903, async (id) => { setup(id, "kimi"); render(<ChatWindow />); await showScreen("kimi", KIMI_APPROVAL_SCREEN); }],
-  ["gemini（屏幕）", 904, async (id) => { setup(id, "gemini"); render(<ChatWindow />); await showScreen("gemini", GEMINI_APPROVAL_SCREEN); }],
+  ["antigravity（屏幕）", 904, async (id) => { setup(id, "antigravity"); render(<ChatWindow />); await showScreen("antigravity", ANTIGRAVITY_APPROVAL_SCREEN); }],
   ["opencode（屏幕）", 905, async (id) => { setup(id, "opencode"); render(<ChatWindow />); await showScreen("opencode", OPENCODE_PERMISSION_SCREEN); }],
   ["claude（屏幕兜底）", 906, async (id) => { setup(id, "claude"); render(<ChatWindow />); await showScreen("claude", CLAUDE_APPROVAL_SCREEN); }],
 ];
@@ -61,7 +61,7 @@ const DELIVERY: Record<string, { allow: unknown; deny: unknown }> = {
   "claude（broker）": { allow: ["respond_runtime_request", "allow_once"], deny: ["respond_runtime_request", "deny"] },
   "codex（broker）": { allow: ["respond_runtime_request", "allow_once"], deny: ["respond_runtime_request", "deny"] },
   "kimi（屏幕）": { allow: ["write_managed_terminal", "1"], deny: ["write_managed_terminal", "3"] },
-  "gemini（屏幕）": { allow: ["write_managed_terminal", "\r"], deny: ["write_managed_terminal", "\x1b[B\x1b[B\r"] },
+  "antigravity（屏幕）": { allow: ["write_managed_terminal", "\r"], deny: ["write_managed_terminal", "\x1b[B\x1b[B\x1b[B\r"] },
   // opencode：允许是点屏幕上的 Allow once（两段写入，下面按段比对），拒绝是 Esc。
   "opencode（屏幕）": { allow: CLICK_ONCE, deny: ["write_managed_terminal", "\x1b"] },
   "claude（屏幕兜底）": { allow: ["write_managed_terminal", "\r"], deny: ["write_managed_terminal", "\x1b[B\x1b[B\x1b[B\r"] },
@@ -160,7 +160,7 @@ describe("审批卡在对话窗里：五家同一套", () => {
       "claude（broker）": [["respond_runtime_request", "suggestion:0"]],
       "codex（broker）": [],
       "kimi（屏幕）": [["write_managed_terminal", "2"]],
-      "gemini（屏幕）": [["write_managed_terminal", "\x1b[B\r"]],
+      "antigravity（屏幕）": [["write_managed_terminal", "\x1b[B\r"]],
       "opencode（屏幕）": CLICK_ALWAYS,
       "claude（屏幕兜底）": [["write_managed_terminal", "\x1b[B\r"]],
     };
@@ -460,7 +460,7 @@ describe("屏幕通道的说明并拒绝：对话窗里走完三步", () => {
   });
 
   it.each([
-    ["gemini", 967, GEMINI_APPROVAL_SCREEN],
+    ["antigravity", 967, ANTIGRAVITY_APPROVAL_SCREEN],
     ["opencode", 968, OPENCODE_PERMISSION_SCREEN],
   ] as const)("%s：拒绝项不能带说明，卡上没有「说明并拒绝」", async (provider, id, sample) => {
     setupScreen(id, provider, () => null);
@@ -491,21 +491,23 @@ describe("选项角色在对话窗里：没有的角色不出按钮，认不出�
   it.each([["桌面", 972, false], ["手机页", 973, true]] as const)("其他选项（%s）：按终端原文出按钮，点了按的是它那一项的键，数字键够不着它", async (_name, id, remote) => {
     if (remote) markRemoteUi();
     try {
-      setup(id, "gemini");
+      setup(id, "antigravity");
       render(<ChatWindow />);
-      await showScreen("gemini", GEMINI_APPROVAL_SCREEN.replace(
-        "│   3. No, suggest changes (esc)            │",
-        "│   3. Modify with external editor          │\n│   4. No, suggest changes (esc)            │",
+      // 在 antigravity 真机面板里插一项认不出角色的选项（合成）。
+      await showScreen("antigravity", ANTIGRAVITY_APPROVAL_SCREEN.replace(
+        "  4. No, cancel",
+        "  4. Modify with external editor\n  5. No, cancel",
       ));
       const other = await screen.findByRole("button", { name: "Modify with external editor" });
       expect(other.querySelector("kbd")).toBeNull();
       adapter.box().blur();
-      // 数字键 3：持久放行只有一个（键 2），3 没有对应项。
-      fireEvent.keyDown(window, { key: "3" });
+      // 数字键 4：持久放行有两个（键 2、3），4 没有对应项。
+      fireEvent.keyDown(window, { key: "4" });
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
       expect(delivered(id)).toEqual([]);
       fireEvent.click(other);
-      await waitFor(() => expect(delivered(id)).toEqual([["write_managed_terminal", "\x1b[B\x1b[B\r"]]));
+      await waitFor(() => expect(delivered(id)).toEqual([["write_managed_terminal", "\x1b[B\x1b[B\x1b[B\r"]]));
+
     } finally {
       (globalThis as Record<string, unknown>).__MEOWO_REMOTE__ = undefined;
       document.body.classList.remove("remote-ui");

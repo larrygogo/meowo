@@ -298,7 +298,7 @@ impl AgentPlugin for Claude {
             ) || path.ends_with("/@anthropic-ai/claude-code/cli.js")
         };
         // node 启动时脚本是 node 之后第一个非选项参数（`node --max-old-space-size=N cli.js`），
-        // 只看前两项会漏判（同 gemini 0.68 重启自身的做空复现）。
+        // 只看前两项会漏判（已移除的 gemini 插件 0.68 重启自身时，做空复现过同样的漏判）。
         let script = argv.iter().skip(1).find(|arg| !arg.starts_with('-'));
         let own = argv.first().is_some_and(is_claude) || script.is_some_and(is_claude);
         if !own {

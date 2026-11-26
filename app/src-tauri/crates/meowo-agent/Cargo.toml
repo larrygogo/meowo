@@ -24,6 +24,9 @@ memchr = "2"
 # 只给 opencode 用：它不写会话日志，对话全在自己的 SQLite 库里（见 plugins/opencode/store.rs）。
 # reporter 经 meowo-store 早已链接同一份 bundled sqlite，不增加二进制体积。
 rusqlite = { workspace = true }
+# 只给 antigravity 用：agy 的对话库每个 step 是一段 protobuf（见 plugins/antigravity/proto.rs）。
+# 只用 derive 手写最小结构体，不需要 protoc 和 build.rs。
+prost = { version = "0.13", default-features = false, features = ["derive", "std"] }
 # 读终端输入框（composer.rs）按插件声明的正则认框。regex 早在工作区依赖树里，不新增下载。
 regex = "1"
 

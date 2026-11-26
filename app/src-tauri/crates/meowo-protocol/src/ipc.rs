@@ -167,7 +167,7 @@ pub struct SubagentProbeDto {
 }
 
 /// 工具调用的语义类别。由各家插件在适配层按**自己的工具名表**给出，前端只认这个字段，
-/// 不再按工具名的子串去猜（猜的规则是照 Claude 的命名调的，Gemini 的 read_file / replace
+/// 不再按工具名的子串去猜（猜的规则是照 Claude 的命名调的，当时 gemini 的 read_file / replace
 /// 全落进「其他」，Codex 的 wait_agent 因为名字含 agent 被当成子任务）。
 /// 插件不认识的工具一律 `Other`，界面显示原始工具名。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -552,16 +552,16 @@ pub struct ChatHistoryDto {
     /// DB 里可能残留 running——前端展示运行态必须以此校正，否则出现「假运行中」。
     pub connected: bool,
     /// 托管 PTY 的实时屏幕状态（"working" | "idle" | "blocked"，非托管为 None），与侧栏/看板
-    /// `LiveItem.screen_state` 同源。对话页的运行态必须同样经它校正：gemini 的 SessionStart
-    /// 就把 DB 置成 running、首个 BeforeAgent 之前没有任何事件纠正它，只看 DB 的对话页会把
-    /// 空闲会话当成「运行中」，发消息按了排队键 Tab 而非回车——正文停在输入框里发不出去
-    /// （0.6.11 实机，gemini 0.64）。
+    /// `LiveItem.screen_state` 同源。对话页的运行态必须同样经它校正：DB 的 running 可能
+    /// 迟迟没有事件纠正，只看 DB 的对话页会把空闲会话当成「运行中」，发消息按了排队键而非回车——
+    /// 正文停在输入框里发不出去（前科：0.6.11 实机，已移除的 gemini 插件 0.64，SessionStart 就置
+    /// running、首个 BeforeAgent 之前没有事件纠正）。
     pub screen_state: Option<String>,
     /// 无规则命中的 idle 不代表确认空闲，必须与状态一起传给统一活动判定。
     #[serde(default)]
     pub screen_assumed: bool,
     /// 最近一轮以错误收场（transcript 分析口径，与侧栏/贴纸的 `LiveItem.errored` 同源）。
-    /// 五家都报：claude / gemini / kimi 的分析解析器本来就有，codex 与 opencode 的错误判据
+    /// 五家都报：claude / kimi / antigravity 的分析解析器本来就有，codex 与 opencode 的错误判据
     /// 与各自时间线的错误卡共用一个函数。
     pub errored: bool,
     /// 还在跑的后台子任务数（与侧栏/贴纸的 `LiveItem.busy_subagents` 同源）。主回合停了但

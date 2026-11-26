@@ -53,7 +53,7 @@ pub(crate) enum NativeOutcome {
 /// 只有声明了版本门（[`meowo_agent::lead_install::LeadCap::native_continue_floor`]）的机制才探测
 /// 版本（做空 N2），且只在作答投递与面板状态里调用。开终端的启动路径不调用它，改用
 /// [`launches_server`]：每个会话启动都会经过 opencode_http::launch_plan 与
-/// codex_app_server::prepare_launch，直接调 mechanism() 会让 kimi/gemini 每次开终端都同步跑一遍
+/// codex_app_server::prepare_launch，直接调 mechanism() 会让 kimi/antigravity 每次开终端都同步跑一遍
 /// `<cli> --version`（缓存过期时最长 5 秒），没装 Lead 也一样（做空 R2）。
 pub(crate) fn mechanism(provider: &str) -> Option<NativeContinue> {
     mechanism_with(provider, probe_version)
@@ -69,7 +69,7 @@ fn probe_version(_plugin: &'static dyn meowo_agent::AgentPlugin) -> Option<Optio
 }
 
 /// 开终端的启动路径用：这次启动要不要为 `protocol` 起服务端口。先看插件**声明**的机制（不探测
-/// 版本），不是这个协议的 provider（claude、kimi/gemini 的会话内等待器）直接放行、零代价；再走带
+/// 版本），不是这个协议的 provider（claude、kimi/antigravity 的会话内等待器）直接放行、零代价；再走带
 /// 版本门的 [`mechanism`]（目前 ServerQueue 机制都没有版本门，不会真的探测）。
 ///
 /// 2026-11-14 起**不再看本账号装没装 Lead**（任务 20261114-tui-model-switch，leader 定）：服务通道是
@@ -179,7 +179,7 @@ pub(crate) fn delivery_status(
                 reason: status.reason,
             })
         }
-        // kimi/gemini：会话内等待器，如实说答复走到了哪一步（已收到 / 发送中 / 在会话里说一句 / 打开会话后说一句）。
+        // kimi/antigravity：会话内等待器，如实说答复走到了哪一步（已收到 / 发送中 / 在会话里说一句 / 打开会话后说一句）。
         // TUI 不在时宿主不续写（leader 2026-11-13），没有可重试的宿主动作。
         NativeContinue::InSessionWaiter { .. } => {
             let store = crate::open_store(db).ok()?;
@@ -220,7 +220,7 @@ mod tests {
                 "{provider}"
             );
         }
-        for (provider, old, ok) in [("kimi", "2.5.3", "2.6.0"), ("gemini", "0.67.0", "0.68.0")] {
+        for (provider, old, ok) in [("kimi", "2.5.3", "2.6.0"), ("antigravity", "1.5.17", "1.5.18")] {
             let mut probed = 0;
             let low = mechanism_with(provider, |_| {
                 probed += 1;
@@ -238,7 +238,7 @@ mod tests {
     #[test]
     fn launch_gate_never_probes_cli_version() {
         use ServerProtocol::{CodexAppServer, OpencodeHttp};
-        for provider in ["claude", "codex", "kimi", "gemini", "opencode", "nope"] {
+        for provider in ["claude", "codex", "kimi", "antigravity", "opencode", "nope"] {
             for protocol in [CodexAppServer, OpencodeHttp] {
                 let launches = launches_server_with(provider, protocol, |_| {
                     panic!("{provider} 启动路径不该探测版本")
@@ -265,11 +265,11 @@ mod tests {
         assert!(plan.args.iter().all(|arg| !arg.contains("mcp")));
     }
 
-    /// 启动入口本身（不只判定函数）在 kimi/gemini 上不触发版本探测：mechanism() 的单测探针计数为 0。
+    /// 启动入口本身（不只判定函数）在 kimi/antigravity 上不触发版本探测：mechanism() 的单测探针计数为 0。
     #[test]
     fn launch_entries_do_not_probe_for_waiter_providers() {
         test_version::reset_probes();
-        for provider in ["kimi", "gemini", "claude"] {
+        for provider in ["kimi", "antigravity", "claude"] {
             let argv = vec![provider.to_owned()];
             assert!(opencode_http::launch_plan(provider, &argv, &[]).is_none());
             let mut command = portable_pty::CommandBuilder::new(provider);

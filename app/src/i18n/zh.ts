@@ -288,7 +288,7 @@ export const zh = {
       "collaboration.plan": "计划模式",
     } as Record<string, string>,
     // 每档一行「什么自动做、什么仍会问你」（对照 Kimi 权限菜单的 *Desc）：档名只是代号，
-    // 选档时真正要比较的是后果。键同 launchChoice；默认审批档 codex 与 gemini 语义不同，不配。
+    // 选档时真正要比较的是后果。键同 launchChoice；codex 的默认审批档跟随 CLI 配置，不配。
     launchChoiceDesc: {
       "permission.default": "读取自动，修改和命令都先问你",
       "permission.plan": "只调研和出计划，不改文件",
@@ -308,8 +308,8 @@ export const zh = {
   },
   // 会话管理页（对照 Kimi Code 的会话管理）。
   // 已合并 worktree 的清理（归档后的撤销条、已完成会话的菜单、会话管理页批量清理）。
-  // 模式的统一说法（任务 20261114-tui-model-switch）：各家原名不同、语义错位（Kimi yolo 危险仍问，
-  // Gemini yolo 都不问），界面按「改文件 / 跑命令要不要问、是否只出方案」三维说，原名放小字。
+  // 模式的统一说法（任务 20261114-tui-model-switch）：各家原名不同、语义错位（Kimi yolo 危险仍问、
+  // auto 都不问，Antigravity auto 却是危险命令才问），界面按「改文件 / 跑命令要不要问、是否只出方案」三维说，原名放小字。
   // 一句话说明按各家官方帮助或文档原文提炼，出处见 research-kimi-gemini §5、research-codex-opencode §9。
   modes: {
     // 改文件与跑命令同一档时合成一句（菜单宽度有限，实拍两段式被截断）。
@@ -343,8 +343,6 @@ export const zh = {
       readOnly: "只读",
       autoEdits: "自动改文件",
       risky: "必要时询问",
-      // Gemini default：改文件要问，工作区内已知安全的命令不问（官方说明），和「每步都问」语义不同（第四轮 M2）。
-      askChanges: "改动先问",
       never: "都不问",
       plan: "计划",
     } as Record<string, string>,
@@ -377,14 +375,12 @@ export const zh = {
       "kimi.work.default": "按权限档执行",
       // 提示词「MUST NOT make any edits (with the exception of the current plan file)」
       "kimi.work.plan": "先出计划，除计划文件外不改文件",
-      // Gemini 0.68 cli-reference「default (prompt for approval)」+ policy-engine：工作区内已知安全的命令放行。
-      "gemini.approval.default": "工作区内已知安全的命令不问，其余先问",
-      // 「auto_edit (auto-approve edit tools)」
-      "gemini.approval.autoEdit": "自动改文件，跑命令仍先问",
-      // 「plan (read-only mode)」
-      "gemini.approval.plan": "只读，只出方案，不能跑命令",
-      // 「yolo (auto-approve all tools)」
-      "gemini.approval.yolo": "所有工具自动放行，含危险命令",
+      // Antigravity 1.5.18 输入框占位原文「Auto mode: edits & safe commands auto-approved」。
+      "antigravity.approval.auto": "改文件和安全命令自动做，其余先问",
+      // 「Accept-edits mode: file edits auto-approved」
+      "antigravity.approval.acceptEdits": "自动改文件，跑命令仍先问",
+      // 「Plan mode: research & plan only」
+      "antigravity.approval.plan": "只调研和出方案，不改文件",
       "codex.approval.default": "按 Codex 配置文件的设置",
       // Codex 0.167 /permissions「Read workspace files, with approval required for edits or internet access」
       "codex.approval.readOnly": "只读工作区，改文件或联网要问",
@@ -584,7 +580,7 @@ export const zh = {
     settingsDeferredCancel: "撤销",
     settingsDeferred: (name: string) => `这一轮结束后切换到「${name}」`,
     // Lead 关卡等待中：带参重启会杀掉会话内的关卡等待器，接回后没有回合、没人再起等待器，答复后不会自动
-    // 继续（做空 N3；B7 真机探针 Kimi/Gemini 均证实，evidence/round3-n3），排到续跑那一轮跑完之后。
+    // 继续（做空 N3；B7 真机探针在 Kimi 与当时的 gemini 插件上均证实，evidence/round3-n3），排到续跑那一轮跑完之后。
     settingsDeferredLead: (name: string) => `关卡答复后那一轮跑完再切换到「${name}」`,
     // 会话没在运行：Codex/OpenCode 恢复时不回放模型，打开后由宿主经会话服务补设（做空 N6）。
     settingsDeferredOpen: (name: string) => `打开会话后切换到「${name}」`,
@@ -1642,7 +1638,7 @@ export const zh = {
     running: `${vocab.session.running}…`,
     contextTip: (pct: number, kw: number) => `上下文已用 ${pct}%（窗口 ${kw}K）`,
     contextShort: (pct: number) => `上下文已用 ${pct}%`,
-    // 这家 CLI 不上报 token 用量（Gemini、OpenCode）：圆环留在原位置灰，悬停说明原因，
+    // 这家 CLI 不上报 token 用量（如 OpenCode）：圆环留在原位置灰，悬停说明原因，
     // 不留空白让人以为是 bug（走查输入 C6）。
     contextUnsupported: "这个 CLI 不提供上下文占用",
     toolRunning: "正在执行，结果尚未返回…",
@@ -2005,12 +2001,9 @@ export const zh = {
       send_message: "发消息",
       followup_task: "追加任务",
       request_user_input_async: "提问",
-      // Gemini
-      list_directory: "列出目录",
-      update_topic: "更新主题",
-      enter_plan_mode: "进入计划",
-      exit_plan_mode: "提交计划",
-      save_memory: "保存记忆",
+      // Antigravity（真机库里的工具名）
+      ask_question: "提问",
+      generate_image: "生成图片",
       // Kimi
       NotifyUser: "通知",
       WaitFor: "等待",
@@ -2054,8 +2047,10 @@ export const zh = {
       "/compact": "压缩上下文，只保留要点",
       "/compress": "压缩上下文，只保留要点",
       "/config": "打开配置",
+      "/context": "查看上下文占用",
       "/cost": "查看本次会话花费",
       "/diff": "查看工作区改动",
+      "/effort": "调整思考力度",
       "/exit": "退出会话",
       "/help": "查看全部命令",
       "/init": "为项目生成说明文件",
@@ -2070,6 +2065,8 @@ export const zh = {
       "/status": "查看会话状态",
       "/tools": "查看可用工具",
       "/undo": "撤回最近一轮对话",
+      "/rewind": "回退到之前的某一轮",
+      "/usage": "查看额度用量",
     } as Record<string, string>,
   },
   errorLabels: {
@@ -2541,7 +2538,7 @@ export const zh = {
     loginCancelled: "已取消等待。在终端登录后切回会自动检测",
     loginFailed: "拉起登录失败",
     loginTimeout: "未检测到登录。在终端登录后切回会自动检测",
-    // API Key 登录（gemini：官方已停掉个人账号的 OAuth，key 是唯一活路）
+    // API Key 登录（ApiKeyLoginCap 通用入口，目前没有插件声明；最初为已移除的 gemini 插件引入）
     apiKeyLogin: "API Key 登录",
     apiKeyPlaceholder: "粘贴 API Key",
     apiKeySave: "保存",

@@ -56,7 +56,7 @@ stash: ComposerStash | null,
  */
 clear_inputs: Array<string>, 
 /**
- * 一轮 `clear_inputs` 清不完时最多重复几轮，每轮后复核（gemini 用行删除键逐行清）。
+ * 一轮 `clear_inputs` 清不完时最多重复几轮，每轮后复核（已移除的 gemini 插件曾用行删除键逐行清）。
  * 1 = 一轮清空整段。
  */
 clear_rounds: number, 

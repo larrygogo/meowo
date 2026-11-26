@@ -5,7 +5,7 @@ import { ChatWindow } from "./ChatWindow";
 import { zh } from "../i18n/zh";
 
 describe("跨Provider发送保护", () => {
-  it.each(["codex", "kimi", "gemini", "opencode"])("%s：已知待批、题面未知时不写正文或Enter，原文可找回", async (provider) => {
+  it.each(["codex", "kimi", "antigravity", "opencode"])("%s：已知待批、题面未知时不写正文或Enter，原文可找回", async (provider) => {
     const base = adapter.setup(751, provider);
     invoke.mockImplementation((command, args) => command === "get_chat_history"
       ? Promise.resolve({ ...adapter.history(751, provider), pendingReview: "permission" })

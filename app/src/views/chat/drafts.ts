@@ -95,7 +95,7 @@ export function saveStoredDraft(sessionId: number, prompt: string, attachments: 
 
 export function promptWithAttachments(prompt: string, attachments: Attachment[], instruction: (files: string) => string, mention = false): string {
   if (!attachments.length) return prompt;
-  // @提及是提交时的原生附加(claude/gemini 实测,由插件按版本声明 attachment_mention)。
+  // @提及是提交时的原生附加(claude 实测,由插件按版本声明 attachment_mention)。
   // 三个硬性例外整条退回指令文本,保持单一注入形态:
   // - 路径含空白:提及解析在空白处截断(claude 实测),后半截变成正文;
   // - 图片:@提及不会作为图像块附加(claude -p 实测,模型明说看不到),指令文本反而

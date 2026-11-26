@@ -1123,7 +1123,7 @@ pub(crate) fn session_connected(
 /// broker 上（AskUserQuestion 的 PreToolUse 代答挂起）还是表单已落在终端里，等的期间
 /// DB 标记都正是对的；代答/作答后由 reporter（settled）与 resolve 命令当场清位。
 ///
-/// **其余 provider（codex/kimi/gemini/opencode）**：审批框在屏幕上，approval 标记同样要等
+/// **其余 provider（codex/kimi/antigravity/opencode）**：审批框在屏幕上，approval 标记同样要等
 /// PostToolUse 才清。屏幕**确凿** working（`screen_working`，只传 confirmed_state，不含回退）
 /// 说明审批框已答、命令在跑，标记已过期：批完一条跑几分钟的构建，这期间不该挂「等审批」、
 /// 也不该拦对话页发送（2026-11-13 做空复现）。屏幕真挂着审批框时是 blocked，不会走到这里。
@@ -1772,7 +1772,7 @@ mod tests {
         );
         assert_eq!(pending_review_live("claude", None, false, false), None);
         // 审批不经 hook 决定的 provider：屏幕确凿在跑 = 审批框已答、命令在跑，标记过期（做空复现）。
-        for provider in ["kimi", "gemini", "opencode"] {
+        for provider in ["kimi", "antigravity", "opencode"] {
             assert_eq!(pending_review_live(provider, Some("approval"), false, true), None, "{provider}");
             // 屏幕没确凿在跑（blocked/idle/回退）时照旧显示。
             assert_eq!(pending_review_live(provider, Some("approval"), false, false), Some("approval"), "{provider}");
