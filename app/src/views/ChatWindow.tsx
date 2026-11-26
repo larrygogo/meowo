@@ -81,7 +81,7 @@ import { modeChoiceViews, screenShowsAny } from "./chat/modeChoices";
 import { QuestionPanels } from "./chat/QuestionPanels";
 import { appendQuote, QuoteSelection } from "./chat/QuoteSelection";
 import { RemoteTerminalKeys } from "./chat/RemoteTerminalKeys";
-import { peekSessionMeta, prefetchPending, recallHistory, rememberHistory, takePrefetch, trackPrefetch } from "./chat/historyCache";
+import { forgetHistory, peekSessionMeta, prefetchPending, recallHistory, rememberHistory, takePrefetch, trackPrefetch } from "./chat/historyCache";
 import { ChatTitleMenu, ChatTitlePlaceholder } from "./chat/TitleMenus";
 import { displayKeys, QuickSwitcher, RenameModal, ShortcutSheet, tipWithKeys, type PaletteCommand } from "./chat/WindowModals";
 import { buildPaletteCommands, OPEN_WITH_PREFIX } from "./chat/paletteCommands";
@@ -182,6 +182,8 @@ function initialSessionId(): number {
   return 0;
 }
 
+/** 列表不属于当前会话时渲染的空表（固定引用，免得下游 memo 每轮失效）。 */
+const NO_ITEMS: ChatItem[] = [];
 const NO_REVIEW_COMMENTS: readonly ReviewComment[] = [];
 const NO_TOUCHED_PATHS: readonly string[] = [];
 const NO_URLS: readonly string[] = [];
@@ -234,7 +236,37 @@ export function ChatWindow() {
   const dirGone = !!history?.cwdMissing && !history.connected && !history.background;
   // 「新开会话」的去处：推得出原项目就预填它；推不出不预填（不拿已经没了的目录去预填）。
   const dirGoneOrigin = dirGone ? history?.originRoot ?? null : null;
-  const [items, setItems] = useState<ChatItem[]>([]);
+  // 消息列表带上它属于哪个会话（owner）：渲染、增量合并、写快照只认 owner === 当前会话的那份。
+  // 2026-11-26 用户实拍：新建会话的第一条消息上方出现了同工作区另一个会话 14:29 的旧回复
+  // （新会话 transcript 干净、后端按 id 精确读取，内容与那个会话的前端快照吻合），具体是哪条
+  // 异步路径把别的会话的内容写进来没能复现。所以不逐个补 guard，而是让所有写入口经 setItemsFor
+  // 声明归属：别的会话的内容即便迟到落进来，也显示不到当前会话上，并写一行 foreign_timeline 日志。
+  const [timeline, setTimeline] = useState<{ owner: number; items: ChatItem[] }>(() => ({ owner: sessionId, items: [] }));
+  const items = timeline.owner === sessionId ? timeline.items : NO_ITEMS;
+  const timelineRef = useRef(timeline);
+  timelineRef.current = timeline;
+  /** 写某个会话的消息列表。updater 拿到的 prev 只会是这个会话自己的列表（不是就当空）。 */
+  const setItemsFor = useCallback((owner: number, next: ChatItem[] | ((prev: ChatItem[]) => ChatItem[])) => {
+    const current = timelineRef.current;
+    if (current.owner !== owner && current.items.length > 0 && typeof next === "function") {
+      // 正常流程里换会话由 resetTo 先把归属切过去，增量写入不会碰到别人的列表；碰到了就是那条没定位的竞态。
+      logChatEvent(owner, { kind: "foreign_timeline", reason: "write_over_foreign", detail: { holder: current.owner, count: current.items.length } });
+    }
+    setTimeline((prev) => {
+      const base = prev.owner === owner ? prev.items : NO_ITEMS;
+      const value = typeof next === "function" ? next(base) : next;
+      return prev.owner === owner && value === prev.items ? prev : { owner, items: value };
+    });
+  }, []);
+  // 渲染时发现手上的列表属于别的会话（被藏起来了）：记一次，便于定位是谁写进来的。每对 (持有者, 当前会话) 只记一次。
+  const foreignLoggedRef = useRef("");
+  useEffect(() => {
+    if (sessionId === 0 || timeline.owner === sessionId || timeline.items.length === 0) return;
+    const key = `${timeline.owner}>${sessionId}`;
+    if (foreignLoggedRef.current === key) return;
+    foreignLoggedRef.current = key;
+    logChatEvent(sessionId, { kind: "foreign_timeline", reason: "hidden_foreign", detail: { holder: timeline.owner, count: timeline.items.length } });
+  }, [sessionId, timeline]);
   // CLI 的送达回执（claude 入队记录）：不进时间线，只喂给发出消息的对账。按会话归零。
   const [queueAcks, setQueueAcks] = useState<readonly PromptAck[]>([]);
   // 异步流程里读最新消息（撤回要等被撤的那条从对话里消失）。
@@ -2043,7 +2075,8 @@ export function ChatWindow() {
       next.delete(id);
       return next;
     });
-    setItems([]);
+    // 归属与 sessionId 同一批切过去：之后哪个写入方还拿着旧会话的 id 写，都落不到这个会话上。
+    setTimeline({ owner: id, items: NO_ITEMS });
     setQueueAcks([]);
     setPrefixSegments([]);
     setHistory(null);
@@ -2112,11 +2145,17 @@ export function ChatWindow() {
     // 看过的会话直接用快照出画面（对照 Kimi 的会话池），不清屏、不出骨架屏；随后的增量
     // 轮询从快照的 offset 续读，期间的新消息照常补上。必须排在上面那串清零之后，同一批
     // 更新里后写的生效。
-    const snapshot = recallHistory(id);
+    let snapshot = recallHistory(id);
+    // 快照按会话 id 存，内容也得是这个会话的：对不上就扔掉、照常加载（串内容事故的兜底之一）。
+    if (snapshot && snapshot.history.sessionId !== id) {
+      logChatEvent(id, { kind: "foreign_timeline", reason: "snapshot_mismatch", detail: { holder: snapshot.history.sessionId, count: snapshot.items.length } });
+      forgetHistory(id);
+      snapshot = undefined;
+    }
     if (snapshot) {
       offsetRef.current = snapshot.offset;
       earliestRef.current = snapshot.earliest;
-      setItems(snapshot.items);
+      setTimeline({ owner: id, items: snapshot.items });
       setHistory(snapshot.history);
       setHasEarlier(snapshot.hasEarlier);
       setCapabilityOffset(snapshot.offset);
@@ -2238,8 +2277,9 @@ export function ChatWindow() {
     busyRef.current = true;
     try {
       // 首读若已在列表上预取（按下/悬停时发出），直接接过那一发，不重复读。
-      const prefetched = offsetRef.current === 0 ? takePrefetch(sessionId) : undefined;
-      const next = await (prefetched ?? getChatHistory(sessionId, offsetRef.current));
+      const requested = offsetRef.current;
+      const prefetched = requested === 0 ? takePrefetch(sessionId) : undefined;
+      const next = await (prefetched ?? getChatHistory(sessionId, requested));
       if (activeSessionRef.current !== sessionId) return;
       // 空批次的 reset 不采信:transcript 暂不可解析(换 profile 的路径切换途中、compaction
       // 重写期间 resolve 不到文件)时,后端会回 reset=true + items=[] + offset 原值。照单清屏
@@ -2281,7 +2321,12 @@ export function ChatWindow() {
         const merged = { ...next, agentModes };
         return sameHistoryMeta(prev, merged) ? prev : merged;
       });
-      setItems((prev) => next.items.length || reset ? reduceChatEvents(prev, next.items, reset) : prev);
+      // 从头读（offset 0）的这一发就是这个会话的全部内容：此前手上不该有任何消息（看过的会话走快照，
+      // offset 不为 0）。真有，就是别处混进来的（串内容事故的兜底之二）——以这一发为准整段替换，并记一行。
+      const leftover = requested === 0 && timelineRef.current.owner === sessionId ? timelineRef.current.items.length : 0;
+      if (leftover > 0) logChatEvent(sessionId, { kind: "foreign_timeline", reason: "first_read_leftover", detail: { count: leftover } });
+      const replace = reset || leftover > 0;
+      setItemsFor(sessionId, (prev) => next.items.length || replace ? reduceChatEvents(prev, next.items, replace) : prev);
       // reset 整读回来的是全量历史，不是新落盘的内容，计进去同样会误判「答案已送达」。
       if (!reset) tailGrowthRef.current += next.items.length;
       if (!emptyReset) {
@@ -2319,7 +2364,7 @@ export function ChatWindow() {
     } finally {
       busyRef.current = false;
     }
-  }, [sessionId]);
+  }, [sessionId, setItemsFor]);
 
   // 读取失败时的「立即重试」：轮询本来就在重试，但用户只能干等下一拍（UI 调研 chat #13）。
   const retryNow = <button type="button" className="chat-retry-now" onClick={() => void refresh()}>{t.chat.retryNow}</button>;
@@ -2612,7 +2657,7 @@ export function ChatWindow() {
       // 等）由 reduceChatEvents 的既有规则顺带处理。
       // 与轮询共用 busyRef，此处 items 闭包就是当前值，可以先算合并结果再一次性落。
       const merged = reduceChatEvents(reduceChatEvents([], page.items, true), items, false);
-      setItems(merged);
+      setItemsFor(sessionId, merged);
       // 前插的是旧消息，不算未读：未读快照同步抬高，否则「加载更早」会把徽章灌大。
       // 增量按 countsAsUnseen 同一口径数，与徽章计数一致。
       if (awayCountRef.current !== null) {
@@ -2894,7 +2939,7 @@ export function ChatWindow() {
         onUndone: () => {
           // 菜单式撤回不写 transcript：本地先收掉被撤的消息（下一条落盘时读取层按分叉收回）。
           if (control.menu) {
-            setItems((current) => {
+            setItemsFor(sessionId, (current) => {
               const at = current.findIndex((item) => item.id === id);
               return at < 0 ? current : current.slice(0, at);
             });
