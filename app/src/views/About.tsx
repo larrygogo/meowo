@@ -1270,7 +1270,9 @@ export function About() {
                 inTeamPage ? (
                   <TeamSection onBack={leaveTeam} draft={teamDraft} nudge={teamNudge} />
                 ) : (
-                  <GeneralSection searching={searching} onOpenTeam={() => pickGeneralView("team")} />
+                  // 子页只在非搜索态渲染（inTeamPage 要求 !searching）：从搜索结果点进来得先清词、落到通用分区，
+                  // 否则点了没反应、清词后才冒出来（2026-11-26 安装版实拍）。
+                  <GeneralSection searching={searching} onOpenTeam={() => { setQuery(""); pickSec("general"); pickGeneralView("team"); }} />
                 )
               ) : s === "appearance" ? (
                 <AppearanceSection />

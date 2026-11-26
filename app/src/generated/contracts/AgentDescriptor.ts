@@ -49,6 +49,17 @@ supports_account: boolean,
  */
 supports_api_key_login: boolean, 
 /**
+ * 有没有**交互式登录入口**（默认实况的 `login_argv()` 有值）。
+ *
+ * 与 `supports_account` 分开：antigravity 能读出账号和用量（凭据在系统凭据库），但 agy 没有登录
+ * 子命令，Meowo 拉不起登录——这时只显示账号，不给「登录」按钮。
+ */
+supports_login: boolean, 
+/**
+ * 有没有**登出办法**（登出命令，或可删的凭据文件）。antigravity 两样都没有，不给「退出登录」。
+ */
+supports_logout: boolean, 
+/**
  * 这个 agent 能不能有**多个账号**（＝插件声明了 `ProfileSpec`）。
  *
  * false（antigravity：数据目录没有可覆盖的环境变量）→ 前端不给「添加账号」入口。「只有一个默认账号」

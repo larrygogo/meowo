@@ -458,10 +458,15 @@ mod tests {
     fn account_capability_matches_the_declared_matrix() {
         let with: std::collections::BTreeSet<&str> =
             all_with_account().map(|p| p.id().as_str()).collect();
+        // antigravity 的账号能力只在 Windows 声明：它的 token 在系统凭据库，Windows 凭据管理器能静默读；
+        // macOS 读别家 Keychain 条目会弹授权框，不接。
+        let mut expected = vec!["claude", "codex", "kimi", "opencode"];
+        if cfg!(target_os = "windows") {
+            expected.push("antigravity");
+        }
         assert_eq!(
             with,
-            // antigravity 没有账号能力：凭据在系统钥匙串、没有登录登出子命令（插件不声明 account）。
-            ["claude", "codex", "kimi", "opencode"]
+            expected
                 .into_iter()
                 .collect::<std::collections::BTreeSet<_>>(),
             "账号能力的覆盖面变了——加/减了 agent，还是漏声明了能力槽？"
@@ -477,19 +482,30 @@ mod tests {
         }
     }
 
-    /// **有账号能力 ⇒ 必须有登录入口。** 两者一旦脱节，前端就会亮出一个点了必失败的登录按钮：
-    /// 卡片按「有账号能力但没登录」显示登录按钮，后端的 `login_argv()` 却是 None，只能回一句
-    /// 「该 agent 未声明登录入口」。已移除的 gemini 插件当年正是这么翻车的——它没有登录子命令（登录靠裸启动），
-    /// 而当时的 `login_args: &[]` 被当成「无入口」。
+    /// **有账号能力但没登录入口的，必须是登记过的「只读账号」，且描述符告诉前端别给登录按钮。**
+    /// 两者一旦脱节，前端就会亮出一个点了必失败的登录按钮：已移除的 gemini 插件当年正是这么翻车的
+    /// （它没有登录子命令，`login_args: &[]` 被当成「无入口」）。antigravity 能读账号和用量，
+    /// 但 agy 没有登录登出子命令，所以靠 `supports_login: false` 让卡片不出登录按钮。
     #[test]
     fn every_agent_with_account_can_actually_be_logged_in() {
+        const READ_ONLY_ACCOUNT: &[&str] = &["antigravity"];
         for p in all_with_account() {
             let inst = p
                 .resolve()
                 .unwrap_or_else(|| panic!("{} 解析不出安装实况", p.id()));
+            let desc = meowo_agent::descriptor::AgentDescriptor::of(p);
+            if inst.login_argv().is_some() {
+                assert!(desc.supports_login, "{} 有登录入口，描述符却没下发", p.id());
+                continue;
+            }
             assert!(
-                inst.login_argv().is_some(),
+                READ_ONLY_ACCOUNT.contains(&p.id().as_str()),
                 "{} 有账号能力却没有登录入口——登录按钮会亮出来，点下去必然失败",
+                p.id()
+            );
+            assert!(
+                !desc.supports_login,
+                "{} 没有登录入口，描述符却让前端显示登录按钮",
                 p.id()
             );
         }

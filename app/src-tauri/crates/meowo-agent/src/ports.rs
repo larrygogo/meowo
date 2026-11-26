@@ -94,6 +94,14 @@ pub trait KeychainPort: Sync {
     ) -> Result<(), String> {
         Err("本平台无可用密钥链".into())
     }
+    /// 读别家 CLI 用 go-keyring 写进系统凭据库的条目（agy 把 OAuth token 存在 `gemini:antigravity`）。
+    ///
+    /// 与 [`available`](KeychainPort::available) 无关：Windows 上 `available()` 仍是 false（claude
+    /// 凭据照旧走文件），这里只是按名字取一条别人的凭据。只有 Windows 实装（凭据管理器，target 即
+    /// `service:user`）；macOS 读别家的 Keychain 条目会弹系统授权框，不实装。
+    fn read_foreign_secret(&self, _service: &str, _user: &str) -> Option<String> {
+        None
+    }
 }
 
 /// 注入给能力方法的一组端口。

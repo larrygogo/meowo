@@ -192,8 +192,36 @@ impl KeychainPort for SystemKeychain {
     }
 }
 
-/// 非 macOS：无密钥链，凭据走文件。全部方法取 trait 默认实现（`available()` 恒 false）。
-#[cfg(not(target_os = "macos"))]
+/// Windows：claude 凭据走文件（`available()` 恒 false），只实装按名读别家 CLI 的凭据。
+#[cfg(target_os = "windows")]
+impl KeychainPort for SystemKeychain {
+    /// go-keyring 在 Windows 写的是普通凭据，target = `service:user`（agy 的 `gemini:antigravity`，
+    /// cmdkey /list 实测）。
+    fn read_foreign_secret(&self, service: &str, user: &str) -> Option<String> {
+        use windows_sys::Win32::Security::Credentials::{CredFree, CredReadW, CREDENTIALW, CRED_TYPE_GENERIC};
+        let target: Vec<u16> = format!("{service}:{user}").encode_utf16().chain(std::iter::once(0)).collect();
+        let mut cred: *mut CREDENTIALW = std::ptr::null_mut();
+        // SAFETY: target 以 0 结尾；成功时 cred 由系统分配，读完用 CredFree 释放。
+        if unsafe { CredReadW(target.as_ptr(), CRED_TYPE_GENERIC, 0, &mut cred) } == 0 {
+            return None;
+        }
+        // SAFETY: 成功时 cred 非空，CredentialBlob 指向 CredentialBlobSize 字节。
+        let bytes = unsafe {
+            let c = &*cred;
+            let blob = if c.CredentialBlob.is_null() || c.CredentialBlobSize == 0 {
+                Vec::new()
+            } else {
+                std::slice::from_raw_parts(c.CredentialBlob, c.CredentialBlobSize as usize).to_vec()
+            };
+            CredFree(cred as *const core::ffi::c_void);
+            blob
+        };
+        String::from_utf8(bytes).ok().filter(|s| !s.is_empty())
+    }
+}
+
+/// Linux：无密钥链，凭据走文件。全部方法取 trait 默认实现。
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 impl KeychainPort for SystemKeychain {}
 
 /// 从 `security find-generic-password -g` 的属性输出里抠出 account（`"acct"<blob>=...`）。

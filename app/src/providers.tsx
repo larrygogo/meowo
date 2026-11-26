@@ -9,9 +9,12 @@ import type { ReactElement } from "react";
 // 不再把整张 PNG 以超长 base64 内嵌进源码（增大 bundle/难 diff）。四角本就透明，无需圆角裁剪。
 import kimiLogo from "./assets/kimi.png";
 // Antigravity 官方 logomark（多色渐变拱形）：取自官网 favicon.svg（antigravity.google），去掉圆形底、
-// viewBox 裁到图形本身，做成与旧 Gemini sparkle 同类的**裸**图标。渐变靠 mask + 模糊椭圆，
-// 当静态资源打包、用 <img> 显示（内联进 React 树会和别的 SVG 撞 id）。
-import antigravityLogo from "./assets/antigravity.svg";
+// viewBox 裁到图形本身，做成与旧 Gemini sparkle 同类的**裸**图标。
+// 用 128px PNG 而不是原 SVG：原图渐变靠十个高斯模糊滤镜叠出来，WebKit（iPhone Safari / macOS 桌面）
+// 对 <img> 里带滤镜的 SVG 按 CSS 尺寸 1 倍出位图再放大，3 倍屏上手机对话页标题处糊成色块
+// （2026-11-26 用户实拍；Playwright WebKit 复现 naturalWidth=13，Edge 为 96）。
+// PNG 由 site/assets/antigravity.svg 在 Edge 里 128×128 透明底渲染得来，换图时同样重出。
+import antigravityLogo from "./assets/antigravity.png";
 
 function ClaudeMark() {
   // 官方 Claude logomark（赤陶色 sunburst）：fill=currentColor，由容器着色——裸图标场景

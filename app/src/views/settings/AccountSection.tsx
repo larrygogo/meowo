@@ -126,10 +126,10 @@ function fmtResetIn(iso: string, t: Dict): string {
 
 function laneLabel(lane: UsageLane, t: Dict): string {
   switch (lane.kind) {
-    case "five_hour": return t.account.laneFiveHour;
+    case "five_hour": return lane.label ? t.account.laneGroupFiveHour(lane.label) : t.account.laneFiveHour;
     case "seven_day": return t.account.laneSevenDay;
     case "opus": return t.account.laneOpus;
-    case "weekly": return t.account.laneWeekly;
+    case "weekly": return lane.label ? t.account.laneModelWeekly(lane.label) : t.account.laneWeekly;
     // 模型专属周限(claude 的 Fable/Opus 周配额):模型名由 API 下发,缺失时退回通用周配额文案。
     case "model_weekly": return lane.label ? t.account.laneModelWeekly(lane.label) : t.account.laneWeekly;
     case "balance": return t.account.laneBalance;
@@ -176,7 +176,7 @@ function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
 
 // 单个 provider 卡片：安装/登录/用量三态。已装且登录 = 现有账号信息 + 用量泳道 + 刷新按钮 + 贴纸显示开关；
 // 已装未登录 = 提示语；未装 = 一键安装按钮。
-function ProviderCard({ provider, name, installed, supportsAccount, supportsApiKeyLogin, supportsProfiles, movesSessionsAcrossAccounts, supportsContext, relay, payload, usage, err, onRefresh, installOp, onStartInstall, onCancelInstall, onLoggedIn, loginState, onStartLogin, onCancelLogin, refreshing, settings, patchSettings, onToggleQuota, usageRefreshedAt, updateInfo, mcpConfigUnreadable = null }: {
+function ProviderCard({ provider, name, installed, supportsAccount, supportsLogin = true, supportsLogout = true, supportsApiKeyLogin, supportsProfiles, movesSessionsAcrossAccounts, supportsContext, relay, payload, usage, err, onRefresh, installOp, onStartInstall, onCancelInstall, onLoggedIn, loginState, onStartLogin, onCancelLogin, refreshing, settings, patchSettings, onToggleQuota, usageRefreshedAt, updateInfo, mcpConfigUnreadable = null }: {
   provider: AgentId;
   /** 展示名，来自后端 list_agents()（产品名，不翻译）。 */
   name: string;
@@ -190,6 +190,10 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
    * `login_argv()` 是 None，点下去只会得到一句「拉起登录失败」。
    */
   supportsAccount: boolean;
+  /** 有交互式登录入口（后端 `supports_login`）。antigravity 能读账号却拉不起登录，不给「登录」。 */
+  supportsLogin?: boolean;
+  /** 有登出办法（后端 `supports_logout`）。antigravity 没有登出命令也没有凭据文件，不给「退出登录」。 */
+  supportsLogout?: boolean;
   /**
    * 该 agent 能否用 API Key 登录（ApiKeyLoginCap；通用能力，目前没有插件声明，最初为已移除的 gemini 插件引入）。
    * true → 未登录时在「登录」旁边多一个「API Key 登录」入口。
@@ -682,7 +686,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
         {/* 顶部这两个按钮作用于**当前活跃账号**（卡片头部显示的正是它的信息）。下面账号列表里的
             同名按钮则针对具体某一行——两者并存不是冗余：一个是「当前账号」的快捷方式，
             一个是「哪一个账号」的精确操作。 */}
-        {isInstalled && !isLoggedIn && !relayEnabled && supportsAccount && (
+        {isInstalled && !isLoggedIn && !relayEnabled && supportsAccount && supportsLogin && (
           <button
             type="button"
             className={"provider-card-action" + (justInstalled ? " btn-primary" : "")}
@@ -710,7 +714,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
             {t.account.apiKeyLogin}
           </button>
         )}
-        {isInstalled && acc && !relayEnabled && (
+        {isInstalled && acc && !relayEnabled && supportsLogout && (
           <button
             type="button"
             className="provider-card-action"
@@ -1604,6 +1608,8 @@ export function AccountSection({ view = "account", onViewChange, showAll = false
         name={cur.display_name}
         installed={installed === null ? null : installed.has(cur.id)}
         supportsAccount={cur.supports_account}
+        supportsLogin={cur.supports_login}
+        supportsLogout={cur.supports_logout}
         supportsApiKeyLogin={cur.supports_api_key_login ?? false}
         supportsProfiles={cur.supports_profiles}
         movesSessionsAcrossAccounts={cur.moves_sessions_across_accounts ?? false}
