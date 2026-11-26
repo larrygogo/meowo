@@ -1,0 +1,25 @@
+{
+  "_说明": "认底线用的开头说法和样例。后端 team_personal.rs 用它下发 floor_prefixes，前后端的测试都跑下面两组样例，保证两边判断一致。规则：去掉首尾空白、转小写后以某个说法开头，且紧跟着结尾、空白或分隔标点（：:，,、；;。（( 等）。连字符、撇号、下划线和汉字都不算分隔。",
+  "prefixes": [
+    "上生产", "部署到生产", "发布到生产",
+    "花钱",
+    "改生产配置或密钥", "改生产配置", "改密钥",
+    "对外发消息",
+    "删除数据", "删数据",
+    "ship to production", "deploy to production", "deploy to prod",
+    "spend money",
+    "change production config",
+    "send messages out",
+    "delete data"
+  ],
+  "floor": [
+    "上生产", "上生产：先给我看发布计划", "花钱：开机器、买资源", "花钱，开云主机", "改生产配置或密钥", "改生产配置（含环境变量）", "改密钥",
+    "对外发消息：聊天群、邮件、webhook", "对外发消息（飞书群）", "删除数据", "删除数据（清理测试库）", "  花钱：开机器",
+    "Deploy to production", "Deploy to prod on Fridays", "DEPLOY TO PROD", "delete data: old snapshots", "Spend money (cloud)"
+  ],
+  "not_floor": [
+    "推 beta", "合并", "删除数据库表前先导出备份", "花钱超过 100 元先问", "上生产前先跑冒烟", "上生产环境部署",
+    "改生产配置文件的格式说明", "Deleted data recovery runbook", "Deploy to prod-like staging first",
+    "Deploy to production-like env is fine", "Spend money-saving effort on caching", "deploy to prod's mirror", "删除数据_tmp 目录"
+  ]
+}

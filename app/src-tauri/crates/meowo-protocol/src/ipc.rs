@@ -1590,6 +1590,54 @@ pub struct LeadDeliveryDto {
     pub can_retry: bool,
 }
 
+/// 团队设置子页：个人层 config.json 里界面管的那几项（team_personal.rs）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct TeamPersonalConfigDto {
+    pub personal_dir: String,
+    pub config_path: String,
+    /// config.json 在不在。不在时界面给「新建」，保存时才创建。
+    pub exists: bool,
+    /// 在却读不出时的原因（和守卫同一个判断）；这时界面只读、不能保存。
+    pub error: Option<String>,
+    /// 写坏时解析器报的行号（从 1 开始），以及这一行前 2 行到后 1 行的原文，界面照原样摆出来。
+    pub error_line: Option<u32>,
+    pub error_first_line: u32,
+    pub error_lines: Vec<String>,
+    /// authority 三档是不是用的模板默认值（文件不存在或没写 authority）。界面照常显示，第一次改动时写进文件。
+    pub authority_defaulted: bool,
+    /// 读到的文件内容指纹；保存时带回来，磁盘上被改过就拒绝覆盖。
+    pub token: String,
+    pub taste: Option<String>,
+    /// taste 指向的文件现在读得到吗（网盘没挂载、文件被挪走时为 false）。
+    pub taste_exists: bool,
+    pub protected: Vec<String>,
+    pub do_and_report: Vec<String>,
+    pub ask_at_end: Vec<String>,
+    /// 用户在底线五样之外追加的「动手前先问」。底线本身不存在这里，界面锁定展示。
+    pub ask_first: Vec<String>,
+    /// 认底线用的开头说法（小写）。界面按它实时判断：写在「直接做」「结尾一次问」里的标「不生效」，
+    /// 写在「动手前先问」里的并到锁组下只读展示。只有一份清单，放在后端。
+    pub floor_prefixes: Vec<String>,
+    /// 额外拦截的命令条数（正则，只在文件里编辑）。
+    pub blocked_command_count: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SaveTeamPersonalConfigArgs {
+    pub token: String,
+    pub taste: Option<String>,
+    pub protected: Vec<String>,
+    pub do_and_report: Vec<String>,
+    pub ask_at_end: Vec<String>,
+    pub ask_first: Vec<String>,
+}
+
 /// 设置页「团队」一行的状态（team.rs）。只支持 Claude Code，所以没有按 provider 分行。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]

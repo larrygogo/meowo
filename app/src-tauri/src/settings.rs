@@ -1059,10 +1059,11 @@ fn spawn_browser(url: String) -> Result<(), String> {
     // Windows：CreateProcess 在杀软实时扫描下 100ms+ 是常态，且本函数会被托盘菜单回调
     // 在主线程直接调用（0.2.0 曾因主线程 spawn 子进程卡死设置页）——放后台线程。
     // status() 同 macOS 分支的理由：已在后台线程，阻塞等待无害。
+    // 不能用 `explorer <url>`：explorer 自己解析命令行，带 `?…&…` 查询串的长链接（如飞书
+    // 设备码授权页）会被当成路径，打开的是「文档」文件夹而不是浏览器。ShellExecuteW 直接
+    // 按 URL 协议关联交给默认浏览器，不经任何命令行解析。
     #[cfg(target_os = "windows")]
-    std::thread::spawn(move || {
-        let _ = std::process::Command::new("explorer").arg(&url).status();
-    });
+    std::thread::spawn(move || shell_open_url(&url));
     // macOS：open 偶发慢（默认浏览器冷启动），放后台线程不挡主线程。
     // spawn_detached 负责拉起后 wait 回收：spawn 后不 wait，Unix 上 Child 被 drop 不会
     // reap，常驻托盘的本进程会积累 <defunct> 僵尸。本函数语义不在乎拉起成败，错误吞掉。
@@ -1073,6 +1074,26 @@ fn spawn_browser(url: String) -> Result<(), String> {
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let _ = url;
     Ok(())
+}
+
+/// 用系统的 URL 协议关联打开链接（默认浏览器）。调用方已校验 scheme 只能是 http/https。
+#[cfg(target_os = "windows")]
+fn shell_open_url(url: &str) {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let wide = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+    let (verb, file) = (wide("open"), wide(url));
+    // SAFETY：两个指针都指向本函数内存活、以 0 结尾的 UTF-16 缓冲；其余参数按文档可为空。
+    unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            file.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        );
+    }
 }
 
 /// 设置/关于页与托盘用：打开官网或本仓库链接。只放行白名单前缀——这些入口是**应用自己**

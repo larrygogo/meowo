@@ -273,11 +273,14 @@ export function ActionMenu({
   items,
   label,
   testId,
+  glyph = icMore,
 }: {
   items: { key: string; label: string; danger?: boolean; onSelect: () => void }[];
   /** 触发按钮的无障碍名（也用作 tooltip）。 */
   label: string;
   testId?: string;
+  /** 触发按钮的图标，默认 `⋯`。团队设置子页的换档菜单用 `⇕`（设计稿 designer-1 C 版）。 */
+  glyph?: typeof icMore;
 }) {
   const { open, setOpen, pos, ref, btnRef, menuRef, toggle, onKeyDown } = useMenuPopup({});
   if (items.length === 0) return null;
@@ -294,7 +297,7 @@ export function ActionMenu({
         data-testid={testId}
         onClick={toggle}
       >
-        <Icon glyph={icMore} size={14} />
+        <Icon glyph={glyph} size={14} />
       </button>
       {open && (
         <div className="dd-menu" role="menu" ref={menuRef} style={{ position: "fixed", top: pos.top, bottom: pos.bottom, right: pos.right }}>

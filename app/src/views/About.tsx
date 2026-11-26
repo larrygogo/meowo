@@ -28,6 +28,8 @@ import { displayKeys, KeyCombos, shortcutGroups } from "./chat/WindowModals";
 import { SETTINGS_SECTION_KEY } from "../settingsNav";
 import { Icon } from "../icons/Icon";
 import { icBell, icClose, icContrast, icSearch, icSettings } from "../icons/glyphs";
+import { icChevronRight } from "../icons/glyphs.scm";
+import { TeamSection, useTeamDraft } from "./settings/TeamSection";
 import { icBot, icCards, icGitPr, icInfo, icKeyboard, icSmartphone } from "../icons/glyphs.settings";
 import { busyProps } from "../busyButton";
 
@@ -228,7 +230,7 @@ export function LeadProviderRows({ onInstalledChange }: { onInstalledChange?: (i
 
 // 通用：应用级设置（语言、自启、更新、网络代理、运行、Lead）。通知搬去了「通知」分区，
 // 会话与卡片的行为在 SessionsSection。
-export function GeneralSection({ searching = false }: { searching?: boolean } = {}) {
+export function GeneralSection({ searching = false, onOpenTeam }: { searching?: boolean; onOpenTeam?: () => void } = {}) {
   const t = useT();
   const [autostart, setAutostart] = useState(false);
   // autostart 是独立 invoke（不走 patch）：失败曾静默回滚，开关弹回去零解释。
@@ -346,7 +348,7 @@ export function GeneralSection({ searching = false }: { searching?: boolean } = 
           </div>
           <Switch checked={!!leadOn} onChange={toggleLead} label={t.settings.leadWorkflow} />
         </div>
-        <TeamRow leadOn={leadOn} />
+        <TeamRow leadOn={leadOn} onOpenTeam={onOpenTeam} />
         <LeadProviderRows onInstalledChange={setProviderLeadOn} />
       </div>
 
@@ -372,7 +374,7 @@ export function GeneralSection({ searching = false }: { searching?: boolean } = 
 
 /// 团队一行（team.rs）：Lead 的扩展，Lead 关着时不可用；关掉 Lead 时后端会把团队一起卸掉，所以跟着 leadOn 重读。
 /// 只有开关，没有按 CLI 分行：第一版只支持 Claude Code（团队规则 R12），说明里写明。
-function TeamRow({ leadOn }: { leadOn: boolean | null }) {
+function TeamRow({ leadOn, onOpenTeam }: { leadOn: boolean | null; onOpenTeam?: () => void }) {
   const t = useT();
   const [state, setState] = useState<TeamWorkflowStateDto | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -390,12 +392,12 @@ function TeamRow({ leadOn }: { leadOn: boolean | null }) {
   // 另一份 team 插件在加载时开关点了也只会被后端拒绝，提示已经写在行里：直接置灰，免得同一句话再以报错出现一次。
   const conflict = !!state?.conflict && !state.installed;
   return (
+    <>
     <div className="row row-sub">
       <div className="row-text">
         <div className="row-label">{t.settings.team}</div>
         <div className="row-desc">{t.settings.teamDesc}</div>
         {state && blocked && <div className="row-desc">{t.settings.teamNeedsLead}</div>}
-        {state?.installed && state.personalDir && <div className="row-desc">{t.settings.teamPersonal(state.personalDir)}</div>}
         {/* 路径是用户要去改的东西，不能被三行钳制吃掉（验收台截图里被截成「CLAUDE_CODE_PLUGIN_DIR…」）。 */}
         {state?.conflict && <div className="row-desc is-error is-full" role="alert">{t.settings.teamConflict(state.conflict)}</div>}
         {state?.personalConfigError && <div className="row-desc is-error is-full" role="alert">{t.settings.teamConfigBroken(state.personalConfigError)}</div>}
@@ -404,6 +406,17 @@ function TeamRow({ leadOn }: { leadOn: boolean | null }) {
       </div>
       <Switch checked={!!state?.installed} onChange={toggle} disabled={!state || conflict || (blocked && !state.installed)} label={t.settings.team} />
     </div>
+    {/* 团队设置子页入口（设计稿 designer-1 entry-dark）：装好之后才有，从右边推入、左上返回。 */}
+    {state?.installed && onOpenTeam && (
+      <button type="button" className="row row-sub row-link" onClick={onOpenTeam}>
+        <div className="row-text">
+          <div className="row-label">{t.settings.teamSettings}</div>
+          <div className="row-desc">{t.settings.teamSettingsDesc}</div>
+        </div>
+        <Icon glyph={icChevronRight} size={14} />
+      </button>
+    )}
+    </>
   );
 }
 
@@ -985,6 +998,9 @@ export function AboutSection({
   );
 }
 
+/** 通用页里看哪一层：主列表，或「团队设置」子页（team_personal.rs）。和 Agent 页的分段一样记在分区键里。 */
+type GeneralView = "main" | "team";
+
 const NAV_ICONS: Record<Section, () => React.JSX.Element> = {
   general: IconGear, appearance: IconAppearance, notify: IconBell, sessions: IconCards, account: IconAgent,
   github: IconGithub, remote: IconPhone, shortcuts: IconKeyboard, about: IconInfo,
@@ -992,8 +1008,9 @@ const NAV_ICONS: Record<Section, () => React.JSX.Element> = {
 
 /** 记住的 / 外部入口给的分区 id → 新结构里的位置。旧 id 不能落空白页：「网络」并进了通用，
  *  「扩展」成了 Agent 页的一段（localStorage 里可能还存着改版前停留的分区）。 */
-export function resolveSection(raw: string | null): { sec: Section; agentView?: AgentView } | null {
+export function resolveSection(raw: string | null): { sec: Section; agentView?: AgentView; generalView?: GeneralView } | null {
   switch (raw) {
+    case "team": return { sec: "general", generalView: "team" };
     case "general": case "appearance": case "notify": case "sessions": case "github": case "remote": case "shortcuts": case "about":
       return { sec: raw };
     case "account": return { sec: "account", agentView: "account" };
@@ -1014,6 +1031,36 @@ export function About() {
   const [sec, setSec] = useState<Section>(initial?.sec ?? "general");
   // Agent 页当前看哪一段。记在同一个分区键里（extensions = Agent 页的扩展段），重开窗口回到原处。
   const [agentView, setAgentView] = useState<AgentView>(initial?.agentView ?? "account");
+  const [generalView, setGeneralView] = useState<GeneralView>(initial?.generalView ?? "main");
+  const pickGeneralView = (view: GeneralView) => {
+    setGeneralView(view);
+    try { localStorage.setItem(SETTINGS_SECTION_KEY, view === "team" ? "team" : "general"); } catch { /* 隐私模式禁写 */ }
+  };
+  // 团队子页没保存的改动放在这一层：搜索、切分区时子页卸载也不丢（做空 redteam-2 N1）。
+  const teamDraft = useTeamDraft();
+  const teamDirty = useRef(false);
+  // 文件写坏时改动本来也存不进去，不拦离开（写坏页上另有放弃），免得把窗口困住（做空 redteam-3 R3-F）。
+  teamDirty.current = teamDraft.dirty && !teamDraft.dto?.error;
+  const [teamNudge, setTeamNudge] = useState(0);
+  // 返回、Esc 离开子页时还有没保存的改动：不走，让保存条闪一下（先保存或放弃）。
+  const leaveTeam = () => (teamDirty.current ? setTeamNudge((n) => n + 1) : pickGeneralView("main"));
+  // 记住的是团队子页，但团队已经关了（或在别处卸了）：回到通用主页，不停在一个没有入口的页面上。
+  useEffect(() => {
+    if (generalView !== "team") return;
+    let live = true;
+    teamWorkflowState()
+      .then((s) => {
+        if (!live || s.installed) return;
+        // 团队已经不在了，子页的草稿也没处可存：丢掉再回主页，免得关窗被拦却看不到保存条（做空 redteam-3 R3-G）。
+        teamDraft.setPending([]);
+        teamDraft.setConflict(null);
+        teamDirty.current = false;
+        pickGeneralView("main");
+      })
+      .catch(() => {});
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- pickGeneralView 每次渲染新建，只看子页切换
+  }, [generalView]);
   const pickAgentView = (view: AgentView) => {
     setAgentView(view);
     try { localStorage.setItem(SETTINGS_SECTION_KEY, view === "extensions" ? "extensions" : "account"); } catch { /* 隐私模式禁写 */ }
@@ -1025,7 +1072,7 @@ export function About() {
   const pickSec = (next: Section) => {
     setSec(next);
     setVisited((prev) => (prev.has(next) ? prev : new Set(prev).add(next)));
-    const stored = next === "account" && agentView === "extensions" ? "extensions" : next;
+    const stored = next === "account" && agentView === "extensions" ? "extensions" : next === "general" && generalView === "team" ? "team" : next;
     try { localStorage.setItem(SETTINGS_SECTION_KEY, stored); } catch { /* 隐私模式禁写 */ }
   };
   // 别的窗口经 openSettingsAt 指定分区时，设置窗若已开着只会被聚焦——跟着 storage 事件切过去
@@ -1037,22 +1084,51 @@ export function About() {
       if (next) {
         setSec(next.sec);
         if (next.agentView) setAgentView(next.agentView);
+        if (!teamDirty.current) setGeneralView(next.generalView ?? "main");
         setVisited((prev) => (prev.has(next.sec) ? prev : new Set(prev).add(next.sec)));
       }
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
-  const close = () => getCurrentWindow().close().catch(() => {});
-  useEscClose(close); // 弹出式任务窗的基本预期：Esc 关窗（输入框内让位）
+  const [query, setQuery] = useState("");
+  const searching = query.trim() !== "";
+  // 关窗前团队子页还有没保存的改动：回到子页、清掉搜索，让保存条闪一下，不关。
+  const holdForTeam = () => {
+    setQuery("");
+    pickSec("general");
+    pickGeneralView("team");
+    setTeamNudge((n) => n + 1);
+  };
+  const close = () => (teamDirty.current ? holdForTeam() : getCurrentWindow().close().catch(() => {}));
+  // 弹出式任务窗的基本预期：Esc 关窗（输入框内让位）。在子页里先返回上一层，和搜索框里 Esc 先清词同一个思路。
+  const inTeamPage = sec === "general" && generalView === "team" && !searching;
+  useEscClose(() => (inTeamPage ? leaveTeam() : close()));
+  // 系统关窗（Alt+F4、任务栏）同样拦。
+  const holdRef = useRef(holdForTeam);
+  holdRef.current = holdForTeam;
+  useEffect(() => {
+    const win = getCurrentWindow();
+    if (typeof win.onCloseRequested !== "function") return;
+    let off: (() => void) | undefined;
+    let live = true;
+    void win
+      .onCloseRequested((event) => {
+        if (teamDirty.current) {
+          event.preventDefault();
+          holdRef.current();
+        }
+      })
+      .then((unlisten) => { if (live) off = unlisten; else unlisten(); })
+      .catch(() => {});
+    return () => { live = false; off?.(); };
+  }, []);
   // 设置窗口也服从自动更新开关；关闭时不做后台检查，用户仍可从「关于」手动打开更新窗口检查。
   const { status, version: newVersion } = useUpdate({ automatic: true });
 
   // S-1 设置搜索：30+ 设置项零搜索曾让「在贴纸显示配额」这类深埋项无从找起。
   // 非空查询时挂载全部分区、按行文本过滤（逻辑在 settings/searchFilter.ts，可单测）；
   // MutationObserver 兜底异步内容（agent 名单/配额加载完成后新出现的行也要被过滤）。
-  const [query, setQuery] = useState("");
-  const searching = query.trim() !== "";
   const navOn = (s: Section) => !searching && sec === s;
   // 7B-7：设置窗此前没有 Ctrl+F（贴纸窗有），搜索框只能用鼠标点到。
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -1189,9 +1265,13 @@ export function About() {
             <div key={s} className="main-sec" data-sec={s} hidden={searching ? false : s !== sec}>
               {/* 页标题（对照 Kimi 设置每页顶部的标题）：此前右侧只有一摞卡片，在哪一页只能回头
                   看左栏高亮；搜索结果平铺各分区时它也是分隔。 */}
-              <h1 className="sec-title">{t.settings.nav[s]}</h1>
+              {!(s === "general" && inTeamPage) && <h1 className="sec-title">{t.settings.nav[s]}</h1>}
               {s === "general" ? (
-                <GeneralSection searching={searching} />
+                inTeamPage ? (
+                  <TeamSection onBack={leaveTeam} draft={teamDraft} nudge={teamNudge} />
+                ) : (
+                  <GeneralSection searching={searching} onOpenTeam={() => pickGeneralView("team")} />
+                )
               ) : s === "appearance" ? (
                 <AppearanceSection />
               ) : s === "notify" ? (

@@ -1,6 +1,6 @@
 [package]
 name = "meowo-app"
-version = "0.8.7"
+version = "0.8.8"
 edition = "2021"
 
 # 全部 Rust 都住在 app/src-tauri 下:本包既是 Tauri 应用 crate,也是 workspace 根
@@ -78,6 +78,8 @@ tauri-plugin-wdio = { version = "1", optional = true }
 tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# 团队设置子页保存个人层 config.json 时按原键序写回（team_personal.rs）；indexmap 2 本就在依赖树里。
+indexmap = { version = "2", features = ["serde"] }
 toml_edit = { workspace = true }
 notify = { workspace = true }
 # 剪贴板图像读写(原生图片附加:把附件写进剪贴板让 TUI 自己 Ctrl-V 读;发完还原快照)。
