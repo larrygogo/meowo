@@ -84,6 +84,14 @@ pub(crate) struct ScreenDetectExplain {
     provider: String,
     /// 防抖后对外发布的状态（卡片显示的那个）。
     published: Option<&'static str>,
+    /// 已发布状态的来源："osc7501"（CLI 自报）/ "rules"（认屏幕）/ "fallback"（无规则命中）。
+    /// 离线快照恒为 None。
+    published_source: Option<&'static str>,
+    /// CLI 自报 blocked 时的原因（permission / question / auth）。
+    blocked_kind: Option<&'static str>,
+    /// CLI 经 OSC 7501 自报的全部记录（根记录 id 为 ""），含来源 app 与最后更新时间。
+    /// 有根记录时它压过下面的规则判定；离线快照恒为空。
+    reported: Vec<crate::pty::ProgramRecordDto>,
     /// 现场对当前屏重跑规则的原始判定（未过防抖）。
     raw_state: Option<&'static str>,
     matched_rule: &'static str,
@@ -96,7 +104,8 @@ pub(crate) struct ScreenDetectExplain {
 fn explain_snapshot(
     provider: String,
     snapshot: crate::detect::ScreenSnapshot,
-    published: Option<&'static str>,
+    published: Option<crate::pty::ScreenSight>,
+    reported: Vec<crate::pty::ProgramRecordDto>,
 ) -> ScreenDetectExplain {
     let (raw_state, matched_rule) = match crate::detect::evaluate(&provider, &snapshot) {
         Some(crate::detect::Evaluation::Publish(det)) => (Some(det.state.as_str()), det.rule_id),
@@ -105,7 +114,10 @@ fn explain_snapshot(
     };
     ScreenDetectExplain {
         provider,
-        published,
+        published: published.map(|sight| sight.state),
+        published_source: published.map(|sight| sight.source.as_str()),
+        blocked_kind: published.and_then(|sight| sight.blocked_kind),
+        reported,
         raw_state,
         matched_rule,
         title: snapshot.title,
@@ -123,11 +135,9 @@ pub(crate) async fn screen_detect_explain(
         let (snapshot, provider) = ptys
             .screen_probe_snapshot(session_id)
             .ok_or("该会话没有托管 PTY 屏幕状态")?;
-        let published = ptys
-            .screen_states()
-            .get(&session_id)
-            .map(|sight| sight.state);
-        Ok(explain_snapshot(provider, snapshot, published))
+        let published = ptys.screen_states().get(&session_id).copied();
+        let reported = ptys.program_records(session_id);
+        Ok(explain_snapshot(provider, snapshot, published, reported))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -151,7 +161,7 @@ pub(crate) fn screen_detect_explain_text(
     let lines = text.lines().map(str::to_string).collect();
     let snapshot = crate::detect::ScreenSnapshot::new(lines, title);
     // 离线快照没有「已发布状态」：那是防抖后的运行时产物，与单帧无关。
-    explain_snapshot(provider, snapshot, None)
+    explain_snapshot(provider, snapshot, None, Vec::new())
 }
 
 #[cfg(test)]

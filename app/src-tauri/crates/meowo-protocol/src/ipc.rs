@@ -560,6 +560,12 @@ pub struct ChatHistoryDto {
     /// 无规则命中的 idle 不代表确认空闲，必须与状态一起传给统一活动判定。
     #[serde(default)]
     pub screen_assumed: bool,
+    /// CLI 经 OSC 7501 自报 blocked 时的原因："permission"（等批准）/ "question"（等回答）/
+    /// "auth"（等登录）。认屏幕得出的 blocked 没有原因，为 None。屏幕上还没认出卡、hook 也没
+    /// 报待处理时，对话页据此先拦住发送并说清在等什么（正文打进终端里的框会丢）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub screen_blocked_kind: Option<String>,
     /// 最近一轮以错误收场（transcript 分析口径，与侧栏/贴纸的 `LiveItem.errored` 同源）。
     /// 五家都报：claude / gemini / kimi 的分析解析器本来就有，codex 与 opencode 的错误判据
     /// 与各自时间线的错误卡共用一个函数。

@@ -7,3 +7,6 @@ LICENSE text eol=lf
 # Lead 面板的真实样例按后端尾部截断后的原样存（正好 6000 字；另有一份换成 CRLF 后截尾的），换行一转字数就变，
 # 截断判断的测试就不再是「后端给的那份」。
 app/src/views/chat/__fixtures__/lead/*.md -text
+
+# OSC 7501 回放夹具是真实 CLI 的原始终端输出（含 CRLF 与转义序列），按字节原样存，不做换行转换。
+app/src-tauri/crates/meowo-agent/tests/fixtures/program-status/*.bin -text

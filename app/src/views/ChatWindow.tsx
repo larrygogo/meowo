@@ -574,6 +574,7 @@ export function ChatWindow() {
     brokerQuestion: !!(structuredQuestion || dismissedQuestion),
     pendingReview: history?.pendingReview && history.pendingReview !== "gate" ? history.pendingReview : null,
     terminalMenuOpen: terminalMenuOpenRef.current,
+    reportedBlocked: history?.screenBlockedKind ?? null,
   });
   interactionBlockedRef.current = cardLock.send;
   // 在途的发送流程要读最新的原因（闭包里的是发起那一刻的）。

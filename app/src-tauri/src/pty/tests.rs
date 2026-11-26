@@ -2521,3 +2521,334 @@ fn external_v2_approval_uses_the_shared_framing_and_passes_without_consumer() {
     assert!(broker.pending_approval(78).is_none());
     handle.join().unwrap();
 }
+
+/// 真实录流走一遍 reader 的 7501 摘除 + 检测节拍，返回已发布状态的变化序列
+/// （状态, 来源, 阻塞原因）。`reported = false` 时丢掉报告，只剩认屏幕——用来对照。
+fn replay_published(
+    provider: &str,
+    bytes: &[u8],
+    reported: bool,
+) -> Vec<(&'static str, &'static str, Option<&'static str>)> {
+    let probe = ScreenProbe::new(40, 120, provider.into());
+    // 按读块推进的「时钟」：每块 100ms，宽限期从第一块起就已过（宽限只管认屏幕）。
+    let mut now = probe.started_at + DETECT_STARTUP_GRACE + std::time::Duration::from_secs(1);
+    let mut filter = meowo_agent::program_status::StatusFilter::new();
+    let mut end = 0u64;
+    let mut seen = Vec::new();
+    // 小块回放：录制时相隔十几秒的两条报告（如信任框 blocked 与确认后的 idle）在大块里
+    // 会落进同一读、节拍只见后者；真实运行中节拍（300ms）早已在两者之间跑过。
+    for chunk in bytes.chunks(256) {
+        let mut events = Vec::new();
+        let raw = filter.feed(chunk, &mut events);
+        feed_screen(&probe, &raw);
+        end += raw.len() as u64;
+        let mut tick = |probe: &ScreenProbe, now: &mut std::time::Instant| {
+            *now += std::time::Duration::from_millis(250);
+            probe.tick(end, *now);
+            let debounce = probe.debounce.lock().unwrap();
+            if let Some(state) = debounce.published() {
+                let item = (
+                    state.as_str(),
+                    debounce.source().as_str(),
+                    debounce.blocked_kind().map(|kind| kind.as_str()),
+                );
+                if seen.last() != Some(&item) {
+                    seen.push(item);
+                }
+            }
+        };
+        // 录制时报告之间往往隔着几秒到十几秒（信任框 blocked 与确认后的 idle 相隔 18s，
+        // 中间没有别的输出），回放把它们挤进同一块；逐条记账、逐条跑节拍才贴近真实节奏。
+        if reported {
+            for event in events {
+                probe.record_program_events(vec![event]);
+                tick(&probe, &mut now);
+            }
+        }
+        // 每块之后再跑几个节拍，让认屏幕的 idle 确认（3 次 / 700ms）有机会走完。
+        for _ in 0..4 {
+            tick(&probe, &mut now);
+        }
+    }
+    seen
+}
+
+/// 应答探测之后 claude 不再把转圈写进标题，认屏幕的主信号没了；会话状态全程由
+/// CLI 自报决定：信任框是等批准，跑命令时在跑，回合结束空闲，长回合被 Esc 中断后空闲。
+/// 对照组（同一录流丢掉报告、只认屏幕）漏掉了信任框和第二个回合——这正是不接管的后果。
+#[test]
+fn claude_reported_status_drives_the_published_state() {
+    let bytes = include_bytes!(
+        "../../crates/meowo-agent/tests/fixtures/program-status/claude-2.1.332-turn-interrupt.bin"
+    );
+    let published = replay_published("claude", bytes, true);
+    assert_eq!(
+        published,
+        vec![
+            // 第一条报告之前，屏幕上还什么都认不出。
+            ("idle", "fallback", None),
+            ("blocked", "osc7501", Some("permission")),
+            // 确认信任后 claude 在同一次写入里先 clear 再报 idle；逐条推进的回放在两条之间
+            // 多跑了一个节拍，于是看得到一瞬间退回认屏幕（生产中同一读的事件先全部记账再
+            // 跑节拍，没有这一步）。退回时用的是回退值，消费方本就不把它当证据。
+            ("idle", "fallback", None),
+            ("idle", "osc7501", None),
+            ("working", "osc7501", None),
+            ("idle", "osc7501", None),
+            ("working", "osc7501", None),
+            ("idle", "osc7501", None),
+        ],
+        "只认屏幕时的序列（对照）：{:?}",
+        replay_published("claude", bytes, false)
+    );
+    let rules_only = replay_published("claude", bytes, false);
+    assert!(
+        !rules_only.iter().any(|(state, _, _)| *state == "blocked"),
+        "对照组本应认不出信任框：{rules_only:?}"
+    );
+}
+
+#[test]
+fn codex_reported_approval_is_published_as_blocked() {
+    let bytes = include_bytes!(
+        "../../crates/meowo-agent/tests/fixtures/program-status/codex-0.169.0-approval.bin"
+    );
+    let published = replay_published("codex", bytes, true);
+    assert!(
+        published.contains(&("blocked", "osc7501", Some("permission"))),
+        "{published:?}"
+    );
+    assert_eq!(published.last(), Some(&("idle", "osc7501", None)), "{published:?}");
+}
+
+#[test]
+fn kimi_reported_question_is_published_as_blocked() {
+    let bytes = include_bytes!(
+        "../../crates/meowo-agent/tests/fixtures/program-status/kimi-2.7.3-question.bin"
+    );
+    let published = replay_published("kimi", bytes, true);
+    assert!(
+        published.contains(&("blocked", "osc7501", Some("question"))),
+        "{published:?}"
+    );
+    assert_eq!(published.last(), Some(&("idle", "osc7501", None)), "{published:?}");
+}
+
+/// CLI 清空全部记录后（没有根记录）退回认屏幕；清空前发布的自报结论不能在
+/// screen_states 里继续冒充（见 PtyBroker::screen_states 的过期过滤）。
+#[test]
+fn cleared_reports_fall_back_to_screen_rules() {
+    let probe = ScreenProbe::new(24, 80, "claude".into());
+    let after_grace = probe.started_at + DETECT_STARTUP_GRACE + std::time::Duration::from_secs(1);
+    let mut filter = meowo_agent::program_status::StatusFilter::new();
+    let mut events = Vec::new();
+    let raw = filter.feed(b"\x1b]7501;state=working:app=claude-code\x07", &mut events);
+    assert!(raw.is_empty());
+    probe.record_program_events(std::mem::take(&mut events));
+    assert_eq!(probe.tick(0, after_grace), Some(crate::detect::ScreenState::Working));
+    assert_eq!(probe.debounce.lock().unwrap().source(), crate::detect::ScreenSource::Reported);
+    // 清空记录；屏幕上是空闲的 ✳ 标题。
+    let raw = filter.feed(b"\x1b]7501;state=clear\x07\x1b]0;\xe2\x9c\xb3 claude\x07", &mut events);
+    probe.record_program_events(std::mem::take(&mut events));
+    feed_screen(&probe, &raw);
+    assert!(probe.reported_state().is_none());
+    assert_eq!(probe.tick(raw.len() as u64, after_grace), Some(crate::detect::ScreenState::Idle));
+    assert_ne!(probe.debounce.lock().unwrap().source(), crate::detect::ScreenSource::Reported);
+}
+
+/// 基准（验收 9）：PTY reader 管线加了 7501 摘除后的吞吐。数据是 6 份真实录流（含 7501
+/// 报告与探测）重复拼到 20MB，16KB 一读，管线与生产一致：摘除 → 私有模式跟踪 → 首帧
+/// 探测扫描 → vt100 → backlog。改前 = 不过摘除器。交替跑 5 轮取中位数，只在 release 下有意义：
+/// `cargo test -p meowo-app --release --lib bench_reader_pipeline -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn bench_reader_pipeline_with_status_filter() {
+    const FIXTURES: [&[u8]; 6] = [
+        include_bytes!("../../crates/meowo-agent/tests/fixtures/program-status/claude-2.1.332-turn-interrupt.bin"),
+        include_bytes!("../../crates/meowo-agent/tests/fixtures/program-status/claude-2.1.332-usage-limit.bin"),
+        include_bytes!("../../crates/meowo-agent/tests/fixtures/program-status/codex-0.169.0-turn.bin"),
+        include_bytes!("../../crates/meowo-agent/tests/fixtures/program-status/codex-0.169.0-approval.bin"),
+        include_bytes!("../../crates/meowo-agent/tests/fixtures/program-status/kimi-2.7.3-trust-turn.bin"),
+        include_bytes!("../../crates/meowo-agent/tests/fixtures/program-status/kimi-2.7.3-question.bin"),
+    ];
+    let mut data = Vec::with_capacity(21 << 20);
+    while data.len() < 20 << 20 {
+        for fixture in FIXTURES {
+            data.extend_from_slice(fixture);
+        }
+    }
+    let reports = data.windows(7).filter(|w| *w == b"\x1b]7501;").count();
+    let run = |with_filter: bool| -> std::time::Duration {
+        let probe = ScreenProbe::new(40, 120, "claude".into());
+        let mut filter = meowo_agent::program_status::StatusFilter::new();
+        let mut events = Vec::new();
+        let mut modes = ModeTracker::new();
+        let mut scanner = StartupProbeScanner::new();
+        let mut backlog: std::collections::VecDeque<u8> = std::collections::VecDeque::new();
+        let started = std::time::Instant::now();
+        for chunk in data.chunks(16 * 1024) {
+            let raw: std::borrow::Cow<'_, [u8]> = if with_filter {
+                let raw = filter.feed(chunk, &mut events);
+                if !events.is_empty() {
+                    probe.record_program_events(std::mem::take(&mut events));
+                }
+                raw
+            } else {
+                std::borrow::Cow::Borrowed(chunk)
+            };
+            modes.feed(&raw);
+            let data: std::borrow::Cow<'_, [u8]> = if scanner.painted() {
+                std::borrow::Cow::Borrowed(&raw[..])
+            } else {
+                std::borrow::Cow::Owned(scanner.feed(&raw).0)
+            };
+            probe.parser.as_ref().unwrap().lock().unwrap().process(&data);
+            backlog.extend(data.iter().copied());
+            if backlog.len() > 1 << 20 {
+                let excess = backlog.len() - (1 << 20);
+                backlog.drain(..excess);
+            }
+        }
+        std::hint::black_box(&backlog);
+        started.elapsed()
+    };
+    let mut before = Vec::new();
+    let mut after = Vec::new();
+    for _ in 0..5 {
+        before.push(run(false));
+        after.push(run(true));
+    }
+    before.sort();
+    after.sort();
+    let mb = data.len() as f64 / (1024.0 * 1024.0);
+    let (b, a) = (before[2].as_secs_f64(), after[2].as_secs_f64());
+    println!(
+        "reader pipeline: {mb:.1} MB, {reports} 条 7501 序列；改前中位 {:.1} ms（{:.1} MB/s），改后中位 {:.1} ms（{:.1} MB/s），改后/改前吞吐 = {:.3}",
+        b * 1000.0,
+        mb / b,
+        a * 1000.0,
+        mb / a,
+        b / a
+    );
+    assert!(b / a >= 0.95, "改后吞吐低于改前的 95%");
+}
+
+/// 真机探针（验收 1）：真实 CLI 的输出走生产的 ReaderFront，代答经 input_tx 写回 CLI——
+/// 与 reader/writer 线程同一条路径，但**没有任何前端**（对话窗、手机、外部终端都没挂），
+/// 也就是后台会话的处境。断言 CLI 收到应答后真的开始报告，且结论经节拍发布、来源是自报。
+/// 不发任何提示词，不消耗额度。临时目录未受信任：claude/kimi 先报信任框（blocked）。
+///
+/// ```text
+/// cargo test -p meowo-app --lib tms_probe_program_status -- --ignored --nocapture --test-threads=1
+/// ```
+#[test]
+#[ignore]
+fn tms_probe_program_status_background_sessions() {
+    use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+    use std::io::{Read, Write};
+    // codex 照其它探针（tms_probe_codex）关掉启动时的更新检查：有新版本时它先弹一个更新
+    // 选择框，主界面起来之前不报告（2026-11-26 实拍 0.169.0 → 0.172.0）。
+    let launches: [(&str, &[&str]); 3] = [
+        ("claude", &["claude"]),
+        ("codex", &["codex", "-c", "check_for_update_on_startup=false"]),
+        ("kimi", &["kimi"]),
+    ];
+    for (provider, argv) in launches {
+        let cwd = std::env::temp_dir().join(format!("meowo-osc7501-probe-{provider}-{}", std::process::id()));
+        std::fs::create_dir_all(&cwd).unwrap();
+        let pair = native_pty_system()
+            .openpty(PtySize { rows: 40, cols: 120, pixel_width: 0, pixel_height: 0 })
+            .unwrap();
+        let mut command = CommandBuilder::new(argv[0]);
+        command.args(&argv[1..]);
+        command.cwd(&cwd);
+        command.env("TERM", "xterm-256color");
+        // 本进程跑在 Meowo 托管会话里：外层 PTY 凭据与账号标识摘掉（同 tms_probe_restart）。
+        for (key, _) in std::env::vars() {
+            if key.starts_with("MEOWO_PTY_") || key.starts_with("CLAUDE") || key == "MEOWO_PROFILE" {
+                command.env_remove(key);
+            }
+        }
+        command.env("MEOWO_DB", cwd.join("probe-board.db"));
+        let mut child = pair.slave.spawn_command(command).unwrap();
+        drop(pair.slave);
+        let (input_tx, input_rx) = mpsc::sync_channel::<Vec<u8>>(128);
+        let managed = Arc::new(ManagedPty {
+            session_id: AtomicI64::new(1),
+            master: Mutex::new(None),
+            finalized: AtomicBool::new(false),
+            input_tx,
+            child: Mutex::new(Box::new(DummyChild)),
+            child_pid: None,
+            conhost_pid: None,
+            stop_requested_at: Mutex::new(None),
+            backlog: Mutex::new(VecDeque::new()),
+            output_end: AtomicU64::new(0),
+            subscribers: Mutex::new(Vec::new()),
+            probe: ScreenProbe::new(40, 120, provider.into()),
+            last_size: AtomicU32::new(0),
+            modes: AtomicU32::new(0),
+        });
+        // writer 线程：与生产一样，代答只经 input_tx 写回。
+        let writer = Arc::new(Mutex::new(pair.master.take_writer().unwrap()));
+        let w = writer.clone();
+        std::thread::spawn(move || {
+            while let Ok(bytes) = input_rx.recv() {
+                let mut writer = w.lock().unwrap();
+                let _ = writer.write_all(&bytes);
+                let _ = writer.flush();
+            }
+        });
+        // reader 线程：生产的 ReaderFront。DA1 由测试代答，模拟前端 xterm（总是更晚）。
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let (m, w) = (managed.clone(), writer.clone());
+        std::thread::spawn(move || {
+            let mut front = ReaderFront::new();
+            let mut buf = [0u8; 16 * 1024];
+            while let Ok(n) = reader.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                let da1 = buf[..n].windows(3).any(|x| x == b"\x1b[c");
+                if let Some(data) = front.process(&m, &buf[..n]) {
+                    m.output_end.fetch_add(data.len() as u64, Ordering::AcqRel);
+                }
+                if da1 {
+                    std::thread::sleep(std::time::Duration::from_millis(30));
+                    let _ = w.lock().unwrap().write_all(b"\x1b[?1;2c");
+                }
+            }
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut published = None;
+        while std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            let now = std::time::Instant::now() + DETECT_STARTUP_GRACE;
+            managed.probe.tick(managed.output_end.load(Ordering::Acquire), now);
+            let debounce = managed.probe.debounce.lock().unwrap();
+            if debounce.source() == crate::detect::ScreenSource::Reported {
+                published = Some((
+                    debounce.published().unwrap().as_str(),
+                    debounce.blocked_kind().map(|kind| kind.as_str()),
+                ));
+                break;
+            }
+        }
+        let records = managed.probe.program_records();
+        eprintln!("[osc7501] {provider}: published={published:?} records={records:?}");
+        if published.is_none() {
+            if let Some(snapshot) = managed.probe.snapshot() {
+                eprintln!("[osc7501] {provider} 末屏：
+{}", snapshot.lines.join("
+"));
+            }
+        }
+        let _ = child.kill();
+        let _ = std::fs::remove_dir_all(&cwd);
+        assert!(published.is_some(), "{provider}: 30s 内没有自报状态发布");
+        assert!(
+            records.iter().any(|record| record.id.is_empty()),
+            "{provider}: 应有根记录"
+        );
+    }
+}
