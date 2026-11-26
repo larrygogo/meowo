@@ -33,7 +33,9 @@ export type ChatDiagKind =
   /** 切换明确没成（CLI 拒绝、后端报错、排队过期）。 */
   | "switch_failed"
   /** 提问卡或审批卡出现后，终端里对应的表单一直没被认出来。 */
-  | "card_unrecognized";
+  | "card_unrecognized"
+  /** 对话页的消息列表里出现了别的会话的内容（已拦下没显示），记下是谁的、从哪个口子进来的。 */
+  | "foreign_timeline";
 
 export interface ChatDiagEvent {
   kind: ChatDiagKind;
