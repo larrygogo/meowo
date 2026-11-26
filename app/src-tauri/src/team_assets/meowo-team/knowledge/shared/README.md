@@ -18,7 +18,7 @@
 
 ## 「项目 Lead 目录」在哪
 
-项目级的知识文件（`product.md` 产品说明、`standards.md` 质量标准、`rules.md` 规则表、`bench.md` 验收台、`team.md` 组队、`design-style.md` 风格档）都放在项目的 Lead 目录，不放进项目仓库。Lead 目录在 Meowo 数据目录里，按项目分开，worktree 和主检出共用一份。在项目目录下运行 `meowo-reporter lead root` 就能打印出位置（完整的本机命令写在 Lead 技能的末尾）。
+项目级的知识文件（`product.md` 产品说明、`standards.md` 质量标准、`rules.md` 规则表、`bench.md` 验收台、`team.md` 组队、`design-style.md` 风格档）都放在项目的 Lead 目录，不放进项目仓库。Lead 目录在 Meowo 数据目录里，按项目分开，worktree 和主检出共用一份。在项目目录下运行 `lead root` 就能打印出位置；`meowo-reporter` 不在 PATH 上，要用 Lead 技能末尾写的完整路径。
 
 项目根目录下如果已经有旧的 `.lead/`，那份照旧读；新文件写到 Lead 目录。
 

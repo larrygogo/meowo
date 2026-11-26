@@ -450,6 +450,10 @@ export const ENTRIES: ErrorEntry[] = [
   // 团队（team.rs）：用户文件和插件冲突的错误后面带着路径，按前缀匹配、把路径接在译文后。
   { m: "team/user_file_exists", tail: true, zh: "已有你自己的同名团队文件，没有覆盖，已停止安装", en: "You already have your own team file with the same name. It was left untouched and installation stopped" },
   { m: "team/plugin_conflict", tail: true, zh: "检测到另一份 team 插件，先从 CLAUDE_CODE_PLUGIN_DIRS 去掉它", en: "Another team plugin is loaded. Remove it from CLAUDE_CODE_PLUGIN_DIRS first" },
+  { m: "team/config_changed", exact: true, zh: "配置文件刚被别处改过，已重新载入，请再改一次", en: "The config file was just changed elsewhere. It has been reloaded, so please make your change again" },
+  { m: "team/config_broken", exact: true, zh: "配置文件写坏了，先修好再在这里改", en: "The config file is malformed. Fix it before editing here" },
+  { m: "team/config_unreadable", tail: true, zh: "读不出配置文件", en: "Could not read the config file" },
+  { m: "team/taste_missing", exact: true, zh: "找不到品味清单文件", en: "The taste list file was not found" },
   { m: "team/lead_required", exact: true, zh: "团队要和 Lead 工作流一起用，请先打开 Lead 工作流", en: "The team works on top of the Lead workflow. Turn on the Lead workflow first" },
   { m: "lead/settings_invalid", exact: true, zh: "CLI 配置格式不正确，未修改该配置", en: "The CLI configuration is malformed and was left unchanged" },
   { m: "lead/provider_missing", exact: true, zh: "未找到该 CLI，请先安装并完成设置", en: "This CLI was not found. Install it and complete its setup first" },

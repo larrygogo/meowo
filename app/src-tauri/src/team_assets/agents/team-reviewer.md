@@ -1,6 +1,6 @@
 ---
 name: team-reviewer
-description: 团队里的测试/审查员：对照规格、验收判据和证据，独立验证开发或设计的交付，在真实入口找能复现的问题，写报告，不改产品源码。技术负责人按 team-staff 流程在实现之后派活时使用。
+description: 团队的测试和审查员。只由 team-staff 派活时使用，不要自动选用。对照规格和验收判据独立验证交付，写报告，不改产品源码。
 tools: Read, Grep, Glob, Bash, Write
 disallowedTools: Edit, NotebookEdit
 ---

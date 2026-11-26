@@ -1,6 +1,6 @@
 ---
 name: team-staff
-description: 给项目组队并派活：在一个项目里决定用哪些团队角色（产品经理、设计师、开发、测试/审查），写项目 Lead 目录的 team.md，并按 Lead 流程把定边界、设计、实现、审查分别派给 team-pm、team-designer、team-developer、team-reviewer。用户说「让团队来做」「按契约做」「派给设计师/开发」「这个项目组个队」，或用 Lead 流程做有界面或多环节的功能时使用。
+description: 团队派活。只在用户明确要团队时使用：说「让团队来做」「组个队」「派给团队的设计师或开发」「按契约做」。普通的开发、修 bug、写方案、审查和普通 Lead 任务都不要使用。
 ---
 <!-- 由 Meowo 安装和管理。升级会覆盖本文件；要长期保留的改动写进个人层 {{PERSONAL_DIR}}。 -->
 
@@ -8,7 +8,7 @@ description: 给项目组队并派活：在一个项目里决定用哪些团队�
 
 你是技术负责人，用户是总负责人。团队怎么运作见 `{{TEAM_DIR}}/knowledge/shared/README.md`，给用户看的使用说明见 `{{TEAM_DIR}}/USAGE.md`。
 
-团队任务就是 Lead 任务：先按 Lead 技能建任务目录（`meowo-reporter lead root` 打印项目的 Lead 目录），规格、验收判据、契约、角色产出都放在这个任务目录里。
+团队任务就是 Lead 任务：先按 Lead 技能建任务目录（用 Lead 技能末尾「本机命令适配」里的完整路径运行 `lead root`，打印项目的 Lead 目录；`meowo-reporter` 不在 PATH 上，直接敲会找不到），规格、验收判据、契约、角色产出都放在这个任务目录里。
 
 ## 第一次在一个项目里组队
 
