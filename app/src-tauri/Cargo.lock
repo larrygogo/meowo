@@ -2700,7 +2700,7 @@ dependencies = [
 
 [[package]]
 name = "meowo-app"
-version = "0.8.7"
+version = "0.8.8"
 dependencies = [
  "arboard",
  "axum",
@@ -2715,6 +2715,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "image",
+ "indexmap 2.14.0",
  "libc",
  "meowo-agent",
  "meowo-protocol",

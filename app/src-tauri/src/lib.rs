@@ -35,6 +35,7 @@ mod lead_conversation;
 mod lead_native;
 mod lead_runtime;
 mod team;
+mod team_personal;
 // 只有 macOS 的菜单栏用；放在 macos 模块外是为了 Windows 开发机上也能跑单测。
 #[cfg(target_os = "windows")]
 mod openwith;
@@ -105,6 +106,7 @@ use lead::{
     retry_lead_gate_delivery, set_lead_provider_enabled, set_lead_workflow,
 };
 use team::{set_team_workflow, team_workflow_state};
+use team_personal::{create_team_taste, open_team_personal, save_team_personal_config, team_personal_config};
 use managed_terminal::{
     attach_background_session, awaiting_interaction_sessions, dismiss_interactive_question,
     managed_terminal_binding, managed_terminal_frame, managed_terminal_grid,
@@ -1609,6 +1611,10 @@ pub fn run() {
             set_lead_workflow,
             team_workflow_state,
             set_team_workflow,
+            team_personal_config,
+            save_team_personal_config,
+            create_team_taste,
+            open_team_personal,
             lead_provider_installations,
             set_lead_provider_enabled,
             git_file_diff,
