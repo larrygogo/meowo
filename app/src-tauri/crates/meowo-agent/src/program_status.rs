@@ -303,6 +303,10 @@ impl StatusFilter {
                 }
                 FilterState::BodyEsc => {
                     if byte == b'\\' {
+                        // ST 是两个字节：push_body 按 1 字节终止符留的余量要再扣 1。
+                        if self.buf.len() > MAX_SEQUENCE - PREFIX.len() - 2 {
+                            self.oversize = true;
+                        }
                         self.finish(events);
                     } else {
                         // ESC 打断了 OSC（ECMA-48：字符串里出现 ESC 即终止）：报文作废，
@@ -677,6 +681,23 @@ mod tests {
         assert!(matches!(&events[0], StreamEvent::Report(r) if r.state == ReportState::Idle));
         // 内部缓冲没有被撑大到超限报文的长度。
         assert!(filter.buf.capacity() <= MAX_SEQUENCE + 64);
+    }
+
+    /// 4096 字节的上限含终止符：BEL 结尾与 ESC \ 结尾的整条长度要分别算对（redteam-1 P3）。
+    #[test]
+    fn sequence_limit_counts_the_terminator_length() {
+        let body = |len: usize| format!("state=idle:x={}", "a".repeat(len - "state=idle:x=".len()));
+        for (terminator, max_body) in [("\x07", MAX_SEQUENCE - PREFIX.len() - 1), ("\x1b\\", MAX_SEQUENCE - PREFIX.len() - 2)] {
+            for (len, accepted) in [(max_body, true), (max_body + 1, false)] {
+                let stream = format!("\x1b]7501;{}{terminator}", body(len));
+                assert_eq!(stream.len() <= MAX_SEQUENCE, accepted, "长度算式自检");
+                let mut filter = StatusFilter::new();
+                let mut events = Vec::new();
+                let out = filter.feed(stream.as_bytes(), &mut events);
+                assert!(out.is_empty());
+                assert_eq!(!events.is_empty(), accepted, "terminator {terminator:?} len {len}");
+            }
+        }
     }
 
     #[test]

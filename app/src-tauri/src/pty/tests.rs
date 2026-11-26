@@ -2852,3 +2852,69 @@ fn tms_probe_program_status_background_sessions() {
         );
     }
 }
+
+/// 自报不是 blocked、认屏幕却确凿认出等人的框时按 blocked 发布（来源：认屏幕）。
+/// 真实依据：claude 2.1.332 打开自带的 /model、/permissions 选择框时只报 idle（redteam-1 P2，
+/// 2026-11-26 探针）；这类框不经 hook，没有 pendingReview。框消失后回到自报。
+#[test]
+fn screen_confirmed_prompt_overrides_a_non_blocked_report() {
+    let probe = ScreenProbe::new(24, 80, "claude".into());
+    let after_grace = probe.started_at + DETECT_STARTUP_GRACE + std::time::Duration::from_secs(1);
+    let mut filter = meowo_agent::program_status::StatusFilter::new();
+    let mut events = Vec::new();
+    let raw = filter.feed(b"\x1b]7501;state=idle:app=claude-code\x07", &mut events);
+    probe.record_program_events(std::mem::take(&mut events));
+    assert!(raw.is_empty());
+    assert_eq!(probe.tick(0, after_grace), Some(crate::detect::ScreenState::Idle));
+    // 审批框上屏，自报仍是 idle。
+    let prompt = " Bash command\r\n Do you want to proceed?\r\n \u{276F} 1. Yes\r\n   2. No\r\n";
+    feed_screen(&probe, prompt.as_bytes());
+    assert_eq!(probe.tick(1, after_grace), Some(crate::detect::ScreenState::Blocked));
+    {
+        let debounce = probe.debounce.lock().unwrap();
+        assert_eq!(debounce.source(), crate::detect::ScreenSource::Rules);
+        assert_eq!(debounce.blocked_kind(), None);
+    }
+    let diagnostics = probe.program_diagnostics();
+    assert_eq!(diagnostics.screen_override_rule, Some("bash_permission_prompt"));
+    assert_eq!(diagnostics.screen_overrides, 1);
+    // 同一个框不重复计数。
+    assert_eq!(probe.tick(2, after_grace), None);
+    assert_eq!(probe.program_diagnostics().screen_overrides, 1);
+    // 框没了（清屏回到输入框），回到自报的 idle。
+    feed_screen(&probe, "\x1b[2J\x1b[H\u{276F} \r\n".as_bytes());
+    assert_eq!(probe.tick(3, after_grace), Some(crate::detect::ScreenState::Idle));
+    assert_eq!(
+        probe.debounce.lock().unwrap().source(),
+        crate::detect::ScreenSource::Reported
+    );
+    assert_eq!(probe.program_diagnostics().screen_override_rule, None);
+}
+
+/// 探测应答计数进诊断（为 0 而 CLI 又够新时，说明探测没到 reader）。
+#[test]
+fn probe_replies_are_counted_for_diagnostics() {
+    let probe = ScreenProbe::new(24, 80, "claude".into());
+    let mut filter = meowo_agent::program_status::StatusFilter::new();
+    let mut events = Vec::new();
+    let _ = filter.feed(b"\x1b]7501;?\x07x\x1b]7501;?\x1b\\", &mut events);
+    assert_eq!(probe.record_program_events(events), 2);
+    let diagnostics = probe.program_diagnostics();
+    assert_eq!(diagnostics.probe_replies, 2);
+    assert!(diagnostics.last_probe_ms.is_some());
+}
+
+/// 真实录流：claude 自带的 /model、/permissions 选择框开着时只报 idle（2026-11-26 探针）。
+/// 这两个框认屏幕原本也认不出（只认屏幕的对照组同样全程 idle），接自报后结论不变——
+/// 没有退步；认屏幕认得出的框由 screen_confirmed_prompt_overrides_a_non_blocked_report 兜住。
+#[test]
+fn claude_own_pickers_report_idle_only() {
+    let bytes = include_bytes!(
+        "../../crates/meowo-agent/tests/fixtures/program-status/claude-2.1.332-model-picker.bin"
+    );
+    let published = replay_published("claude", bytes, true);
+    let rules_only = replay_published("claude", bytes, false);
+    assert!(published.iter().all(|(state, _, _)| *state == "idle"), "{published:?}");
+    assert!(rules_only.iter().all(|(state, _, _)| *state == "idle"), "{rules_only:?}");
+    assert_eq!(published.last(), Some(&("idle", "osc7501", None)));
+}

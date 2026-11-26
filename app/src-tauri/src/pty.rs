@@ -117,6 +117,17 @@ struct ScreenProbe {
     /// reader 写入新报告后置位：报告可能是一个读块里唯一的内容（摘除后没有字节进
     /// backlog，output_end 不动），节拍不能只凭 output_end 判断有没有新东西。
     program_dirty: AtomicBool,
+    /// 应答过的探测次数与最后一次的墙钟毫秒（诊断「为什么没报告」用）。
+    probe_replies: AtomicU32,
+    last_probe_ms: AtomicI64,
+    /// 有自报、但自报不是 blocked 时，认屏幕规则确凿认出的等人框（规则 id）。
+    /// 2026-11-26 实测：claude 2.1.332 打开自带的 /model、/permissions 选择框时只报 idle，
+    /// 不报 blocked；这类框不经 hook、没有 pendingReview（ChatWindow 2026-11-16 实拍的
+    /// LSP 插件推荐同类）。所以「等人」这一档认屏幕仍可压过自报：与改动前的判定一致，
+    /// 只会让状态更偏向「等你」，不会漏掉。
+    screen_blocked_rule: Mutex<Option<&'static str>>,
+    /// 上面那种分歧出现过几次（进入次数）：一个版本的统计决定要不要继续保留这一档。
+    screen_overrides: AtomicU32,
 }
 
 impl ScreenProbe {
@@ -138,6 +149,10 @@ impl ScreenProbe {
             provider,
             program: Mutex::new(Default::default()),
             program_dirty: AtomicBool::new(false),
+            probe_replies: AtomicU32::new(0),
+            last_probe_ms: AtomicI64::new(0),
+            screen_blocked_rule: Mutex::new(None),
+            screen_overrides: AtomicU32::new(0),
         }
     }
 
@@ -150,7 +165,11 @@ impl ScreenProbe {
         };
         for event in events {
             match event {
-                StreamEvent::Probe => probes += 1,
+                StreamEvent::Probe => {
+                    probes += 1;
+                    self.probe_replies.fetch_add(1, Ordering::AcqRel);
+                    self.last_probe_ms.store(crate::now_ms(), Ordering::Release);
+                }
                 StreamEvent::Report(report) => {
                     program.apply(report, crate::now_ms());
                     self.program_dirty.store(true, Ordering::Release);
@@ -174,6 +193,18 @@ impl ScreenProbe {
         Option<meowo_agent::program_status::BlockedKind>,
     )> {
         self.program.lock().ok()?.session_state()
+    }
+
+    /// 诊断用：自报记录、探测应答与认屏幕分歧。
+    fn program_diagnostics(&self) -> ProgramDiagnosticsDto {
+        let last_probe_ms = self.last_probe_ms.load(Ordering::Acquire);
+        ProgramDiagnosticsDto {
+            records: self.program_records(),
+            probe_replies: self.probe_replies.load(Ordering::Acquire),
+            last_probe_ms: (last_probe_ms > 0).then_some(last_probe_ms),
+            screen_override_rule: self.screen_blocked_rule.lock().ok().and_then(|rule| *rule),
+            screen_overrides: self.screen_overrides.load(Ordering::Acquire),
+        }
     }
 
     /// 诊断用：全部自报记录。
@@ -240,15 +271,45 @@ impl ScreenProbe {
         // 防抖防的都是认屏幕的误读，自报没有这个问题。屏幕仍照常扫，只为自动重试行（它
         // 只在屏幕上，报告里没有）。
         if let Some((state, kind)) = self.reported_state() {
-            if self.scanned_end.load(Ordering::Acquire) != current_end {
+            if program_changed || self.scanned_end.load(Ordering::Acquire) != current_end {
                 if let Some(snapshot) = self.snapshot() {
                     self.scanned_end.store(current_end, Ordering::Release);
                     if let Ok(mut retry) = self.retry.lock() {
                         *retry = crate::detect::retry_note(&self.provider, &snapshot);
                     }
+                    let blocked_rule = if state == crate::detect::ScreenState::Blocked {
+                        None
+                    } else {
+                        match crate::detect::evaluate(&self.provider, &snapshot) {
+                            Some(crate::detect::Evaluation::Publish(det))
+                                if det.state == crate::detect::ScreenState::Blocked
+                                    && det.rule_id != crate::detect::FALLBACK_RULE_ID =>
+                            {
+                                Some(det.rule_id)
+                            }
+                            _ => None,
+                        }
+                    };
+                    if let Ok(mut current) = self.screen_blocked_rule.lock() {
+                        if current.is_none() && blocked_rule.is_some() {
+                            self.screen_overrides.fetch_add(1, Ordering::AcqRel);
+                        }
+                        *current = blocked_rule;
+                    }
                 }
             }
-            return self.debounce.lock().ok()?.publish_reported(state, kind);
+            let screen_blocked = self.screen_blocked_rule.lock().ok().and_then(|rule| *rule);
+            let mut debounce = self.debounce.lock().ok()?;
+            return match screen_blocked {
+                Some(_) if state != crate::detect::ScreenState::Blocked => {
+                    debounce.publish_screen_blocked()
+                }
+                _ => debounce.publish_reported(state, kind),
+            };
+        }
+        // 没有自报：分歧记号作废，规则照常全权判定。
+        if let Ok(mut rule) = self.screen_blocked_rule.lock() {
+            *rule = None;
         }
         // parser 为 None 即无规则集（门在构造时，见字段注释），snapshot() 会返回 None，
         // 这里不必再判 provider。
@@ -444,7 +505,20 @@ pub(crate) struct ScreenSight {
     pub(crate) blocked_kind: Option<&'static str>,
 }
 
-/// 诊断用：一条 OSC 7501 记录（[`PtyBroker::program_records`]）。
+/// 诊断用：OSC 7501 的整体情况（[`PtyBroker::program_diagnostics`]）。
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub(crate) struct ProgramDiagnosticsDto {
+    pub(crate) records: Vec<ProgramRecordDto>,
+    /// 应答过几次探测；为 0 而 CLI 版本又够新，说明探测没到 reader（排查起点）。
+    pub(crate) probe_replies: u32,
+    pub(crate) last_probe_ms: Option<i64>,
+    /// 此刻认屏幕压过自报的规则（自报不是 blocked、屏幕上却确凿是等人的框）。
+    pub(crate) screen_override_rule: Option<&'static str>,
+    /// 这种分歧出现过几次。
+    pub(crate) screen_overrides: u32,
+}
+
+/// 诊断用：一条 OSC 7501 记录。
 #[derive(Debug, Clone, serde::Serialize)]
 pub(crate) struct ProgramRecordDto {
     /// "" = 根记录；否则是子记录路径（子代理等）。
@@ -2576,12 +2650,12 @@ impl PtyBroker {
         Some((snapshot, managed.probe.provider.clone()))
     }
 
-    /// 诊断用：某会话此刻全部 OSC 7501 记录（临时 id 同样经 lookup 解析）。
-    pub(crate) fn program_records(&self, session_id: i64) -> Vec<ProgramRecordDto> {
+    /// 诊断用：某会话此刻的 OSC 7501 情况（临时 id 同样经 lookup 解析）。
+    pub(crate) fn program_diagnostics(&self, session_id: i64) -> ProgramDiagnosticsDto {
         self.lookup(session_id)
             .ok()
             .flatten()
-            .map(|managed| managed.probe.program_records())
+            .map(|managed| managed.probe.program_diagnostics())
             .unwrap_or_default()
     }
 

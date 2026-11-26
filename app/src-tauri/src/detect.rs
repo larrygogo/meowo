@@ -499,6 +499,17 @@ impl ScreenDebounce {
         changed.then_some(state)
     }
 
+    /// 有自报、但认屏幕确凿认出等人的框（见 pty.rs ScreenProbe::screen_blocked_rule）：
+    /// 按 blocked 发布，来源记为认屏幕，阻塞原因未知。
+    pub(crate) fn publish_screen_blocked(&mut self) -> Option<ScreenState> {
+        let changed = self.published != Some(ScreenState::Blocked) || self.kind.is_some();
+        self.pending_idle = None;
+        self.source = ScreenSource::Rules;
+        self.kind = None;
+        self.published = Some(ScreenState::Blocked);
+        changed.then_some(ScreenState::Blocked)
+    }
+
     /// 是否有待确认的降级——ticker 据此在内容序号未变时也继续扫描（确认的正是「屏幕
     /// 稳定不变」这件事，跳扫会让确认永远等不齐）。
     pub(crate) fn pending(&self) -> bool {
