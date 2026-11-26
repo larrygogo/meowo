@@ -58,7 +58,7 @@ describe("ChatWindow 不串会话", () => {
     await shows("新会话的第一句");
     expect(bodyText()).not.toContain("别的会话的旧回复");
     const logs = foreignLogs();
-    expect(logs.some((line) => line.includes("reason=snapshot_mismatch") && line.includes("session=71") && line.includes("holder=61"))).toBe(true);
+    expect(logs.some((line) => line.includes("reason=snapshot_mismatch") && line.includes("session=71") && line.includes("from=61"))).toBe(true);
     // 日志不含消息正文。
     expect(logs.join("\n")).not.toContain("旧回复");
   });
@@ -73,7 +73,12 @@ describe("ChatWindow 不串会话", () => {
     act(() => eventListeners.get("chat-session-changed")?.({ payload: 71 }));
     await shows("新会话的第一句");
     await waitFor(() => expect(bodyText()).not.toContain("别的会话的旧回复"));
-    expect(foreignLogs().some((line) => line.includes("reason=first_read_leftover") && line.includes("session=71"))).toBe(true);
+    // 残留出处的线索：从哪个会话切过来、残留的时间，不含正文。
+    const leftover = foreignLogs().find((line) => line.includes("reason=first_read_leftover"));
+    expect(leftover).toContain("session=71");
+    expect(leftover).toContain("from=61");
+    expect(leftover).toContain("first=2026-11-26T06:29:07Z");
+    expect(leftover).not.toContain("旧回复");
   });
 
   it("正常切换会话不写 foreign_timeline 日志", async () => {
@@ -91,5 +96,44 @@ describe("ChatWindow 不串会话", () => {
     await shows("新会话的第一句");
     await new Promise((resolve) => setTimeout(resolve, 800));
     expect(foreignLogs()).toEqual([]);
+  });
+
+  it("响应里写的是别的会话：一条都不收，并记日志", async () => {
+    window.history.replaceState({}, "", "/?sessionId=61");
+    mockBackend();
+    const base = invoke.getMockImplementation()!;
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      // 请求 71 却拿回 61 的历史（审查探针 P3 的形态）。
+      if (command === "get_chat_history" && Number(args?.sessionId) === 71) return Promise.resolve(historyOf(61, [OLD, NEW], 100));
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await shows("别的会话的旧回复");
+    act(() => eventListeners.get("chat-session-changed")?.({ payload: 71 }));
+    await waitFor(() => expect(foreignLogs().some((line) => line.includes("reason=response_mismatch") && line.includes("session=71") && line.includes("from=61"))).toBe(true));
+    expect(bodyText()).not.toContain("别的会话的旧回复");
+  });
+
+  it("切走后旧会话的结果才到：不显示，带内容的记一行", async () => {
+    window.history.replaceState({}, "", "/?sessionId=61");
+    mockBackend();
+    const base = invoke.getMockImplementation()!;
+    let release: (() => void) | null = null;
+    let first = true;
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "get_chat_history" && Number(args?.sessionId) === 61 && first) {
+        first = false;
+        // 61 的首读挂起，等切到 71 之后才放回。
+        return new Promise((resolve) => { release = () => resolve(historyOf(61, [OLD], 100)); });
+      }
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await waitFor(() => expect(release).not.toBeNull());
+    act(() => eventListeners.get("chat-session-changed")?.({ payload: 71 }));
+    act(() => release?.());
+    await waitFor(() => expect(foreignLogs().some((line) => line.includes("reason=late_discarded") && line.includes("session=71") && line.includes("from=61"))).toBe(true), { timeout: 4_000 });
+    await shows("新会话的第一句");
+    expect(bodyText()).not.toContain("别的会话的旧回复");
   });
 });

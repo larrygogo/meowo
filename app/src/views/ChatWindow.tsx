@@ -245,17 +245,18 @@ export function ChatWindow() {
   const items = timeline.owner === sessionId ? timeline.items : NO_ITEMS;
   const timelineRef = useRef(timeline);
   timelineRef.current = timeline;
-  /** 写某个会话的消息列表。updater 拿到的 prev 只会是这个会话自己的列表（不是就当空）。 */
+  /** 写某个会话的消息列表。列表此刻不归这个会话（已经换走了）就丢弃这次写入：替换掉会把当前会话的列表清空，
+   *  它之后的增量又从已推进的位置续读，已显示的历史就丢了（做空审查指出）。换会话只由 resetTo 切归属。 */
   const setItemsFor = useCallback((owner: number, next: ChatItem[] | ((prev: ChatItem[]) => ChatItem[])) => {
     const current = timelineRef.current;
-    if (current.owner !== owner && current.items.length > 0 && typeof next === "function") {
-      // 正常流程里换会话由 resetTo 先把归属切过去，增量写入不会碰到别人的列表；碰到了就是那条没定位的竞态。
-      logChatEvent(owner, { kind: "foreign_timeline", reason: "write_over_foreign", detail: { holder: current.owner, count: current.items.length } });
+    if (current.owner !== owner) {
+      // 正常流程里写入前都有「还是不是这个会话」的同步守卫，走到这里就是那条没定位的竞态。
+      logChatEvent(current.owner, { kind: "foreign_timeline", reason: "write_dropped", detail: { from: owner } });
     }
     setTimeline((prev) => {
-      const base = prev.owner === owner ? prev.items : NO_ITEMS;
-      const value = typeof next === "function" ? next(base) : next;
-      return prev.owner === owner && value === prev.items ? prev : { owner, items: value };
+      if (prev.owner !== owner) return prev;
+      const value = typeof next === "function" ? next(prev.items) : next;
+      return value === prev.items ? prev : { owner, items: value };
     });
   }, []);
   // 渲染时发现手上的列表属于别的会话（被藏起来了）：记一次，便于定位是谁写进来的。每对 (持有者, 当前会话) 只记一次。
@@ -265,7 +266,7 @@ export function ChatWindow() {
     const key = `${timeline.owner}>${sessionId}`;
     if (foreignLoggedRef.current === key) return;
     foreignLoggedRef.current = key;
-    logChatEvent(sessionId, { kind: "foreign_timeline", reason: "hidden_foreign", detail: { holder: timeline.owner, count: timeline.items.length } });
+    logChatEvent(sessionId, { kind: "foreign_timeline", reason: "hidden_foreign", detail: { from: timeline.owner, count: timeline.items.length } });
   }, [sessionId, timeline]);
   // CLI 的送达回执（claude 入队记录）：不进时间线，只喂给发出消息的对账。按会话归零。
   const [queueAcks, setQueueAcks] = useState<readonly PromptAck[]>([]);
@@ -2029,6 +2030,8 @@ export function ChatWindow() {
   /// 空草稿,认领那一刻全部消失(用户反馈「新会话无法粘贴图片」即此)。
   // 切模型重开未建会话时要切到新的临时 id；resetTo 定义在后面，经 ref 取。
   const resetToRef = useRef<(id: number, claim?: boolean) => void>(() => {});
+  // 上一次换会话是从哪个会话换过来的：串内容的日志里拿它当「残留可能来自谁」的线索。
+  const switchedFromRef = useRef(0);
   const resetTo = useCallback((id: number, claim = false) => {
     // 远程窄屏的 0 是真实的「会话列表」页面；桌面保留旧守卫，不会误入无会话空态。
     if (!Number.isSafeInteger(id) || (id === 0 && !remoteUi())) return;
@@ -2064,6 +2067,7 @@ export function ChatWindow() {
     earliestRef.current = 0;
     leftBlockedRef.current.set(from, interactionBlockedRef.current);
     activeSessionRef.current = id;
+    switchedFromRef.current = from;
     sessionEpochRef.current += 1;
     sendLockRef.current = null;
     interruptLockRef.current = null;
@@ -2148,7 +2152,7 @@ export function ChatWindow() {
     let snapshot = recallHistory(id);
     // 快照按会话 id 存，内容也得是这个会话的：对不上就扔掉、照常加载（串内容事故的兜底之一）。
     if (snapshot && snapshot.history.sessionId !== id) {
-      logChatEvent(id, { kind: "foreign_timeline", reason: "snapshot_mismatch", detail: { holder: snapshot.history.sessionId, count: snapshot.items.length } });
+      logChatEvent(id, { kind: "foreign_timeline", reason: "snapshot_mismatch", detail: { from: snapshot.history.sessionId, count: snapshot.items.length } });
       forgetHistory(id);
       snapshot = undefined;
     }
@@ -2234,6 +2238,10 @@ export function ChatWindow() {
     trackPrefetch(id, request);
     request.then((next) => {
       if (activeSessionRef.current === id || (next.reset && next.items.length === 0)) return;
+      if (next.sessionId !== id) {
+        logChatEvent(id, { kind: "foreign_timeline", reason: "response_mismatch", detail: { from: next.sessionId, via: "prefetch" } });
+        return;
+      }
       rememberHistory(id, {
         history: { ...next, agentModes: next.agentModes ?? [] },
         items: reduceChatEvents([], next.items, true),
@@ -2280,7 +2288,17 @@ export function ChatWindow() {
       const requested = offsetRef.current;
       const prefetched = requested === 0 ? takePrefetch(sessionId) : undefined;
       const next = await (prefetched ?? getChatHistory(sessionId, requested));
-      if (activeSessionRef.current !== sessionId) return;
+      if (activeSessionRef.current !== sessionId) {
+        // 人已经切走：这一发作废。带着消息的才记一行（切会话时常有，空批次不记，免得刷屏），串内容再发生时
+        // 能对上「谁的结果晚到了」。
+        if (next.items.length > 0) logChatEvent(activeSessionRef.current, { kind: "foreign_timeline", reason: "late_discarded", detail: { from: sessionId, count: next.items.length, via: "poll" } });
+        return;
+      }
+      // 响应里写的会话和请求的不是同一个：一条都不收（O(1) 比较，做空审查 P3）。
+      if (next.sessionId !== sessionId) {
+        logChatEvent(sessionId, { kind: "foreign_timeline", reason: "response_mismatch", detail: { from: next.sessionId, count: next.items.length, via: "poll" } });
+        return;
+      }
       // 空批次的 reset 不采信:transcript 暂不可解析(换 profile 的路径切换途中、compaction
       // 重写期间 resolve 不到文件)时,后端会回 reset=true + items=[] + offset 原值。照单清屏
       // 会把整段历史抹掉,而 offset 不回 0,之后只拿增量,历史永久丢失。忽略这一发(消息、
@@ -2324,7 +2342,13 @@ export function ChatWindow() {
       // 从头读（offset 0）的这一发就是这个会话的全部内容：此前手上不该有任何消息（看过的会话走快照，
       // offset 不为 0）。真有，就是别处混进来的（串内容事故的兜底之二）——以这一发为准整段替换，并记一行。
       const leftover = requested === 0 && timelineRef.current.owner === sessionId ? timelineRef.current.items.length : 0;
-      if (leftover > 0) logChatEvent(sessionId, { kind: "foreign_timeline", reason: "first_read_leftover", detail: { count: leftover } });
+      if (leftover > 0) {
+        // 残留的出处未知：记下这次是从哪个会话切过来的，以及残留首末两条的时间（不记正文），够对照 transcript 认出是谁的。
+        const left = timelineRef.current.items;
+        logChatEvent(sessionId, { kind: "foreign_timeline", reason: "first_read_leftover", detail: {
+          from: switchedFromRef.current, count: leftover, first: left[0]?.timestamp, last: left[left.length - 1]?.timestamp,
+        } });
+      }
       const replace = reset || leftover > 0;
       setItemsFor(sessionId, (prev) => next.items.length || replace ? reduceChatEvents(prev, next.items, replace) : prev);
       // reset 整读回来的是全量历史，不是新落盘的内容，计进去同样会误判「答案已送达」。
@@ -2652,7 +2676,14 @@ export function ChatWindow() {
     const prevTop = el?.scrollTop ?? 0;
     try {
       const page = await getChatHistory(sessionId, 0, undefined, earliestRef.current);
-      if (activeSessionRef.current !== sessionId) return;
+      if (activeSessionRef.current !== sessionId) {
+        if (page.items.length > 0) logChatEvent(activeSessionRef.current, { kind: "foreign_timeline", reason: "late_discarded", detail: { from: sessionId, count: page.items.length, via: "earlier" } });
+        return;
+      }
+      if (page.sessionId !== sessionId) {
+        logChatEvent(sessionId, { kind: "foreign_timeline", reason: "response_mismatch", detail: { from: page.sessionId, count: page.items.length, via: "earlier" } });
+        return;
+      }
       // 前插：本屏是现有头部之前的一段。两条 reduce 接缝处的相邻去重（同戳同文 user_text
       // 等）由 reduceChatEvents 的既有规则顺带处理。
       // 与轮询共用 busyRef，此处 items 闭包就是当前值，可以先算合并结果再一次性落。
