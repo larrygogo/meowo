@@ -200,6 +200,39 @@ mod screen_explain_tests {
         assert_eq!(unsupported.raw_state, None);
         assert_eq!(unsupported.matched_rule, "provider_unsupported");
     }
+
+    /// 在线诊断要能回答「这个状态是 CLI 自己说的还是认屏幕认出来的」：自报时同时给出
+    /// 来源、等待原因与全部记录（含继承来的 app 和更新时间），屏幕重判结果照旧附上做对照。
+    #[test]
+    fn live_explain_shows_reported_records_and_source() {
+        let snapshot = crate::detect::ScreenSnapshot::new(vec!["  working…".into()], None);
+        let sight = crate::pty::ScreenSight {
+            state: "blocked",
+            fallback: false,
+            retry: None,
+            source: crate::detect::ScreenSource::Reported,
+            blocked_kind: Some("permission"),
+        };
+        let records = vec![crate::pty::ProgramRecordDto {
+            id: String::new(),
+            state: "blocked",
+            kind: Some("permission"),
+            progress: None,
+            app: Some("claude-code".into()),
+            msg: Some("approve Write: a.txt".into()),
+            updated_ms: 1_795_674_160_661,
+        }];
+        let explain = explain_snapshot("claude".into(), snapshot, Some(sight), records);
+        let json = serde_json::to_value(&explain).unwrap();
+        assert_eq!(json["published"], "blocked");
+        assert_eq!(json["published_source"], "osc7501");
+        assert_eq!(json["blocked_kind"], "permission");
+        assert_eq!(json["reported"][0]["app"], "claude-code");
+        assert_eq!(json["reported"][0]["msg"], "approve Write: a.txt");
+        assert_eq!(json["reported"][0]["updated_ms"], 1_795_674_160_661_i64);
+        // 屏幕重判仍附上：两者不一致时一眼看出是谁在说话。
+        assert!(json["matched_rule"].is_string());
+    }
 }
 
 // snapshot/write/resize/stop 一律 async + spawn_blocking：同步命令跑在主线程，而这几条
