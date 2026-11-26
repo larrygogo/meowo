@@ -229,6 +229,7 @@ mod screen_explain_tests {
             last_probe_ms: Some(1_795_674_160_000),
             screen_override_rule: None,
             screen_overrides: 0,
+            main_idle_rule: None,
         };
         let explain = explain_snapshot("claude".into(), snapshot, Some(sight), records);
         let json = serde_json::to_value(&explain).unwrap();
@@ -239,6 +240,7 @@ mod screen_explain_tests {
         assert_eq!(json["reported"]["records"][0]["msg"], "approve Write: a.txt");
         assert_eq!(json["reported"]["records"][0]["updated_ms"], 1_795_674_160_661_i64);
         assert_eq!(json["reported"]["probe_replies"], 1);
+        assert!(json["reported"]["main_idle_rule"].is_null());
         // 屏幕重判仍附上：两者不一致时一眼看出是谁在说话。
         assert!(json["matched_rule"].is_string());
     }

@@ -246,6 +246,11 @@ impl ScreenProbe {
             last_probe_ms: (last_probe_ms > 0).then_some(last_probe_ms),
             screen_override_rule: self.screen_blocked_rule.lock().ok().and_then(|rule| *rule),
             screen_overrides: self.screen_overrides.load(Ordering::Acquire),
+            main_idle_rule: self
+                .main_idle
+                .lock()
+                .ok()
+                .and_then(|held| held.map(|(det, _)| det.rule_id)),
         }
     }
 
@@ -344,6 +349,8 @@ impl ScreenProbe {
                             .then(|| crate::detect::evaluate_reported_working(&self.provider, &snapshot))
                             .flatten();
                         *main_idle = match (*main_idle, seen) {
+                            // 否决项命中：主回合确实在跑，立即撤销，不等迟滞。
+                            (_, Some(det)) if det.state == crate::detect::ScreenState::Working => None,
                             (_, Some(det)) => Some((det, None)),
                             // 自报不再是 working：立即撤销（新回合开始或回合结束都由自报说了算）。
                             _ if state != crate::detect::ScreenState::Working => None,
@@ -595,6 +602,9 @@ pub(crate) struct ProgramDiagnosticsDto {
     pub(crate) screen_override_rule: Option<&'static str>,
     /// 这种分歧出现过几次。
     pub(crate) screen_overrides: u32,
+    /// 此刻把自报 working 改判为主回合空闲的规则（只剩后台任务时）。发布来源是 rules 而自报
+    /// 是 working 时，看它就知道是哪一档改的判（redteam-3：只有 eprintln 时诊断里看不出）。
+    pub(crate) main_idle_rule: Option<&'static str>,
 }
 
 /// 诊断用：一条 OSC 7501 记录。

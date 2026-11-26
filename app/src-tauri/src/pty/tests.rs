@@ -3021,6 +3021,96 @@ fn claude_background_only_work_is_a_main_turn_idle() {
     );
 }
 
+/// 按录制时的真实到达时间回放带 `.times` 的夹具（每行「块结束偏移 毫秒」）：每块到达即
+/// 解析、记录自报、喂屏幕，检测节拍按生产的 300ms 独立推进。返回 (毫秒, 状态, 来源) 的
+/// 变化序列。按字节折算的时钟会把 spinner 帧的停留压得很短，掩盖「每隔一帧证据回来」
+/// 这类问题（redteam-3 P3）。
+fn replay_timed(provider: &str, name: &str) -> Vec<(u64, &'static str, &'static str)> {
+    let path = format!(
+        "{}/crates/meowo-agent/tests/fixtures/program-status/{name}.bin",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let bytes = std::fs::read(&path).unwrap();
+    let chunks: Vec<(usize, u64)> = std::fs::read_to_string(format!("{path}.times"))
+        .unwrap()
+        .lines()
+        .filter_map(|line| {
+            let (off, ms) = line.split_once(' ')?;
+            Some((off.parse().ok()?, ms.parse().ok()?))
+        })
+        .collect();
+    let probe = ScreenProbe::new(40, 120, provider.into());
+    let base = probe.started_at + DETECT_STARTUP_GRACE + std::time::Duration::from_secs(1);
+    let mut filter = meowo_agent::program_status::StatusFilter::new();
+    let (mut end, mut start, mut next_tick) = (0u64, 0usize, 0u64);
+    let mut seen: Vec<(u64, &'static str, &'static str)> = Vec::new();
+    let mut tick_at = |probe: &ScreenProbe, ms: u64, end: u64| {
+        probe.tick(end, base + std::time::Duration::from_millis(ms));
+        let debounce = probe.debounce.lock().unwrap();
+        if let Some(state) = debounce.published() {
+            let item = (state.as_str(), debounce.source().as_str());
+            if seen.last().map(|(_, s, src)| (*s, *src)) != Some(item) {
+                seen.push((ms, item.0, item.1));
+            }
+        }
+    };
+    let last_ms = chunks.last().map_or(0, |(_, ms)| *ms);
+    for (off, ms) in chunks {
+        while next_tick <= ms {
+            tick_at(&probe, next_tick, end);
+            next_tick += 300;
+        }
+        let mut events = Vec::new();
+        let raw = filter.feed(&bytes[start..off], &mut events);
+        start = off;
+        if !events.is_empty() {
+            probe.record_program_events(events);
+        }
+        feed_screen(&probe, &raw);
+        end += raw.len() as u64;
+    }
+    while next_tick <= last_ms + 3000 {
+        tick_at(&probe, next_tick, end);
+        next_tick += 300;
+    }
+    seen
+}
+
+/// 后台任务结束后 claude 自动接着跑前台回合（redteam-3 P1，Lead 派后台审查代理后最常见的
+/// 情形）：上一回合的「Waiting for 1 background agent to finish」留在尾巴里，spinner 转到
+/// `*` 帧时曾被判成主回合空闲，36 秒里翻转 7 次。按真实时间回放：主回合只剩后台时空闲，
+/// 自动接续的回合一开跑就回到在跑、直到结束不再翻转。
+#[test]
+fn claude_auto_resumed_turn_after_background_stays_working() {
+    for (name, resume_ms, done_ms) in [
+        // 子代理 48.5s 结束，自动接续的回合 84.5s 报 done。
+        ("claude-2.1.332-autowake-long", 48_500u64, 84_500u64),
+        // 后台 shell 期间用户插话，回合 56.0s 开跑、84.8s 报 done。
+        ("claude-2.1.332-bg-then-fg", 56_000, 84_800),
+    ] {
+        let seen = replay_timed("claude", name);
+        let in_turn: Vec<_> = seen
+            .iter()
+            .filter(|(ms, _, _)| *ms > resume_ms + 1500 && *ms < done_ms)
+            .collect();
+        assert!(
+            in_turn.iter().all(|(_, state, _)| *state == "working"),
+            "{name}: 接续回合里不应再判空闲：{seen:?}"
+        );
+        // 接续回合开跑 1.5 秒内已是在跑（结束行还在屏幕上）。
+        let at_resume = seen.iter().rev().find(|(ms, _, _)| *ms <= resume_ms + 1500).unwrap();
+        assert_eq!(at_resume.1, "working", "{name}: {seen:?}");
+        // 接续之前，只剩后台时主回合是空闲。
+        assert!(
+            seen.iter().any(|(ms, state, source)| *ms < resume_ms
+                && *state == "idle"
+                && *source == "rules"),
+            "{name}: 只剩后台时应判主回合空闲：{seen:?}"
+        );
+        assert_eq!(seen.last().map(|(_, s, src)| (*s, *src)), Some(("idle", "osc7501")), "{name}");
+    }
+}
+
 /// 审批/提问录流里没有一次「认屏幕压过自报」：批准或拒绝后的过渡帧不算分歧（redteam-2 P2）。
 #[test]
 fn approval_transitions_are_not_counted_as_screen_overrides() {

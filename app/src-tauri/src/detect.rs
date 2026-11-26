@@ -124,6 +124,8 @@ pub(crate) fn provider_supported(provider: &str) -> bool {
 /// CLI 自报 working 时，屏幕能否说明主回合其实已停（见
 /// `AgentPlugin::reported_working_idle_rules`）。按 priority 取首个命中者；没有规则或没有
 /// 命中返回 None（照收自报）。
+///
+/// 返回 state 为 Working 的结果表示命中否决项（主回合确实在跑），宿主据此立即撤销主回合空闲。
 pub(crate) fn evaluate_reported_working(provider: &str, snap: &ScreenSnapshot) -> Option<Detection> {
     let rules =
         meowo_agent::resolve(Some(provider)).map_or(&[][..], |plugin| plugin.reported_working_idle_rules());
