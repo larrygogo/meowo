@@ -804,6 +804,8 @@ mod tests {
     /// 接线产物落在 `plugin/` 子目录里，且认领能把 reporter 路径读回来（换路径即重写）。
     #[test]
     fn plugin_lands_under_plugin_subdir_and_roundtrips() {
+        // lead_install 的测试会设 OPENCODE_CONFIG_DIR，不拿锁会串进来（红队 redteam-1 F9，3 次全量 1 次失败）。
+        let _env = crate::env_guard();
         let home = std::env::temp_dir().join(format!("meowo-opencode-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(crate::join_rel(&home, ".config/opencode")).unwrap();
@@ -841,6 +843,8 @@ mod tests {
     /// 配置目录优先 `~/.config/opencode`，`~/.opencode` 作次选（两者都在 opencode 的搜索链上）。
     #[test]
     fn prefers_xdg_config_dir_over_dot_opencode() {
+        // lead_install 的测试会设 OPENCODE_CONFIG_DIR，不拿锁会串进来（红队 redteam-1 F9，3 次全量 1 次失败）。
+        let _env = crate::env_guard();
         let home = std::env::temp_dir().join(format!("meowo-opencode-dirs-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
 

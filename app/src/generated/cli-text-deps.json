@@ -1696,7 +1696,7 @@
           "needle": "write-in",
           "note": "",
           "rule": "literal:write-in",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:427"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:428"
         },
         {
           "legacy": false,
@@ -1752,49 +1752,49 @@
           "needle": "run this command?",
           "note": "同 screen:approval_panel",
           "rule": "attention:antigravity:command-approval",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:344"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:345"
         },
         {
           "legacy": false,
           "needle": "yes, run command",
           "note": "1.5.18 真机 run2/05；agy.exe 1 处。文件审批 `Yes, allow creation`、访问 `Yes, allow access`、工具 `Yes, allow tool call` 各 1 处",
           "rule": "option:antigravity:command-approval#0",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:360"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:361"
         },
         {
           "legacy": false,
           "needle": "in this conversation for commands that start with",
           "note": "1.5.18 真机 run2/05；agy.exe 格式串 `Yes, and always allow in this conversation for commands that start with '%s'`",
           "rule": "option:antigravity:command-approval#1",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:366"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:367"
         },
         {
           "legacy": false,
           "needle": "(persist to %s)",
           "note": "1.5.18 真机 run2/05；agy.exe 里 4 个格式串都以 `(Persist to %s)` 结尾",
           "rule": "option:antigravity:command-approval#2",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:372"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:373"
         },
         {
           "legacy": false,
           "needle": "no, cancel",
           "note": "1.5.18 真机 run2/05；agy.exe 1 处。另有 `No, deny creation` / `No, deny access` / `No, deny tool call`",
           "rule": "option:antigravity:command-approval#3",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:378"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:379"
         },
         {
           "legacy": false,
           "needle": "",
           "note": "同 screen:question_form：格式串 `Question %d/%d`，不搜",
           "rule": "attention:antigravity:question",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:394"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:395"
         },
         {
           "legacy": false,
           "needle": "do you trust the contents of this project?",
           "note": "1.5.18 真机 run1/00_start；agy.exe 1 处",
           "rule": "attention:antigravity:trust",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:407"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:408"
         }
       ],
       "id": "antigravity",

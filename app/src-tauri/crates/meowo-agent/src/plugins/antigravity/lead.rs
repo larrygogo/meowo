@@ -91,6 +91,12 @@ impl LeadCap for AntigravityLead {
     fn native_continue_floor(&self) -> Option<(u32, u32, u32)> {
         Some((1, 5, 18))
     }
+    /// 等待器是 agy 自己 run_command 执行的一条命令：agy 的放行规则在它自己会重写的 settings.json 里，
+    /// Meowo 不往里写（decisions 2026-11-26 16:01），default / accept-edits 档下这条命令可能要用户在终端批
+    /// 一次；关卡续跑也还没在真机上走过（红队 redteam-1 F1）。设置页要照实说，不能只显示「可自动继续」。
+    fn continue_notes(&self) -> &'static [&'static str] {
+        &["lead/note_waiter_needs_approval"]
+    }
     fn spec(&self, inst: &Installation) -> Option<&'static LeadInstallSpec> {
         (inst.variant_tag == "stable").then_some(&SPEC)
     }

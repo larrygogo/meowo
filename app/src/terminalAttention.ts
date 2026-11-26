@@ -969,29 +969,36 @@ export function terminalAttention(
     ? snippetLines.slice(0, firstOptionLine).join("\n").trim()
     : snippet;
   const labels: { index: number; label: string; focused: boolean }[] = [];
-  // 屏宽估计：片段里最长的一行（agy 面板头下面就是一条满宽分隔线）。折行按词断开，被折的那行
-  // 离屏宽最多差一个词；差得多的说明它本来就在那里结束，下一行顶格的是页脚（`esc to cancel`）。
-  const widest = Math.max(0, ...snippetLines.map((line) => line.length));
-  const wrapped = (line: string) => line.length >= 40 && line.length >= widest - 20;
-  let continuing = false;
+  const OPTION_LINE = /^\s*([❯›>▶]?)\s*(\d+)[.)]\s*(.+?)\s*$/;
+  // 选项文字超过终端宽度时折到下一行，续行顶格、不带编号（agy 1.5.18：`  3. Yes, and always
+  // allow for commands that start with '…' (Persist to` / `settings.json)`，dev 实例窄窗口实拍
+  // 2026-11-26）。不并回去，「记住」和「本会话」两种放行只差在折下去的那半句，按钮就认不出范围、
+  // 照搬英文原文。
+  // 什么算续行：紧跟在选项后的一段顶格行，而且这段之后还有下一个选项或缩进行（agy 选项下面总有一行
+  // 缩进的 `↑/↓ Navigate`）。段落停在片段末尾、或是 `esc to …` 这类页脚，就不是续行：宽末项后面
+  // 紧跟顶格状态栏时，状态栏不能被吞进选项（红队 redteam-1 F2 构造屏 C/D）。不按行宽估屏宽：
+  // 长命令整词折行时被折的那行可能离屏宽很远（F2 构造屏 A）。claude 等选项下方的说明行都有缩进，
+  // 不受影响（1335 个真机屏幕差分零变化）。
+  const flush = (line: string) => /^\S/.test(line) && !OPTION_LINE.test(line) && !/^esc to /i.test(line);
+  const continuation = new Set<number>();
+  for (let index = optionsFrom; index < snippetLines.length; index += 1) {
+    if (!OPTION_LINE.test(snippetLines[index])) continue;
+    let end = index + 1;
+    while (end < snippetLines.length && flush(snippetLines[end])) end += 1;
+    const next = snippetLines.slice(end).find((line) => line.trim());
+    if (end > index + 1 && next !== undefined && (OPTION_LINE.test(next) || /^\s/.test(next))) {
+      for (let line = index + 1; line < end; line += 1) continuation.add(line);
+    }
+    index = end - 1;
+  }
   snippetLines.forEach((line, index) => {
     if (index < optionsFrom) return;
-    const match = line.match(/^\s*([❯›>▶]?)\s*(\d+)[.)]\s*(.+?)\s*$/);
+    const match = line.match(OPTION_LINE);
     if (match) {
       labels.push({ index: Number(match[2]) - 1, label: match[3], focused: Boolean(match[1]) });
-      continuing = wrapped(line);
-      return;
-    }
-    // 选项文字超过终端宽度时折到下一行，续行顶格、不带编号（agy 1.5.18：`  3. Yes, and always
-    // allow for commands that start with '…' (Persist to` / `settings.json)`，dev 实例窄窗口实拍
-    // 2026-11-26）。不并回去，「记住」和「本会话」两种放行只差在折下去的那半句，按钮就认不出范围、
-    // 照搬英文原文。只并顶格行：claude 等选项下方的说明行都有缩进，不会被吞进选项文字。
-    if (continuing && /^\S/.test(line) && labels.length > 0) {
+    } else if (continuation.has(index) && labels.length > 0) {
       labels[labels.length - 1].label += ` ${line.trim()}`;
-      continuing = wrapped(line);
-      return;
     }
-    continuing = false;
   });
   if (selectorLike) {
     const lines = snippet.split("\n");

@@ -333,7 +333,8 @@ impl AgentPlugin for Antigravity {
     }
 
     /// 审批面板与提问表单（research-screen.md §3、§4）。选项行 `> 1. Yes, run command` 的 `>` 是焦点；
-    /// 直接按数字键即选即确认（按 `1` 批准了 b.txt 的创建），所以作答发数字键，与焦点在哪无关。
+    /// 数字键也能即选即确认（按 `1` 批准了 b.txt 的创建），但卡片走 ProceedBox 文法，作答是从焦点相对移动
+    /// 再回车（dev 实例走查 2026-11-26 点允许、拒绝都生效）。
     fn attention_patterns(&self) -> &'static [crate::chat_ui::AttentionPattern] {
         use crate::chat_ui::{
             AttentionDetails, AttentionKind, AttentionOptionRule, AttentionPattern, OptionRole,

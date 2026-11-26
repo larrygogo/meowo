@@ -19,6 +19,7 @@ type ErrorEntry = {
 
 /** 按声明顺序匹配:精确项放前、长前缀放短前缀前。导出仅供对账测试(errors.parity.test.ts)。 */
 export const ENTRIES: ErrorEntry[] = [
+  { m: "lead/note_waiter_needs_approval", exact: true, zh: "关卡答复后的自动继续还没实测；非自动档下可能要在终端批准一次等待命令", en: "Auto-continue after a gate is untested; outside Auto mode you may need to approve the wait command once in the terminal." },
   { m: "lead/gate_ambiguous", exact: true, zh: "多个任务使用了相同的关卡编号，已停止送达，请先修正编号", en: "Multiple tasks share this gate ID. Delivery stopped until the IDs are corrected." },
   // OpenCode 原生 TUI 续跑（lead_native/opencode_http.rs）：答复已保存，经本机服务投递失败，可重试。
   { m: "lead/opencode_http_unauthorized", exact: true, zh: "回答已保存；OpenCode 本机服务拒绝了连接（密码不符），重新打开会话后重试", en: "Answer saved. The local OpenCode service rejected the connection (password mismatch); reopen the session and retry." },

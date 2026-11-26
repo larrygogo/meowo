@@ -1399,8 +1399,13 @@ mod provider_install_tests {
     #[test]
     fn continue_notes_come_from_the_plugin_and_only_with_automatic_continue() {
         let fixture = Fixture::new();
-        let providers: [(&dyn AgentPlugin, &str, &[&str]); 3] = [
+        let providers: [(&dyn AgentPlugin, &str, &[&str]); 4] = [
             (&meowo_agent::plugins::kimi::Kimi, "2.6.0", &[]),
+            (
+                &meowo_agent::plugins::antigravity::Antigravity,
+                "1.5.18",
+                &["lead/note_waiter_needs_approval"],
+            ),
             (&meowo_agent::plugins::codex::Codex, "0.167.2", &[]),
             (&meowo_agent::plugins::opencode::Opencode, "1.19.3", &[]),
         ];

@@ -675,6 +675,31 @@ describe("terminalAttention", () => {
     ]);
   });
 
+  /// 红队构造屏（redteam-1 F2）：长命令整词折行，被折的那行离屏宽很远，照样要并回去；
+  /// 宽末项后面紧跟顶格状态栏时，状态栏不能被吞进选项。
+  it("Antigravity 折行边界：长命令整词折行照并，顶格页脚不吞", () => {
+    const sep = "─".repeat(100);
+    const longCmd = "'npm run build:production-with-a-really-long-script-name-xyz'";
+    const wrapped = terminalAttention([
+      "Command", sep, "Requesting permission for:", "   npm run x", "", "Run this command?",
+      "> 1. Yes, run command",
+      "  2. Yes, and always allow in this conversation for commands that start with",
+      longCmd,
+      "  3. Yes, and always allow for commands that start with",
+      `${longCmd} (Persist to settings.json)`,
+      "  4. No, cancel", "", "  ↑/↓ Navigate · tab Amend", "esc to cancel",
+    ].join("\n"), [], false, false, grammar("antigravity"));
+    expect(wrapped?.options?.map((option) => option.scope ?? option.role)).toEqual(["allow_once", "session", "remember", "deny"]);
+    const footer = terminalAttention([
+      "Command", sep, "Requesting permission for:", "   x", "", "Run this command?",
+      "> 1. Yes, run command",
+      "  2. Yes, and always allow in this conversation for commands that start with 'x'",
+      "  3. Yes, and always allow for commands that start with 'x' (Persist to settings.json)",
+      "esc to cancel                                                                    plan · Gemini 4 Neon",
+    ].join("\n"), [], false, false, grammar("antigravity"));
+    expect(footer?.options?.at(-1)?.label).toBe("Yes, and always allow for commands that start with 'x' (Persist to settings.json)");
+  });
+
   /// opencode 权限框(1.19.5 真机，2026-11-14 probe_tui_script):横排选项按 option_row 文法拆成按钮。
   /// 焦点初始在第一项：Allow once = 回车，Allow always = → 回车，Reject = Esc(escapeKey，不依赖焦点)。
   it("OpenCode 权限框：横排选项拆成三个按钮，Allow always 有入口", () => {
