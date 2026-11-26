@@ -881,6 +881,90 @@ mod tests {
             assert!(root.msg.as_deref().unwrap().contains("5-hour limit"));
         }
 
+        /// 写文件审批（--permission-mode default）：blocked/permission，msg 说清批的是什么。
+        #[test]
+        fn claude_write_approval_is_blocked_on_permission() {
+            let bytes: &[u8] =
+                include_bytes!("../tests/fixtures/program-status/claude-2.1.332-write-approval.bin");
+            check(
+                bytes,
+                true,
+                &[
+                    Some((Idle, None)),
+                    Some((Working, None)),
+                    Some((Blocked, Some(Permission))),
+                    // Esc 拒绝。
+                    Some((Idle, None)),
+                ],
+            );
+            let msgs = reported_msgs(bytes);
+            assert!(
+                msgs.iter().any(|msg| msg.starts_with("approve Write: ") && msg.ends_with("approval.txt")),
+                "{msgs:?}"
+            );
+        }
+
+        /// AskUserQuestion：blocked/question，msg 带题面与选项；子代理以子记录报告，结束时清掉，
+        /// 不影响根记录（主回合）的结论。
+        #[test]
+        fn claude_question_and_subagents() {
+            let bytes: &[u8] = include_bytes!(
+                "../tests/fixtures/program-status/claude-2.1.332-question-subagent.bin"
+            );
+            let status = check(
+                bytes,
+                true,
+                &[
+                    Some((Idle, None)),
+                    // WebFetch 被委派给一个子代理跑（账号设置自动放行，没有审批）。
+                    Some((Working, None)),
+                    Some((Idle, None)),
+                    Some((Working, None)),
+                    Some((Blocked, Some(Question))),
+                    // Esc 不作答。
+                    Some((Idle, None)),
+                    // Task 子代理。
+                    Some((Working, None)),
+                    Some((Idle, None)),
+                ],
+            );
+            assert!(reported_msgs(bytes).iter().any(|msg| msg.starts_with("answer: ")));
+            // 子记录出现过、带继承来的 app，最后都清掉了。
+            let mut filter = StatusFilter::new();
+            let mut live = ProgramStatus::default();
+            let mut children_seen = 0;
+            for piece in bytes.chunks(4096) {
+                let mut events = Vec::new();
+                let _ = filter.feed(piece, &mut events);
+                for event in events {
+                    if let StreamEvent::Report(report) = event {
+                        live.apply(report, 0);
+                    }
+                }
+                for (id, _) in live.records() {
+                    if !id.is_empty() {
+                        children_seen += 1;
+                        assert_eq!(live.app_of(id), Some("claude-code"));
+                    }
+                }
+            }
+            assert!(children_seen > 0, "应出现子代理子记录");
+            assert_eq!(status.records().len(), 1, "子记录应已清掉，只剩根记录");
+        }
+
+        fn reported_msgs(bytes: &[u8]) -> Vec<String> {
+            let mut filter = StatusFilter::new();
+            let mut events = Vec::new();
+            let _ = filter.feed(bytes, &mut events);
+            events
+                .into_iter()
+                .filter_map(|event| match event {
+                    StreamEvent::Report(report) => report.msg,
+                    _ => None,
+                })
+                .collect()
+        }
+
         #[test]
         fn codex_turn() {
             check(

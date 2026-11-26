@@ -2918,3 +2918,43 @@ fn claude_own_pickers_report_idle_only() {
     assert!(rules_only.iter().all(|(state, _, _)| *state == "idle"), "{rules_only:?}");
     assert_eq!(published.last(), Some(&("idle", "osc7501", None)));
 }
+
+/// 真实 Claude 的审批与提问一路走到侧栏分类（tab_class，与前端 activityTone 同序）：
+/// 自报 blocked → 「待交互」；在跑 → 「运行中」。数据库状态故意给成回合里的 running——
+/// 用户按 Esc 中断时 Claude 不触发 Stop hook，DB 会一直停在 running（验收 3 改写的依据），
+/// 自报 idle 必须把它纠正成「待交互」。
+#[test]
+fn claude_reported_states_reach_the_sidebar_classes() {
+    for (name, bytes, wanted) in [
+        (
+            "write-approval",
+            &include_bytes!(
+                "../../crates/meowo-agent/tests/fixtures/program-status/claude-2.1.332-write-approval.bin"
+            )[..],
+            ("blocked", "osc7501", Some("permission")),
+        ),
+        (
+            "question-subagent",
+            &include_bytes!(
+                "../../crates/meowo-agent/tests/fixtures/program-status/claude-2.1.332-question-subagent.bin"
+            )[..],
+            ("blocked", "osc7501", Some("question")),
+        ),
+    ] {
+        let published = replay_published("claude", bytes, true);
+        assert!(published.contains(&wanted), "{name}: {published:?}");
+        for (state, source, _) in &published {
+            if *source != "osc7501" {
+                continue;
+            }
+            let class = crate::session_query::tab_class(true, "running", None, Some(state), || false);
+            let expected = match *state {
+                "working" => "running",
+                _ => "waiting",
+            };
+            assert_eq!(class, Some(expected), "{name}: {state}");
+        }
+        // 结尾（Esc 中断 / 回合结束）自报 idle，DB 仍是 running：侧栏是「待交互」不是「运行中」。
+        assert_eq!(published.last().map(|item| item.0), Some("idle"), "{name}");
+    }
+}
