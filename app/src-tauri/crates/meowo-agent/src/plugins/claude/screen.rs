@@ -46,6 +46,47 @@ const MAIN_TURN_LIVE: &[Matcher] = &[
     Matcher::Contains(&["do you want to"]),
 ];
 
+/// 自报 working 时「主回合其实已停」的证据（见 AgentPlugin::reported_working_idle_rules）。
+///
+/// 2026-11-26 真机（redteam-2，claude 2.1.332，应答了 OSC 7501 探测）：主回合结束、只剩后台
+/// 子代理（`✻ Waiting for 1 background agent to finish`）或后台 shell（`✻ Cogitated for 3s ·
+/// done 15:37 · 1 shell still running`）时，claude 一直自报 working。应答探测后标题不再
+/// 转圈，原来靠标题区分主回合与后台的 spinner_title_idle_prompt 进不了场。这里只收**回合
+/// 结束行明说后台还在跑**的两种可见证据，立即判主回合空闲。
+///
+/// 刻意不收「尾巴里没有 spinner 行」这种弱证据：同一批真机录流回放，前台 40 秒长回合在
+/// 在跑/空闲之间翻转几十次（渲染中途的半帧常没有 spinner 行）。代价是主回合以正文收尾、
+/// 没画结束行的后台场景（2026-11-19 00:31 实拍那种）仍按自报显示在跑，直到后台结束。
+pub(super) static REPORTED_WORKING_IDLE: &[ScreenRule] = &[
+    ScreenRule::new(
+        "reported_background_wait_idle",
+        ScreenState::Idle,
+        1200,
+        Region::PromptBoxWithTurnTail,
+        Matcher::All(&[
+            Matcher::LineRegex(
+                r"^[·✢✳✶✻✽]\s+(?:[^·]*·\s+)?waiting for \d+ background \S+ to finish\s*$",
+            ),
+            Matcher::LineStartsWith(&["\u{276F}"]),
+            Matcher::Not(MAIN_TURN_LIVE),
+        ]),
+    )
+    .visible(),
+    // 后台 shell：`✻ Cogitated for 3s · done 15:37 · 1 shell still running`。
+    ScreenRule::new(
+        "reported_shells_still_running_idle",
+        ScreenState::Idle,
+        1190,
+        Region::PromptBoxWithTurnTail,
+        Matcher::All(&[
+            Matcher::LineRegex(r"^[·✢✳✶✻✽]\s+\S.*·\s+\d+ shells? still running\s*$"),
+            Matcher::LineStartsWith(&["\u{276F}"]),
+            Matcher::Not(MAIN_TURN_LIVE),
+        ]),
+    )
+    .visible(),
+];
+
 pub(super) static RULES: &[ScreenRule] = &[
     // 主回合结束、只剩后台子代理在跑（2.1.327 实拍 2026-11-19，2 个后台子代理）：回合结束行
     // 是 `✻ Waiting for 2 background agents to finish`（单个时 `1 background agent`），

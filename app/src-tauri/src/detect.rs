@@ -58,6 +58,7 @@ pub(crate) enum Evaluation {
     Hold { rule_id: &'static str },
 }
 
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct Detection {
     pub(crate) state: ScreenState,
     /// 有可见证据（审批 UI / 提示框 / spinner 标题）：防抖直接放行，不需要确认期。
@@ -118,6 +119,35 @@ fn rules_for(provider: &str) -> &'static [ScreenRule] {
 /// 连解析都不做（门必须设在生产端，否则 reader 每 chunk 白跑一遍 VT 状态机）。
 pub(crate) fn provider_supported(provider: &str) -> bool {
     !rules_for(provider).is_empty()
+}
+
+/// CLI 自报 working 时，屏幕能否说明主回合其实已停（见
+/// `AgentPlugin::reported_working_idle_rules`）。按 priority 取首个命中者；没有规则或没有
+/// 命中返回 None（照收自报）。
+pub(crate) fn evaluate_reported_working(provider: &str, snap: &ScreenSnapshot) -> Option<Detection> {
+    let rules =
+        meowo_agent::resolve(Some(provider)).map_or(&[][..], |plugin| plugin.reported_working_idle_rules());
+    if rules.is_empty() {
+        return None;
+    }
+    let lower: Vec<String> = snap.lines.iter().map(|line| line.to_lowercase()).collect();
+    let title = snap.title.as_deref().unwrap_or("");
+    let lower_title = [title.to_lowercase()];
+    let lower_progress = [snap.progress.as_deref().unwrap_or("").to_lowercase()];
+    let mut best: Option<&ScreenRule> = None;
+    for rule in rules {
+        if best.is_some_and(|winner| winner.priority >= rule.priority) {
+            continue;
+        }
+        if matches_rule(rule, &lower, title, &lower_title, &lower_progress) {
+            best = Some(rule);
+        }
+    }
+    best.map(|rule| Detection {
+        state: rule.state,
+        visible: rule.visible,
+        rule_id: rule.id,
+    })
 }
 
 /// 按 provider 求值。None = 该 provider 没有规则集（不做屏幕检测）。

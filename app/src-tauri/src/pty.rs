@@ -127,8 +127,25 @@ struct ScreenProbe {
     /// 只会让状态更偏向「等你」，不会漏掉。
     screen_blocked_rule: Mutex<Option<&'static str>>,
     /// 上面那种分歧出现过几次（进入次数）：一个版本的统计决定要不要继续保留这一档。
+    /// 每次进入同时写一行运行日志（`[osc7501] screen-override`，安装版落 ~/.meowo/logs），
+    /// 会话结束后照样可统计。
     screen_overrides: AtomicU32,
+    /// 候选的等人框（规则 id, 首次看到的时刻）。只认带可见证据的规则，且同一个框要在屏幕
+    /// 上停留满 [`SCREEN_OVERRIDE_HOLD`] 才生效：批准/拒绝审批框后，CLI 已改报 working/idle、
+    /// 屏幕上的表单要到下一次重绘才擦掉，这种过渡帧不算分歧（redteam-2 P2：5 份审批录流
+    /// 各被过渡帧误计 1 次）；真正等人的框会一直停在屏幕上。
+    screen_blocked_candidate: Mutex<Option<(&'static str, std::time::Instant)>>,
+    /// 自报 working、屏幕却说明主回合已停（只剩后台任务）时命中的规则，以及证据从屏幕上
+    /// 消失的起点。结束行在渲染中途的半帧里时有时无，证据要连续消失满
+    /// [`MAIN_IDLE_RELEASE`] 才撤销，否则主回合口径会在在跑/空闲之间闪。
+    main_idle: Mutex<Option<(crate::detect::Detection, Option<std::time::Instant>)>>,
 }
+
+/// 主回合空闲的证据连续消失多久才撤销。
+const MAIN_IDLE_RELEASE: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// 等人框在屏幕上停留多久才压过自报。
+const SCREEN_OVERRIDE_HOLD: std::time::Duration = std::time::Duration::from_secs(2);
 
 impl ScreenProbe {
     fn new(rows: u16, cols: u16, provider: String) -> Self {
@@ -153,6 +170,8 @@ impl ScreenProbe {
             last_probe_ms: AtomicI64::new(0),
             screen_blocked_rule: Mutex::new(None),
             screen_overrides: AtomicU32::new(0),
+            screen_blocked_candidate: Mutex::new(None),
+            main_idle: Mutex::new(None),
         }
     }
 
@@ -183,6 +202,29 @@ impl ScreenProbe {
             }
         }
         probes
+    }
+
+    /// 返回此刻生效的等人框规则（候选停留满 [`SCREEN_OVERRIDE_HOLD`] 才算）。
+    /// 生效瞬间计数并写一行运行日志。
+    fn confirm_screen_blocked(&self, now: std::time::Instant) -> Option<&'static str> {
+        let confirmed = self
+            .screen_blocked_candidate
+            .lock()
+            .ok()?
+            .filter(|(_, since)| now.duration_since(*since) >= SCREEN_OVERRIDE_HOLD)
+            .map(|(rule, _)| rule);
+        let mut active = self.screen_blocked_rule.lock().ok()?;
+        if active.is_none() {
+            if let Some(rule) = confirmed {
+                self.screen_overrides.fetch_add(1, Ordering::AcqRel);
+                eprintln!(
+                    "[osc7501] screen-override provider={} rule={}",
+                    self.provider, rule
+                );
+            }
+        }
+        *active = confirmed;
+        confirmed
     }
 
     /// CLI 自报的会话状态（根记录），无报告时 None。
@@ -221,6 +263,7 @@ impl ScreenProbe {
                 kind: record.kind.map(|kind| kind.as_str()),
                 progress: record.progress,
                 app: program.app_of(id).map(str::to_string),
+                title: record.title.clone(),
                 msg: record.msg.clone(),
                 updated_ms: record.updated_ms,
             })
@@ -283,26 +326,56 @@ impl ScreenProbe {
                         match crate::detect::evaluate(&self.provider, &snapshot) {
                             Some(crate::detect::Evaluation::Publish(det))
                                 if det.state == crate::detect::ScreenState::Blocked
-                                    && det.rule_id != crate::detect::FALLBACK_RULE_ID =>
+                                    && det.visible =>
                             {
                                 Some(det.rule_id)
                             }
                             _ => None,
                         }
                     };
-                    if let Ok(mut current) = self.screen_blocked_rule.lock() {
-                        if current.is_none() && blocked_rule.is_some() {
-                            self.screen_overrides.fetch_add(1, Ordering::AcqRel);
-                        }
-                        *current = blocked_rule;
+                    if let Ok(mut candidate) = self.screen_blocked_candidate.lock() {
+                        *candidate = match (*candidate, blocked_rule) {
+                            (Some((rule, since)), Some(seen)) if rule == seen => Some((rule, since)),
+                            (_, seen) => seen.map(|rule| (rule, now)),
+                        };
+                    }
+                    if let Ok(mut main_idle) = self.main_idle.lock() {
+                        let seen = (state == crate::detect::ScreenState::Working)
+                            .then(|| crate::detect::evaluate_reported_working(&self.provider, &snapshot))
+                            .flatten();
+                        *main_idle = match (*main_idle, seen) {
+                            (_, Some(det)) => Some((det, None)),
+                            // 自报不再是 working：立即撤销（新回合开始或回合结束都由自报说了算）。
+                            _ if state != crate::detect::ScreenState::Working => None,
+                            (Some((det, None)), None) => Some((det, Some(now))),
+                            (Some((det, Some(since))), None)
+                                if now.duration_since(since) < MAIN_IDLE_RELEASE =>
+                            {
+                                Some((det, Some(since)))
+                            }
+                            _ => None,
+                        };
                     }
                 }
             }
-            let screen_blocked = self.screen_blocked_rule.lock().ok().and_then(|rule| *rule);
+            // 候选等人框停留够久才生效（屏幕没变就一直是同一个框）。
+            let screen_blocked = self.confirm_screen_blocked(now);
+            let main_idle = self.main_idle.lock().ok().and_then(|held| held.map(|(det, _)| det));
             let mut debounce = self.debounce.lock().ok()?;
-            return match screen_blocked {
-                Some(_) if state != crate::detect::ScreenState::Blocked => {
+            return match (screen_blocked, main_idle) {
+                (Some(_), _) if state != crate::detect::ScreenState::Blocked => {
                     debounce.publish_screen_blocked()
+                }
+                (_, Some(det)) => {
+                    let changed =
+                        debounce.observe(&crate::detect::Evaluation::Publish(det), now);
+                    if changed == Some(crate::detect::ScreenState::Idle) {
+                        eprintln!(
+                            "[osc7501] main-turn-idle provider={} rule={}",
+                            self.provider, det.rule_id
+                        );
+                    }
+                    changed
                 }
                 _ => debounce.publish_reported(state, kind),
             };
@@ -310,6 +383,12 @@ impl ScreenProbe {
         // 没有自报：分歧记号作废，规则照常全权判定。
         if let Ok(mut rule) = self.screen_blocked_rule.lock() {
             *rule = None;
+        }
+        if let Ok(mut candidate) = self.screen_blocked_candidate.lock() {
+            *candidate = None;
+        }
+        if let Ok(mut main_idle) = self.main_idle.lock() {
+            *main_idle = None;
         }
         // parser 为 None 即无规则集（门在构造时，见字段注释），snapshot() 会返回 None，
         // 这里不必再判 provider。
@@ -528,6 +607,8 @@ pub(crate) struct ProgramRecordDto {
     pub(crate) progress: Option<u8>,
     /// 子记录没写时已按规范继承祖先。
     pub(crate) app: Option<String>,
+    /// 子记录的说明（claude 子代理的任务名写在这里，如「在后台等待 40 秒」）。
+    pub(crate) title: Option<String>,
     pub(crate) msg: Option<String>,
     pub(crate) updated_ms: i64,
 }

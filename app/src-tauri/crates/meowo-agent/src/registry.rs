@@ -743,6 +743,15 @@ pub trait AgentPlugin: Sync {
         &[]
     }
 
+    /// CLI 经 OSC 7501 自报 working、屏幕却说明**主回合已经停了**时用的规则（只认 Idle）。
+    /// 有的 CLI 把「只剩后台任务在跑」也报成 working（claude 2.1.332：后台子代理、后台
+    /// shell），而 Meowo 的主回合口径（对话窗发送、排队、运行条）要的是主回合本身；后台
+    /// 忙另有 busy_subagents 链路。空 = 自报 working 一律照收。只在有自报时求值，不影响
+    /// 没有自报时的 [`Self::screen_rules`]。
+    fn reported_working_idle_rules(&self) -> &'static [crate::screen::ScreenRule] {
+        &[]
+    }
+
     /// 会话遥测（Stop 正文/模型、上下文占用、transcript、重命名回写）。None = 全部降级。
     fn telemetry(&self) -> Option<&'static dyn TelemetryCap> {
         None

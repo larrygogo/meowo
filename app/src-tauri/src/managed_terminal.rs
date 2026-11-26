@@ -221,6 +221,7 @@ mod screen_explain_tests {
             kind: Some("permission"),
             progress: None,
             app: Some("claude-code".into()),
+            title: None,
             msg: Some("approve Write: a.txt".into()),
             updated_ms: 1_795_674_160_661,
             }],

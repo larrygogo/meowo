@@ -2530,7 +2530,9 @@ fn replay_published(
     reported: bool,
 ) -> Vec<(&'static str, &'static str, Option<&'static str>)> {
     let probe = ScreenProbe::new(40, 120, provider.into());
-    // 按读块推进的「时钟」：每块 100ms，宽限期从第一块起就已过（宽限只管认屏幕）。
+    // 回放时钟：每 256 字节算 75ms（约 3.4KB/s，TUI 重绘的量级）、跑一个节拍；宽限期从
+    // 第一块起就已过（宽限只管认屏幕）。早先每块跑 4 个 250ms 节拍，等于把 256 字节拉长到
+    // 1 秒，屏幕上一闪而过的过渡帧会被当成停留了几秒（redteam-2 回放的教训）。
     let mut now = probe.started_at + DETECT_STARTUP_GRACE + std::time::Duration::from_secs(1);
     let mut filter = meowo_agent::program_status::StatusFilter::new();
     let mut end = 0u64;
@@ -2543,7 +2545,7 @@ fn replay_published(
         feed_screen(&probe, &raw);
         end += raw.len() as u64;
         let mut tick = |probe: &ScreenProbe, now: &mut std::time::Instant| {
-            *now += std::time::Duration::from_millis(250);
+            *now += std::time::Duration::from_millis(75);
             probe.tick(end, *now);
             let debounce = probe.debounce.lock().unwrap();
             if let Some(state) = debounce.published() {
@@ -2565,9 +2567,22 @@ fn replay_published(
                 tick(&probe, &mut now);
             }
         }
-        // 每块之后再跑几个节拍，让认屏幕的 idle 确认（3 次 / 700ms）有机会走完。
-        for _ in 0..4 {
-            tick(&probe, &mut now);
+        tick(&probe, &mut now);
+    }
+    // 录完之后屏幕静止：再跑 3 秒节拍，让各种确认期走完，看最终结论。
+    for _ in 0..10 {
+        now += std::time::Duration::from_millis(300);
+        probe.tick(end, now);
+        let debounce = probe.debounce.lock().unwrap();
+        if let Some(state) = debounce.published() {
+            let item = (
+                state.as_str(),
+                debounce.source().as_str(),
+                debounce.blocked_kind().map(|kind| kind.as_str()),
+            );
+            if seen.last() != Some(&item) {
+                seen.push(item);
+            }
         }
     }
     seen
@@ -2866,10 +2881,20 @@ fn screen_confirmed_prompt_overrides_a_non_blocked_report() {
     probe.record_program_events(std::mem::take(&mut events));
     assert!(raw.is_empty());
     assert_eq!(probe.tick(0, after_grace), Some(crate::detect::ScreenState::Idle));
-    // 审批框上屏，自报仍是 idle。
+    let at = |ms: u64| after_grace + std::time::Duration::from_millis(ms);
     let prompt = " Bash command\r\n Do you want to proceed?\r\n \u{276F} 1. Yes\r\n   2. No\r\n";
+    // 过渡帧：表单在屏幕上不到 2 秒就被下一次重绘擦掉（批准/拒绝后的常态）——不算分歧。
     feed_screen(&probe, prompt.as_bytes());
-    assert_eq!(probe.tick(1, after_grace), Some(crate::detect::ScreenState::Blocked));
+    assert_eq!(probe.tick(1, at(0)), None);
+    assert_eq!(probe.tick(1, at(1500)), None);
+    feed_screen(&probe, "\x1b[2J\x1b[H\u{276F} \r\n".as_bytes());
+    assert_eq!(probe.tick(2, at(1600)), None);
+    assert_eq!(probe.program_diagnostics().screen_overrides, 0);
+    // 真正等人的框：一直停在屏幕上，满 2 秒后压过自报的 idle。
+    feed_screen(&probe, prompt.as_bytes());
+    assert_eq!(probe.tick(3, at(2000)), None);
+    assert_eq!(probe.tick(3, at(3000)), None, "不到 2 秒不生效");
+    assert_eq!(probe.tick(3, at(4100)), Some(crate::detect::ScreenState::Blocked));
     {
         let debounce = probe.debounce.lock().unwrap();
         assert_eq!(debounce.source(), crate::detect::ScreenSource::Rules);
@@ -2879,11 +2904,11 @@ fn screen_confirmed_prompt_overrides_a_non_blocked_report() {
     assert_eq!(diagnostics.screen_override_rule, Some("bash_permission_prompt"));
     assert_eq!(diagnostics.screen_overrides, 1);
     // 同一个框不重复计数。
-    assert_eq!(probe.tick(2, after_grace), None);
+    assert_eq!(probe.tick(3, at(4400)), None);
     assert_eq!(probe.program_diagnostics().screen_overrides, 1);
     // 框没了（清屏回到输入框），回到自报的 idle。
     feed_screen(&probe, "\x1b[2J\x1b[H\u{276F} \r\n".as_bytes());
-    assert_eq!(probe.tick(3, after_grace), Some(crate::detect::ScreenState::Idle));
+    assert_eq!(probe.tick(4, at(4700)), Some(crate::detect::ScreenState::Idle));
     assert_eq!(
         probe.debounce.lock().unwrap().source(),
         crate::detect::ScreenSource::Reported
@@ -2956,5 +2981,59 @@ fn claude_reported_states_reach_the_sidebar_classes() {
         }
         // 结尾（Esc 中断 / 回合结束）自报 idle，DB 仍是 running：侧栏是「待交互」不是「运行中」。
         assert_eq!(published.last().map(|item| item.0), Some("idle"), "{name}");
+    }
+}
+
+/// 主回合结束、只剩后台任务时 claude 仍自报 working（redteam-2 P1，真机录流）。主回合口径
+/// 必须回到空闲（对话窗可直接发送，不扣进排队），来源记为认屏幕；后台忙由侧栏的
+/// background_busy 另行显示。前台长回合不能被误判成空闲，审批后的过渡帧不能记成分歧。
+#[test]
+fn claude_background_only_work_is_a_main_turn_idle() {
+    let fixture = |name: &str| {
+        std::fs::read(format!(
+            "{}/crates/meowo-agent/tests/fixtures/program-status/claude-2.1.332-{name}.bin",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap()
+    };
+    // 后台子代理：`✻ Waiting for 1 background agent to finish` + 空闲 ❯。
+    let bg_agent = replay_published("claude", &fixture("bg-agent"), true);
+    assert_eq!(bg_agent.last(), Some(&("idle", "rules", None)), "{bg_agent:?}");
+    // 后台 shell：`✻ Cogitated for 3s · done … · 1 shell still running`。
+    let bg_shell = replay_published("claude", &fixture("long-turn"), true);
+    assert_eq!(bg_shell.last(), Some(&("idle", "rules", None)), "{bg_shell:?}");
+    // 主回合空闲 + 后台忙：侧栏仍是「运行中」，对话窗主回合口径是空闲。
+    assert_eq!(
+        crate::session_query::tab_class(true, "running", None, Some("idle"), || true),
+        Some("running")
+    );
+    // 前台 40 秒长回合：全程在跑，结束才空闲，中间不闪。
+    let foreground = replay_published("claude", &fixture("long-fg"), true);
+    let working_runs = foreground
+        .windows(2)
+        .filter(|pair| pair[0].0 == "working" && pair[1].0 != "working")
+        .count();
+    assert_eq!(working_runs, 2, "两个前台回合各一段在跑：{foreground:?}");
+    let first_working = foreground.iter().position(|item| item.0 == "working").unwrap();
+    assert!(
+        foreground[first_working..].iter().all(|(_, source, _)| *source == "osc7501"),
+        "前台回合开始后不应由认屏幕改判：{foreground:?}"
+    );
+}
+
+/// 审批/提问录流里没有一次「认屏幕压过自报」：批准或拒绝后的过渡帧不算分歧（redteam-2 P2）。
+#[test]
+fn approval_transitions_are_not_counted_as_screen_overrides() {
+    for name in ["write-approval", "bash-approve-run", "question-subagent"] {
+        let bytes = std::fs::read(format!(
+            "{}/crates/meowo-agent/tests/fixtures/program-status/claude-2.1.332-{name}.bin",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        let published = replay_published("claude", &bytes, true);
+        assert!(
+            !published.contains(&("blocked", "rules", None)),
+            "{name}: {published:?}"
+        );
     }
 }
