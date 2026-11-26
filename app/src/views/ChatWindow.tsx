@@ -596,7 +596,7 @@ export function ChatWindow() {
     structuredQuestion, setStructuredQuestion, liveQuestionId,
     approvalAwaitingIds, setApprovalAwaitingIds,
     brokerOwnsReview, setBrokerOwnsReview,
-    lastInteractiveQuestionRef, collapsedQuestionIdRef,
+    lastInteractiveQuestionRef, collapsedQuestionIdRef, answeringApprovalIdRef,
   } = useApprovalChannel({ sessionId, activeSessionRef, viewRef, setView, setSendError, onProcessRestart: () => processRestartedRef.current() });
   // 有卡片待处理时输入框怎么办：五家、两条通道同一条规则，见 chat/composerCardLock。
   // 发送是否被拦、控件是否停用、说明用哪一句，都从这一个结果取。
@@ -4038,8 +4038,10 @@ export function ChatWindow() {
     setBrokerOwnsReview(true);
     // 失败时卡片还在（请求未结算），原因由 broker.errorFor 写进卡内；下一次轮询会恢复
     // 仍有效的请求，hook 已结束则保持消失。
+    answeringApprovalIdRef.current = approval.requestId;
     const result = await broker.respond(approval.requestId, choice);
     if (result?.ok) setApproval(null);
+    else answeringApprovalIdRef.current = null;
   };
 
 
@@ -4298,11 +4300,21 @@ export function ChatWindow() {
     // 接手，手机上逐题点选即可。
     if (!remoteUi()) setView("terminal");
   };
-  // 审批卡的视图模型：屏幕上认出的审批框优先（它在场说明终端正等着按键），否则是 broker
-  // 挂起的审批。两条通道归一成同一份模型，交给同一张卡（见 chat/requestCard）。
-  const approvalRequest = commandAttention && terminalRuntimeRequest
-    ? terminalRuntimeRequest
-    : !terminalAttention && approval ? approval : null;
+  // 审批卡的视图模型：broker 还扣着、没超时的审批优先，其次是屏幕上认出的审批框，两条通道
+  // 归一成同一份模型交给同一张卡（见 chat/requestCard）。
+  // broker 必须排在屏幕框前面：Claude 的审批框与 PermissionRequest hook 同时在场、谁先答算谁
+  // （permission_prompt_races_hook）。以前屏幕框优先，卡片往终端里落键，Claude 放行了，可 broker
+  // 扣着的那条 hook 请求没人结算，要等工具跑完 DB 清位才判「在别处处理」——命令跑多久，侧栏就挂多久
+  // 「待批准」，结束时对话窗还冒一句「该审批已在别处处理或已过期」（2026-11-26 dev 实测：30 秒命令，
+  // broker 请求在放行后又挂了 30.5 秒）。broker 一结算，Claude 自己收掉终端里的框。
+  // 屏幕上是别的框（信任页、提问）时不抢，broker 卡超时交还终端后也让给屏幕框。
+  const brokerApprovalFirst = !!approval && runtimeRequestBrokerLive(approval) && !approvalTimedOut
+    && (!terminalAttention || !!commandAttention);
+  const approvalRequest = brokerApprovalFirst
+    ? approval
+    : commandAttention && terminalRuntimeRequest
+      ? terminalRuntimeRequest
+      : !terminalAttention && approval ? approval : null;
   const approvalModel = useMemo(
     () => (approvalRequest ? approvalCardModel(approvalRequest, t, approvalTimedOut) : null),
     [approvalRequest, t, approvalTimedOut],

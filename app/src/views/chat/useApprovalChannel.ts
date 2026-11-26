@@ -54,6 +54,11 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
   approvalLiveRef.current = approval;
   const tRef = useRef(t);
   tRef.current = t;
+  // 本窗口正在卡上作答的那条审批（ChatWindow 的 decideApproval 在调 respond 前登记）。
+  // respond 要等后端结算完才返回，结算时发的 pending-approval-cleared 往往先到，卡还挂着，
+  // 不认这个 id 就会把自己点的「允许一次」当成「在别处处理」提示出来（2026-11-26 dev 实测，
+  // 每次在卡上放行都冒一句）。
+  const answeringApprovalIdRef = useRef<string | null>(null);
   // broker 审批的剩余时间。用户在终端作答的场景不靠它——后端监视断连与 pending_review
   // 清位（pty.rs 的 await_approval_outcome），结算后 pending-approval-cleared 实时收卡；
   // 倒计时只覆盖「两边都没人答」的兜底：300s 超时此前只写在注释里，卡片到点凭空消失像 bug。
@@ -177,7 +182,7 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
       setApproval((current) => {
         if (current && (!nextApproval || nextApproval.status !== "pending")) {
           if (nextApproval && current.requestId !== nextApproval.requestId) return current;
-          if (runtimeRequestBrokerLive(current)) {
+          if (runtimeRequestBrokerLive(current) && current.requestId !== answeringApprovalIdRef.current) {
             // 后端给了终态就照实说是过期还是已取消；没给（空快照）用分不清原因的那一句。
             setSendError(approvalEndedNotice(nextApproval?.status, tRef.current));
           }
@@ -303,7 +308,10 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
         // 卡还挂着时被 cleared = 在终端答掉 / 300s 超时回落——不是本窗口的 decideApproval
         // （那条路先行 setApproval(null)，这里读到的已是 null）。凭空消失分不清是自己漏点
         // 还是超时（与题面卡 questionExpired 同一课），说清卡去哪了。
-        if (approvalLiveRef.current?.requestId === event.payload.requestId) {
+        if (
+          approvalLiveRef.current?.requestId === event.payload.requestId
+          && event.payload.requestId !== answeringApprovalIdRef.current
+        ) {
           setSendError(approvalEndedNotice(undefined, tRef.current));
         }
         setApproval((current) => current?.requestId === event.payload.requestId ? null : current);
@@ -381,5 +389,6 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
     // 交出去给消解逻辑清空:卡了结时必须连领养暂存一起清,否则切走再切回弹幽灵卡。
     lastInteractiveQuestionRef,
     collapsedQuestionIdRef,
+    answeringApprovalIdRef,
   };
 }
