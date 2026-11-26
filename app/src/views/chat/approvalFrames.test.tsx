@@ -17,6 +17,7 @@ import { grammar } from "../../test/agents";
 import fixture from "../../test/fixtures/approval-frames.json";
 import { ANTIGRAVITY_APPROVAL_SCREEN } from "../../test/requestSamples";
 import { ApprovalRequestCard } from "./ApprovalRequestCard";
+import { proceedBoxApprovalDetails } from "./terminalApprovalDetails";
 import { approvalCardModel, cardBadge, cardKindOfAttention, cardTitle, terminalFeedbackFor, terminalInputForChoice } from "./requestCard";
 import { asTerminalRuntimeRequest } from "./runtimeRequest";
 import { typeAnswerIntoTerminal, typedAnswerReady } from "./terminalTypedAnswer";
@@ -201,6 +202,15 @@ describe("真机审批样本：按钮集合与顺序五家同一套规则", () =
     const model = approvalCardModel(screenRequest("antigravity").request, zh);
     expect(model.question).toBe("Run this command?");
     expect(model.detail).toEqual({ label: "command", text: "Get-ChildItem -Force" });
+  });
+
+  /// 写工作区外文件的面板头没在已知列表里（#7 真机测试 2026-11-26），卡片曾把工具名显示成 claude 的 Bash。
+  /// 问句是 agy 的就不冒充 Bash；claude 的问句照旧。
+  it("antigravity：面板头认不出时按问句判断，不显示成 Bash", () => {
+    const agy = proceedBoxApprovalDetails(["C:/Users/u/.meowo/projects/p/.lead/t/decisions.md", "1 + # 决定记录", "Reason: outside workspace", "Allow creation of this file?"].join("\n"));
+    expect(agy.tool).toBe("");
+    expect(agy.question).toBe("Allow creation of this file?");
+    expect(proceedBoxApprovalDetails(["ls -la", "Do you want to proceed?"].join("\n")).tool).toBe("Bash");
   });
 
   /// 别的卡片测试用的是裁到面板附近的样本（requestSamples.ts 的 ANTIGRAVITY_APPROVAL_SCREEN）。整屏

@@ -93,7 +93,8 @@ impl LeadCap for AntigravityLead {
     }
     /// 等待器是 agy 自己 run_command 执行的一条命令：agy 的放行规则在它自己会重写的 settings.json 里，
     /// Meowo 不往里写（decisions 2026-11-26 16:01），default / accept-edits 档下这条命令可能要用户在终端批
-    /// 一次；关卡续跑也还没在真机上走过（红队 redteam-1 F1）。设置页要照实说，不能只显示「可自动继续」。
+    /// 一次（启动说明要它 BypassSandbox，更可能弹）。auto 档下关卡续跑已真机走通（#7 测试 2026-11-26：答复后
+    /// 等待器唤醒、consume、写进度一气呵成）。设置页要照实说，不能只显示「可自动继续」（红队 redteam-1 F1）。
     fn continue_notes(&self) -> &'static [&'static str] {
         &["lead/note_waiter_needs_approval"]
     }

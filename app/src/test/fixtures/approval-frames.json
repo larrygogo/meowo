@@ -30,6 +30,12 @@
             "typed": null
           },
           {
+            "pattern": "^yes, and always allow non-workspace access$",
+            "role": "allow_persistent",
+            "scope": "remember",
+            "typed": null
+          },
+          {
             "pattern": "^no, (?:cancel|deny(?: [a-z ]+)?)$",
             "role": "deny",
             "scope": null,

@@ -538,8 +538,22 @@ fn antigravity_requires_a_waiter_before_writing_a_pending_gate_and_asks_once_at_
     let out: Value = serde_json::from_str(&call(&e, "antigravity", "gate", pre(pending)).stdout.unwrap()).unwrap();
     assert_eq!(out["decision"], "deny");
     let reason = out["reason"].as_str().unwrap();
-    assert!(reason.contains("run_command") && reason.contains("WaitMsBeforeAsync"), "{reason}");
+    assert!(reason.contains("run_command") && reason.contains("WaitMsBeforeAsync") && reason.contains("BypassSandbox"), "{reason}");
     assert!(reason.contains("lead wait --provider antigravity --session agy-1 --gate 'Q-9'`"), "{reason}");
+    // 按命令起好 agy 自己的等待器后，再写同一张草稿要放行（#7 真机测试 2026-11-26：provider 写死 kimi，
+    // agy 起好等待器后仍被连拦三次，关卡发不出去）。
+    let record = crate::lead_waiter::WaiterRecord {
+        pid: std::process::id(),
+        started: crate::lead_waiter::process_started(std::process::id()).unwrap(),
+        gate: "Q-9".into(),
+        session: "agy-1".into(),
+        provider: "antigravity".into(),
+        cli_pid: crate::proc::owner_pid("antigravity"),
+        cli_started: crate::proc::owner_pid("antigravity").and_then(crate::lead_waiter::process_started),
+    };
+    fs::write(crate::lead_waiter::waiter_path(&e.task), serde_json::to_string(&record).unwrap()).unwrap();
+    assert_eq!(call(&e, "antigravity", "gate", pre(pending)), Output::default());
+    fs::remove_file(crate::lead_waiter::waiter_path(&e.task)).unwrap();
     // 消费关卡、不碰 gate.json 的命令放行。
     assert_eq!(call(&e, "antigravity", "gate", pre(&pending.replace("pending", "consumed"))), Output::default());
     assert_eq!(

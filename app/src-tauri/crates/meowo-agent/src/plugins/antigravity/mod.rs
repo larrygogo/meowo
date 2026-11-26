@@ -128,6 +128,15 @@ impl AgentPlugin for Antigravity {
     fn id(&self) -> AgentId {
         id::ANTIGRAVITY
     }
+    /// `--add-dir`（agy 1.5.18 `--help`：Add a directory to the workspace）。Lead 任务目录在 `~/.meowo` 下，
+    /// 不加进工作区的话 agy 连 auto 档也要为每个任务文件弹一次「outside workspace」审批（dev 实例走查
+    /// 2026-11-26，#7 真机测试里写 SPEC/acceptance/progress 各弹一次）。
+    fn lead_dir_grant_floor(&self) -> Option<(u32, u32, u32)> {
+        Some((1, 5, 18))
+    }
+    fn lead_dir_grant(&self, dir: &std::path::Path, _env: &[(String, String)]) -> Option<crate::lead_paths::LeadDirGrant> {
+        Some(crate::lead_paths::LeadDirGrant::Args(vec!["--add-dir".into(), dir.to_string_lossy().into_owned()]))
+    }
     fn display_name(&self) -> &'static str {
         "Antigravity CLI"
     }
@@ -371,6 +380,14 @@ impl AgentPlugin for Antigravity {
                     },
                     AttentionOptionRule {
                         pattern: r"^yes, and always allow\b.*\(persist to [^)]+\)$",
+                        role: OptionRole::AllowPersistent,
+                        scope: Some(PersistScope::Remember),
+                        typed: None,
+                    },
+                    // 写工作区外的文件时多出这一项（#7 真机测试 2026-11-26，写 ~/.meowo 下的 Lead 任务文件）：
+                    // 放行会写进 agy 的设置、以后都不再问，按「记住」算。认不出时按钮照搬英文原文。
+                    AttentionOptionRule {
+                        pattern: r"^yes, and always allow non-workspace access$",
                         role: OptionRole::AllowPersistent,
                         scope: Some(PersistScope::Remember),
                         typed: None,

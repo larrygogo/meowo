@@ -88,3 +88,17 @@ fn hooks_file_is_the_global_config_next_to_the_data_dir() {
 fn resume_uses_conversation_flag() {
     assert_eq!(Antigravity.resume_args(), ["--conversation"]);
 }
+
+/// Lead 目录用 `--add-dir` 加进工作区，否则写任务文件要逐个批（#7 真机测试 2026-11-26）；
+/// 参数只在 1.5.18 上查证过，更老的版本不加。
+#[test]
+fn lead_dir_joins_workspace_via_add_dir() {
+    let dir = std::path::Path::new("C:/Users/user/.meowo/projects/p/.lead");
+    match Antigravity.lead_dir_grant(dir, &[]) {
+        Some(crate::lead_paths::LeadDirGrant::Args(args)) => {
+            assert_eq!(args, ["--add-dir", "C:/Users/user/.meowo/projects/p/.lead"]);
+        }
+        _ => panic!("应当给 --add-dir 参数"),
+    }
+    assert_eq!(Antigravity.lead_dir_grant_floor(), Some((1, 5, 18)));
+}

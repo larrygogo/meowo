@@ -613,7 +613,9 @@ fn deny(provider: Provider, reason: String) -> Output {
 /// 还没结束的命令转到后台，结束时唤醒 agent（changelog「when a background task … finishes and wakes the agent」）。
 fn start_how(provider: Provider) -> &'static str {
     match provider {
-        Provider::Antigravity => "用 run_command 在后台启动它（WaitMsBeforeAsync 设为 500，命令会转到后台运行；不要设 RunPersistent）",
+        // BypassSandbox：沙箱里的命令读不到 ~/.meowo（--add-dir 只管文件工具），等待器起来就报「没有找到本会话
+        // 认领的 Lead 任务」退出；agy 自己改成 BypassSandbox 后才起来（#7 真机测试 2026-11-26）。
+        Provider::Antigravity => "用 run_command 在后台启动它（WaitMsBeforeAsync 设为 500，命令会转到后台运行；BypassSandbox 设为 true，沙箱里读不到 Lead 目录；不要设 RunPersistent）",
         _ => "用 Bash 工具在后台启动它（run_in_background=true，disable_timeout=true，description 写「等待 leader 答复」）",
     }
 }
@@ -705,7 +707,7 @@ fn gate_guard_with(
     }
     let owner_pid = crate::proc::owner_pid(provider.id());
     let ready = || match draft_id.as_deref() {
-        Some(id) => lead_waiter::target_waiter_ready(&task, id, session, owner_pid),
+        Some(id) => lead_waiter::target_waiter_ready(&task, id, session, provider.id(), owner_pid),
         None => lead_waiter::any_live_waiter(&task),
     };
     let rounds = if recently_asked { 50 } else { 1 };

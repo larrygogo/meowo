@@ -33,7 +33,10 @@ export function proceedBoxApprovalDetails(text: string) {
   // 命令前还有一行 `Requesting permission for:`。面板头之上是历史，同样只取最后一个面板头之后。
   const AGY_HEADER = /^(?:command|(?:create|edit|write|delete) file)$/i;
   const header = before.reduce((found, line, index) => (HEADER.test(line) || AGY_HEADER.test(line) ? index : found), -1);
-  const agy = header >= 0 && AGY_HEADER.test(before[header]);
+  // 面板头没认出来时（写工作区外文件的面板，#7 真机测试 2026-11-26 卡片显示成了「Bash」），
+  // 问句也能分辨：claude 只问「Do you want to proceed?」，「Run this command?」「Allow …?」都是 agy。
+  const agyQuestion = question !== "" && !/^do you want to proceed/i.test(question);
+  const agy = header >= 0 ? AGY_HEADER.test(before[header]) : agyQuestion;
   // agy 的命令面板显示它自己的工具名 run_command（对话页工具调用也叫这个），不冒充 claude 的 Bash；
   // 文件面板的工具名屏幕上没有，留空不猜。
   const tool = header >= 0 && /^powershell/i.test(before[header]) ? "PowerShell"

@@ -73,6 +73,12 @@ pub(super) static DEPS: &[D] = &[
     ),
     D::new(
         "option:antigravity:command-approval#3",
+        "yes, and always allow non-workspace access",
+        "Yes, and always allow non-workspace access",
+        "1.5.18 dev 实例实拍 2026-11-26（写 ~/.meowo 下的 Lead 任务文件时的文件审批）；agy.exe 1 处",
+    ),
+    D::new(
+        "option:antigravity:command-approval#4",
         "no, cancel",
         "No, cancel",
         "1.5.18 真机 run2/05；agy.exe 1 处。另有 `No, deny creation` / `No, deny access` / `No, deny tool call`",

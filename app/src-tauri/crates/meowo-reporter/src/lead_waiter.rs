@@ -78,10 +78,12 @@ pub fn live_waiter(task: &Path, gate_id: &str) -> Option<WaiterRecord> {
         .filter(|r| (r.gate == gate_id || r.gate.is_empty()) && same_process(r.pid, r.started))
 }
 
-pub fn target_waiter_ready(task: &Path, gate_id: &str, session: &str, kimi_pid: Option<u32>) -> bool {
+/// `provider` 是写关卡的那家：原先写死成 "kimi"，agy 接进同一条路后它的等待器永远判不就绪，
+/// 关卡草稿一直被拦（#7 真机测试 2026-11-26，agy 起好等待器后仍连续三次写不进 gate.json）。
+pub fn target_waiter_ready(task: &Path, gate_id: &str, session: &str, provider: &str, cli_pid: Option<u32>) -> bool {
     live_waiter(task, gate_id).is_some_and(|record| {
-        record.gate == gate_id && record.provider == "kimi" && record.session == session
-            && kimi_pid.is_none_or(|pid| record.cli_pid == Some(pid)
+        record.gate == gate_id && record.provider == provider && record.session == session
+            && cli_pid.is_none_or(|pid| record.cli_pid == Some(pid)
                 && record.cli_started.zip(process_started(pid))
                     .is_some_and(|(before, now)| before.abs_diff(now) <= 1))
     })
