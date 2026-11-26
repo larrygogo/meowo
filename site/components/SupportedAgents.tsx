@@ -1,9 +1,9 @@
 // 各 AI Agent 的品牌 logo 与 ProviderId：StickerWindow 会话卡片使用。
 // （原「支持的 Agent」展示板块已随首页重构移除，这里只保留 logo 部分。）
 import kimiLogo from "@/assets/kimi.png";
-import geminiLogo from "@/assets/gemini.svg";
+import antigravityLogo from "@/assets/antigravity.svg";
 
-export type ProviderId = "claude" | "codex" | "kimi" | "gemini" | "opencode";
+export type ProviderId = "claude" | "codex" | "kimi" | "antigravity" | "opencode";
 
 function ClaudeLogo() {
   return (
@@ -71,10 +71,10 @@ export function AgentLogo({
         <CodexLogo />
       ) : id === "opencode" ? (
         <OpencodeLogo />
-      ) : id === "gemini" ? (
-        // Gemini 官方 aurora sparkle（裸徽标，留一圈内边距免得顶到框）。
+      ) : id === "antigravity" ? (
+        // Antigravity 徽标，与 app/src/assets/antigravity.svg 同一份（裸徽标，留一圈内边距免得顶到框）。
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={geminiLogo.src} width={Math.round(size * 0.82)} height={Math.round(size * 0.82)} alt="" style={{ display: "block" }} />
+        <img src={antigravityLogo.src} width={Math.round(size * 0.82)} height={Math.round(size * 0.82)} alt="" style={{ display: "block" }} />
       ) : (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={kimiLogo.src} width={size} height={size} alt="" style={{ display: "block" }} />

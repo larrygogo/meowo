@@ -124,6 +124,11 @@ pub fn apply_all() {
     if claude_wired {
         sweep_legacy_wrappers();
     }
+    // 已退役 agent 的接线（gemini → antigravity，2026-11）：Meowo 当年写进它数据目录的 hooks、MCP、
+    // Lead 文件。不清的话，用户手动跑旧 CLI 时 hook 还会往看板塞卡片。没有要清的就什么都不写。
+    for line in meowo_agent::retired::sweep() {
+        eprintln!("Meowo: 清理已退役 agent 的接线：{line}");
+    }
     // 代理同样在启动时对齐一次：用户可能在 Meowo 没运行时手改过 agent 的配置，或换了机器。
     // 与 hooks 接线同为 best-effort，失败只留日志。
     let _ = crate::proxy::apply_to_agent_configs();

@@ -4,7 +4,7 @@
 // 原稿，搬进对话页的却是占位文字本身；Kimi 一行长草稿被框宽折成两行，搬过来在折行处多了换行；只读
 // 屏幕可见的行、每行还去掉首尾空白，超出可视高度的部分和行首缩进直接丢。
 //
-// 这里的每一帧都是本机真实 CLI 的画面（tests/probe_draft_fidelity.rs，2026-11-14，120×40）：五家各十来种
+// 这里的每一帧都是本机真实 CLI 的画面（tests/probe_draft_fidelity.rs，2026-11-14，120×40）：claude/codex/kimi/opencode 四家各十来种
 // 草稿形态，逐字打进或粘贴进输入框后抓下来，并进 test/fixtures/composer-frames.json（宿主的 Rust 测试读
 // 同一份）。每一帧断言到底：要么搬过来的文本与帧里登记的原文逐字相等、终端被清空；要么判为读不全、
 // 一个键也没按、终端画面原封不动。
@@ -45,7 +45,7 @@ const spec = (provider: string): ComposerSpec => chatUi(provider)!.composer!;
 const EMPTY: Record<string, string> = {
   codex: "codex-0.167.2-placeholder-cursor",
   kimi: "kimi-2.6.1-cleared",
-  gemini: "gemini-0.68-placeholder-cursor",
+
   opencode: "opencode-1.19.5-placeholder-cursor",
   claude: "claude-2.1.325-stashed",
 };
@@ -66,10 +66,11 @@ function terminal(provider: string, start: TerminalScreenFrameDto) {
 }
 
 const forms = samples.filter((sample) => sample.name.includes("-form-"));
-const PROVIDERS = ["claude", "codex", "gemini", "kimi", "opencode"];
+// antigravity 还没有草稿保真的取证帧（它也不声明清空键，有草稿时对话页不替用户清），不在这里。
+const PROVIDERS = ["claude", "codex", "kimi", "opencode"];
 
-describe("五家 × 草稿形态：原样搬，或者不动终端", () => {
-  it("五家各有十种以上的形态", () => {
+describe("四家 × 草稿形态：原样搬，或者不动终端", () => {
+  it("四家各有十种以上的形态", () => {
     for (const provider of PROVIDERS) {
       expect(forms.filter((sample) => sample.provider === provider).length, provider).toBeGreaterThanOrEqual(10);
     }
@@ -143,7 +144,8 @@ describe("做空复现的两个现象", () => {
     expect(pty.keys).toEqual([]);
   });
   it("行首缩进与空行原样保留", async () => {
-    for (const provider of ["codex", "kimi", "gemini", "opencode"]) {
+    for (const provider of ["codex", "kimi", "opencode"]) {
+
       const sample = forms.find((entry) => entry.provider === provider && entry.name.endsWith("-form-multi"))!;
       const pty = terminal(provider, toFrame(sample));
       expect(await prepareComposer(pty.io, spec(provider), { running: false }), provider)
@@ -204,7 +206,7 @@ describe("换终端尺寸：折行从不被当成换行", () => {
   const formOf = (sample: Sample) => sample.name.split("-form-")[1];
   const draftOf = (sample: Sample) => readComposerFrame(toFrame(sample), spec(sample.provider)).draft;
 
-  it("五家各在至少四个宽度、两个高度上有帧", () => {
+  it("四家各在至少四个宽度、两个高度上有帧", () => {
     for (const provider of PROVIDERS) {
       const sizes = new Set(sized.filter((sample) => sample.provider === provider).map(sizeOf));
       expect(new Set([...sizes].map((size) => size.split("x")[0])).size, provider).toBeGreaterThanOrEqual(4);
@@ -223,14 +225,15 @@ describe("换终端尺寸：折行从不被当成换行", () => {
   });
   it("被折行的长单行在每个尺寸下都判读不全", () => {
     const wrapped = sized.filter((sample) => /^(wrap_|fill_plus1|near_spaces|over_spaces|multi_long|multi_full)/.test(formOf(sample)));
-    expect(wrapped.length).toBeGreaterThan(300);
+    // 四家（gemini 的帧随 provider 移除）各七十来帧。
+    expect(wrapped.length).toBeGreaterThan(280);
     for (const sample of wrapped) expect(draftOf(sample), sample.name).toEqual({ complete: false, why: "wrap" });
   });
   it("没有矫枉过正：短草稿、刚好填满一行、差一格填满的单行在每个尺寸下都读全", () => {
     for (const sample of sized.filter((entry) => /^(short|fill_exact|fill_minus1|fill_words)$/.test(formOf(entry)))) {
       expect(draftOf(sample), sample.name).toEqual({ complete: true, text: sample.original });
     }
-    // 没碰到边界的多行草稿：60 列以上五家都读全（40 列时一行只有 30 来格，5 行的草稿确实贴着边）。
+    // 没碰到边界的多行草稿：60 列以上四家都读全（40 列时一行只有 30 来格，5 行的草稿确实贴着边）。
     for (const sample of sized.filter((entry) => formOf(entry) === "multi_short" && sizeOf(entry) !== "40x20")) {
       expect(draftOf(sample), sample.name).toEqual({ complete: true, text: sample.original });
     }

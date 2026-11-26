@@ -53,9 +53,37 @@ fn env() -> Env {
         registry,
     }
 }
+/// agy 原始负载的公共字段（真机探针 probe-hooks-1.md 的形状）：路径类字段是 JSON 编码后的字符串，
+/// artifactDirectoryPath 在 antigravity-cli 下（App/IDE 的会话不在，会被整个丢掉）。
+fn agy(e: &Env, event: &str, session: &str) -> Value {
+    json!({
+        "hookEventName": event,
+        "conversationId": session,
+        "cwd": serde_json::to_string(&e.root.path()).unwrap(),
+        "artifactDirectoryPath": format!("C:/Users/u/.gemini/antigravity-cli/brain/{session}"),
+        "transcriptPath": format!("C:/Users/u/.gemini/antigravity-cli/brain/{session}/.system_generated/logs/transcript_full.jsonl"),
+        "lastUserInput": "开始",
+    })
+}
+/// agy 的 toolCall：`{"name","args","id"}` 编码成字符串。
+fn agy_tool(e: &Env, event: &str, session: &str, name: &str, args: Value) -> Value {
+    let mut raw = agy(e, event, session);
+    raw["toolCall"] = json!(json!({"name": name, "args": args, "id": "call_1"}).to_string());
+    raw["stepIdx"] = json!(2);
+    raw["error"] = json!("");
+    raw
+}
+/// 解开 toolCall 字符串改一处再编回去。
+fn agy_edit_call(raw: &mut Value, edit: impl FnOnce(&mut Value)) {
+    let mut call: Value = serde_json::from_str(raw["toolCall"].as_str().unwrap()).unwrap();
+    edit(&mut call);
+    raw["toolCall"] = json!(call.to_string());
+}
 // 字段形态逐项取自模块头官方来源；这些是协议 fixture，不冒充真实模型闭环探针。
 fn claim(e: &Env, provider: &str, session: &str) -> Value {
-    let file = e.task.join("progress.md");
+    claim_file(e, provider, session, &e.task.join("progress.md"))
+}
+fn claim_file(e: &Env, provider: &str, session: &str, file: &Path) -> Value {
     match provider {
         "codex" => {
             json!({"hook_event_name":"PostToolUse","session_id":session,"cwd":e.root.path(),"turn_id":"t1","tool_name":"apply_patch","tool_input":{"command":format!("*** Begin Patch\n*** Update File: {}\n@@\n-old\n+new\n*** End Patch",file.display())},"tool_response":"Success. Updated the following files:\nM progress.md"})
@@ -63,9 +91,7 @@ fn claim(e: &Env, provider: &str, session: &str) -> Value {
         "kimi" => {
             json!({"hook_event_name":"PostToolUse","session_id":session,"cwd":e.root.path(),"client_type":"kimi_code_cli","tool_name":"Write","tool_input":{"path":file,"content":"new"}})
         }
-        "gemini" => {
-            json!({"hook_event_name":"AfterTool","session_id":session,"cwd":e.root.path(),"tool_name":"write_file","tool_input":{"file_path":file,"content":"new"},"tool_response":{"llmContent":"File written."}})
-        }
+        "antigravity" => agy_tool(e, "PostToolUse", session, "write_file", json!({"Path":file,"Content":"new","Overwrite":true})),
         "opencode" => {
             json!({"hook_event_name":"tool.execute.after","cwd":e.root.path(),"input":{"sessionID":session,"tool":"write","callID":"c1","args":{"filePath":file,"content":"new"}},"output":{"title":"write","output":"ok","metadata":{}}})
         }
@@ -77,8 +103,12 @@ fn call(e: &Env, provider: &str, mode: &str, value: Value) -> Output {
 }
 fn prompt(e: &Env, provider: &str, session: &str, text: &str) -> Value {
     match provider {
-        "gemini" => {
-            json!({"hook_event_name":"BeforeAgent","session_id":session,"cwd":e.root.path(),"prompt":text})
+        // 每回合第一次模型调用（invocationNum == 0）才是用户提交。
+        "antigravity" => {
+            let mut raw = agy(e, "PreInvocation", session);
+            raw["invocationNum"] = json!(0);
+            raw["lastUserInput"] = json!(text);
+            raw
         }
         "opencode" => {
             json!({"hook_event_name":"chat.message","cwd":e.root.path(),"input":{"sessionID":session},"output":{"parts":[{"type":"text","text":text}]}})
@@ -89,16 +119,26 @@ fn prompt(e: &Env, provider: &str, session: &str, text: &str) -> Value {
     }
 }
 fn stop(e: &Env, provider: &str, session: &str, text: &str) -> Value {
-    json!({"hook_event_name":if provider == "gemini" { "AfterAgent" } else { "Stop" },"session_id":session,"client_type":if provider == "kimi" { "kimi_code_cli" } else { "other" },"cwd":e.root.path(),"turn_id":"t1","prompt":text,"stop_hook_active":false})
+    if provider == "antigravity" {
+        let mut raw = agy(e, "Stop", session);
+        raw["lastUserInput"] = json!(text);
+        raw["terminationReason"] = json!("NO_TOOL_CALL");
+        raw["continuationActive"] = json!(false);
+        raw["fullyIdle"] = json!(true);
+        return raw;
+    }
+    json!({"hook_event_name":"Stop","session_id":session,"client_type":if provider == "kimi" { "kimi_code_cli" } else { "other" },"cwd":e.root.path(),"turn_id":"t1","prompt":text,"stop_hook_active":false})
 }
 
 #[test]
 fn native_write_fixtures_claim_only_the_native_session() {
-    for provider in ["codex", "kimi", "gemini", "opencode"] {
+    for provider in ["codex", "kimi", "antigravity", "opencode"] {
         let e = env();
         let mut raw = claim(&e, provider, "owner-123");
         if provider == "opencode" {
             raw["input"]["args"]["sessionID"] = json!("victim");
+        } else if provider == "antigravity" {
+            agy_edit_call(&mut raw, |call| call["args"]["session_id"] = json!("victim"));
         } else {
             raw["tool_input"]["session_id"] = json!("victim");
         }
@@ -113,11 +153,13 @@ fn native_write_fixtures_claim_only_the_native_session() {
 
 #[test]
 fn reads_failed_unknown_and_mcp_identity_do_not_claim() {
-    for provider in ["codex", "kimi", "gemini", "opencode"] {
+    for provider in ["codex", "kimi", "antigravity", "opencode"] {
         let e = env();
         let mut raw = claim(&e, provider, "owner");
         if provider == "opencode" {
             raw["input"]["tool"] = json!("read");
+        } else if provider == "antigravity" {
+            agy_edit_call(&mut raw, |call| call["name"] = json!("read_file"));
         } else {
             raw["tool_name"] = json!("Read");
         }
@@ -125,6 +167,8 @@ fn reads_failed_unknown_and_mcp_identity_do_not_claim() {
         let mut raw = claim(&e, provider, "owner");
         if provider == "opencode" {
             raw["output"]["error"] = json!("failed");
+        } else if provider == "antigravity" {
+            raw["error"] = json!("permission check failed: user denied permission");
         } else {
             raw["tool_response"] = json!({"error":"failed","exit_code":1});
         }
@@ -151,7 +195,7 @@ fn reads_failed_unknown_and_mcp_identity_do_not_claim() {
 
 #[test]
 fn another_sessions_owner_is_not_stolen() {
-    for provider in ["codex", "kimi", "gemini", "opencode"] {
+    for provider in ["codex", "kimi", "antigravity", "opencode"] {
         let e = env();
         fs::write(e.task.join(".owner"), "original-owner").unwrap();
         call(&e, provider, "claim", claim(&e, provider, "new-owner"));
@@ -189,13 +233,14 @@ fn parallel_native_claims_reserve_one_owner() {
 
 #[test]
 fn malformed_success_responses_and_unverified_kimi_variants_are_noops() {
-    for provider in ["codex", "kimi", "gemini", "opencode"] {
+    for provider in ["codex", "kimi", "antigravity", "opencode"] {
         let e = env();
         let mut raw = claim(&e, provider, "owner");
         match provider {
             "codex" => raw["tool_response"] = json!("unknown output"),
             "kimi" => raw["client_type"] = json!("kimi_cli"),
-            "gemini" => raw["tool_response"] = json!({}),
+            // agy：工具调用串解不开（截断）。
+            "antigravity" => raw["toolCall"] = json!("{\"name\":\"write_file\",\"args\":"),
             _ => raw["output"] = json!({}),
         }
         call(&e, provider, "claim", raw);
@@ -231,7 +276,7 @@ fn new_runtime_and_new_turn_drop_previous_write_facts() {
 
 #[test]
 fn native_stop_protocols_reuse_rules_and_respect_pause_unrelated_and_retry_bound() {
-    for provider in ["codex", "kimi", "gemini"] {
+    for provider in ["codex", "kimi", "antigravity"] {
         let e = env();
         call(&e, provider, "claim", claim(&e, provider, "owner"));
         call(
@@ -256,9 +301,10 @@ fn native_stop_protocols_reuse_rules_and_respect_pause_unrelated_and_retry_bound
                         assert_eq!(out.exit, 2);
                         assert!(out.stderr.unwrap().contains("[lead]"));
                     }
-                    "gemini" => assert_eq!(
+                    // agy 的 Stop：continue 阻止结束（真机探针 probe-hooks-1.md 第 7 条）。
+                    "antigravity" => assert_eq!(
                         serde_json::from_str::<Value>(&out.stdout.unwrap()).unwrap()["decision"],
-                        "deny"
+                        "continue"
                     ),
                     _ => assert_eq!(
                         serde_json::from_str::<Value>(&out.stdout.unwrap()).unwrap()["decision"],
@@ -299,7 +345,7 @@ fn native_stop_protocols_reuse_rules_and_respect_pause_unrelated_and_retry_bound
 
 #[test]
 fn context_uses_native_output_and_does_not_inject_kimi_observation_events() {
-    for provider in ["codex", "kimi", "gemini", "opencode"] {
+    for provider in ["codex", "kimi", "antigravity", "opencode"] {
         let e = env();
         call(&e, provider, "claim", claim(&e, provider, "owner"));
         let out = call(
@@ -339,24 +385,33 @@ fn context_uses_native_output_and_does_not_inject_kimi_observation_events() {
     }
 }
 
+/// agy 的 PreInvocation 只认 injectSteps；同一回合后面的模型调用（invocationNum > 0）不再注入，
+/// 免得系统消息在对话里越堆越多（hooks.md：注入的消息永久留在对话里）。
 #[test]
-fn gemini_before_model_preserves_request_and_replaces_only_owned_context() {
+fn antigravity_context_is_injected_once_per_turn_as_a_system_step() {
     let e = env();
-    call(&e, "gemini", "claim", claim(&e, "gemini", "owner"));
-    let raw = json!({"hook_event_name":"BeforeModel","session_id":"owner","cwd":e.root.path(),"llm_request":{"model":"native-model","messages":[{"role":"user","content":"hello"},{"role":"system","content":"[meowo-lead-context]\nstale"}],"config":{"temperature":0.1}}});
-    let out = call(&e, "gemini", "session", raw);
+    call(&e, "antigravity", "claim", claim(&e, "antigravity", "agy-ctx"));
+    let out = call(&e, "antigravity", "session", prompt(&e, "antigravity", "agy-ctx", "implement"));
     let value: Value = serde_json::from_str(&out.stdout.unwrap()).unwrap();
-    let request = &value["hookSpecificOutput"]["llm_request"];
-    assert_eq!(request["model"], "native-model");
-    assert_eq!(request["config"]["temperature"], 0.1);
-    assert_eq!(request["messages"].as_array().unwrap().len(), 2);
-    assert!(request["messages"][1]["content"]
-        .as_str()
-        .unwrap()
-        .contains("SPEC.md"));
-    // Gemini API 不收 system 角色（真模型 400）：注入的上下文一律用 user。
-    assert_eq!(request["messages"][1]["role"], "user");
-    assert_eq!(request["messages"][0]["content"], "hello");
+    let message = value["injectSteps"][0]["systemMessage"]["systemMessage"].as_str().unwrap();
+    assert!(message.contains("SPEC.md"), "{message}");
+    let mut later = prompt(&e, "antigravity", "agy-ctx", "implement");
+    later["invocationNum"] = json!(1);
+    assert_eq!(call(&e, "antigravity", "session", later), Output::default());
+}
+
+/// 共用 hooks.json 的 Antigravity App / IDE 会话、以及子代理（单独的对话，带父对话 id）都不归 Lead 管。
+#[test]
+fn antigravity_app_and_subagent_payloads_are_ignored() {
+    let e = env();
+    let mut app = claim(&e, "antigravity", "app-1");
+    app["artifactDirectoryPath"] = json!("C:/Users/u/.gemini/antigravity/brain/app-1");
+    app["transcriptPath"] = json!("C:/Users/u/.gemini/antigravity/brain/app-1/.system_generated/logs/transcript_full.jsonl");
+    assert_eq!(call(&e, "antigravity", "claim", app), Output::default());
+    let mut sub = claim(&e, "antigravity", "sub-1");
+    sub["parentConversationId"] = json!("main-1");
+    assert_eq!(call(&e, "antigravity", "claim", sub), Output::default());
+    assert!(!e.task.join(".owner").exists());
 }
 
 #[test]
@@ -400,7 +455,7 @@ fn compression_does_not_reset_turn_facts_and_opencode_idle_is_not_a_stop_control
 #[test]
 fn two_sessions_on_two_tasks_in_one_project_never_cross() {
     let mut injected = 0;
-    for provider in ["codex", "kimi", "gemini", "opencode"] {
+    for provider in ["codex", "kimi", "antigravity", "opencode"] {
         let e = env();
         let other = e.root.path().join(".lead/20261112-other");
         fs::create_dir_all(&other).unwrap();
@@ -409,13 +464,7 @@ fn two_sessions_on_two_tasks_in_one_project_never_cross() {
         fs::write(other.join("acceptance.json"), r#"[{"id":1,"check":"other","passes":false}]"#).unwrap();
         // A 写本任务，B 写另一个任务（同一 fixture，换掉目标路径）。
         call(&e, provider, "claim", claim(&e, provider, "session-a"));
-        let first = e.task.join("progress.md").display().to_string();
-        let second = other.join("progress.md").display().to_string();
-        let raw = claim(&e, provider, "session-b").to_string().replace(
-            &serde_json::to_string(&first).unwrap()[1..serde_json::to_string(&first).unwrap().len() - 1],
-            &serde_json::to_string(&second).unwrap()[1..serde_json::to_string(&second).unwrap().len() - 1],
-        );
-        call(&e, provider, "claim", serde_json::from_str(&raw).unwrap());
+        call(&e, provider, "claim", claim_file(&e, provider, "session-b", &other.join("progress.md")));
         assert_eq!(fs::read_to_string(e.task.join(".owner")).unwrap(), "session-a", "{provider}");
         assert_eq!(fs::read_to_string(other.join(".owner")).unwrap(), "session-b", "{provider}");
         let registry: Value = serde_json::from_slice(&fs::read(&e.registry).unwrap()).unwrap();
@@ -476,34 +525,55 @@ fn kimi_stop_asks_for_the_waiter_once_gate_is_open_and_hands_over_an_early_answe
     assert!(again.stderr.is_none_or(|text| !text.contains("leader 已在 Meowo 里回答")));
 }
 
+/// agy：写挂起关卡前在 PreToolUse 拦一次（deny + 原因），原因里给出 run_command 的后台启动方式与原样命令；
+/// Stop 兜底只问一次（continue 不限次数，续跑那轮的 continuationActive 也不可靠），答复先到时直接交给模型。
 #[test]
-fn gemini_gate_write_starts_waiter_by_tail_call_and_explains_it_to_the_model() {
+fn antigravity_requires_a_waiter_before_writing_a_pending_gate_and_asks_once_at_stop() {
     let e = env();
-    call(&e, "gemini", "session", prompt(&e, "gemini", "g-1", "开始"));
-    call(&e, "gemini", "claim", claim(&e, "gemini", "g-1"));
-    fs::write(
-        e.task.join("gate.json"),
-        r#"{"id":"Q-wait","type":"Q","title":"t","status":"pending","options":[{"id":"go","label":"Go"}]}"#,
-    )
-    .unwrap();
-    let write = json!({"hook_event_name":"AfterTool","session_id":"g-1","cwd":e.root.path(),"tool_name":"write_file","tool_input":{"file_path":e.task.join("gate.json"),"content":"{}"},"tool_response":{"llmContent":"File written."}});
-    let out: Value = serde_json::from_str(&call(&e, "gemini", "claim", write).stdout.unwrap()).unwrap();
-    let tail = &out["hookSpecificOutput"]["tailToolCallRequest"];
-    assert_eq!(tail["name"], "run_shell_command");
-    assert_eq!(tail["args"]["is_background"], true);
-    let command = tail["args"]["command"].as_str().unwrap().to_owned();
-    assert!(command.ends_with(" lead wait --provider gemini --session g-1"), "{command}");
-    // 尾调用自己的 AfterTool：补一句说明，叫模型结束本轮。
-    let started = json!({"hook_event_name":"AfterTool","session_id":"g-1","cwd":e.root.path(),"tool_name":"run_shell_command","tool_input":{"command":command,"is_background":true},"tool_response":{"llmContent":"Command moved to background (PID: 1)."}});
-    let out: Value = serde_json::from_str(&call(&e, "gemini", "claim", started).stdout.unwrap()).unwrap();
-    assert!(out["hookSpecificOutput"]["additionalContext"].as_str().unwrap().contains("直接结束本轮"));
-    // 写别的任务文件不触发尾调用。
-    assert_eq!(call(&e, "gemini", "claim", claim(&e, "gemini", "g-1")), Output::default());
-    // AfterAgent 兜底只问一次，避免无限续跑。
-    let first = call(&e, "gemini", "stop", stop(&e, "gemini", "g-1", "开始"));
-    assert!(first.stdout.unwrap().contains("is_background=true"));
-    let second = call(&e, "gemini", "stop", stop(&e, "gemini", "g-1", "开始"));
-    assert!(second.stdout.is_none_or(|text| !text.contains("is_background=true")));
+    call(&e, "antigravity", "session", prompt(&e, "antigravity", "agy-1", "开始"));
+    call(&e, "antigravity", "claim", claim(&e, "antigravity", "agy-1"));
+    let gate = e.task.join("gate.json");
+    let pending = r#"{"id":"Q-9","type":"Q","title":"t","status":"pending"}"#;
+    let pre = |content: &str| agy_tool(&e, "PreToolUse", "agy-1", "write_file", json!({"Path":gate,"Content":content}));
+    let out: Value = serde_json::from_str(&call(&e, "antigravity", "gate", pre(pending)).stdout.unwrap()).unwrap();
+    assert_eq!(out["decision"], "deny");
+    let reason = out["reason"].as_str().unwrap();
+    assert!(reason.contains("run_command") && reason.contains("WaitMsBeforeAsync") && reason.contains("BypassSandbox"), "{reason}");
+    assert!(reason.contains("lead wait --provider antigravity --session agy-1 --gate 'Q-9'`"), "{reason}");
+    // 按命令起好 agy 自己的等待器后，再写同一张草稿要放行（#7 真机测试 2026-11-26：provider 写死 kimi，
+    // agy 起好等待器后仍被连拦三次，关卡发不出去）。
+    let record = crate::lead_waiter::WaiterRecord {
+        pid: std::process::id(),
+        started: crate::lead_waiter::process_started(std::process::id()).unwrap(),
+        gate: "Q-9".into(),
+        session: "agy-1".into(),
+        provider: "antigravity".into(),
+        cli_pid: crate::proc::owner_pid("antigravity"),
+        cli_started: crate::proc::owner_pid("antigravity").and_then(crate::lead_waiter::process_started),
+    };
+    fs::write(crate::lead_waiter::waiter_path(&e.task), serde_json::to_string(&record).unwrap()).unwrap();
+    assert_eq!(call(&e, "antigravity", "gate", pre(pending)), Output::default());
+    fs::remove_file(crate::lead_waiter::waiter_path(&e.task)).unwrap();
+    // 消费关卡、不碰 gate.json 的命令放行。
+    assert_eq!(call(&e, "antigravity", "gate", pre(&pending.replace("pending", "consumed"))), Output::default());
+    assert_eq!(
+        call(&e, "antigravity", "gate", agy_tool(&e, "PreToolUse", "agy-1", "run_command", json!({"CommandLine":"ls"}))),
+        Output::default()
+    );
+    // 关卡还是写进去了（比如用 shell 写的）：Stop 兜底要求启动等待器，只问一次。
+    fs::write(&gate, r#"{"id":"Q-wait","type":"Q","title":"t","status":"pending","options":[{"id":"go","label":"Go"}]}"#).unwrap();
+    let first: Value = serde_json::from_str(&call(&e, "antigravity", "stop", stop(&e, "antigravity", "agy-1", "开始")).stdout.unwrap()).unwrap();
+    assert_eq!(first["decision"], "continue");
+    assert!(first["reason"].as_str().unwrap().contains("lead wait --provider antigravity --session agy-1`"));
+    let second = call(&e, "antigravity", "stop", stop(&e, "antigravity", "agy-1", "开始"));
+    assert!(second.stdout.is_none_or(|text| !text.contains("lead wait")));
+    // 答复在回合结束前就到了：Stop 直接把答复交给模型（continue），只送一次。
+    lead::answer_gate(&e.task, "Q-wait", &meowo_protocol::ipc::LeadGateAnswerDto { choice: "go".into(), note: String::new() }).unwrap();
+    let handed: Value = serde_json::from_str(&call(&e, "antigravity", "stop", stop(&e, "antigravity", "agy-1", "开始")).stdout.unwrap()).unwrap();
+    assert_eq!(handed["decision"], "continue");
+    assert!(handed["reason"].as_str().unwrap().contains("leader 已在 Meowo 里回答关卡 Q"));
+    let again = call(&e, "antigravity", "stop", stop(&e, "antigravity", "agy-1", "开始"));
+    assert!(again.stdout.is_none_or(|text| !text.contains("leader 已在 Meowo 里回答")));
 }
 
 /// kimi 2.6.0 的 Stop hook 不触发：写挂起关卡前在 PreToolUse 拦一次，给出原样命令；
@@ -550,204 +620,16 @@ fn kimi_subagent_writing_a_pending_gate_is_denied_without_a_waiter_command() {
     let gate = e.task.join("gate.json");
     let raw = json!({"hook_event_name":"PreToolUse","session_id":"session_k3","cwd":e.root.path(),"client_type":"kimi_code_cli","tool_name":"Write","tool_input":{"path":gate,"content":r#"{"id":"Q-1","type":"Q","title":"t","status":"pending"}"#}});
     let native = normalize(Provider::Kimi, &raw).unwrap();
-    let out = kimi_gate_guard_with(&native, &raw, "session_k3", &e.registry, |_| true).unwrap();
+    let out = gate_guard_with(Provider::Kimi, &native, &raw, "session_k3", &e.registry, |_| true).unwrap();
     assert_eq!(out.exit, 2);
     let reason = out.stderr.unwrap();
     assert!(reason.contains("关卡只由主会话发"), "{reason}");
     assert!(!reason.contains("lead wait"), "不能把等待命令给子代理：{reason}");
     assert!(!e.task.join(".owner").exists(), "子代理不能借写关卡认领任务");
     // 主 agent 写：照旧要求先起等待器。
-    let out = kimi_gate_guard_with(&native, &raw, "session_k3", &e.registry, |_| false).unwrap();
+    let out = gate_guard_with(Provider::Kimi, &native, &raw, "session_k3", &e.registry, |_| false).unwrap();
     assert!(out.stderr.unwrap().contains("lead wait --provider kimi --session session_k3"));
 }
-
-/// gemini 0.68 子代理与主 agent 共用 hook 载荷：按主 agent 的 invoke_agent 起止认。期间写挂起关卡被
-/// BeforeTool 拒绝、AfterTool 也不起等待器；invoke_agent 结束（或主回合起止）后主 agent 照常。
-#[test]
-fn gemini_subagent_cannot_write_a_pending_gate_while_invoke_agent_runs() {
-    let e = env();
-    call(&e, "gemini", "session", prompt(&e, "gemini", "g-2", "开始"));
-    call(&e, "gemini", "claim", claim(&e, "gemini", "g-2"));
-    let gate = e.task.join("gate.json");
-    let agent = |event: &str| json!({"hook_event_name":event,"session_id":"g-2","cwd":e.root.path(),"tool_name":"invoke_agent","tool_input":{"agent_name":"generalist","prompt":"写关卡"},"tool_response":{"llmContent":"done"}});
-    let write = json!({"hook_event_name":"BeforeTool","session_id":"g-2","cwd":e.root.path(),"tool_name":"write_file","tool_input":{"file_path":gate,"content":r#"{"id":"Q-1","type":"Q","title":"t","status":"pending"}"#}});
-    // 没有子代理：BeforeTool 放行。
-    assert_eq!(call(&e, "gemini", "gate", write.clone()), Output::default());
-    // 主 agent 派出子代理：期间写挂起关卡被拒，原因交给模型。
-    assert_eq!(call(&e, "gemini", "gate", agent("BeforeTool")), Output::default());
-    let out: Value = serde_json::from_str(&call(&e, "gemini", "gate", write.clone()).stdout.unwrap()).unwrap();
-    assert_eq!(out["decision"], "deny");
-    assert!(out["reason"].as_str().unwrap().contains("关卡只由主会话发"));
-    // 消费关卡、写别的文件不拦。
-    let mut consume = write.clone();
-    consume["tool_input"]["content"] = json!(r#"{"id":"Q-1","status":"consumed"}"#);
-    assert_eq!(call(&e, "gemini", "gate", consume), Output::default());
-    // 子代理以别的写法写进去了：AfterTool 不给它起等待器。
-    fs::write(&gate, r#"{"id":"Q-1","type":"Q","title":"t","status":"pending","options":[{"id":"go","label":"Go"}]}"#).unwrap();
-    let after = json!({"hook_event_name":"AfterTool","session_id":"g-2","cwd":e.root.path(),"tool_name":"write_file","tool_input":{"file_path":gate,"content":"{}"},"tool_response":{"llmContent":"File written."}});
-    let out = call(&e, "gemini", "claim", after.clone());
-    assert!(out.stdout.is_none_or(|text| !text.contains("tailToolCallRequest")));
-    // invoke_agent 结束：主 agent 写关卡照常（BeforeTool 放行、AfterTool 起等待器）。
-    assert_eq!(call(&e, "gemini", "claim", agent("AfterTool")), Output::default());
-    assert_eq!(call(&e, "gemini", "gate", write.clone()), Output::default());
-    assert!(call(&e, "gemini", "claim", after).stdout.unwrap().contains("tailToolCallRequest"));
-    // invoke_agent 被取消、没有 AfterTool：主回合起止清掉残留标记，不误拦主 agent。
-    call(&e, "gemini", "gate", agent("BeforeTool"));
-    assert_ne!(call(&e, "gemini", "gate", write.clone()), Output::default());
-    call(&e, "gemini", "stop", stop(&e, "gemini", "g-2", "开始"));
-    assert_eq!(call(&e, "gemini", "gate", write), Output::default());
-}
-
-/// 第三轮真机 run1：子代理在跑期间 invoke_agent 的标记一次都没出现，子代理把挂起关卡写进去了。
-/// 不靠标记也要认出子代理：gemini 的会话记录里，子代理文件（`<chats>/<会话>/<子代理>.jsonl`）比主会话记录新、
-/// 且还没 complete_task 成功，就是子代理在跑。期间写挂起关卡拒绝、AfterTool 不起等待器、BeforeModel 不改写请求。
-#[test]
-fn gemini_subagent_is_recognised_from_the_transcript_even_without_the_marker() {
-    let e = env();
-    call(&e, "gemini", "session", prompt(&e, "gemini", "g-3", "开始"));
-    call(&e, "gemini", "claim", claim(&e, "gemini", "g-3"));
-    let chats = e.root.path().join("home/.gemini/tmp/cwd/chats");
-    fs::create_dir_all(chats.join("g-3")).unwrap();
-    let main = chats.join("session-2026-11-13T14-06-g-3.jsonl");
-    let sub = chats.join("g-3").join("sub-1.jsonl");
-    let at = |path: &Path, secs: u64| {
-        fs::File::options()
-            .write(true)
-            .open(path)
-            .unwrap()
-            .set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs))
-            .unwrap();
-    };
-    fs::write(&main, "{\"sessionId\":\"g-3\",\"kind\":\"main\"}\n").unwrap();
-    at(&main, 1_000);
-    fs::write(&sub, "{\"sessionId\":\"sub-1\",\"kind\":\"subagent\"}\n").unwrap();
-    at(&sub, 1_001);
-    let gate = e.task.join("gate.json");
-    let pending = r#"{"id":"Q-1","type":"Q","title":"t","status":"pending"}"#;
-    let write = json!({"hook_event_name":"BeforeTool","session_id":"g-3","cwd":e.root.path(),"transcript_path":main,"tool_name":"write_file","tool_input":{"file_path":gate,"content":pending}});
-    // 子代理文件比主会话记录新：拒绝，且不给等待命令。
-    let out: Value = serde_json::from_str(&call(&e, "gemini", "gate", write.clone()).stdout.unwrap()).unwrap();
-    assert_eq!(out["decision"], "deny");
-    assert!(!out["reason"].as_str().unwrap().contains("lead wait"));
-    // 写进去了也不起等待器，BeforeModel 不改写子代理的请求。
-    fs::write(&gate, r#"{"id":"Q-1","type":"Q","title":"t","status":"pending","options":[{"id":"go","label":"Go"}]}"#).unwrap();
-    let after = json!({"hook_event_name":"AfterTool","session_id":"g-3","cwd":e.root.path(),"transcript_path":main,"tool_name":"write_file","tool_input":{"file_path":gate,"content":"{}"},"tool_response":{"llmContent":"File written."}});
-    assert!(call(&e, "gemini", "claim", after.clone()).stdout.is_none_or(|t| !t.contains("tailToolCallRequest")));
-    let model = json!({"hook_event_name":"BeforeModel","session_id":"g-3","cwd":e.root.path(),"transcript_path":main,"llm_request":{"model":"m","messages":[{"role":"user","content":"hi"}]}});
-    assert_eq!(call(&e, "gemini", "session", model.clone()), Output::default());
-    // 子代理 complete_task 成功：不再算在跑。
-    let mut text = fs::read_to_string(&sub).unwrap();
-    text.push_str("{\"id\":\"x\",\"type\":\"gemini\",\"toolCalls\":[{\"id\":\"c\",\"name\":\"complete_task\",\"status\":\"success\"}]}\n{\"$set\":{\"summary\":\"done\"}}\n");
-    fs::write(&sub, text).unwrap();
-    at(&sub, 1_002);
-    assert_eq!(call(&e, "gemini", "gate", write.clone()), Output::default());
-    // 子代理报错中途退出（没有 complete_task），主会话随后追加了记录：主会话更新，放行。
-    let errored = chats.join("g-3").join("sub-2.jsonl");
-    fs::write(&errored, "{\"sessionId\":\"sub-2\",\"kind\":\"subagent\"}\n").unwrap();
-    at(&errored, 1_003);
-    assert_ne!(call(&e, "gemini", "gate", write.clone()), Output::default());
-    at(&main, 1_004);
-    assert_eq!(call(&e, "gemini", "gate", write), Output::default());
-    assert!(call(&e, "gemini", "claim", after).stdout.unwrap().contains("tailToolCallRequest"));
-    assert!(call(&e, "gemini", "session", model).stdout.unwrap().contains("[meowo-lead-context]"));
-}
-
-/// Gemini API 对 contents 里的 system 角色回 400「Role 'system' is not supported」（第三轮 run1 两次）。
-/// 0.68 把 BeforeModel 返回的 messages 按角色原样转成 contents，其余 hook 的 systemMessage 只上屏。
-/// 断言：每个 Gemini hook、各种输入下，我们的输出里都没有 system 角色，也没有 systemMessage 字段，也不写 stderr
-/// （stdout 为空时 0.68 拿 stderr 当纯文本输出，转成 systemMessage）；BeforeModel 回写的每条消息只会是 user / model。
-#[test]
-fn gemini_hook_outputs_never_carry_a_system_role() {
-    fn walk(value: &Value, hits: &mut Vec<String>) {
-        match value {
-            Value::Object(map) => {
-                for (key, v) in map {
-                    if key == "systemMessage" || (key == "role" && v != "user" && v != "model") {
-                        hits.push(format!("{key}={v}"));
-                    }
-                    walk(v, hits);
-                }
-            }
-            Value::Array(items) => items.iter().for_each(|v| walk(v, hits)),
-            _ => {}
-        }
-    }
-    let e = env();
-    let s = "g-4";
-    let root = e.root.path();
-    let gate = e.task.join("gate.json");
-    let pending = r#"{"id":"Q-1","type":"Q","title":"t","status":"pending","options":[{"id":"go","label":"Go"}]}"#;
-    let before_model = |messages: Value| json!({"hook_event_name":"BeforeModel","session_id":s,"cwd":root,"llm_request":{"model":"m","messages":messages,"config":{"temperature":1}}});
-    let steps: Vec<(&str, Value)> = vec![
-        ("session", json!({"hook_event_name":"SessionStart","session_id":s,"cwd":root,"source":"startup"})),
-        ("session", prompt(&e, "gemini", s, "开始")),
-        ("session", before_model(json!([{"role":"user","content":"hi"}]))),
-        ("claim", claim(&e, "gemini", s)),
-        ("session", prompt(&e, "gemini", s, "继续")),
-        ("session", before_model(json!([{"role":"user","content":"hi"},{"role":"model","content":"ok"}]))),
-        ("session", before_model(json!([{"role":"system","content":"sys"},{"role":"user","content":"hi"},{"role":"system","content":"[meowo-lead-context]\nold"}]))),
-        ("session", before_model(json!([{"role":"tool","content":"x"},{"content":"no role"}]))),
-        ("gate", json!({"hook_event_name":"BeforeTool","session_id":s,"cwd":root,"tool_name":"invoke_agent","tool_input":{"agent_name":"generalist","prompt":"p"}})),
-        ("gate", json!({"hook_event_name":"BeforeTool","session_id":s,"cwd":root,"tool_name":"write_file","tool_input":{"file_path":gate,"content":pending}})),
-        ("claim", json!({"hook_event_name":"AfterTool","session_id":s,"cwd":root,"tool_name":"invoke_agent","tool_input":{"agent_name":"generalist","prompt":"p"},"tool_response":{"llmContent":"done"}})),
-    ];
-    let mut checked = 0;
-    for (mode, raw) in steps {
-        let out = call(&e, "gemini", mode, raw.clone());
-        if let Some(text) = out.stdout {
-            let value: Value = serde_json::from_str(&text)
-                .unwrap_or_else(|_| panic!("gemini hook 输出必须是 JSON（纯文本会被当成 systemMessage）：{text}"));
-            let mut hits = Vec::new();
-            walk(&value, &mut hits);
-            assert!(hits.is_empty(), "{raw} → {hits:?}");
-            checked += 1;
-        }
-        assert!(out.stderr.is_none(), "gemini hook 不该写 stderr：{raw}");
-    }
-    // 关卡写入后的尾调用、等待器说明、AfterAgent 兜底。
-    fs::write(&gate, pending).unwrap();
-    let mut outputs = vec![call(&e, "gemini", "claim", json!({"hook_event_name":"AfterTool","session_id":s,"cwd":root,"tool_name":"write_file","tool_input":{"file_path":gate,"content":pending},"tool_response":{"llmContent":"ok"}}))];
-    let command = outputs[0]
-        .stdout
-        .as_deref()
-        .and_then(|t| serde_json::from_str::<Value>(t).ok())
-        .and_then(|v| {
-            v.pointer("/hookSpecificOutput/tailToolCallRequest/args/command")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        })
-        .expect("尾调用");
-    outputs.push(call(&e, "gemini", "claim", json!({"hook_event_name":"AfterTool","session_id":s,"cwd":root,"tool_name":"run_shell_command","tool_input":{"command":command},"tool_response":{"llmContent":"bg"}})));
-    outputs.push(call(&e, "gemini", "stop", stop(&e, "gemini", s, "继续")));
-    for out in outputs {
-        let value: Value = serde_json::from_str(&out.stdout.unwrap()).unwrap();
-        let mut hits = Vec::new();
-        walk(&value, &mut hits);
-        assert!(hits.is_empty(), "{hits:?}");
-        checked += 1;
-    }
-    assert!(checked >= 7, "覆盖到的输出太少：{checked}");
-}
-
-
-#[test]
-fn gemini_publication_waits_after_publish_not_draft_write() {
-    let e = env();
-    call(&e, "gemini", "session", prompt(&e, "gemini", "g-pub", "开始"));
-    call(&e, "gemini", "claim", claim(&e, "gemini", "g-pub"));
-    lead::publication::initialize(&e.task).unwrap();
-    fs::write(e.task.join("gate.json"), r#"{"id":"A-pub","type":"A","status":"pending"}"#).unwrap();
-    let write = json!({"hook_event_name":"AfterTool","session_id":"g-pub","cwd":e.root.path(),"tool_name":"write_file","tool_input":{"file_path":e.task.join("gate.json"),"content":"{}"},"tool_response":{"llmContent":"File written."}});
-    let before = call(&e, "gemini", "claim", write);
-    assert!(before.stdout.is_none_or(|text| !text.contains("tailToolCallRequest")));
-    assert!(lead::read_gate(&e.task).is_none());
-    lead::publication::publish(&e.task, None).unwrap();
-    let after = call(&e, "gemini", "stop", stop(&e, "gemini", "g-pub", "开始"));
-    assert!(after.stdout.unwrap().contains("is_background=true"));
-    let retry = call(&e, "gemini", "stop", stop(&e, "gemini", "g-pub", "开始"));
-    assert!(retry.stdout.is_none_or(|text| !text.contains("is_background=true")));
-}
-
 
 #[test]
 fn kimi_publication_guard_requires_publish_before_ending() {
@@ -783,7 +665,7 @@ fn kimi_reissue_requires_waiter_for_new_id_not_old_pending_card() {
     let out = call(&e, "kimi", "gate", pre.clone());
     assert_eq!(out.exit, 2);
     assert!(out.stderr.unwrap().contains("--gate 'Q-new'"));
-    for (gate, owner, provider) in [("", "session_target", "kimi"), ("Q-new", "other", "kimi"), ("Q-new", "session_target", "gemini")] {
+    for (gate, owner, provider) in [("", "session_target", "kimi"), ("Q-new", "other", "kimi"), ("Q-new", "session_target", "antigravity")] {
         record.gate = gate.into();
         record.session = owner.into();
         record.provider = provider.into();

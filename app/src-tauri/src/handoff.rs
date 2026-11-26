@@ -30,7 +30,7 @@ pub(crate) async fn copy_session_to_provider(
             .map_err(|e| e.to_string())?;
         let source = meowo_agent::by_id(&header.provider).ok_or("未知来源 agent")?;
         // 来源门槛 = 现成的结构化 transcript 能力谓词，不新增能力槽也不按身份分支：
-        // 没有结构化历史就没有可交接的东西（gemini/opencode 只能当复制目标）。
+        // 没有结构化历史就没有可交接的东西（这样的 agent 只能当复制目标；现役五家都有）。
         let spec = source
             .telemetry()
             .and_then(|telemetry| telemetry.transcript())

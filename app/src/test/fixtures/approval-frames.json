@@ -1,6 +1,90 @@
 {
-  "note": "五家审批的真机样本：tests/probe_approval.rs 用本机真实 CLI 抓的屏幕与 broker 请求（用户目录名已换成 me）。前端 views/chat/approvalFrames.test.tsx 拿它回放识别与卡片模型；探针作答时读这里的 allowOnceInput 与 denyFeedback。patterns 是各插件声明的 attention_patterns（含选项角色规则），Rust 测试逐字核对。feedbackFrames 是 tests/probe_deny_feedback.rs 走「说明并拒绝」时四个时刻的屏幕：审批框、进入等输入、打完字、了结之后。customAnswerFrames 是 tests/probe_kimi_other.rs 走提问表单自定义答案时的屏幕。",
+  "note": "五家审批的真机样本：tests/probe_approval.rs 用本机真实 CLI 抓的屏幕与 broker 请求（用户目录名已换成 me）；antigravity 那一帧不是探针抓的，取自接入时的屏幕取证（见该帧 source），账号邮箱与工作目录已脱敏。前端 views/chat/approvalFrames.test.tsx 拿它回放识别与卡片模型；探针作答时读这里的 allowOnceInput 与 denyFeedback。patterns 是各插件声明的 attention_patterns（含选项角色规则），Rust 测试逐字核对。feedbackFrames 是 tests/probe_deny_feedback.rs 走「说明并拒绝」时四个时刻的屏幕：审批框、进入等输入、打完字、了结之后。customAnswerFrames 是 tests/probe_kimi_other.rs 走提问表单自定义答案时的屏幕。",
   "patterns": {
+    "antigravity": [
+      {
+        "anchors": [],
+        "confirms": null,
+        "details": "proceed_box",
+        "id": "antigravity:command-approval",
+        "kind": "approval",
+        "last": true,
+        "notice": null,
+        "options": [
+          {
+            "pattern": "^yes, (?:run command|allow [a-z ]+)$",
+            "role": "allow_once",
+            "scope": null,
+            "typed": null
+          },
+          {
+            "pattern": "^yes, and always (?:allow|grant)\\b.*\\bin this conversation\\b",
+            "role": "allow_persistent",
+            "scope": "session",
+            "typed": null
+          },
+          {
+            "pattern": "^yes, and always allow\\b.*\\(persist to [^)]+\\)$",
+            "role": "allow_persistent",
+            "scope": "remember",
+            "typed": null
+          },
+          {
+            "pattern": "^yes, and always allow non-workspace access$",
+            "role": "allow_persistent",
+            "scope": "remember",
+            "typed": null
+          },
+          {
+            "pattern": "^no, (?:cancel|deny(?: [a-z ]+)?)$",
+            "role": "deny",
+            "scope": null,
+            "typed": null
+          }
+        ],
+        "patterns": [
+          "^\\s*run this command\\?\\s*$",
+          "^\\s*allow [^?\\n]{1,80}\\?\\s*$"
+        ],
+        "tail_lines": null,
+        "unparsed_keys": [
+          {
+            "input": "\u001b",
+            "role": "deny"
+          }
+        ]
+      },
+      {
+        "anchors": [],
+        "confirms": null,
+        "details": "none",
+        "id": "antigravity:question",
+        "kind": "question",
+        "last": true,
+        "notice": null,
+        "options": [],
+        "patterns": [
+          "^\\s*question \\d+/\\d+: "
+        ],
+        "tail_lines": null,
+        "unparsed_keys": []
+      },
+      {
+        "anchors": [],
+        "confirms": null,
+        "details": "none",
+        "id": "antigravity:trust",
+        "kind": "choice",
+        "last": true,
+        "notice": null,
+        "options": [],
+        "patterns": [
+          "^\\s*do you trust the contents of this project\\?\\s*$"
+        ],
+        "tail_lines": null,
+        "unparsed_keys": []
+      }
+    ],
     "claude": [
       {
         "anchors": [],
@@ -171,87 +255,6 @@
       }
     ],
     "codex": [],
-    "gemini": [
-      {
-        "anchors": [],
-        "confirms": null,
-        "details": "framed_box",
-        "id": "gemini:command-approval",
-        "kind": "approval",
-        "last": true,
-        "notice": null,
-        "options": [
-          {
-            "pattern": "^allow once$",
-            "role": "allow_once",
-            "scope": null,
-            "typed": null
-          },
-          {
-            "pattern": "^allow (?:tool |all server tools )?for this session$",
-            "role": "allow_persistent",
-            "scope": "session",
-            "typed": null
-          },
-          {
-            "pattern": "^allow (?:tool |this command )?for (?:this file in )?all future sessions$",
-            "role": "allow_persistent",
-            "scope": "remember",
-            "typed": null
-          },
-          {
-            "pattern": "^no, suggest changes(?: \\(esc\\))?$",
-            "role": "deny",
-            "scope": null,
-            "typed": null
-          }
-        ],
-        "patterns": [
-          "^\\s*│\\s*allow execution of [^\\n]*\\?",
-          "^\\s*│\\s*apply this change\\?",
-          "^\\s*│\\s*do you want to proceed\\?",
-          "^\\s*│\\s*to run \\[[^\\]\\n]+\\], allow access to the following\\?"
-        ],
-        "tail_lines": null,
-        "unparsed_keys": [
-          {
-            "input": "\u001b",
-            "role": "deny"
-          }
-        ]
-      },
-      {
-        "anchors": [],
-        "confirms": null,
-        "details": "none",
-        "id": "gemini:usage-limit",
-        "kind": "choice",
-        "last": true,
-        "notice": null,
-        "options": [],
-        "patterns": [
-          "^\\s*│\\s*usage limit reached\\b",
-          "^\\s*│\\s*we are currently experiencing high demand\\b"
-        ],
-        "tail_lines": null,
-        "unparsed_keys": []
-      },
-      {
-        "anchors": [],
-        "confirms": null,
-        "details": "framed_form",
-        "id": "gemini:question",
-        "kind": "question",
-        "last": true,
-        "notice": null,
-        "options": [],
-        "patterns": [
-          "^\\s*│\\s*answer questions\\b"
-        ],
-        "tail_lines": null,
-        "unparsed_keys": []
-      }
-    ],
     "kimi": [
       {
         "anchors": [],
@@ -564,43 +567,6 @@
         "submitInput": "\r"
       }
     },
-    "gemini": {
-      "version": "0.68.0",
-      "capturedAt": "2026-11-20",
-      "args": [
-        "--approval-mode",
-        "default"
-      ],
-      "prompt": "Run this exact shell command and nothing else: echo meowo-probe > probe-out.txt",
-      "channel": "terminal",
-      "rule": "gemini:command-approval",
-      "allowOnceInput": "\r",
-      "screen": [
-        " ▝▜▄     Gemini CLI v0.68.0",
-        "   ▝▜▄",
-        "  ▗▟▀    Authenticated with gemini-api-key /auth",
-        " ▝▀",
-        "",
-        "▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄",
-        " > Run this exact shell command and nothing else: echo meowo-probe > probe-out.txt",
-        "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
-        "✦ This command creates a file named probe-out.txt containing the text meowo-probe in the current directory.",
-        "",
-        "╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
-        "│ ? Shell  echo meowo-probe > probe-out.txt                                                                            │",
-        "│ ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │",
-        "│ │ echo meowo-probe > probe-out.txt                                                                                 │ │",
-        "│ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │",
-        "│ Allow execution of [Shell]?                                                                                          │",
-        "│ Redirection detected. To auto-accept, press Shift+Tab                                                                │",
-        "│                                                                                                                      │",
-        "│ ● 1. Allow once                                                                                                      │",
-        "│   2. Allow for this session                                                                                          │",
-        "│   3. No, suggest changes (esc)                                                                                       │",
-        "╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯"
-      ],
-      "brokerRequest": null
-    },
     "opencode": {
       "version": "1.19.5",
       "capturedAt": "2026-11-14",
@@ -651,6 +617,56 @@
         "  ┃",
         "  ┃   Allow once   Allow always   Reject                                 ctrl+f fullscreen  ⇆ select  enter confirm",
         "  ┃"
+      ],
+      "brokerRequest": null
+    },
+    "antigravity": {
+      "version": "1.5.18",
+      "capturedAt": "2026-11-26",
+      "args": [
+        "--mode",
+        "plan"
+      ],
+      "prompt": "/plan line1\nline2\nline3",
+      "source": "接入 antigravity 的 Lead 任务屏幕取证 run2/05_approval_cmd.txt（120x40 ConPTY + pyte 重建；账号邮箱、工作目录已脱敏），不是 tests/probe_approval.rs 抓的",
+      "channel": "terminal",
+      "rule": "antigravity:command-approval",
+      "allowOnceInput": "\r",
+      "screen": [
+        "",
+        "      ▄▀▀▄",
+        "     ▀▀▀▀▀▀",
+        "    ▀▀▀▀▀▀▀▀",
+        "   ▄▀▀    ▀▀▄",
+        "  ▄▀▀      ▀▀▄",
+        "",
+        "  Antigravity CLI 1.5.18",
+        "  user@example.com (Google AI Pro)",
+        "  Gemini 4 Neon (High)",
+        "  ~/work/demo",
+        "",
+        "────────────────────────────────────────────────────────────",
+        "> /plan line1",
+        "  line2",
+        "  line3",
+        "",
+        "○ Thought for 6.9s (Multivalued command structure detected alongside generic placeholder text. Workspace path conte...)",
+        "● Ran (Get-ChildItem -Force) (ctrl+o to expand)",
+        "",
+        "Command",
+        "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+        "",
+        "Requesting permission for:",
+        "   Get-ChildItem -Force",
+        "",
+        "Run this command?",
+        "> 1. Yes, run command",
+        "  2. Yes, and always allow in this conversation for commands that start with 'Get-ChildItem -Force'",
+        "  3. Yes, and always allow for commands that start with 'Get-ChildItem -Force' (Persist to settings.json)",
+        "  4. No, cancel",
+        "",
+        "  ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command",
+        "esc to cancel                                                                                plan · Gemini 4 Neon · high"
       ],
       "brokerRequest": null
     }

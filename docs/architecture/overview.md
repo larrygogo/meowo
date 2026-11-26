@@ -8,7 +8,7 @@
 
 ## 产品形态
 
-Meowo 把各 AI CLI（Claude Code / Codex / Kimi / Gemini / OpenCode）的会话事件收集到本地
+Meowo 把各 AI CLI（Claude Code / Codex / Kimi / Antigravity / OpenCode）的会话事件收集到本地
 SQLite，再用桌面贴纸实时展示，并提供原生对话窗直接驱动会话。三个进程角色：
 
 - **meowo-reporter**：hook 子进程二进制。各 CLI 的 hook 被接线成调用 reporter，由它写库、

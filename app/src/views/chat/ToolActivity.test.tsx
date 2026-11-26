@@ -191,7 +191,7 @@ describe("待办与子任务的工具行", () => {
     };
     const run = paths({ type: "tool_use", id: "i1", timestamp: null, name: "Bash", kind: "run", summary: "ls", detail: null });
     const todoIcon = paths(todo("TodoWrite", "x"));
-    const agentIcon = paths({ type: "tool_use", id: "i2", timestamp: null, name: "spawn_agent", kind: "agent", summary: "gemini_e2e", detail: null });
+    const agentIcon = paths({ type: "tool_use", id: "i2", timestamp: null, name: "spawn_agent", kind: "agent", summary: "lead_e2e", detail: null });
     expect(new Set([run, todoIcon, agentIcon]).size).toBe(3);
   });
 });

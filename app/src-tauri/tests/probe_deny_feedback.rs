@@ -89,23 +89,12 @@ fn approval_on_screen(agent: &str, screen: &str) -> Option<&'static str> {
 }
 
 fn args(agent: &str) -> Vec<String> {
-    let plugin = meowo_agent::by_id(agent).unwrap();
     let mut args: Vec<String> = match agent {
         // 模型用最便宜的；`--model` 只管本次启动，不改用户的默认模型。
         "claude" => ["--permission-mode", "default", "--model", "haiku"]
             .map(String::from)
             .to_vec(),
         "kimi" => Vec::new(),
-        "gemini" => plugin
-            .launch_options()
-            .iter()
-            .find(|o| o.id == "approval")
-            .and_then(|o| o.choices.iter().find(|c| c.id == "default"))
-            .expect("gemini 没有声明 approval/default")
-            .args
-            .iter()
-            .map(|arg| arg.to_string())
-            .collect(),
         other => panic!("没有 {other} 的走查方案"),
     };
     if let Ok(extra) = std::env::var("PROBE_ARGS") {

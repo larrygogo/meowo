@@ -167,7 +167,7 @@ mod auto_resume_tests {
     fn only_providers_without_lead_cap_are_resumed_on_answer() {
         assert!(super::auto_resume_on_answer("claude"));
         assert!(super::auto_resume_on_answer(""));
-        for provider in ["codex", "kimi", "gemini", "opencode"] {
+        for provider in ["codex", "kimi", "antigravity", "opencode"] {
             assert!(!super::auto_resume_on_answer(provider), "{provider}");
         }
         assert!(!super::auto_resume_on_answer("nope"));
@@ -492,7 +492,7 @@ pub(crate) fn refresh_if_installed() {
         return;
     };
     // Claude 装着 Lead 才刷新它；账号目录也在这里对齐：开关打开之后才建的账号、以及老账号，都靠它补上（#173）。
-    // 不能像 main 那样在 Claude 没装时提前 return：下面还要刷新 codex/kimi/gemini/opencode 的 Lead。
+    // 不能像 main 那样在 Claude 没装时提前 return：下面还要刷新 codex/kimi/antigravity/opencode 的 Lead。
     if claude_dir().is_some_and(|home| installed_in(&home)) {
         let dirs = all_claude_dirs();
         for dir in &dirs {
@@ -609,7 +609,7 @@ fn provider_installation_state(
     dto.hooks_installed = state.hooks_present;
     dto.installed = state.installed;
     // 自动继续 = 本机 CLI 版本上插件声明的原生续跑机制成立（任务 .lead/20261113-lead-tui：
-    // codex app-server / opencode HTTP / kimi·gemini 会话内等待器）。托管会话路线已删除。
+    // codex app-server / opencode HTTP / kimi·antigravity 会话内等待器）。托管会话路线已删除。
     dto.automatic_continue =
         dto.installed && lead_install::native_continue_for(cap, version).is_some();
     if dto.automatic_continue {
@@ -1325,10 +1325,9 @@ mod provider_install_tests {
     #[test]
     fn provider_states_keep_asset_install_and_automatic_continuation_separate() {
         let fixture = Fixture::new();
-        let providers: [(&dyn AgentPlugin, &str); 4] = [
+        let providers: [(&dyn AgentPlugin, &str); 3] = [
             (&meowo_agent::plugins::codex::Codex, "0.167.2"),
             (&meowo_agent::plugins::kimi::Kimi, "2.5.3"),
-            (&meowo_agent::plugins::gemini::Gemini, "0.65.0"),
             (&meowo_agent::plugins::opencode::Opencode, "1.19.3"),
         ];
         for (plugin, version) in providers {
@@ -1359,7 +1358,7 @@ mod provider_install_tests {
                     && installed.hooks_installed
             );
             // 本机版本上原生续跑机制成立才算可自动继续（做空指出：此前写死 false，与真机闭环矛盾）。
-            // kimi 2.5.3 / gemini 0.65.0 低于会话内等待器的查证版本，只装 Lead、不自动继续。
+            // kimi 2.5.3 低于会话内等待器的查证版本，只装 Lead、不自动继续。
             let expected = matches!(plugin.id().as_str(), "codex" | "opencode");
             assert_eq!(
                 installed.automatic_continue,
@@ -1394,15 +1393,19 @@ mod provider_install_tests {
         }
     }
 
-    /// leader 在关卡 Q 接受的风险要写在设置页：Gemini 的自动继续会在 /settings、登录对话框开着时直接开新一轮。
+    /// leader 在关卡 Q 接受的风险要写在设置页（原出自已移除的 gemini 插件：自动继续会在 /settings、登录对话框开着时
+    /// 直接开新一轮；现役插件都没有说明）。
     /// 说明来自插件声明，只在本机版本上续跑成立时给；其余 CLI 与续跑不成立的版本没有说明。
     #[test]
     fn continue_notes_come_from_the_plugin_and_only_with_automatic_continue() {
         let fixture = Fixture::new();
-        let providers: [(&dyn AgentPlugin, &str, &[&str]); 5] = [
-            (&meowo_agent::plugins::gemini::Gemini, "0.68.0", &["lead/note_dialog_starts_turn"]),
-            (&meowo_agent::plugins::gemini::Gemini, "0.65.0", &[]),
+        let providers: [(&dyn AgentPlugin, &str, &[&str]); 4] = [
             (&meowo_agent::plugins::kimi::Kimi, "2.6.0", &[]),
+            (
+                &meowo_agent::plugins::antigravity::Antigravity,
+                "1.5.18",
+                &["lead/note_waiter_needs_approval"],
+            ),
             (&meowo_agent::plugins::codex::Codex, "0.167.2", &[]),
             (&meowo_agent::plugins::opencode::Opencode, "1.19.3", &[]),
         ];

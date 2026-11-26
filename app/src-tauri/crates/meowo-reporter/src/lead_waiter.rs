@@ -1,8 +1,8 @@
-//! 原生 TUI 会话的关卡等待器：`meowo-reporter lead wait --provider <kimi|gemini> --session <id>`。
+//! 原生 TUI 会话的关卡等待器：`meowo-reporter lead wait --provider <kimi|antigravity> --session <id>`。
 //!
-//! 为什么要它（任务 .lead/20261113-lead-tui）：kimi/gemini 的 hook 都不能自己开新回合，但两家的
-//! TUI 都会在「后台命令结束」时于空闲处自动开一轮（kimi 后台 Bash 完成 → loop.notify；gemini
-//! 后台 shell 完成 → inject + modelSteering 空闲自动提交）。所以关卡挂起时让 TUI 自己在后台跑这个
+//! 为什么要它（任务 .lead/20261113-lead-tui，当时为 kimi 与已移除的 gemini 插件设计）：原生 hook
+//! 不能自己开新回合，但 kimi 与 antigravity 的 TUI 都会在「后台命令结束」时于空闲处自动开一轮
+//! （kimi 后台 Bash 完成 → loop.notify；antigravity 非 daemon 后台任务结束时唤醒 agent，changelog）。所以关卡挂起时让 TUI 自己在后台跑这个
 //! 等待器：答复落盘它就把答复打到 stdout 并退出，CLI 收到「后台任务完成」后接着做。不往 PTY 打字
 //! （覆盖草稿、误答审批），也不走 ACP（leader：Provider 会把 ACP 流量另算）。
 //!
@@ -78,10 +78,12 @@ pub fn live_waiter(task: &Path, gate_id: &str) -> Option<WaiterRecord> {
         .filter(|r| (r.gate == gate_id || r.gate.is_empty()) && same_process(r.pid, r.started))
 }
 
-pub fn target_waiter_ready(task: &Path, gate_id: &str, session: &str, kimi_pid: Option<u32>) -> bool {
+/// `provider` 是写关卡的那家：原先写死成 "kimi"，agy 接进同一条路后它的等待器永远判不就绪，
+/// 关卡草稿一直被拦（#7 真机测试 2026-11-26，agy 起好等待器后仍连续三次写不进 gate.json）。
+pub fn target_waiter_ready(task: &Path, gate_id: &str, session: &str, provider: &str, cli_pid: Option<u32>) -> bool {
     live_waiter(task, gate_id).is_some_and(|record| {
-        record.gate == gate_id && record.provider == "kimi" && record.session == session
-            && kimi_pid.is_none_or(|pid| record.cli_pid == Some(pid)
+        record.gate == gate_id && record.provider == provider && record.session == session
+            && cli_pid.is_none_or(|pid| record.cli_pid == Some(pid)
                 && record.cli_started.zip(process_started(pid))
                     .is_some_and(|(before, now)| before.abs_diff(now) <= 1))
     })
@@ -396,8 +398,8 @@ pub fn run_from_args(args: &[String], registry: &Path) -> Option<Output> {
     }
     Some(
         std::panic::catch_unwind(|| {
-            // 只有 kimi 的 hook 载荷分不出子代理（见 lead_kimi），要靠 wire 认启动者；gemini 的后台完成
-            // 注入是会话级广播，主界面空闲时一定收得到（0.68 InjectionService.addInjection），不需要。
+            // 只有 kimi 的 hook 载荷分不出子代理（见 lead_kimi），要靠 wire 认启动者；其余 provider 不走
+            // 这一步（已移除的 gemini 插件的后台完成注入是会话级广播，当时据此不需要）。
             let mut launcher = || {
                 (provider == "kimi")
                     .then(|| crate::lead_kimi::launched_by_subagent(&session, &crate::lead_kimi::ancestors()))
@@ -442,11 +444,11 @@ pub struct Guards<'a> {
     /// kimi 子代理拿到等待命令后自己在后台跑了它，完成通知进了子代理的 loop、主会话没续跑（run5 D）。
     pub launched_by_subagent: &'a mut dyn FnMut() -> Option<bool>,
     pub launcher_grace: Duration,
-    /// 启动我的 shell 进程（pid，启动时刻）。它没了就退出：gemini 0.68 的 /quit 先杀后台 shell
+    /// 启动我的 shell 进程（pid，启动时刻）。它没了就退出。前科：已移除的 gemini 插件 0.68 的 /quit 先杀后台 shell
     /// （interactiveCli cleanupFn → ShellExecutionService.kill）再 process.exit，这段时间宿主 CLI 还活着，
     /// 只看 CLI 时我们这个孙进程会多挂一阵、还挂在那个伪终端上。第二轮真机 E 里 /quit 20 秒没退出、
     /// 按两次 Ctrl-C 才退；假模型复跑（2026-11-13）新旧 reporter 都在 0.6 秒内退出，没能复现，真模型下
-    /// 卡住是不是等待器所致未证实。用户在 gemini 里手动停掉这个后台任务时同理，等待器不该留成孤儿。
+    /// 卡住是不是等待器所致未证实。用户在 CLI 里手动停掉这个后台任务时同理，等待器不该留成孤儿。
     pub parent: Option<(u32, u64)>,
     pub target_gate: Option<&'a str>,
 }
@@ -1025,7 +1027,7 @@ mod tests {
         let fx = Fx::new("pending");
         fx.answer();
         assert!(undelivered_answer(&fx.task, "session_abc").is_some());
-        let out = wait("gemini", "session_abc", &fx.registry, P, M, || None);
+        let out = wait("antigravity", "session_abc", &fx.registry, P, M, || None);
         assert!(out.stdout.unwrap().contains("选择 go"));
         assert!(!waiter_path(&fx.task).exists());
     }
@@ -1163,20 +1165,20 @@ mod tests {
         )
         .unwrap();
         assert_eq!(kimi, "\"C:/Program Files/Meowo/meowo-reporter.exe\" lead wait --provider kimi --session session_abc");
-        let gemini = command("gemini", r"C:\Users\o'neil\meowo-reporter.exe", "abc-1").unwrap();
+        let agy = command("antigravity", r"C:\Users\o'neil\meowo-reporter.exe", "abc-1").unwrap();
         if cfg!(windows) {
             assert_eq!(
-                gemini,
-                r"& 'C:\Users\o''neil\meowo-reporter.exe' lead wait --provider gemini --session abc-1"
+                agy,
+                r"& 'C:\Users\o''neil\meowo-reporter.exe' lead wait --provider antigravity --session abc-1"
             );
         }
     }
 
     /// 做空 N5：hook 要不要求起等待器，与宿主面板同一个版本门。版本不到 / 读不出 → 不给命令
-    /// （kimi PreToolUse、Stop 与 gemini AfterTool 三处都经 [`command`] 取命令，拿到 None 就不拦截）。
+    /// （kimi / antigravity 的 PreToolUse 与 Stop 都经 [`command`] 取命令，拿到 None 就不拦截）。
     #[test]
     fn waiter_command_follows_the_host_version_gate() {
-        for (provider, old, ok) in [("kimi", "2.5.3", "2.6.0"), ("gemini", "0.67.0", "0.68.0")] {
+        for (provider, old, ok) in [("kimi", "2.5.3", "2.6.0"), ("antigravity", "1.5.17", "1.5.18")] {
             test_version::set(Some(Some(old)));
             assert!(command(provider, "r", "s").is_none(), "{provider} {old}");
             test_version::set(Some(None));
@@ -1324,7 +1326,7 @@ mod tests {
         assert!(out.stdout.unwrap().contains("选择 go"));
     }
 
-    /// 第二轮 P4：gemini /quit 先杀后台 shell 再退出，等待器若还活着退出就卡住。启动它的 shell
+    /// 第二轮 P4（已移除的 gemini 插件）：/quit 先杀后台 shell 再退出，等待器若还活着退出就卡住。启动它的 shell
     /// 没了就静默退出（宿主 CLI 此时还活着）。
     #[test]
     fn exits_silently_when_its_parent_shell_is_gone() {
@@ -1342,7 +1344,7 @@ mod tests {
         let registry = fx.registry.clone();
         let handle = std::thread::spawn(move || {
             wait_guarded(
-                "gemini",
+                "antigravity",
                 "session_abc",
                 &registry,
                 P,

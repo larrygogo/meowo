@@ -4,7 +4,7 @@
 ///
 /// 这里有几份不是真机抓的（kimi 的屏幕取自源码，claude、codex 的 broker 请求只有字段形状）。
 /// 真机抓的那一套在 fixtures/approval-frames.json（tests/probe_approval.rs，2026-11-14：claude、codex 的
-/// broker 请求，claude、kimi、opencode 的屏幕），由 views/chat/approvalFrames.test.tsx 回放。
+/// broker 请求，claude、kimi、opencode 的屏幕；antigravity 的屏幕取自 2026-11-26 屏幕取证），由 views/chat/approvalFrames.test.tsx 回放。
 /// 两套并存：这里的样本带着各条用例要的特定内容（长命令、危险命令、多条持久放行），真机那套管
 /// 「CLI 现在实际长什么样」。
 
@@ -51,23 +51,46 @@ export const KIMI_APPROVAL_SCREEN = [
   "────────────────────────",
 ].join("\n");
 
-/// Gemini 的工具确认框。0.61 真机屏（`--approval-mode default` 下跑一条带重定向的 shell），
-/// 与 terminalAttention.test.ts 里的既有样本同一份。框宽是手改窄的；0.68.0 真机帧（2026-11-20，
-/// fixtures/approval-frames.json 的 gemini）文案、选项、顺序都没变，approvalFrames.test 断言两份
-/// 算出同一张卡。
-export const GEMINI_APPROVAL_SCREEN = [
-  "╭────────────────────────────────────────────╮",
-  "│ ? Shell  echo meowo-probe > probe-out.txt                         │",
-  "│ ╭────────────────────────────────────────╮ │",
-  "│ │ echo meowo-probe > probe-out.txt                             │ │",
-  "│ ╰────────────────────────────────────────╯ │",
-  "│ Allow execution of [Shell]?                │",
-  "│ Redirection detected. To auto-accept, press Shift+Tab │",
-  "│                                            │",
-  "│ ● 1. Allow once                           │",
-  "│   2. Allow for this session               │",
-  "│   3. No, suggest changes (esc)            │",
-  "╰────────────────────────────────────────────╯",
+/// Antigravity CLI 1.5.18 的命令审批面板。真机屏幕取证 2026-11-26（接入 antigravity 的 Lead 任务，
+/// research-screen-work/run2/05_approval_cmd.txt，plan 模式下让它跑 `Get-ChildItem -Force`），裁到面板附近；
+/// 与 fixtures/approval-frames.json 的 antigravity 帧同一屏。
+export const ANTIGRAVITY_APPROVAL_SCREEN = [
+  "Command",
+  "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+  "",
+  "Requesting permission for:",
+  "   Get-ChildItem -Force",
+  "",
+  "Run this command?",
+  "> 1. Yes, run command",
+  "  2. Yes, and always allow in this conversation for commands that start with 'Get-ChildItem -Force'",
+  "  3. Yes, and always allow for commands that start with 'Get-ChildItem -Force' (Persist to settings.json)",
+  "  4. No, cancel",
+  "",
+  "  ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command",
+  "esc to cancel                                                                                plan · Gemini 4 Neon · high",
+].join("\n");
+
+/// 同一个审批面板在窄终端里（Meowo dev 实例对话页的托管终端，约 100 列，2026-11-26 实拍）：长选项
+/// 折到下一行，续行顶格。「本会话」与「记住」两项的区别（in this conversation / Persist to）可能正好
+/// 在折下去的那半句里。
+export const ANTIGRAVITY_APPROVAL_SCREEN_NARROW = [
+  "Command",
+  "────────────────────────────────────────────────────────────────────────────────────────────────────",
+  "",
+  "Requesting permission for:",
+  "   Get-Date -Format yyyy-MM-dd",
+  "",
+  "Run this command?",
+  "> 1. Yes, run command",
+  "  2. Yes, and always allow in this conversation for commands that start with 'Get-Date -Format",
+  "yyyy-MM-dd'",
+  "  3. Yes, and always allow for commands that start with 'Get-Date -Format yyyy-MM-dd' (Persist to",
+  "settings.json)",
+  "  4. No, cancel",
+  "",
+  "  ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command",
+  "esc to cancel                                                        accept-edits · Gemini 4 Neon · high",
 ].join("\n");
 
 /// OpenCode 1.19.5 的权限框。本机真机取证 2026-11-14（tests/probe_tui_script.rs，

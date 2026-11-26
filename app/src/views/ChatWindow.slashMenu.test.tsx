@@ -7,11 +7,11 @@ import { ChatWindow } from "./ChatWindow";
 import { zh } from "../i18n/zh";
 import { chatUi, descriptors } from "../test/agents";
 
-const ALL = ["claude", "codex", "kimi", "gemini", "opencode"] as const;
+const ALL = ["claude", "codex", "kimi", "antigravity", "opencode"] as const;
 const { box, writes } = adapter;
 
 /// 每家挑一条「只能开菜单」的命令：声明为菜单型、且没有同名的内联参数形式。
-/// 夹具的补全表里没有它时补进去（Gemini 的 `/model`），保证五家都走到。
+/// 夹具的补全表里没有它时补进去（例如某家的 `/model`），保证五家都走到。
 function menuUi(provider: string) {
   const ui = chatUi(provider)!;
   const name = ui.menu_slash_commands.find((command) => command !== ui.model_select_command)!;

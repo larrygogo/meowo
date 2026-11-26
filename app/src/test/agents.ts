@@ -14,90 +14,91 @@ const NAMES: Record<string, string> = {
   claude: "Claude Code",
   codex: "Codex",
   kimi: "Kimi Code",
-  gemini: "Gemini CLI",
+  antigravity: "Antigravity CLI",
   opencode: "OpenCode",
 };
 const RELAYS: Record<string, AgentDescriptor["relay"]> = {
   claude: { protocols: [], auth_modes: [{ value: "bearer", label: "Bearer Token" }, { value: "api_key", label: "API Key (x-api-key)" }], default_protocol: "", default_auth: "bearer", suggestions: [{ protocol: "", models: ["claude-sonnet-5"] }], env_options: [] },
   codex: { protocols: [], auth_modes: [{ value: "bearer", label: "Bearer Token" }], default_protocol: "", default_auth: "bearer", suggestions: [{ protocol: "", models: ["gpt-5.4"] }], env_options: [] },
   kimi: { protocols: [{ value: "kimi", label: "Kimi" }, { value: "anthropic", label: "Anthropic Messages" }, { value: "openai", label: "OpenAI Chat Completions" }], auth_modes: [{ value: "bearer", label: "Bearer Token" }], default_protocol: "kimi", default_auth: "bearer", suggestions: [{ protocol: "kimi", models: ["kimi-for-coding"] }], env_options: [] },
-  // gemini：只有一种协议（讲 Gemini 自己的 generateContent，故 protocols 空）+ API Key 认证。
-  gemini: { protocols: [], auth_modes: [{ value: "api_key", label: "API Key" }], default_protocol: "", default_auth: "api_key", suggestions: [{ protocol: "", models: ["gemini-2.5-pro"] }], env_options: [] },
+  // antigravity：插件没有声明中转能力（relay() 为 None），后端下发 null。
+  antigravity: null,
   // opencode：中转＝往它配置里注入自定义 provider（OpenAI 兼容 / Anthropic）。
   opencode: { protocols: [{ value: "openai", label: "OpenAI 兼容" }, { value: "anthropic", label: "Anthropic Messages" }], auth_modes: [{ value: "bearer", label: "Bearer Token" }], default_protocol: "openai", default_auth: "bearer", suggestions: [{ protocol: "openai", models: ["gpt-5.4"] }], env_options: [] },
 };
 
 /**
- * 能被套上代理的那些（＝插件声明了 ProxySpec）。当前**五家都有**（gemini/opencode 也认标准代理
- * 环境变量，实测其 bundle/二进制）。
+ * 能被套上代理的那些（＝插件声明了 ProxySpec）。当前**五家都有**（antigravity/opencode 也认标准代理
+ * 环境变量，实测其二进制）。
  * 与后端 `AgentPlugin::proxy()` 的能力矩阵同源——那边加了代理能力，这里也要跟上。
  */
-const SUPPORTS_PROXY = new Set(["claude", "codex", "kimi", "gemini", "opencode"]);
+const SUPPORTS_PROXY = new Set(["claude", "codex", "kimi", "antigravity", "opencode"]);
 
 /**
  * 代理能写进自己配置文件（＝不管由谁启动都生效）的那些。与后端 `ProxySpec.config_env`
- * 同源——**仅 claude**：codex/kimi/gemini 只认进程环境变量，故只覆盖 Meowo 拉起的会话。
+ * 同源——**仅 claude**：codex/kimi/antigravity 只认进程环境变量，故只覆盖 Meowo 拉起的会话。
  */
 const PROXY_COVERS_ALL_LAUNCHES = new Set(["claude"]);
 
 /**
  * 支持 SOCKS 代理的那些。与后端 `ProxySpec.socks` 同源，逐个核对过插件声明：
  * claude 官方明确不支持、codex 未编译 reqwest 的 socks feature、opencode 亦为 false，
- * 只有 kimi 与 gemini 认 SOCKS。
+ * 只有 kimi 与 antigravity（Go 标准库从 HTTPS_PROXY 读 socks5 串）认 SOCKS。
  */
-const PROXY_ACCEPTS_SOCKS = new Set(["kimi", "gemini"]);
+const PROXY_ACCEPTS_SOCKS = new Set(["kimi", "antigravity"]);
 
 /**
- * 有账号概念的那些（＝插件声明了 account 能力槽）。当前**五家都有**，故这里全收。
+ * 有账号概念的那些（＝插件声明了 account 能力槽）。**antigravity 没有**：凭据在系统钥匙串、
+ * 没有 login/logout 子命令，插件不声明（plugins/antigravity/mod.rs）。
  *
  * 它仍然是个可选能力槽：为 false 的 agent 不显示登录态、也不给登录入口（它的 `login_argv()`
  * 会是 None，按钮点下去只会报「拉起登录失败」）。要测那条路径，在用例里手写一个
  * `supports_account: false` 的 descriptor——别改这里，这里必须与后端的真实矩阵同源。
  */
-const SUPPORTS_ACCOUNT = new Set(["claude", "codex", "kimi", "gemini", "opencode"]);
+const SUPPORTS_ACCOUNT = new Set(["claude", "codex", "kimi", "opencode"]);
 
 /**
- * 能用 API Key 登录的那些（＝插件声明了 ApiKeyLoginCap）。**只有 gemini**：它的 OAuth 被官方
- * 停用（个人版 Code Assist 关闸），key 是唯一活路，且 CLI 没有输入 key 的登录子命令。
- * 与后端 `AgentPlugin::api_key_login()` 同源。
+ * 能用 API Key 登录的那些（＝插件声明了 ApiKeyLoginCap）。当前**没有**一家声明。
+ * 与后端 `AgentPlugin::api_key_login()` 同源；要测这条路径，在用例里手写
+ * `supports_api_key_login: true` 的 descriptor。
  */
-const SUPPORTS_API_KEY_LOGIN = new Set(["gemini"]);
+const SUPPORTS_API_KEY_LOGIN = new Set<string>();
 
 /**
- * 能有多个账号的那些（＝插件声明了 ProfileSpec）。**gemini 不行**：它的数据目录无法被环境变量
- * 覆盖（`GEMINI_DIR` 实测无效），谎称支持会让两个「账号」静默共用同一份凭据。
+ * 能有多个账号的那些（＝插件声明了 ProfileSpec）。**antigravity 不行**：它的数据目录没有可覆盖的
+ * 环境变量，谎称支持会让两个「账号」静默共用同一份凭据。
  */
 const SUPPORTS_PROFILES = new Set(["claude", "codex", "kimi", "opencode"]);
 
 /**
- * meowo 能显示上下文占用的那些。**gemini/opencode 不行**：gemini 的 hook 不带 token，opencode
- * 没声明 telemetry（token 在它自己库里）。与后端 `AgentPlugin::provides_context()` 同源。
+ * meowo 能显示上下文占用的那些。**opencode 不行**：没声明 telemetry（token 在它自己库里）。
+ * antigravity 每次模型调用都记了用量与窗口大小。与后端 `AgentPlugin::provides_context()` 同源。
  */
-const SUPPORTS_CONTEXT = new Set(["claude", "codex", "kimi"]);
+const SUPPORTS_CONTEXT = new Set(["claude", "codex", "kimi", "antigravity"]);
 
 /**
  * 会话历史可导出交接（跨 provider 切换的**来源**门槛）的那些。与后端
- * `telemetry().transcript().supports_chat()` 同源——gemini/opencode 无结构化
- * transcript，只能当切换目标，不能当来源。
+ * `telemetry().transcript().supports_chat()` 同源——opencode 无结构化
+ * transcript，只能当切换目标，不能当来源；antigravity 从 conversations/<id>.db 物化。
  */
-const SUPPORTS_CHAT_EXPORT = new Set(["claude", "codex", "kimi"]);
+const SUPPORTS_CHAT_EXPORT = new Set(["claude", "codex", "kimi", "antigravity"]);
 
 /**
  * 切账号时会话能跟着搬到新账号的那些。与后端 `cross_account_session()` 同源——
- * opencode 的会话存储没取证过，gemini 压根不支持多账号。
+ * opencode 的会话存储没取证过，antigravity 压根不支持多账号。
  */
 const MOVES_SESSIONS_ACROSS_ACCOUNTS = new Set(["claude", "codex", "kimi"]);
 
 /**
  * 对话页内置 `/` 补全候选。与后端 `AgentPlugin::slash_commands()` 同源——各家命令表是插件
- * 声明的事实（gemini 是 `/stats` 不是 `/status`，opencode 是 `/models` 不是 `/model`）。
+ * 声明的事实（antigravity 是 `/usage` 不是 `/status`，opencode 是 `/models` 不是 `/model`）。
  */
 const SLASH_COMMANDS: Record<string, string[]> = {
   // /btw：声明了侧问能力的命令由后端并进补全表（registry chat_ui）。
   claude: ["/btw", "/clear", "/compact", "/config", "/cost", "/help", "/init", "/mcp", "/memory", "/model", "/resume", "/review", "/status"],
   codex: ["/clear", "/compact", "/diff", "/help", "/model", "/new", "/review", "/status"],
   kimi: ["/clear", "/compact", "/help", "/model", "/status"],
-  gemini: ["/chat", "/clear", "/compress", "/help", "/mcp", "/memory", "/stats", "/tools"],
+  antigravity: ["/clear", "/compact", "/context", "/effort", "/help", "/model", "/resume", "/rewind", "/usage"],
   opencode: ["/compact", "/exit", "/help", "/init", "/models", "/new", "/undo"],
 };
 
@@ -163,7 +164,7 @@ export function grammar(
 const COMPOSER_VERSIONS: Record<string, string> = {
   "codex": "0.167.2",
   "kimi": "2.5.3",
-  "gemini": "0.65.0",
+  "antigravity": "1.5.18",
   "opencode": "1.19.3"
 };
 const COMPOSER_SPECS = composerFrames.specs as unknown as Record<string, NonNullable<ChatUi["composer"]>>;
@@ -191,14 +192,13 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     queue_delivery: provider === "claude" ? "next_step" : provider === "kimi" ? null : "turn_end",
     // 与后端插件声明同源：kimi 的排队区提示行（2026-11-16 实拍）。
     queued_hint: provider === "kimi" ? "↑ to edit" : null,
-    // 与后端插件声明同源：kimi 对话区用户消息的行首（2026-11-17 实拍）；gemini 插话那一行
-    // （0.68.0，2026-11-20 实拍）。
-    user_line_marker: provider === "kimi" ? "❯ " : provider === "gemini" ? "💡 Steering Hint: " : null,
+    // 与后端插件声明同源：kimi 对话区用户消息的行首（2026-11-17 实拍）。
+    user_line_marker: provider === "kimi" ? "❯ " : null,
     // 只有 claude 的 `/model` 接受内联参数；其余几家是交互式菜单，靠这条命令打开。
     // opencode 的命令是 /models(复数)——与后端插件声明同源。
     model_menu_command: (MODEL_PRESETS[provider] ?? []).length > 0 ? null : provider === "opencode" ? "/models" : "/model",
     // 切模型机制与后端插件声明同源（任务 20261114-tui-model-switch）。
-    model_switch: provider === "codex" ? "server_settings" : provider === "kimi" || provider === "gemini" ? "restart_resume" : provider === "opencode" ? "tui_dialog" : null,
+    model_switch: provider === "codex" ? "server_settings" : provider === "kimi" || provider === "antigravity" ? "restart_resume" : provider === "opencode" ? "tui_dialog" : null,
     awaiting_first_message_markers: provider === "kimi" ? ["No session yet — one will be created on your first message."] : [],
     mode_controls: provider === "claude"
       ? [{
@@ -232,7 +232,17 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
               },
               { dimension: "permission", menu_command: "/permission", cycle_input: null, options: [], screen_markers: [] },
             ]
-            : [],
+            // 与后端 antigravity 插件同源：只从状态栏右侧读出当前模式，不在会话里切（切档走带参重启）。
+            : provider === "antigravity"
+              ? [{
+                dimension: "approval", menu_command: null, cycle_input: null, options: [],
+                screen_markers: [
+                  { marker: "auto · ", value: "auto" },
+                  { marker: "accept-edits · ", value: "accept-edits" },
+                  { marker: "plan · ", value: "plan" },
+                ],
+              }]
+              : [],
     startup_attention_markers: provider === "claude"
       ? ["do you trust the files in this folder", "do you trust the contents of this directory", "trust this folder", "workspace not trusted", "workspace trust dialog"]
       : provider === "codex"
@@ -243,31 +253,33 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     menu_slash_commands: provider === "claude"
       ? ["/config", "/mcp", "/memory", "/model", "/resume"]
       : (MODEL_PRESETS[provider] ?? []).length > 0 ? [] : [provider === "opencode" ? "/models" : "/model"],
-    // 与后端同源:选择器锚点是插件声明的识别文法,当前只有 claude 有真机取证。
+    // 与后端同源:选择器锚点是插件声明的识别文法。claude 两个；antigravity 提问表单末项的写入项
+    // （run2/16_ask_form 的 `3. Write-in...`）。
     selector_anchors: provider === "claude"
       ? [{ marker: "type something", kind: "input" as const }, { marker: "chat about this", kind: "chat" as const }]
-      : [],
+      : provider === "antigravity"
+        ? [{ marker: "write-in", kind: "input" as const }]
+        : [],
     // 与后端同源:五家都用 Esc 中断(claude/codex 确证,其余约定推断,见插件注释)。
     interrupt_input: "\x1b",
     // 与后端同源:opencode 首按 Esc 只提示 "esc again to interrupt",须分两次写。
     interrupt_presses: provider === "opencode" ? 2 : 1,
     // 与后端同源:换行注入序列 claude 与 codex 是 ESC+CR(codex 0.167.2 真机上裸 LF 已不换行),
-    // 其余三家是 ctrl+j(裸 LF),见各插件的取证注释。
+    // 其余三家是 ctrl+j(裸 LF;agy 实测 ctrl+j 有效),见各插件的取证注释。
     newline_input: provider === "claude" || provider === "codex" ? "\u001b\r" : "\n",
-    // 与后端同源:gemini 0.68.0 吞掉一次写入里的半角问号,带问号的单行正文改走粘贴。
-    single_line_paste_pattern: provider === "gemini" ? String.raw`\?` : null,
+    single_line_paste_pattern: null,
     runtime_commands_pending: false,
-    // 与后端同源:claude/gemini(提交时原生附加)与 kimi/codex/opencode(@ 是文本级惯例,
-    // 模型自行读取)声明 true。测试桩模拟「已探测到版本」的常态,故不做 version 门控。
-    attachment_mention: true,
+    // 与后端同源:claude(提交时原生附加)与 kimi/codex/opencode(@ 是文本级惯例,模型自行读取)
+    // 声明 true;antigravity 未取证,不声明。测试桩模拟「已探测到版本」的常态,故不做 version 门控。
+    attachment_mention: provider !== "antigravity",
     // 与后端同源:claude/kimi/codex/opencode 的 TUI 实测 Ctrl-V(kimi 是 Alt+V)读剪贴板原生附加
-    // 图片,占位符各家不同;gemini 会落盘到用户工作目录,刻意不声明。
+    // 图片,占位符各家不同;antigravity 未取证,不声明。
     clipboard_image_paste: provider === "claude" || provider === "codex" ? "\\[Image ?#\\d"
       : provider === "kimi" ? "\\[image[:# ]"
       : provider === "opencode" ? "\\[Image \\d" : null,
     // 与后端同源:粘贴键 kimi 在 Windows 上是 Alt+V(二进制里 win32 ? "alt+v" : ctrl("v")),
-    // 其余声明该能力的是 Ctrl-V。
-    clipboard_paste_input: provider === "kimi" ? "\u001bv" : provider === "gemini" ? null : "\u0016",
+    // 其余是默认的 Ctrl-V(antigravity 没声明贴图能力,按默认值下发)。
+    clipboard_paste_input: provider === "kimi" ? "\u001bv" : "\u0016",
     // 与后端同源:运行中状态行正则只有 claude 声明(plugins/claude status_line_pattern)。
     status_line_pattern: provider === "claude" ? CLAUDE_STATUS_LINE_PATTERN : null,
     retry_line_pattern: provider === "claude" ? CLAUDE_RETRY_LINE_PATTERN : null,
@@ -290,7 +302,7 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
       ? { command: "/btw", footer_marker: "esc to close", ready_marker: "c to copy", scroll_input: "\x1b[B", close_input: "\x1b" }
       : null,
     // 与后端同源:裸可执行名 + 各家 resume_args。
-    resume_command: ({ claude: ["claude", "--resume"], codex: ["codex", "resume"], kimi: ["kimi", "-r"], opencode: ["opencode", "--session"], gemini: ["gemini", "--resume"] } as Record<string, string[]>)[provider] ?? [],
+    resume_command: ({ claude: ["claude", "--resume"], codex: ["codex", "resume"], kimi: ["kimi", "-r"], opencode: ["opencode", "--session"], antigravity: ["agy", "--conversation"] } as Record<string, string[]>)[provider] ?? [],
     // 与后端同源:kimi `/undo N`(2.4.0 包内取证);opencode `/undo` 一次一轮、还原文件、
     // 原文放回它的输入框(1.19.3 probe_opencode_undo);claude `/rewind` 菜单(2.1.314 probe_claude_rewind)。
     undo: provider === "kimi"
@@ -312,7 +324,7 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
 
 /**
  * 启动选项。与后端 `AgentPlugin::launch_options()` 同源：claude 有模型+权限两栏，
- * codex/gemini 各一栏审批，kimi/opencode 未调研到稳定 flag、如实不声明。
+ * codex/antigravity 各一栏审批，kimi 权限+工作两栏，opencode 一栏 agent。
  */
 type Traits = NonNullable<LaunchChoice["traits"]>;
 const tr = (edits: Traits["edits"], commands: Traits["commands"], plan_only = false): Traits => ({ edits, commands, plan_only });
@@ -351,12 +363,13 @@ const LAUNCH_OPTIONS: Record<string, LaunchOption[]> = {
       ch("plan", "Plan", [], false, { traits: tr("blocked", "inherit", true), desc: "codex.collaboration.plan", server: '{"collaboration":"plan"}' }),
     ], { switch: "server", in_session_only: true }),
   ],
-  gemini: [
-    opt("approval", "default", [
-      ch("default", "default", ["--approval-mode", "default"], false, { traits: tr("always", "always"), desc: "gemini.approval.default" }),
-      ch("autoEdit", "auto_edit", ["--approval-mode", "auto_edit"], false, { traits: tr("never", "always"), desc: "gemini.approval.autoEdit" }),
-      ch("plan", "plan", ["--approval-mode", "plan"], false, { traits: tr("blocked", "blocked", true), desc: "gemini.approval.plan" }),
-      ch("yolo", "yolo", ["--yolo"], true, { traits: tr("never", "never"), desc: "gemini.approval.yolo" }),
+  // 与后端 antigravity 插件同源：`--mode` 只收这三档，不传时 agy 用 auto；「每步都问」的 default 档
+  // 没有启动参数，不列。
+  antigravity: [
+    opt("approval", "auto", [
+      ch("auto", "auto", ["--mode", "auto"], false, { traits: tr("never", "risky"), desc: "antigravity.approval.auto" }),
+      ch("accept-edits", "accept-edits", ["--mode", "accept-edits"], false, { traits: tr("never", "always"), desc: "antigravity.approval.acceptEdits" }),
+      ch("plan", "plan", ["--mode", "plan"], false, { traits: tr("blocked", "blocked", true), desc: "antigravity.approval.plan" }),
     ], { switch: "restart" }),
   ],
   kimi: [
@@ -399,7 +412,7 @@ export function descriptors(installed: string[]): AgentDescriptor[] {
     supports_chat_export: SUPPORTS_CHAT_EXPORT.has(id),
     // 旧用例明确覆盖原生CLI路径；协议托管用例需单独开启能力并给真实结构化历史。
     // 与后端事实对齐:claude/codex/kimi 声明了 CrossAccountSession(会话能搬去另一个账号);
-    // opencode 的会话存储没取证过,gemini 压根不支持多账号。
+    // opencode 的会话存储没取证过,antigravity 压根不支持多账号。
     moves_sessions_across_accounts: MOVES_SESSIONS_ACROSS_ACCOUNTS.has(id),
     // 与后端事实对齐:目前只有 claude 声明了附加目录 flag(--add-dir)。
     launch_options: LAUNCH_OPTIONS[id] ?? [],

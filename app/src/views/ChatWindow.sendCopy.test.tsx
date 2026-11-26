@@ -11,7 +11,7 @@ const REMOTE_FLAG = "__MEOWO_REMOTE__";
 afterEach(() => { delete (globalThis as Record<string, unknown>)[REMOTE_FLAG]; });
 
 describe("软拦横幅与实际一致（走查输入 A2）", () => {
-  it.each(["claude", "codex", "kimi", "gemini", "opencode"])("%s：消息被拦下没发，横幅说没有发出", async (provider) => {
+  it.each(["claude", "codex", "kimi", "antigravity", "opencode"])("%s：消息被拦下没发，横幅说没有发出", async (provider) => {
     const base = adapter.setup(771, provider);
     invoke.mockImplementation((command, args) => command === "get_chat_history"
       ? Promise.resolve({ ...adapter.history(771, provider), pendingReview: "permission" })
@@ -33,7 +33,7 @@ describe("软拦横幅与实际一致（走查输入 A2）", () => {
 
 describe("运行中发送的占位与回执同词（走查输入 B5）", () => {
   it.each([
-    ["claude", false], ["codex", false], ["kimi", false], ["gemini", false], ["opencode", false],
+    ["claude", false], ["codex", false], ["kimi", false], ["antigravity", false], ["opencode", false],
     ["kimi", true], ["codex", true],
   ] as const)("%s（手机=%s）：占位许诺的去向就是发出后回执说的去向", async (provider, remote) => {
     if (remote) (globalThis as Record<string, unknown>)[REMOTE_FLAG] = true;

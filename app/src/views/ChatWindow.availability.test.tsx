@@ -7,7 +7,7 @@ import { ChatWindow } from "./ChatWindow";
 import { zh } from "../i18n/zh";
 import { descriptors } from "../test/agents";
 
-const ALL = ["claude", "codex", "kimi", "gemini", "opencode"];
+const ALL = ["claude", "codex", "kimi", "antigravity", "opencode"];
 
 function setup(sessionId: number, provider: string, status: string, extra: Record<string, unknown> = {}, more: (command: string, args?: Record<string, unknown>) => unknown = () => undefined) {
   const base = adapter.setup(sessionId, provider, status);
@@ -92,7 +92,7 @@ describe("Kimi 收紧权限（走查输入 B8）", () => {
 describe("五家的模式菜单在回合中：没有「列出来点了才报错」", () => {
   it.each([
     ["codex", /^切换模式: /],
-    ["gemini", /^切换模式: /],
+    ["antigravity", /^切换模式: /],
     ["opencode", /^切换模式: /],
   ] as const)("%s：回合在跑时每一档可点，点了排队", async (provider, name) => {
     setup(785, provider, "running");
@@ -153,7 +153,7 @@ describe("Codex 思考档（走查输入 B7）", () => {
     expect(called("apply_session_settings").length).toBe(0);
   });
 
-  it.each(["gemini", "opencode"])("%s 没有声明思考档能力：模型菜单里不出这一段", async (provider) => {
+  it.each(["antigravity", "opencode"])("%s 没有声明思考档能力：模型菜单里不出这一段", async (provider) => {
     setup(788, provider, "waiting", { model: "GPT-6.1-Sol", effort: "medium" }, (command) => command === "agent_model_catalog" ? Promise.resolve(catalog) : undefined);
     render(<ChatWindow />);
     await screen.findByText("适配-788");
@@ -167,7 +167,7 @@ describe("Codex 思考档（走查输入 B7）", () => {
 });
 
 describe("能力确实不同的地方：位置不变，说得清为什么（走查输入 C1、C6）", () => {
-  it.each(["gemini", "opencode"])("%s 不上报上下文占用：圆环留在原位置灰并说明", async (provider) => {
+  it.each(["opencode"])("%s 不上报上下文占用：圆环留在原位置灰并说明", async (provider) => {
     setup(789, provider, "waiting");
     render(<ChatWindow />);
     await screen.findByText("适配-789");
@@ -180,7 +180,7 @@ describe("能力确实不同的地方：位置不变，说得清为什么（走�
     expect(ring.getAttribute("data-tip")).toBe(zh.chat.contextUnsupported);
   });
 
-  it.each(["claude", "codex", "kimi"])("%s 能上报：还没有数值时不画圆环，也不说不支持", async (provider) => {
+  it.each(["claude", "codex", "kimi", "antigravity"])("%s 能上报：还没有数值时不画圆环，也不说不支持", async (provider) => {
     setup(790, provider, "waiting");
     render(<ChatWindow />);
     await screen.findByText("适配-790");

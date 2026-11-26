@@ -15,7 +15,7 @@ import { formatBackendError } from "../i18n/errors";
 function row(provider: string, values: Partial<LeadProviderInstallationDto> = {}): LeadProviderInstallationDto {
   return { provider, name: provider, profileId: null, profileName: null, version: "test", configured: true, supported: true, managed: false, installed: false, assetsInstalled: false, hooksInstalled: false, automaticContinue: false, notes: [], reason: null, ...values };
 }
-beforeEach(() => { api.leadProviderInstallations.mockResolvedValue([row("codex"), row("kimi"), row("gemini"), row("opencode")]); });
+beforeEach(() => { api.leadProviderInstallations.mockResolvedValue([row("codex"), row("kimi"), row("opencode")]); });
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 describe("Lead 按 Provider / 账号独立安装", () => {
@@ -33,31 +33,18 @@ describe("Lead 按 Provider / 账号独立安装", () => {
     expect(screen.getByRole("button", { name: `${zh.settings.leadInstall} opencode` })).toBeTruthy();
   });
   it("安装单个 CLI 后保留其他项，并明确自动继续仍不可用", async () => {
-    api.setLeadProviderEnabled.mockResolvedValue(row("gemini", { managed: true, installed: true, assetsInstalled: true, hooksInstalled: true }));
+    api.setLeadProviderEnabled.mockResolvedValue(row("opencode", { managed: true, installed: true, assetsInstalled: true, hooksInstalled: true }));
     render(<LeadProviderRows />);
-    fireEvent.click(await screen.findByRole("button", { name: `${zh.settings.leadInstall} gemini` }));
-    await waitFor(() => expect(api.setLeadProviderEnabled).toHaveBeenCalledWith("gemini", null, true));
+    fireEvent.click(await screen.findByRole("button", { name: `${zh.settings.leadInstall} opencode` }));
+    await waitFor(() => expect(api.setLeadProviderEnabled).toHaveBeenCalledWith("opencode", null, true));
     expect(await screen.findByText(zh.settings.leadInstalledNoContinue)).toBeTruthy();
     expect(screen.queryByText(zh.settings.leadInstalled)).toBeNull();
-    expect(screen.getAllByText(zh.settings.leadNotInstalled)).toHaveLength(3);
-    expect(screen.getByRole("button", { name: `${zh.settings.leadUninstall} gemini` })).toBeTruthy();
+    expect(screen.getAllByText(zh.settings.leadNotInstalled)).toHaveLength(2);
+    expect(screen.getByRole("button", { name: `${zh.settings.leadUninstall} opencode` })).toBeTruthy();
   });
 
-  it("自动继续的副作用说明来自插件声明，只在可自动继续时显示", async () => {
-    const note = "lead/note_dialog_starts_turn";
-    api.leadProviderInstallations.mockResolvedValue([
-      row("gemini", { managed: true, installed: true, assetsInstalled: true, hooksInstalled: true, automaticContinue: true, notes: [note] }),
-      row("kimi", { managed: true, installed: true, assetsInstalled: true, hooksInstalled: true, automaticContinue: false, notes: [note] }),
-    ]);
-    render(<LeadProviderRows />);
-    expect(await screen.findAllByText(formatBackendError(note, "zh"))).toHaveLength(1);
-    // 文案约束：一行内、不用破折号和分号，中英文都有映射（没映射时 formatBackendError 会原样回键名）。
-    for (const locale of ["zh", "en"] as const) {
-      const text = formatBackendError(note, locale);
-      expect(text).not.toBe(note);
-      expect(text).not.toMatch(/[—–;；]/);
-    }
-  });
+  // 「自动继续的副作用说明」（LeadCap::continue_notes）唯一的一条出自 gemini（对话框开着时也会开新一轮），
+  // 随 gemini 退役删除。机制保留；有 provider 再声明说明时补回渲染用例。
 
   it("未知版本仍允许卸载托管文件，不允许重新安装", async () => {
     const old = row("kimi", { supported: false, managed: true, reason: "lead/version_unsupported" });
@@ -92,6 +79,6 @@ describe("Lead 按 Provider / 账号独立安装", () => {
     fireEvent.click(button);
     expect((await screen.findByRole("alert")).textContent).toContain(formatBackendError("lead/user_file_exists", "zh"));
     await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
-    expect(screen.getAllByText(zh.settings.leadNotInstalled)).toHaveLength(4);
+    expect(screen.getAllByText(zh.settings.leadNotInstalled)).toHaveLength(3);
   });
 });

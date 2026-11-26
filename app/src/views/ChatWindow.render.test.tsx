@@ -512,7 +512,7 @@ describe("ChatWindow", () => {
     // 不提供结构化 transcript 的 agent：hook 数据仍是真实内容，「暂未提供」降为注脚。
     window.history.replaceState({}, "", "/?sessionId=43");
     respondWithHistory({
-      sessionId: 43, title: "无结构化记录", status: "running", provider: "gemini", cwd: null,
+      sessionId: 43, title: "无结构化记录", status: "running", provider: "opencode", cwd: null,
       supported: false, offset: 0, reset: false, pendingReview: null,
       lastUserText: "整理下这份文档", items: [],
     });

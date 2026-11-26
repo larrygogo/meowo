@@ -1181,7 +1181,7 @@ fn config_file(agent: &str, reporter: &str, browser: bool) -> Option<String> {
     Some(path.to_string_lossy().into_owned())
 }
 
-/// 没有启动参数可用、只读数据目录里 MCP 配置文件的 agent（McpAttach::DataDirJson，如 kimi 2.x、gemini）。
+/// 没有启动参数可用、只读数据目录里 MCP 配置文件的 agent（McpAttach::DataDirJson，如 kimi 2.x、antigravity）。
 /// 有 reporter 就登记 `meowo` 这一项（浏览器开关只决定参数里带不带 `--no-browser`），并按插件
 /// 声明写发图工具的免审批规则；文件里别的服务器、别的规则原样保留。
 /// 这份文件 agent 的桌面版和外部终端里的 CLI 也会读——服务器在那些地方拿不到 Meowo 的
@@ -1218,7 +1218,7 @@ pub(crate) fn sync_mcp_files() {
         for home in homes.into_iter().filter(|dir| dir.is_dir()) {
             let file = home.join(rel);
             if sync_mcp_file(&file, entry.clone()) == McpFileSync::Unparsable {
-                // 用户的配置文件 Meowo 读不懂（gemini 的 settings.json 允许注释，serde_json 不认）：
+                // 用户的配置文件 Meowo 读不懂（如带注释的 JSONC，serde_json 不认）：
                 // 不动它，记一行运行日志，并在 Agent 描述符里给前端一个标记（设置页提示
                 // 「没能接上发图工具」）。
                 eprintln!(
@@ -1537,10 +1537,11 @@ mod tests {
         assert_eq!(global["permission"], "ask");
     }
 
-    /// gemini 的 settings.json 服务器项显式引用 MEOWO_PTY_*（gemini 会删掉继承环境里名字含
-    /// TOKEN 的变量）；令牌本身不落盘。
+    /// `expand_env` 的服务器项显式引用 MEOWO_PTY_*（给会删掉继承环境里名字含 TOKEN 的变量的 CLI，
+    /// 最初是已移除的 gemini 插件）；令牌本身不落盘。策略文件只放行 Meowo 的展示类工具。两者都是
+    /// 通用能力，现役插件都不声明。
     #[test]
-    fn gemini_entry_expands_env_instead_of_writing_token() {
+    fn expand_env_entry_and_policy_file_body() {
         let entry = server_entry("C:/m/meowo-reporter.exe", true, true);
         assert_eq!(entry["env"]["MEOWO_PTY_TOKEN"], "${MEOWO_PTY_TOKEN:-}");
         assert_eq!(entry["args"], json!(["mcp"]));

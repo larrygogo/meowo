@@ -2,7 +2,9 @@
 /// 命令、说明与问句，交给审批卡展示。用哪种解析器由插件随 AttentionPattern.details 声明。
 /// 纯函数，从 ChatWindow 搬出以便单独测试。
 
-const PROCEED_QUESTION = /^do you want to proceed\?$/i;
+// claude 的「Do you want to proceed?」；agy 1.5.18 的「Run this command?」「Allow creation of this file?」
+// （真机屏幕 research-screen-work run2/05、19）。
+const PROCEED_QUESTION = /^(?:do you want to proceed|run this command|allow [^?]{1,80})\?$/i;
 
 /// 「proceed_box」框式审批详情（claude 真机取证的屏幕文法）。用哪种解析器由插件随
 /// AttentionPattern.details 声明，前端不再按 pattern id 猜。
@@ -27,14 +29,25 @@ export function proceedBoxApprovalDetails(text: string) {
   // 标题有变体(2.1.304 源码):「Bash command (unsandboxed)」「Bash command (runs on …)」,
   // Windows 上还有「PowerShell command」——只认裸「Bash command」会让这些框认不出边界。
   const HEADER = /^(bash|powershell) command(?: \(.*\))?$/i;
-  const header = before.reduce((found, line, index) => (HEADER.test(line) ? index : found), -1);
-  const tool = header >= 0 && /^powershell/i.test(before[header]) ? "PowerShell" : "Bash";
+  // agy 的面板头是一个词或两个词（`Command`、`Create file`），下一行是满宽分隔线（已被上面滤掉），
+  // 命令前还有一行 `Requesting permission for:`。面板头之上是历史，同样只取最后一个面板头之后。
+  const AGY_HEADER = /^(?:command|(?:create|edit|write|delete) file)$/i;
+  const header = before.reduce((found, line, index) => (HEADER.test(line) || AGY_HEADER.test(line) ? index : found), -1);
+  // 面板头没认出来时（写工作区外文件的面板，#7 真机测试 2026-11-26 卡片显示成了「Bash」），
+  // 问句也能分辨：claude 只问「Do you want to proceed?」，「Run this command?」「Allow …?」都是 agy。
+  const agyQuestion = question !== "" && !/^do you want to proceed/i.test(question);
+  const agy = header >= 0 ? AGY_HEADER.test(before[header]) : agyQuestion;
+  // agy 的命令面板显示它自己的工具名 run_command（对话页工具调用也叫这个），不冒充 claude 的 Bash；
+  // 文件面板的工具名屏幕上没有，留空不猜。
+  const tool = header >= 0 && /^powershell/i.test(before[header]) ? "PowerShell"
+    : agy ? (/^command$/i.test(before[header]) ? "run_command" : "")
+    : "Bash";
   if (header >= 0) before = before.slice(header + 1);
-  before = before.filter((line) => !PROCEED_QUESTION.test(line));
+  before = before.filter((line) => !PROCEED_QUESTION.test(line) && !/^requesting permission for:$/i.test(line));
   // 末行是「用途说明」这个判断，只有认出了框的边界（工具头或 requires-approval 行）
   // 才成立。认不出时整段进命令区，不去猜哪一行是说明——猜错就是把半条命令当成说明
-  // 单独拎出来显示，比不显示更误导。
-  const framed = header >= 0 || marker >= 0;
+  // 单独拎出来显示，比不显示更误导。agy 的面板里没有用途说明那一行。
+  const framed = !agy && (header >= 0 || marker >= 0);
   const description = framed && before.length >= 2 ? before[before.length - 1] : "";
   return {
     tool,
@@ -100,7 +113,7 @@ export function arrowPanelApprovalDetails(text: string) {
   return { tool, command, description: cwd, question };
 }
 
-/// 「framed_box」框线对话框式审批详情（gemini 0.6x 真机取证 + 源码 ToolConfirmationMessage）：
+/// 「framed_box」框线对话框式审批详情（取证自已移除的 gemini 插件：0.6x 真机 + 源码 ToolConfirmationMessage；现役插件都不声明）：
 /// 外框首行「? <工具名>  <说明>」，内框是命令/diff 正文，其后是问句（Allow execution of
 /// [Shell]? / Apply this change? / Do you want to proceed?），再往下是编号选项（另由按钮承载）。
 export function framedBoxApprovalDetails(text: string) {

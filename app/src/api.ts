@@ -1679,7 +1679,7 @@ export function agentModels(provider: string, sessionId?: number): Promise<strin
 
 /**
  * 按 id 取展示名。未知 id（DB 里存着本版本不认识的 agent，或 list_agents 尚未 resolve）
- * 回退为 id 本身——显示 `"gemini"` 好过显示 `"Claude Code"`。
+ * 回退为 id 本身——显示 `"gemini"`（已退役的旧会话）好过显示 `"Claude Code"`。
  */
 export function agentName(agents: AgentDescriptor[], id: AgentId): string {
   return agents.find((a) => a.id === id)?.display_name ?? id;
@@ -1968,7 +1968,7 @@ export type ProfileView = {
 /**
  * 某 agent 的账号列表（默认账号 + 自定义），每个都带自己的登录态。
  *
- * 不支持多账号的 agent（gemini：数据目录不可被环境变量覆盖）只会返回**一条**默认账号——
+ * 不支持多账号的 agent（antigravity：数据目录没有可覆盖的环境变量）只会返回**一条**默认账号——
  * 前端据此不给「添加账号」入口。
  */
 export function listProfiles(provider: AgentId): Promise<ProfileView[]> {
@@ -2052,8 +2052,8 @@ export function cancelLogin(provider: AgentId, operationId: string): Promise<voi
 }
 
 /**
- * 用 API Key 登录（`supports_api_key_login` 的 agent，当前只有 gemini）。同步落盘、当场生效：
- * 后端把 key 写进 CLI 自己认的位置（gemini：`~/.gemini/.env` + settings 的 selectedType），
+ * 用 API Key 登录（`supports_api_key_login` 的 agent；通用能力，目前没有插件声明，最初为已移除的 gemini
+ * 插件引入）。同步落盘、当场生效：后端把 key 写进 CLI 自己认的位置，
  * resolve 后重查账号即可。`profile` 语义同 logoutAgent（省略/null = 当前活跃账号）。
  */
 export function apiKeyLogin(provider: AgentId, key: string, profile?: string | null): Promise<void> {

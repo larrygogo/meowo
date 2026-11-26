@@ -1467,8 +1467,8 @@ fn resume_session_ghostty(cwd: Option<&str>, argv: &[String], env_prefix: &str) 
 /// macOS 恢复会话的 env 注入文件：赋值写进临时文件（unix 下创建即 0600），终端命令只出现
 /// `source '<tmp>' && rm -f '<tmp>' && ` 前缀——密钥值不再落在可见命令行上。
 ///
-/// 起因：恢复会话的 env 带着中转 API key（ANTHROPIC_API_KEY / KIMI_MODEL_API_KEY /
-/// GEMINI_API_KEY），此前由内联前缀（已删除的 `env_prefix_posix`）拼成 `K='sk-…' `
+/// 起因：恢复会话的 env 带着中转 API key（ANTHROPIC_API_KEY / KIMI_MODEL_API_KEY
+/// 等），此前由内联前缀（已删除的 `env_prefix_posix`）拼成 `K='sk-…' `
 /// 直接进终端命令——iTerm2 会把这行命令写进 ~/.zsh_history，Terminal.app 则留在滚动
 /// 缓冲区，都是明文落盘。
 /// 文件由恢复命令 source 成功后立即自删；命令若没来得及执行（窗口被直接关掉），残留文件
@@ -2466,7 +2466,7 @@ fn filter_sessions_off_profile(
 /// `Ok(false)` = 没动它（恰在此刻自己退出了 / start 判重收敛）。
 /// - 切账号：`overrides = None`，账号随恢复计划迁到活跃账号（该不该动由 [`sessions_off_active_profile`] 判）。
 /// - 切模型 / 模式（session_settings 的 Restart 机制）：`overrides` 是要合并进启动选项的选择，
-///   Kimi `-r <id> -m <alias>`、Gemini `--resume <uuid> -m <id>`（research-kimi-gemini §2.3/§3.3）。
+///   Kimi `-r <id> -m <alias>`（research-kimi-gemini §2.3）、Antigravity `--conversation <id> --model <id>`。
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 pub(crate) fn restart_session_with(
     app: &tauri::AppHandle,
@@ -3688,9 +3688,9 @@ mod sessions_off_profile_tests {
     }
 }
 
-/// 还没发过消息的会话：有的 CLI 退出时把会话文件删掉，按 id 恢复会报错（Gemini 0.68 `Invalid session
-/// identifier`，research-kimi-gemini §3.3 e3-05）。插件声明了替代参数时（Gemini `--session-id <同一 uuid>`，
-/// E3-D 实测 id 不变），找不到会话文件就换上它。找得到文件的照旧按 id 恢复。
+/// 还没发过消息的会话：有的 CLI 退出时把会话文件删掉，按 id 恢复会报错（前科：已移除的 gemini 插件
+/// 0.68 `Invalid session identifier`，research-kimi-gemini §3.3 e3-05）。插件声明了替代参数时（当时是
+/// `--session-id <同一 uuid>`，E3-D 实测 id 不变；现役插件都不声明），找不到会话文件就换上它。找得到文件的照旧按 id 恢复。
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 fn swap_unsent_resume(resume: &mut [String], provider: &str, session_id: &str, user_spoke: bool) {
     let Some(plugin) = meowo_agent::resolve(Some(provider)) else {
@@ -3787,21 +3787,22 @@ pub(crate) fn reopen_pending_with(
 
 #[cfg(test)]
 mod settings_restart_tests {
-    /// Gemini 没发过消息的会话：`--resume <id>` 换成 `--session-id <id>`，其余参数不动。
+    /// 没发过消息的会话换恢复参数（曾经的 gemini 插件 0.68：`--resume <id>` → `--session-id <id>`），
+    /// 其余参数不动。机制是通用的，样例用中性的名字。
     #[test]
     fn unsent_resume_swaps_only_the_resume_subcommand() {
-        let mut argv: Vec<String> = ["gemini", "-m", "gemini-2.5-pro", "--resume", "u-1"]
+        let mut argv: Vec<String> = ["some-cli", "-m", "model-a", "--resume", "u-1"]
             .iter()
             .map(|s| s.to_string())
             .collect();
         assert!(super::replace_resume_args(&mut argv, &["--resume"], &["--session-id"]));
-        assert_eq!(argv, ["gemini", "-m", "gemini-2.5-pro", "--session-id", "u-1"]);
+        assert_eq!(argv, ["some-cli", "-m", "model-a", "--session-id", "u-1"]);
         let mut other: Vec<String> = ["kimi", "-r", "s"].iter().map(|s| s.to_string()).collect();
         assert!(!super::replace_resume_args(&mut other, &["--resume"], &["--session-id"]));
     }
 }
 
-/// 真机探针：Kimi / Gemini 切模型、切模式（.lead/20261114-tui-model-switch）。挂在这里才能调到拼恢复 argv 的私有函数。
+/// 真机探针：Kimi 切模型、切模式（.lead/20261114-tui-model-switch）。挂在这里才能调到拼恢复 argv 的私有函数。
 #[cfg(test)]
 #[path = "tms_probe_restart.rs"]
 mod tms_probe_restart;

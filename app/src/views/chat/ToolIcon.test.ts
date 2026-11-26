@@ -18,7 +18,8 @@ describe("toolShortName", () => {
   it("其余四家归不进类别的常用工具也有中文名", () => {
     expect(name("write_stdin")).toBe("终端输入");
     expect(name("wait_agent")).toBe("等待子任务");
-    expect(name("list_directory")).toBe("列出目录");
+    expect(name("ask_question")).toBe("提问");
+    expect(name("generate_image")).toBe("生成图片");
     expect(name("NotifyUser")).toBe("通知");
     expect(name("list")).toBe("列出目录");
   });

@@ -212,7 +212,7 @@ describe("这一轮的检查", () => {
     expect(check.status).toBe("unknown");
   });
 
-  it("gemini / opencode：命令跑完不标 is_error，非零退出码照样算失败", () => {
+  it("opencode：命令跑完不标 is_error，非零退出码照样算失败", () => {
     const checks = collectTurnChecks([
       ...run("npm run build", { exit_code: 1, text: "vite error\nExit Code: 1" }),
       ...run("cargo test", { exit_code: 101, text: "error[E0425]: x" }),

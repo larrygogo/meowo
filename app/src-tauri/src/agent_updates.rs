@@ -45,7 +45,8 @@ fn latest_source(id: meowo_agent::AgentId) -> Option<LatestSource> {
         // 渠道的纯文本版本号文件——若走 npm registry，npm 发布滞后时更新提示就跟着滞后。
         "claude" => LatestSource::PlainText("https://downloads.claude.ai/claude-code-releases/latest"),
         "codex" => LatestSource::Npm("@openai/codex"),
-        "gemini" => LatestSource::Npm("@google/gemini-cli"),
+        // antigravity（agy）不参与：它自己在后台升级（2026-11-26 本机实测 1.5.17 → 1.5.18 发生在两次
+        // 启动之间），也没有公开的纯文本版本号地址，Meowo 再提示一遍只会和它的自动更新打架。
         "opencode" => LatestSource::Npm("opencode-ai"),
         "kimi" => LatestSource::PlainText("https://code.kimi.com/kimi-code/latest"),
         _ => return None,
@@ -192,7 +193,7 @@ fn probe_one(plugin: &'static dyn meowo_agent::AgentPlugin) -> AgentUpdateInfo {
 }
 
 /// 对每个已安装 agent 各开一条线程跑 `f`，按插件顺序收回结果。
-/// 为什么并行：顺序探测时总耗时是各 agent 之和（实测冷启动 `--version` gemini ~1s、
+/// 为什么并行：顺序探测时总耗时是各 agent 之和（实测冷启动 `--version` 慢的要 ~1s（当时的 gemini）、
 /// opencode/kimi ~0.5s，再加各自一次联网），设置页首开要干等数秒；并行后只等最慢的那一个。
 /// agent 至多个位数，线程数有界；scope 保证返回前全部 join。
 fn for_each_installed(

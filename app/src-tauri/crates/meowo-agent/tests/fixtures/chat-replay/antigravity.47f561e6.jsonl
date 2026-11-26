@@ -1,0 +1,8 @@
+{"idx":0,"images":[],"kind":"user","queued":false,"text":"Run the shell command: echo hello-probe . Then reply with one short sentence.","ts":1795677646546}
+{"context_tokens":20101,"context_window":512000,"idx":1,"kind":"assistant","model":"Gemini 4 Neon (High)","text":"","thinking":"","tool_calls":[{"id":"call_9209557172472505258","name":"run_command"}],"ts":1795677646796}
+{"args":{"CommandLine":"echo hello-probe","WaitMsBeforeAsync":5000,"toolSummary":"Echo hello-probe"},"end":1795677653611,"error":null,"exit_code":0,"id":"call_9209557172472505258","idx":2,"kind":"tool","name":"run_command","output":"Command exited with code 0.\n\nCommand output:\nhello-probe\r\n","status":"done","title":"Ran echo hello-probe","ts":1795677651557}
+{"context_tokens":20235,"context_window":512000,"idx":3,"kind":"assistant","model":"Gemini 4 Neon (High)","text":"The command ran and printed `hello-probe`.","thinking":"","tool_calls":[],"ts":1795677653796}
+{"idx":4,"kind":"system","text":"Stop hook blocked termination: PROBE: reply with exactly the word BANANA","ts":1795677657800}
+{"context_tokens":20352,"context_window":512000,"idx":5,"kind":"assistant","model":"Gemini 4 Neon (High)","text":"BANANA","thinking":"","tool_calls":[],"ts":1795677657907}
+{"idx":6,"images":[],"kind":"user","queued":false,"text":"say ok","ts":1795677707520}
+{"context_tokens":20440,"context_window":512000,"idx":7,"kind":"assistant","model":"Gemini 4 Neon (High)","text":"ok","thinking":"","tool_calls":[],"ts":1795677707713}

@@ -22,8 +22,8 @@ risk: boolean,
  */
 traits: ModeTraits | null, 
 /**
- * 一句话说明的 i18n 键（前端 `t.modes.desc[键]`）。按 provider 起名：同叫 yolo 的两档
- * 在 Kimi 与 Gemini 是两回事，不能共用一句。
+ * 一句话说明的 i18n 键（前端 `t.modes.desc[键]`）。按 provider 起名：同名的两档在不同
+ * CLI 里可能是两回事（Kimi 的 `auto` 都不问，Antigravity 的 `auto` 危险命令仍问），不能共用一句。
  */
 desc: string | null, 
 /**

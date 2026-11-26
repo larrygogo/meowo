@@ -52,23 +52,23 @@ describe("RuntimeRequest compatibility", () => {
     expect(asTerminalRuntimeRequest({ ...base, attention: { id: "claude:plan-approval", kind: "plan", text: "plan" } }).kind).toBe("approval");
     expect(asTerminalRuntimeRequest({ ...base, attention: { id: "provider:trust", kind: "trust", text: "trust", options: [{ label: "Yes", input: "1" }] } }).kind).toBe("prompt");
     expect(asTerminalRuntimeRequest({ ...base, attention: { id: "claude:long-session-resume", kind: "choice", text: "continue" } }).kind).toBe("prompt");
-    expect(asTerminalRuntimeRequest({ ...base, attention: { id: "gemini:usage-limit", kind: "choice", text: "limit" } }).kind).toBe("prompt");
+    expect(asTerminalRuntimeRequest({ ...base, attention: { id: "antigravity:trust", kind: "choice", text: "trust" } }).kind).toBe("prompt");
   });
 
   it("keeps terminal identity stable across repaints and preserves native options", () => {
     const first = asTerminalRuntimeRequest({
       sessionId: 42,
-      provider: "gemini",
+      provider: "antigravity",
       writable: true,
-      attention: { id: "gemini:command-approval", kind: "approval", text: "Allow once?", details: "framed_box", options: [{ label: "Allow once", input: "\r", focused: true }] },
+      attention: { id: "antigravity:command-approval", kind: "approval", text: "Run this command?", details: "proceed_box", options: [{ label: "Yes, run command", input: "\r", focused: true }] },
     });
     const repainted = asTerminalRuntimeRequest({
       sessionId: 42,
-      provider: "gemini",
+      provider: "antigravity",
       writable: true,
-      attention: { id: "gemini:command-approval", kind: "approval", text: "Allow once?\nnew detail", details: "framed_box", options: [{ label: "Allow once", input: "\r" }] },
+      attention: { id: "antigravity:command-approval", kind: "approval", text: "Run this command?\nnew detail", details: "proceed_box", options: [{ label: "Yes, run command", input: "\r" }] },
     });
-    expect(first.requestId).toBe("terminal:42:gemini:command-approval");
+    expect(first.requestId).toBe("terminal:42:antigravity:command-approval");
     expect(repainted.requestId).toBe(first.requestId);
     expect(repainted.terminal?.options?.[0].input).toBe("\r");
     expect(runtimeRequestTerminalLive(repainted)).toBe(true);

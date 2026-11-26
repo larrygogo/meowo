@@ -30,12 +30,12 @@ const errorBar = () => document.querySelector(".chat-send-error")!;
 const buttons = () => [...errorBar().querySelectorAll("button")].map((button) => button.textContent);
 const diagLines = () => invoke.mock.calls.filter(([command]) => command === "diag_log").map(([, args]) => (args as { message: string }).message);
 
-// 四家各取一种读不全的形态：粘贴占位、被框宽折行、超出可视高度。
+// 三家各取一种读不全的形态：粘贴占位、被框宽折行、超出可视高度（antigravity 不声明清空键、没有保真帧，不在这里）。
 const cases = [
   { provider: "codex", draft: "codex-0.167.2-form-paste_big_line", empty: "codex-0.167.2-placeholder-cursor", message: zh.chat.composerDraftPaste, why: "paste", cleared: "\x03", clear: ["\x03"] },
   { provider: "kimi", draft: "kimi-2.6.1-form-wrap_words", empty: "kimi-2.6.1-cleared", message: zh.chat.composerDraftWrapped, why: "wrap", cleared: "\x03", clear: ["\x03"] },
-  { provider: "gemini", draft: "gemini-0.68.0-form-tall", empty: "gemini-0.68-placeholder-cursor", message: zh.chat.composerDraftOverflow, why: "overflow", cleared: "\x15", clear: ["\x0b", "\x15"] },
-  { provider: "opencode", draft: "opencode-1.19.5-form-paste_small", empty: "opencode-1.19.5-placeholder-cursor", message: zh.chat.composerDraftPaste, why: "paste", cleared: "\x03", clear: ["\x03"] },
+  { provider: "opencode", draft: "opencode-1.19.5-form-tall", empty: "opencode-1.19.5-placeholder-cursor", message: zh.chat.composerDraftOverflow, why: "overflow", cleared: "\x03", clear: ["\x03"] },
+
 ];
 const BODY = "对话页的新消息 body-0519";
 

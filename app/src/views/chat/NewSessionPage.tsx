@@ -154,7 +154,7 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
             欢迎面板同一套标识）。名字不再写一遍，下拉里已经有了。Kimi 在这放品牌字标，它只有一家。 */}
         <div className="nsp-hero">
           {/* 与设置页 agent 卡片同一套应用图标外框（provider-card-icon）：自带方块的（codex /
-              opencode / kimi）铺满，裸 logomark（claude / gemini）留一圈边。此前一律套一块着色
+              opencode / kimi）铺满，裸 logomark（claude / antigravity）留一圈边。此前一律套一块着色
               方底，codex 的黑方块被套成方中方、几家大小都不一样（用户实拍）。 */}
           <AgentAppIcon provider={provider} className="nsp-hero-mark" tiled />
           <h1 className="nsp-hero-title">{t.newSession.title}</h1>

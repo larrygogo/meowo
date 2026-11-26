@@ -12,13 +12,13 @@ describe("有卡片待处理时输入框的规则", () => {
     expect(cardLockHint(lock, zh)).toBe("");
   });
 
-  /// 走查 输入 B2：此前屏幕通道（kimi、gemini、opencode）锁输入框，broker 通道（claude、codex）不锁、
+  /// 走查 输入 B2：此前屏幕通道（kimi、antigravity、opencode）锁输入框，broker 通道（claude、codex）不锁、
   /// 发送后才报错。现在五家的审批都先拦发送，说明是同一句。
   it.each([
     ["claude", { brokerApproval: true }],
     ["codex", { brokerApproval: true }],
     ["kimi", { terminalCard: { kind: "approval" as const, collapsed: false } }],
-    ["gemini", { terminalCard: { kind: "approval" as const, collapsed: false } }],
+    ["antigravity", { terminalCard: { kind: "approval" as const, collapsed: false } }],
     ["opencode", { terminalCard: { kind: "approval" as const, collapsed: false } }],
   ])("%s 的审批待处理：发送先拦住，说明同一句", (_provider, input) => {
     const lock = composerCardLock({ ...NONE, ...input });
@@ -31,7 +31,7 @@ describe("有卡片待处理时输入框的规则", () => {
     ["claude 的 broker 提问", { brokerQuestion: true }],
     ["kimi 的 broker 提问", { brokerQuestion: true }],
     ["kimi 屏幕上的方括号表单", { terminalCard: { kind: "question" as const, collapsed: false } }],
-    ["gemini 屏幕上的提问表单", { terminalCard: { kind: "question" as const, collapsed: false } }],
+    ["antigravity 屏幕上的提问表单", { terminalCard: { kind: "question" as const, collapsed: false } }],
     ["会话记录报了提问、题面还没认出来", { pendingReview: "question" as const }],
   ])("%s：发送先拦住，说明是「先回答」", (_name, input) => {
     const lock = composerCardLock({ ...NONE, ...input });

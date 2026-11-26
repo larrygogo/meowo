@@ -17,8 +17,6 @@ import claudeMain from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-repl
 import claudeError from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/claude.15a3c5a2.items.json";
 import claudeAgent from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/claude.e903be8f.items.json";
 import codexMain from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/codex.01a1cea4.items.json";
-import geminiMain from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/gemini.1b135d85.items.json";
-import geminiError from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/gemini.882f0730.items.json";
 import kimiMain from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/kimi.658d0ccd.items.json";
 import kimiError from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/kimi.aa711c07.items.json";
 import opencodeMain from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/opencode.bzQ2Bs.items.json";
@@ -26,8 +24,9 @@ import opencodeError from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-r
 import opencodeMidTurn from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/opencode.KbLGZo.items.json";
 
 type Lang = "zh" | "en";
-export type ToolProvider = "claude" | "codex" | "kimi" | "gemini" | "opencode";
-export const TOOL_PROVIDERS: ToolProvider[] = ["claude", "codex", "kimi", "gemini", "opencode"];
+// antigravity 还没有回放样本（后端 chat-replay 下没有 antigravity.*），有了再加进来。
+export type ToolProvider = "claude" | "codex" | "kimi" | "opencode";
+export const TOOL_PROVIDERS: ToolProvider[] = ["claude", "codex", "kimi", "opencode"];
 /// all：一场会话的片段，回合已结束。running：最后一条命令还没回执、会话在跑。waiting：同一段，停在审批上。
 /// stale：同一段，但会话已经停了（没回执的调用应显示「已中断」，不再计时）。error：以回合出错收尾。
 /// todo：整份样本前插一条待办调用。
@@ -43,14 +42,13 @@ type Sample = {
   live: string;
   /** 以回合出错收尾的那场会话；codex 没有，见 CODEX_TURN_ERROR。 */
   error: ChatItem[] | null;
-  /** 子任务块所在的会话片段。gemini、opencode 本机没有派过子任务。 */
+  /** 子任务块所在的会话片段。opencode 本机没有派过子任务。 */
   agents: ChatItem[] | null;
 };
 const SAMPLES: Record<ToolProvider, Sample> = {
   claude: { main: items(claudeMain), live: "gh issue view", error: items(claudeError), agents: items(claudeAgent) },
   codex: { main: items(codexMain), live: "Get-Content app/src-tauri/CLAUDE.md", error: null, agents: items(codexMain) },
   kimi: { main: items(kimiMain), live: "cargo test", error: items(kimiError), agents: items(kimiMain) },
-  gemini: { main: items(geminiMain), live: "npm test", error: items(geminiError), agents: null },
   opencode: { main: items(opencodeMain), live: "node --version", error: items(opencodeError), agents: null },
 };
 
@@ -59,7 +57,6 @@ const CWD: Record<ToolProvider, string> = {
   claude: "C:\\Users\\user\\Desktop\\workspace\\meowo",
   codex: "C:\\Users\\user\\Desktop\\workspace\\meowo",
   kimi: "C:\\Users\\user\\Desktop\\workspace\\meowo-1114-0850",
-  gemini: "C:\\Users\\user\\Desktop\\workspace\\meowo",
   opencode: "C:\\Users\\user\\Desktop\\workspace\\meowo",
 };
 
@@ -92,12 +89,11 @@ const CODEX_TURN_ERROR = { type: "turn_error", id: "codex-error-unit", timestamp
 
 /// 待办调用：五家的回放样本都没有这一类。工具名与摘要按各家插件的规则写，不是真实会话记录：
 /// claude TodoWrite 的摘要是整包入参的紧凑 JSON（transcript.rs tool_summary 的兜底）；codex update_plan 取
-/// explanation（telemetry.rs）；kimi TodoList、gemini write_todos、opencode todowrite 都退回整包入参。
+/// explanation（telemetry.rs）；kimi TodoList、opencode todowrite 都退回整包入参。
 const TODO_CALL: Record<ToolProvider, { name: string; summary: string }> = {
   claude: { name: "TodoWrite", summary: '{"todos":[{"content":"对齐两边的对比维度","status":"in_progress","activeForm":"对齐对比维度"},{"content":"写结论","status":"pending","activeForm":"写结论"}]}' },
   codex: { name: "update_plan", summary: "先落盘关卡 B 的决定，再补探针" },
   kimi: { name: "TodoList", summary: '{"todos":[{"title":"读 RuntimeRequest 的现状","status":"done"},{"title":"写垂直切片方案","status":"in_progress"}]}' },
-  gemini: { name: "write_todos", summary: '{"todos":[{"description":"读 NewSessionPanel","status":"completed"},{"description":"改样式","status":"in_progress"}]}' },
   opencode: { name: "todowrite", summary: '{"todos":[{"content":"run ping","status":"completed","priority":"high"},{"content":"say DONE1","status":"pending","priority":"medium"}]}' },
 };
 
@@ -142,13 +138,12 @@ export function toolSceneItems(provider: ToolProvider, state: ToolState): ChatIt
   }
   if (state === "midturn") {
     // opencode：真实的一场（KbLGZo）——ping 还在跑时用户又发了一句，记录里它排在跑完的 ping 之后。
-    // gemini 的调用连同结果一起落盘，不存在「命令在跑、后面又来了一条用户消息」的时间线，退回运行中那一段。
     if (provider === "opencode") {
       const real = items(opencodeMidTurn);
       return restamp(real.slice(0, real.findIndex((item) => item.type === "user_text" && item.text.includes("QUEUED-OK")) + 1));
     }
     const live = liveSlice(sample);
-    return restamp(provider === "gemini" ? live : [...live, midTurnMessage(provider, live)]);
+    return restamp([...live, midTurnMessage(provider, live)]);
   }
   if (state === "agents" || state === "agents-running") {
     const source = sample.agents ?? all;
@@ -165,7 +160,7 @@ export function toolSceneItems(provider: ToolProvider, state: ToolState): ChatIt
 }
 
 export function parseToolScene(name: string): { provider: ToolProvider; state: ToolState } | null {
-  const hit = /^(claude|codex|kimi|gemini|opencode)-(all|running|waiting|stale|error|todo|midturn|agents-running|agents)$/.exec(name);
+  const hit = /^(claude|codex|kimi|opencode)-(all|running|waiting|stale|error|todo|midturn|agents-running|agents)$/.exec(name);
   return hit ? { provider: hit[1] as ToolProvider, state: hit[2] as ToolState } : null;
 }
 
@@ -185,7 +180,7 @@ export function toolSceneMock(name: string, lang: Lang, chat: (cmd: string) => u
         ...base, provider, cwd: CWD[provider], ptyManaged: true, items: timeline, todos: [], model: null,
         status: live ? "running" : "waiting",
         pendingReview: state === "waiting" ? base.pendingReview ?? null : null,
-        // 屏幕通道的审批（kimi、gemini、opencode）不经 broker，会话记录不报 pendingReview；真实后端此时由 PTY 的
+        // 屏幕通道的审批（kimi、opencode）不经 broker，会话记录不报 pendingReview；真实后端此时由 PTY 的
         // 屏幕检测报 screenState=blocked（session_query.rs），会话状态同样落到「待处理」。
         screenState: state === "waiting" && !base.pendingReview ? "blocked" : null, screenAssumed: false,
         errored: state === "error", connected: true, lastUserText: null, lastAiText: null,
@@ -194,7 +189,7 @@ export function toolSceneMock(name: string, lang: Lang, chat: (cmd: string) => u
     const hit = card?.(cmd, args);
     if (cmd === "pending_interaction" && hit) {
       // broker 审批（claude、codex）的请求带命令本身：换成时间线上等着批准的那条命令，卡片与工具行说的才是
-      // 同一件事。屏幕通道（kimi、gemini、opencode）的卡片内容来自终端画面样本，画面是整屏取证的，不改。
+      // 同一件事。屏幕通道（kimi、opencode）的卡片内容来自终端画面样本，画面是整屏取证的，不改。
       const pending = [...timeline].reverse().find((item) => item.type === "tool_use");
       const command = pending?.type === "tool_use" && pending.detail?.kind === "command" ? pending.detail.command : null;
       const approval = (hit as { approval?: { input?: string } | null }).approval;

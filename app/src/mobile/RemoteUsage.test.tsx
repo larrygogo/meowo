@@ -95,13 +95,13 @@ describe("RemoteUsage", () => {
 
   it("未登录、不支持和中转显示真实状态，不提供无效的刷新入口", async () => {
     api.getAccounts.mockResolvedValue([
-      payload("gemini", { account: null }),
+      payload("codex", { account: null }),
       payload("kimi", { usage_supported: false }),
       payload("opencode", { relay_enabled: true }),
     ]);
     render(<RemoteUsage />);
 
-    expect((await screen.findByRole("region", { name: "Gemini" })).textContent).toContain("未登录");
+    expect((await screen.findByRole("region", { name: "Codex" })).textContent).toContain("未登录");
     expect(screen.getByRole("region", { name: "Kimi" }).textContent).toContain("当前账号不支持用量查询");
     expect(screen.getByRole("region", { name: "Opencode" }).textContent).toContain("正在使用 API 中转，官方配额不适用");
     expect(screen.queryByRole("button", { name: /刷新 .* 用量/ })).toBeNull();
@@ -137,7 +137,7 @@ describe("RemoteUsage", () => {
     ];
 
     it("多账号的家列出全部账号（名字、描述、套餐、使用中），单账号家不出列表", async () => {
-      api.getAccounts.mockResolvedValue([payload("claude", { usage: usage(30) }), payload("gemini")]);
+      api.getAccounts.mockResolvedValue([payload("claude", { usage: usage(30) }), payload("codex")]);
       api.listProfiles.mockImplementation(async (provider: string) =>
         provider === "claude" ? [...twoProfiles(), profile("spare", "备用", false, { account: null })] : [profile(null, "", true)],
       );
@@ -158,9 +158,9 @@ describe("RemoteUsage", () => {
       // 当前账号不给切换按钮
       expect(list.queryByRole("button", { name: "切换到默认账号" })).toBeNull();
 
-      const gemini = within(screen.getByRole("region", { name: "Gemini" }));
-      expect(gemini.queryByRole("group")).toBeNull();
-      expect(gemini.queryByText("使用中")).toBeNull();
+      const single = within(screen.getByRole("region", { name: "Codex" }));
+      expect(single.queryByRole("group")).toBeNull();
+      expect(single.queryByText("使用中")).toBeNull();
       expect(screen.getByText("登录、退出和管理账号请在电脑上操作")).toBeTruthy();
       // 打开只读本地：不联网查用量
       expect(api.refreshUsage).not.toHaveBeenCalled();

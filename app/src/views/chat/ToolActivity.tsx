@@ -148,8 +148,8 @@ function patchDelta(patch: DiffHunk[]): { added: number; removed: number } {
 }
 
 /// 一次写入/编辑的落地结果。五家的数据形态不同，都在这里归成「逐文件的修改」：
-/// - claude / gemini：调用带旧段新段，回执带真实行号的 diff（优先用回执的）；
-/// - kimi / opencode：只有旧段新段，按它们现算 diff；
+/// - claude：调用带旧段新段，回执带真实行号的 diff（优先用回执的）；
+/// - kimi / opencode / antigravity：只有旧段新段，按它们现算 diff；
 /// - codex：调用就是补丁，一次可以改几个文件，diff 与增删行数随调用下发。
 /// 工具行与回合末尾的「文件已修改」卡片共用这一份口径，两处的增删数才对得上。
 export function editOutcome(item: import("./shared").ToolUseItem, result?: import("./shared").ToolResultItem) {
@@ -198,7 +198,7 @@ export function relativize(text: string, cwd: string | null): string {
 
 /// 待办调用的摘要：正在做的那一项（没有就取第一项没做完的，再没有取最后一项）与完成进度。
 ///
-/// 各家待办工具的入参都是整份清单（claude TodoWrite、kimi TodoList、gemini write_todos、opencode
+/// 各家待办工具的入参都是整份清单（claude TodoWrite、kimi TodoList、opencode
 /// todowrite），后端给的摘要是整包入参的 JSON，原样显示就是一行 `{"todos":[{"content":…`
 /// （2026-11-14 截图自验）。条目的文字字段各家不同名（content / title / description / subject），
 /// 状态词也不完全一样（completed / done）。摘要不是这种 JSON（codex update_plan 给的是一句说明）

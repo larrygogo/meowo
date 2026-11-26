@@ -154,7 +154,7 @@ describe("五家回放：真实会话样本 → 解析 → 归并 → 渲染", (
     expect(patch.querySelector(".chat-tool-verb")?.textContent).toBe("编辑");
     expect(patch.querySelector(".chat-tool-delta")?.textContent).toMatch(/^\+\d+/);
     expect(patch.querySelectorAll(".chat-tool-udiff .chat-tool-line.is-add").length).toBeGreaterThan(0);
-    // 补丁不带行号：行号列收掉，不留一列空白。带行号的（gemini 用例里断言了行号 2348）不受影响。
+    // 补丁不带行号：行号列收掉，不留一列空白。
     expect(patch.querySelector(".chat-tool-udiff")?.classList.contains("is-unnumbered")).toBe(true);
     // 一段脚本里先打补丁再跑命令：两行，各有各的回执。
     expect(lines.some((line) => line.startsWith("工具[done]｜编辑｜app/src-tauri/tests/probe_lead_codex.rs"))).toBe(true);
@@ -177,32 +177,6 @@ describe("五家回放：真实会话样本 → 解析 → 归并 → 渲染", (
     cleanup();
     // 只新建文件的补丁是「写入」（子线程 01a1cefb 那份）。
     expect(replay("codex", "codex.01a1cefb").lines.some((line) => line.startsWith("工具[done]｜写入｜"))).toBe(true);
-  });
-
-  it("gemini：读写改归类正确，摘要是路径，条数与行数是真实数字，有 diff 和改动卡，首行系统记录不上屏", () => {
-    const { lines, tools, toolsWith, container } = replay("gemini");
-    expect(lines).toContain("工具[done]｜读取｜app/src/views/ NewSessionPanel.tsx:1-200｜读取了 200 行｜读取了 200 行");
-    expect(lines.some((line) => line.startsWith("工具[done]｜搜索｜ns-window｜找到 2 条结果"))).toBe(true);
-    // 没有命中也是真实数字：glob 一个都没找到。
-    expect(lines).toContain("工具[done]｜搜索｜app/src/views/*Settings*.tsx｜找到 0 条结果｜找到 0 条结果");
-    const written = toolsWith("improve-new-session-design.md");
-    expect(written.map((tool) => tool.querySelector(".chat-tool-verb")?.textContent)).toEqual(["写入"]);
-    const edits = toolsWith("styles.css");
-    expect(edits.map((tool) => tool.querySelector(".chat-tool-verb")?.textContent)).toEqual(["编辑", "编辑"]);
-    expect(edits[0].getAttribute("data-state")).toBe("done");
-    // 增删行数按回执的 diff 数（样本里这段 diff 截短过，所以是 3 增 3 删）。
-    expect(edits[0].querySelector(".chat-tool-delta")?.textContent).toBe("+3-3");
-    // 回执带的 diff 有真实行号。
-    expect(edits[0].querySelector(".chat-tool-udiff .chat-tool-ln")?.textContent).toBe("2348");
-    expect(edits[0].querySelector(".chat-tool-udiff")?.classList.contains("is-unnumbered")).toBe(false);
-    expect(edits[1].getAttribute("data-state")).toBe("error");
-    // 摘要不是半截 JSON。
-    for (const tool of tools) expect(tool.querySelector(".chat-tool-summary")?.textContent ?? "").not.toMatch(/^\{/);
-    expect(container.textContent).not.toContain("系统记录");
-    expect(container.textContent).not.toContain("session_context");
-    expect(lines.some((line) => line.startsWith("改动卡｜2 个文件已修改"))).toBe(true);
-    expect(lines).toContain("分隔｜已中断");
-    expect(container.querySelector(".chat-turn-error-label")?.textContent).toBe("API 请求出错");
   });
 
   it("kimi：失败的命令标红（isError 在 result 里），出错卡与中断分隔俱全", () => {

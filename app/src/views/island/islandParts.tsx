@@ -489,7 +489,7 @@ const BRAND_COLORS: Record<string, string> = {
   claude: "#d97757",
   codex: "#a970ff",
   kimi: "#4f8cff",
-  gemini: "#7b8cff",
+  antigravity: "#7b8cff",
   opencode: "#c7c7cc",
 };
 // 待交互用黄（--isl-pending），不用额度环的橙色警示（--isl-warn）：用户要求「待交互时圆环变黄色」

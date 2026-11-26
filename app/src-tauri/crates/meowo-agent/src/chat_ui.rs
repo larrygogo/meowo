@@ -3,7 +3,7 @@
 //! 「agent 的能力由装的是什么决定」在工程上分三层，可动态化程度不同：
 //!
 //! 1. **真正可发现的**：CLI 版本（宿主探测 `--version`）、用户自定义斜杠命令（文件系统：
-//!    claude 的 `commands/`、codex 的 `prompts/`、gemini 的 `commands/*.toml`、opencode 的
+//!    claude 的 `commands/`、codex 的 `prompts/`、opencode 的
 //!    `command/`，含项目级目录）。本模块负责这层——装了新命令，下一次询问就反映。
 //! 2. **版本相关但查询不到的**：内置命令表、`/model` 是否接受内联参数。五家 CLI 都没有
 //!    「自述能力」的接口（没有任何 `list-commands`），这份知识只能由插件整理；但**选表**由
@@ -21,7 +21,7 @@ use std::path::Path;
 /// 多家 CLI 共用的启动目录信任标题。即使某个 provider 当前版本尚无此功能，继承这些足够
 /// 具体的句子也不会把普通欢迎页误判为交互提示，并能自然覆盖未来新增的同类安全检查。
 pub const COMMON_STARTUP_ATTENTION_MARKERS: &[&str] = &[
-    // Claude Code、Gemini CLI
+    // Claude Code
     "do you trust the files in this folder",
     // Codex CLI
     "do you trust the contents of this directory",
@@ -148,7 +148,7 @@ pub struct ComposerStash {
     pub stashed_marker: &'static str,
 }
 
-/// 输入框处在另一种输入模式（Gemini 的 shell 模式、vim NORMAL）：这时写进去的字不是普通消息
+/// 输入框处在另一种输入模式（shell 模式、vim NORMAL；最初为已移除的 gemini 插件的 shell 模式引入，现役插件都不声明）：这时写进去的字不是普通消息
 /// （会被当成 shell 命令 / vim 命令执行）。认出来之后先按 `exit_input` 退回普通模式，复核
 /// 退出了才写正文；退不出就不写，并按 `id` 给出说明。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -195,7 +195,7 @@ pub enum AttentionDetails {
     /// 附带语义：「Approve for this session」只记本会话，不是持久规则。
     ArrowPanel,
     /// 圆角外框对话框式：`? 工具名  说明` 头行 + 内框正文 + 问句 + `│ ● 1. Allow once │`
-    /// 编号选项（gemini 0.6x 真机取证 + 源码 ToolConfirmationMessage）。选项行带框线，
+    /// 编号选项（取证自已移除的 gemini 插件：0.6x 真机 + 源码 ToolConfirmationMessage；现役插件都不声明）。选项行带框线，
     /// 以 ● 焦点做相对移动；「Allow for this session」只记本会话。
     FramedBox,
     /// 方括号编号表单：`? 问题` + `[1] 选项`（单选，`→` 为光标）或 `[ ] 选项` / `[✓] 选项`
@@ -204,7 +204,7 @@ pub enum AttentionDetails {
     BracketForm,
     /// 圆角外框里的提问表单：`│ Answer Questions` 头行 + 问句 + `│ ● 1.  选项` 编号行
     /// （多选另有 `[ ]`/`[x]` 勾选框与无编号的 `Done` 行），末页 `Review your answers:`。
-    /// 以 ● 焦点做相对移动，回车选中（gemini 0.65 AskUserDialog 源码取证，2026-11-12，未实拍）。
+    /// 以 ● 焦点做相对移动，回车选中（取证自已移除的 gemini 插件：0.65 AskUserDialog 源码，2026-11-12，未实拍）。
     /// 与 `FramedBox` 的区别在语义：这是提问，不是命令审批，前端出提问卡。
     FramedForm,
     /// 横排选项行：标题行之下是正文，末行是 `Allow once   Allow always   Reject` 这样用多个空格
@@ -220,7 +220,7 @@ pub enum AttentionDetails {
 }
 
 /// 屏幕上这条可操作提示**是什么事**。前端按它定卡片的标题、徽章和按钮形态，
-/// 不再从 `id` 的后缀猜（`gemini:usage-limit` 曾因此被说成「启动步骤」、徽章写「待批准」）。
+/// 不再从 `id` 的后缀猜（已移除的 gemini 插件的 `gemini:usage-limit` 曾因此被说成「启动步骤」、徽章写「待批准」）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -663,7 +663,7 @@ pub struct ComposerSpec {
     /// 清空输入框的按键，逐个分开写（两个 Esc 合成一次写入会被当成 Alt+Esc）。**只在认出输入框
     /// 里有字时才按**：这些键在空输入框上另有含义（退出、打开回退菜单）。空表 = 未取证，不清。
     pub clear_inputs: &'static [&'static str],
-    /// 一轮 `clear_inputs` 清不完时最多重复几轮，每轮后复核（gemini 用行删除键逐行清）。
+    /// 一轮 `clear_inputs` 清不完时最多重复几轮，每轮后复核（已移除的 gemini 插件曾用行删除键逐行清）。
     /// 1 = 一轮清空整段。
     pub clear_rounds: u8,
     /// 回合进行中按 `clear_inputs` 是否只清草稿、不打断回合（逐家真机取证）。false = 运行中不清，
@@ -776,7 +776,7 @@ pub struct ChatUi {
     /// 中断键要按几次(分次写入,间隔由前端定)。opencode 首按只提示 "esc again to interrupt",
     /// 第二下才停;两个 Esc 合成一次写入会被当成 Alt+Esc,一下都不算(真机取证见其插件)。
     pub interrupt_presses: u8,
-    /// 运行中排队的提交键。Codex 的 Enter 不等于排队（官方键盘文档）；gemini 0.64 实测 Enter 即排队。
+    /// 运行中排队的提交键。Codex 的 Enter 不等于排队（官方键盘文档）；antigravity 的 Enter 即排队（research-screen.md §2）。
     pub queue_input: Option<&'static str>,
     /// 用 queue_input 提交的消息何时被读到。None = 未取证，GUI 只说「已交给 Agent」。
     pub queue_delivery: Option<QueueDelivery>,
@@ -796,8 +796,8 @@ pub struct ChatUi {
     /// 单行正文命中这条正则（JS 语法）时，也包成 bracketed paste 再写进终端；None = 单行照旧直接写。
     ///
     /// 多行正文本来就一律走 bracketed paste。单行直接写是为了兼容不开 bracketed paste 的旧 CLI，
-    /// 但有的 TUI 会把「一次写进来的一串字」里的某些字符当成快捷键吃掉（gemini 0.68.0 吞半角问号，
-    /// 见其插件注释）。命中的正文改走粘贴，TUI 按粘贴内容原样收下。
+    /// 但有的 TUI 会把「一次写进来的一串字」里的某些字符当成快捷键吃掉（前科：已移除的 gemini 插件
+    /// 0.68.0 吞半角问号；现役插件都不声明）。命中的正文改走粘贴，TUI 按粘贴内容原样收下。
     pub single_line_paste_pattern: Option<&'static str>,
     /// 当前会话支持 runtime 命令自发现、但权威清单尚未写入 transcript。前端据此继续随
     /// transcript 增量重试；一旦为 false 就停止探测，避免稳态轮询反复扫描文件。
@@ -845,7 +845,7 @@ pub struct CustomCommandSpec {
     pub project_dir: Option<&'static str>,
     /// 命令文件扩展名（不含点）。`md` 的描述取 frontmatter，`toml` 取顶层 `description` 键。
     pub ext: &'static str,
-    /// 子目录的命名空间连接符（claude/gemini 都是 `:`：`commands/git/commit.*` → `/git:commit`）。
+    /// 子目录的命名空间连接符（claude 是 `:`：`commands/git/commit.*` → `/git:commit`）。
     /// None = **只收顶层文件**——用于嵌套语义未经验证的 agent，宁可少收也不编造名字。
     pub namespace_sep: Option<&'static str>,
 }

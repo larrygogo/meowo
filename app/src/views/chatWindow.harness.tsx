@@ -245,16 +245,19 @@ const NATIVE_EMPTY_FRAMES: Record<string, TerminalScreenFrameDto> = {
     "cursorCol": 2,
     "cursorVisible": true
   },
-  "gemini": {
+  // antigravity 1.5.18 空闲的空输入框（2026-11-26 屏幕取证 run2/27_idle_after_intro.txt，default 档没有占位；
+  // 终端行按 120 列补齐空格，光标停在 `> ` 之后）。
+  "antigravity": {
     "lines": [
       "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
-      " >   Type your message or @path/to/file",
+      ">                                                                                                                       ",
       "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────"
     ],
     "cursorRow": 1,
-    "cursorCol": 3,
+    "cursorCol": 2,
     "cursorVisible": true
   }
+
 };
 export function emptyComposerFrame(provider: string): TerminalScreenFrameDto | null {
   const frame = NATIVE_EMPTY_FRAMES[provider];

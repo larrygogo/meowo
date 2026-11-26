@@ -45,7 +45,7 @@ const AGENTS: { id: ProviderId; name: string }[] = [
   { id: "claude", name: "Claude Code" },
   { id: "codex", name: "Codex" },
   { id: "kimi", name: "Kimi Code" },
-  { id: "gemini", name: "Gemini CLI" },
+  { id: "antigravity", name: "Antigravity CLI" },
   { id: "opencode", name: "OpenCode" },
 ];
 
@@ -55,7 +55,7 @@ const CONTENT: Record<Lang, Content> = {
       eyebrow: "// AI 编程代理工作台",
       h1a: "多个 AI 编程会话",
       accent: "在一个窗口里跑",
-      lead: "一个桌面应用。Claude Code、Codex、Kimi、Gemini CLI 和 OpenCode 的会话都在它的对话窗里运行。有会话等你批准时，屏幕顶部的灵动岛会提醒；不在电脑前，可以用手机处理。",
+      lead: "一个桌面应用。Claude Code、Codex、Kimi、Antigravity CLI 和 OpenCode 的会话都在它的对话窗里运行。有会话等你批准时，屏幕顶部的灵动岛会提醒；不在电脑前，可以用手机处理。",
       github: "GitHub",
       note: "开源 · MIT · Windows 与 macOS · 无需预装 AI CLI",
       works: "支持",
@@ -93,7 +93,7 @@ const CONTENT: Record<Lang, Content> = {
       {
         time: "17:30", tone: "err", eyes: { tone: "running", quota: 92 }, label: "额度见底",
         title: "额度快用完了",
-        body: "灵动岛的额度环显示 Claude Code、Codex 和 Kimi 的 5 小时和 7 天额度，Opus 这类模型单独计算的周额度也在里面。用到 85% 以上，环会变红。除了 Gemini CLI，每家都可以保存多个账号来回切换，也可以改用 API 中转。",
+        body: "灵动岛的额度环显示 Claude Code、Codex 和 Kimi 的 5 小时和 7 天额度，Opus 这类模型单独计算的周额度也在里面。用到 85% 以上，环会变红。除了 Antigravity CLI，每家都可以保存多个账号来回切换，也可以改用 API 中转。",
       },
       {
         time: "19:00", tone: "done", eyes: { tone: "running", cue: "star" }, label: "收工",
@@ -104,7 +104,7 @@ const CONTENT: Record<Lang, Content> = {
     agents: {
       eyebrow: "五家 Agent",
       title: "支持五家 AI 编程 CLI",
-      body: "还没装的，可以在设置里安装和登录，Gemini CLI 需要填 API Key。所需的 hooks 由 Meowo 自动配置。各家能做的事不完全一样，比如额度读数、多账号、让 Agent 操作浏览器，功能页有逐项对照。",
+      body: "还没装的，可以在设置里安装和登录。Antigravity CLI 在 agy 自己的界面里登录。所需的 hooks 由 Meowo 自动配置。各家能做的事不完全一样，比如额度读数、多账号、让 Agent 操作浏览器，功能页有逐项对照。",
       more: "查看能力对照",
     },
     trust: {
@@ -128,7 +128,7 @@ const CONTENT: Record<Lang, Content> = {
       eyebrow: "// AI coding agent workbench",
       h1a: "Run several AI coding sessions",
       accent: "in one window",
-      lead: "A desktop app. Sessions from Claude Code, Codex, Kimi, Gemini CLI and OpenCode all run in its chat window. When one is waiting for your approval, the island at the top of the screen alerts you, and away from your computer you can handle it on your phone.",
+      lead: "A desktop app. Sessions from Claude Code, Codex, Kimi, Antigravity CLI and OpenCode all run in its chat window. When one is waiting for your approval, the island at the top of the screen alerts you, and away from your computer you can handle it on your phone.",
       github: "GitHub",
       note: "Open source · MIT · Windows & macOS · no AI CLI needed upfront",
       works: "Works with",
@@ -166,7 +166,7 @@ const CONTENT: Record<Lang, Content> = {
       {
         time: "17:30", tone: "err", eyes: { tone: "running", quota: 92 }, label: "Quota running low",
         title: "Quota is almost used up",
-        body: "The quota ring on the island shows 5-hour and 7-day quota for Claude Code, Codex and Kimi, including separate weekly quota for models such as Opus. Past 85%, the ring turns red. Every agent except Gemini CLI can keep several accounts to switch between, or you can use an API relay instead.",
+        body: "The quota ring on the island shows 5-hour and 7-day quota for Claude Code, Codex and Kimi, including separate weekly quota for models such as Opus. Past 85%, the ring turns red. Every agent except Antigravity CLI can keep several accounts to switch between, or you can use an API relay instead.",
       },
       {
         time: "19:00", tone: "done", eyes: { tone: "running", cue: "star" }, label: "Wrap up",
@@ -177,7 +177,7 @@ const CONTENT: Record<Lang, Content> = {
     agents: {
       eyebrow: "Five agents",
       title: "Works with five AI coding CLIs",
-      body: "If a CLI isn't installed yet, you can install it and sign in from Settings. Gemini CLI needs an API key. Meowo sets up the hooks it needs. The agents differ in what they support, such as quota readouts, multiple accounts and letting the agent operate the browser. The features page compares them.",
+      body: "If a CLI isn't installed yet, you can install it and sign in from Settings. For Antigravity CLI, you sign in inside agy itself. Meowo sets up the hooks it needs. The agents differ in what they support, such as quota readouts, multiple accounts and letting the agent operate the browser. The features page compares them.",
       more: "Compare agents",
     },
     trust: {

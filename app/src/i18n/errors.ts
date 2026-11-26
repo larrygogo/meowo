@@ -19,6 +19,7 @@ type ErrorEntry = {
 
 /** 按声明顺序匹配:精确项放前、长前缀放短前缀前。导出仅供对账测试(errors.parity.test.ts)。 */
 export const ENTRIES: ErrorEntry[] = [
+  { m: "lead/note_waiter_needs_approval", exact: true, zh: "非自动档下，每张关卡可能要在终端批准一次等待命令", en: "Outside Auto mode, you may need to approve the wait command in the terminal once per gate." },
   { m: "lead/gate_ambiguous", exact: true, zh: "多个任务使用了相同的关卡编号，已停止送达，请先修正编号", en: "Multiple tasks share this gate ID. Delivery stopped until the IDs are corrected." },
   // OpenCode 原生 TUI 续跑（lead_native/opencode_http.rs）：答复已保存，经本机服务投递失败，可重试。
   { m: "lead/opencode_http_unauthorized", exact: true, zh: "回答已保存；OpenCode 本机服务拒绝了连接（密码不符），重新打开会话后重试", en: "Answer saved. The local OpenCode service rejected the connection (password mismatch); reopen the session and retry." },
@@ -462,7 +463,6 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "lead/variant_unsupported", exact: true, zh: "该 CLI 变体暂不支持 Lead 接入", en: "Lead is not supported for this CLI variant yet" },
   { m: "lead/profile_missing", exact: true, zh: "该账号配置已不存在，请重新选择账号", en: "This account configuration no longer exists. Choose another account and retry" },
   // 设置页 Lead 行的自动继续副作用说明（插件声明 LeadCap::continue_notes）；leader 在关卡 Q 接受了这条风险，要求写明。
-  { m: "lead/note_dialog_starts_turn", exact: true, zh: "停在 /settings、登录等对话框时，手机作答也会直接开始新一轮", en: "Answering from your phone starts a new turn even while /settings or a sign-in dialog is open" },
   { m: "lead/reviewer_disabled", exact: true, zh: "CLI 已禁用审查角色所需的能力，请先在其设置中启用", en: "The CLI has disabled the capability required by the reviewer role. Enable it in the CLI settings first" },
   { m: "lead/config_changed", exact: true, zh: "CLI 配置在安装期间发生变化，请重试", en: "The CLI configuration changed during installation. Please retry" },
   { m: "lead/read_failed", exact: true, zh: "无法读取 Lead 配置，请检查目录权限后重试", en: "Could not read the Lead configuration. Check folder permissions and retry" },

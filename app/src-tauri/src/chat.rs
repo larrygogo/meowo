@@ -365,7 +365,7 @@ fn load_chat_history(
     // 「加载更早」向上翻页：before = 当前已加载窗口的首行字节（首读/上一屏响应里的
     // earliest）。只解析 [0, before) 这一段并取其尾部一屏，长会话反复上翻不再是
     // 整文件重读 × 页数。尾部增量的记账（offset/mtime）不在这条路径上动，轮询不受影响。
-    // Gemini快照重写或跨账号恢复后，旧页的字节上界同样失效；不能先按before读取再检查路径。
+    // 导出缓存换代（antigravity /rewind 后整份重导到新文件）或跨账号恢复后，旧页的字节上界同样失效；不能先按before读取再检查路径。
     let path_changed = prev.as_ref().is_some_and(|entry| entry.path != path);
     if let Some(end) = before.filter(|_| !path_changed) {
         if let Some(window) = meowo_agent::read_chat_window(spec, &path, end, FIRST_PAGE_ITEMS) {

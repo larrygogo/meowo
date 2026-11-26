@@ -181,59 +181,58 @@ fn permission_result_clears_denied_approval_even_without_posttooluse() {
     }
 }
 
+/// agy 的真机负载（camelCase，cwd / toolCall 是 JSON 字符串，SessionStart 在首条消息时才发）先经插件改写，
+/// 再走与其他家同一个 dispatch：建会话、提交即运行、工具跑完、回合结束即等待。同一回合里后续的模型调用
+/// （PreInvocation invocationNum > 0）与 App/IDE 的会话都不落库。
 #[test]
-fn gemini_only_permission_notifications_mark_pending_and_legacy_compress_does_not_stick() {
+fn antigravity_payloads_drive_the_session_lifecycle_after_normalization() {
+    let plugin = meowo_agent::by_id("antigravity").unwrap();
+    let norm = |raw: serde_json::Value| match plugin.normalize_hook_payload(&raw.to_string()) {
+        meowo_agent::HookPayload::Rewrite(text) => Some(ev(&text)),
+        _ => None,
+    };
+    let base = |event: &str| {
+        serde_json::json!({
+            "hookEventName": event,
+            "conversationId": "agy-conv",
+            "cwd": "\"/p\"",
+            "artifactDirectoryPath": "/home/u/.gemini/antigravity-cli/brain/agy-conv",
+            "lastUserInput": "hi",
+        })
+    };
     let store = Store::open_in_memory().unwrap();
-    dispatch(
-        &store,
-        &ev(r#"{"hook_event_name":"SessionStart","session_id":"g","cwd":"/p"}"#),
-        100,
-        "gemini",
-    )
-    .unwrap();
-    let sid = store.find_session_id_pub("g").unwrap().unwrap();
-    for (index, kind) in ["Info", "ToolPermission"].into_iter().enumerate() {
-        let payload = serde_json::json!({"hook_event_name":"Notification","session_id":"g","notification_type":kind});
-        dispatch(
-            &store,
-            &ev(&payload.to_string()),
-            200 + index as i64,
-            "gemini",
-        )
-        .unwrap();
-        assert_eq!(
-            store.session_pending_review(sid).unwrap().is_some(),
-            kind == "ToolPermission"
-        );
-    }
-    dispatch(
-        &store,
-        &ev(r#"{"hook_event_name":"AfterTool","session_id":"g","tool_name":"run_shell_command"}"#),
-        300,
-        "gemini",
-    )
-    .unwrap();
-    assert_eq!(store.session_pending_review(sid).unwrap(), None);
-    dispatch(
-        &store,
-        &ev(r#"{"hook_event_name":"AfterAgent","session_id":"g"}"#),
-        400,
-        "gemini",
-    )
-    .unwrap();
-    dispatch(
-        &store,
-        &ev(r#"{"hook_event_name":"PreCompress","session_id":"g"}"#),
-        500,
-        "gemini",
-    )
-    .unwrap();
-    assert_eq!(store.get_session(sid).unwrap().status, "waiting");
-    let tid = store.task_id_of_session_pub(sid).unwrap();
-    assert_ne!(
-        store.get_task(tid).unwrap().current_activity.as_deref(),
-        Some("__meowo_compacting__")
+    let run = |raw: serde_json::Value, at: i64| {
+        if let Some(event) = norm(raw) {
+            dispatch(&store, &event, at, "antigravity").unwrap();
+        }
+    };
+    run(base("SessionStart"), 100);
+    let sid = store.find_session_id_pub("agy-conv").unwrap().expect("SessionStart 建会话");
+    let live = store.live_sessions(None, None, None, None, 1000).unwrap();
+    assert_eq!(
+        live.iter().find(|l| l.session.cc_session_id == "agy-conv").unwrap().provider,
+        "antigravity"
     );
+    let mut first = base("PreInvocation");
+    first["invocationNum"] = serde_json::json!(0);
+    run(first, 200);
+    assert_eq!(store.get_session(sid).unwrap().status, "running");
+    let mut tool = base("PostToolUse");
+    tool["toolCall"] = serde_json::json!("{\"name\":\"run_command\",\"args\":{\"CommandLine\":\"echo hi\"},\"id\":\"c1\"}");
+    run(tool, 300);
+    assert_eq!(store.get_session(sid).unwrap().status, "running");
+    run(base("Stop"), 400);
+    assert_eq!(store.get_session(sid).unwrap().status, "waiting");
+    // 同一回合后面的模型调用不是新的提交，不把回合翻回运行中。
+    let mut later = base("PreInvocation");
+    later["invocationNum"] = serde_json::json!(2);
+    assert!(norm(later).is_none());
+    // App / IDE 的会话不落库。
+    let mut app = base("SessionStart");
+    app["conversationId"] = serde_json::json!("app-conv");
+    app["artifactDirectoryPath"] = serde_json::json!("/home/u/.gemini/antigravity/brain/app-conv");
+    run(app, 500);
+    assert!(store.find_session_id_pub("app-conv").unwrap().is_none());
 }
 
 /// 测试默认走 claude provider；provider 行为单独在 kimi_session_tagged_with_provider 覆盖。
@@ -857,7 +856,7 @@ fn provider_defaults_claude_and_kimi_is_tagged() {
     assert_eq!(prov("km1"), "kimi");
 }
 
-/// 回归（Copilot review）：本版本尚不认识的 provider（跨版本时更新版 meowo 写入的 id，如 `gemini`）
+/// 回归（Copilot review）：本版本尚不认识的 provider（跨版本时更新版 meowo 写入的 id；`gemini` 2026-11 退役后也是这种）
 /// 必须**原样落库**，绝不因「查不到插件」就冒名成默认 agent。
 ///
 /// 此前 dispatch 入参是 `AgentId`，未知值在 main.rs 就被回退成 `DEFAULT_ID`，于是这类会话落成

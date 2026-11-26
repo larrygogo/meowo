@@ -10,7 +10,7 @@ import {
   CLAUDE_APPROVAL_SCREEN,
   CLAUDE_BROKER_APPROVAL,
   CODEX_BROKER_APPROVAL,
-  GEMINI_APPROVAL_SCREEN,
+  ANTIGRAVITY_APPROVAL_SCREEN,
   KIMI_APPROVAL_SCREEN,
   OPENCODE_PERMISSION_SCREEN,
 } from "../../test/requestSamples";
@@ -31,13 +31,13 @@ function screenRequest(provider: string, screen: string, writable = true): Runti
   return asTerminalRuntimeRequest({ sessionId: 7, provider, attention, writable });
 }
 
-/// 五家各一份样本：claude、codex 走 broker，kimi、gemini、opencode 走屏幕；claude 另有一份屏幕样本
+/// 五家各一份样本：claude、codex 走 broker，kimi、antigravity、opencode 走屏幕；claude 另有一份屏幕样本
 /// （broker 接不上时的兜底通道）。
 const FIVE: [string, RuntimeRequest][] = [
   ["claude（broker）", CLAUDE_BROKER_APPROVAL],
   ["codex（broker）", CODEX_BROKER_APPROVAL],
   ["kimi（屏幕）", screenRequest("kimi", KIMI_APPROVAL_SCREEN)],
-  ["gemini（屏幕）", screenRequest("gemini", GEMINI_APPROVAL_SCREEN)],
+  ["antigravity（屏幕）", screenRequest("antigravity", ANTIGRAVITY_APPROVAL_SCREEN)],
   ["opencode（屏幕）", screenRequest("opencode", OPENCODE_PERMISSION_SCREEN)],
   ["claude（屏幕兜底）", screenRequest("claude", CLAUDE_APPROVAL_SCREEN)],
 ];
@@ -85,9 +85,9 @@ describe("审批卡：五家同一张卡", () => {
       ["codex（broker）", ["说明并拒绝", "拒绝", "允许一次"]],
       // 屏幕：识别可能认错，所以有「仅收起」；持久放行按终端里实际有的选项出。
       // 「说明并拒绝」跟着能力走，不跟着通道走：拒绝项声明了打字流程的家有（kimi、claude 真机走通），
-      // gemini 那一项只是取消、opencode 主会话没有说明页，所以没有。
+      // antigravity 的 No, cancel 只是取消、opencode 主会话没有说明页，所以没有。
       ["kimi（屏幕）", ["仅收起", "本会话内允许", "说明并拒绝", "拒绝", "允许一次"]],
-      ["gemini（屏幕）", ["仅收起", "本会话内允许", "拒绝", "允许一次"]],
+      ["antigravity（屏幕）", ["仅收起", "本会话内允许", "允许并记住", "拒绝", "允许一次"]],
       ["opencode（屏幕）", ["仅收起", "本会话内允许", "拒绝", "允许一次"]],
       ["claude（屏幕兜底）", ["仅收起", "允许并记住 · curl *", "允许并切到自动模式", "说明并拒绝", "拒绝", "允许一次"]],
     ]);
@@ -139,7 +139,7 @@ describe("审批卡：五家同一张卡", () => {
     render(<Card request={CLAUDE_BROKER_APPROVAL} />);
     expect(screen.getByText("命令")).toBeTruthy();
     cleanup();
-    render(<Card request={screenRequest("gemini", GEMINI_APPROVAL_SCREEN)} />);
+    render(<Card request={screenRequest("antigravity", ANTIGRAVITY_APPROVAL_SCREEN)} />);
     expect(screen.getByText("命令")).toBeTruthy();
     expect(screen.queryByText("完整参数")).toBeNull();
     cleanup();
@@ -195,9 +195,9 @@ describe("审批卡状态：过期、外部终端", () => {
 
   it("外部终端里跑的会话：屏幕卡照常显示内容，按钮不可用并说明原因", () => {
     const onDecide = vi.fn();
-    render(<Card request={screenRequest("gemini", GEMINI_APPROVAL_SCREEN, false)} onDecide={onDecide} />);
+    render(<Card request={screenRequest("kimi", KIMI_APPROVAL_SCREEN, false)} onDecide={onDecide} />);
     expect(screen.getByText(zh.chat.questionExternalHint)).toBeTruthy();
-    expect(screen.getByText("echo meowo-probe > probe-out.txt")).toBeTruthy();
+    expect(document.body.textContent).toContain("echo meowo-approval-probe-1234");
     fireEvent.click(screen.getByRole("button", { name: "允许一次" }));
     expect(onDecide).not.toHaveBeenCalled();
   });
@@ -305,7 +305,7 @@ describe("审批卡：说明并拒绝、在途、焦点（broker 通道的能力
   });
 
   it.each([
-    ["gemini", GEMINI_APPROVAL_SCREEN],
+    ["antigravity", ANTIGRAVITY_APPROVAL_SCREEN],
     ["opencode", OPENCODE_PERMISSION_SCREEN],
   ])("%s 屏幕通道：拒绝项没有声明打字流程，不出「说明并拒绝」", (provider, sample) => {
     render(<Card request={screenRequest(provider, sample)} />);
@@ -314,15 +314,17 @@ describe("审批卡：说明并拒绝、在途、焦点（broker 通道的能力
 
   /// 认不出角色的选项：照终端原文列成普通按钮，在左侧组里，不带数字徽标，发的是它自己的决定词。
   it("其他选项：按终端原文出按钮，不带数字徽标，不进允许与拒绝", async () => {
-    const sample = GEMINI_APPROVAL_SCREEN.replace(
-      "│   3. No, suggest changes (esc)            │",
-      "│   3. Modify with external editor          │\n│   4. No, suggest changes (esc)            │",
+    // 在 antigravity 真机面板里插一项认不出角色的选项（合成）。
+    const sample = ANTIGRAVITY_APPROVAL_SCREEN.replace(
+      "  4. No, cancel",
+      "  4. Modify with external editor\n  5. No, cancel",
     );
     const onDecide = vi.fn();
-    render(<Card request={screenRequest("gemini", sample)} onDecide={onDecide} />);
+    render(<Card request={screenRequest("antigravity", sample)} onDecide={onDecide} />);
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-    expect(actionNames()).toEqual(["仅收起", "本会话内允许", "Modify with external editor", "拒绝", "允许一次"]);
+    expect(actionNames()).toEqual(["仅收起", "本会话内允许", "允许并记住", "Modify with external editor", "拒绝", "允许一次"]);
     const other = screen.getByRole("button", { name: "Modify with external editor" });
+
     expect(other.closest(".chat-approval-actions-side")).not.toBeNull();
     expect(other.querySelector("kbd")).toBeNull();
     expect(other.className).toBe("is-other");

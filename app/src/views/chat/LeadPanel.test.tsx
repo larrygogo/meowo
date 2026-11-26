@@ -70,7 +70,7 @@ describe("Lead 入口", () => {
     expect(screen.queryByRole("button", { name: "继续送达" })).toBeNull();
   });
 
-  // 做空指出：关卡归原生终端会话（codex/kimi/gemini/opencode）时，答复只保存不代投，面板此前什么都不显示。
+  // 做空指出：关卡归原生终端会话（codex/kimi/antigravity/opencode）时，答复只保存不代投，面板此前什么都不显示。
   it("原生终端会话的答复如实说下一步，不给看似能用的重试按钮", () => {
     render(<LeadPanel task={task({ gate: gate("Q", { status: "answered" }), delivery: {
       sessionId: 1, cwd: "C:/repo", deliveryId: "", state: "native_manual", reason: null, canRetry: false,

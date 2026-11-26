@@ -30,7 +30,7 @@ fn providers() -> Vec<(&'static dyn AgentPlugin, &'static str)> {
     vec![
         (&crate::plugins::codex::Codex, "codex-cli 0.167.2"),
         (&crate::plugins::kimi::Kimi, "kimi 2.5.3"),
-        (&crate::plugins::gemini::Gemini, "0.65.0"),
+        (&crate::plugins::antigravity::Antigravity, "1.5.18"),
         (&crate::plugins::opencode::Opencode, "1.19.3"),
     ]
 }
@@ -90,7 +90,7 @@ fn shared_workflow_keeps_risk_permission_and_review_contracts() {
         "验证版本和证据对应关系",
         "默认从「无法判定」出发",
         "SPEC 没有验收判据时",
-        // REVIEW 由 codex/kimi/gemini/opencode/claude 共用，只有 claude 版有写工具：只读角色必须有退路。
+        // REVIEW 由 codex/kimi/opencode/claude 共用，只有 claude 版有写工具：只读角色必须有退路。
         "把完整报告直接作为答复返回",
         "最多 5 个短句、总共不超过 500 字",
         "不用 shell 重定向或 heredoc 绕开",
@@ -119,13 +119,16 @@ fn native_install_refresh_and_uninstall_preserve_user_assets() {
         let spec = cap.spec(&inst).unwrap();
         let user = inst.data_dir.join("user-keep.txt");
         fs::write(&user, "keep").unwrap();
-        let hooks = inst.data_dir.join(spec.hook_rel);
+        let hooks = cap.asset_root(&inst).join(spec.hook_rel);
         let original=match spec.format {
             LeadHookFormat::Json=>"{\"theme\":\"keep\",\"hooks\":{\"SessionStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"user-hook\"}]}]}}",
             LeadHookFormat::Toml=>"# 用户配置注释\ndefault_model = 'keep'\n[[hooks]]\nevent = 'SessionStart'\ncommand = 'user-hook'\ntimeout = 3\n",
             LeadHookFormat::Plugin=>"",
+            // agy 的全局 hooks.json：用户自己的命名 hook 与 Meowo 的 meowo-lead 块并存。
+            LeadHookFormat::AgyJson=>"{\"mine\":{\"enabled\":true,\"Stop\":[{\"type\":\"command\",\"command\":\"user-hook\"}]},\"keep\":true}",
         };
         if !original.is_empty() {
+            fs::create_dir_all(hooks.parent().unwrap()).unwrap();
             fs::write(&hooks, original).unwrap();
         }
         let state = install(
@@ -136,8 +139,8 @@ fn native_install_refresh_and_uninstall_preserve_user_assets() {
         )
         .unwrap();
         assert!(state.installed, "{} {:?}", plugin.id(), state);
-        assert_eq!(fs::read_to_string(inst.data_dir.join(spec.skill_rel)).unwrap(), skill_body("C:/Program Files/meowo-reporter.exe").unwrap());
-        assert_eq!(fs::read_to_string(inst.data_dir.join(spec.reviewer_rel)).unwrap(), cap.reviewer());
+        assert_eq!(fs::read_to_string(cap.asset_root(&inst).join(spec.skill_rel)).unwrap(), skill_body("C:/Program Files/meowo-reporter.exe").unwrap());
+        assert_eq!(fs::read_to_string(cap.asset_root(&inst).join(spec.reviewer_rel)).unwrap(), cap.reviewer());
         assert!(!state.limitations.is_empty());
         // 离线续跑已删（leader 2026-11-13「不需要离线」），限制声明里不能再留它的死数据（做空 R9）。
         assert!(
@@ -173,8 +176,8 @@ fn native_install_refresh_and_uninstall_preserve_user_assets() {
         assert!(!refreshed.contains("Program Files"));
         uninstall(cap, &inst).unwrap();
         uninstall(cap, &inst).unwrap();
-        assert!(!inst.data_dir.join(spec.skill_rel).exists());
-        assert!(!inst.data_dir.join(spec.reviewer_rel).exists());
+        assert!(!cap.asset_root(&inst).join(spec.skill_rel).exists());
+        assert!(!cap.asset_root(&inst).join(spec.reviewer_rel).exists());
         assert_eq!(fs::read_to_string(user).unwrap(), "keep");
         match spec.format {
             LeadHookFormat::Plugin => assert!(!hooks.exists()),
@@ -195,21 +198,21 @@ fn conflicts_and_invalid_settings_abort_before_asset_writes() {
         let inst = fixture.installation(plugin);
         let cap = plugin.lead().unwrap();
         let spec = cap.spec(&inst).unwrap();
-        let reviewer = inst.data_dir.join(spec.reviewer_rel);
+        let reviewer = cap.asset_root(&inst).join(spec.reviewer_rel);
         fs::create_dir_all(reviewer.parent().unwrap()).unwrap();
         fs::write(&reviewer, "my reviewer").unwrap();
         assert_eq!(
             install(cap, &inst, Some(version), "meowo-reporter.exe").unwrap_err(),
             "lead/user_file_exists"
         );
-        assert!(!inst.data_dir.join(spec.skill_rel).exists());
-        assert!(!inst.data_dir.join(spec.hook_rel).exists());
+        assert!(!cap.asset_root(&inst).join(spec.skill_rel).exists());
+        assert!(!cap.asset_root(&inst).join(spec.hook_rel).exists());
         fs::remove_file(&reviewer).unwrap();
-        let hook = inst.data_dir.join(spec.hook_rel);
+        let hook = cap.asset_root(&inst).join(spec.hook_rel);
         fs::create_dir_all(hook.parent().unwrap()).unwrap();
         fs::write(&hook, "this is not a valid native config").unwrap();
         assert!(install(cap, &inst, Some(version), "meowo-reporter.exe").is_err());
-        assert!(!inst.data_dir.join(spec.skill_rel).exists());
+        assert!(!cap.asset_root(&inst).join(spec.skill_rel).exists());
         assert!(!reviewer.exists());
         assert_eq!(
             fs::read_to_string(hook).unwrap(),
@@ -236,16 +239,6 @@ fn native_reviewer_formats_and_disabled_settings_are_preserved() {
                 )
                 .unwrap();
             }
-            "gemini" => {
-                assert!(reviewer.contains("kind: local\n"));
-                assert!(reviewer.contains("  - read_file\n"));
-                assert!(!reviewer.contains("  - Read\n"));
-                fs::write(
-                    inst.data_dir.join("settings.json"),
-                    "{\"experimental\":{\"enableAgents\":false}}",
-                )
-                .unwrap();
-            }
             "kimi" => {
                 assert!(reviewer.contains("  - Read\n"));
                 assert!(reviewer.contains("subagents: []"));
@@ -254,10 +247,17 @@ fn native_reviewer_formats_and_disabled_settings_are_preserved() {
                 assert!(reviewer.contains("mode: subagent\n"));
                 assert!(reviewer.contains("  edit: deny\n"));
             }
+            // agy 的子代理定义：subagent: true、不当主 agent，工具名用 agy 自己的。
+            "antigravity" => {
+                assert!(reviewer.contains("subagent: true\n"));
+                assert!(reviewer.contains("mainAgent: false\n"));
+                assert!(reviewer.contains("  - read_file\n"));
+                assert!(!reviewer.contains("kind: local"));
+            }
             _ => unreachable!(),
         }
         let state = install(cap, &inst, Some(version), "meowo-reporter.exe").unwrap();
-        if matches!(plugin.id().as_str(), "codex" | "gemini") {
+        if plugin.id().as_str() == "codex" {
             assert!(!state.installed);
             assert!(state.assets_present && state.hooks_present);
             assert_eq!(state.reason.as_deref(), Some("lead/reviewer_disabled"));
@@ -293,7 +293,7 @@ fn codex_install_trusts_effective_commands_without_shifting_user_hook_indices() 
     let inst = fixture.installation(plugin);
     let cap = plugin.lead().unwrap();
     let spec = cap.spec(&inst).unwrap();
-    let hooks = inst.data_dir.join(spec.hook_rel);
+    let hooks = cap.asset_root(&inst).join(spec.hook_rel);
     let config = inst.data_dir.join("config.toml");
     fs::write(
         &hooks,
@@ -364,7 +364,6 @@ fn installation_follows_native_default_and_environment_roots() {
     let keys = [
         "CODEX_HOME",
         "KIMI_CODE_HOME",
-        "GEMINI_CLI_HOME",
         "OPENCODE_CONFIG_DIR",
     ];
     let _restore = Restore(
@@ -391,10 +390,13 @@ fn installation_follows_native_default_and_environment_roots() {
                 .unwrap()
                 .installed
         );
+        // agy 没有覆盖数据目录的环境变量，只验默认落点。
+        let Some(key) = variant.data_dir.env else {
+            continue;
+        };
         let override_root = home.join("custom-root");
         let resolved = override_root.join(variant.data_dir.env_suffix);
         fs::create_dir_all(&resolved).unwrap();
-        let key = variant.data_dir.env.unwrap();
         std::env::set_var(key, &override_root);
         let inst = variant.probe(plugin.id(), &home).unwrap();
         assert_eq!(inst.data_dir, resolved);
@@ -408,10 +410,6 @@ fn installation_follows_native_default_and_environment_roots() {
             .data_dir
             .join(cap.spec(&inst).unwrap().skill_rel)
             .exists());
-        if plugin.id() == crate::id::GEMINI {
-            assert!(resolved.ends_with("custom-root/.gemini"));
-            assert!(!override_root.join("skills/lead/SKILL.md").exists());
-        }
         std::env::remove_var(key);
     }
 }
@@ -497,60 +495,16 @@ fn kimi_waiter_permission_rule_is_exact_and_reversible() {
     assert_eq!(fs::read_to_string(&config).unwrap(), "default_model = 'keep'\n");
 }
 
-/// gemini：打开后台完成注入与 modelSteering、写放行策略；卸载还原用户原值、删策略与原值记录。
-#[test]
-fn gemini_auto_continue_settings_restore_user_values_on_uninstall() {
-    let fixture = Fixture::new();
-    let plugin: &dyn AgentPlugin = &crate::plugins::gemini::Gemini;
-    let inst = fixture.installation(plugin);
-    let cap = plugin.lead().unwrap();
-    let settings = inst.data_dir.join("settings.json");
-    fs::write(
-        &settings,
-        r#"{"theme":"keep","tools":{"shell":{"backgroundCompletionBehavior":"notify","enableInteractiveShell":true}}}"#,
-    )
-    .unwrap();
-    let reporter = r"C:\Users\o'neil\Meowo\meowo-reporter.exe";
-    assert!(install(cap, &inst, Some("0.68.0"), reporter).unwrap().installed);
-    let doc: Value = serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
-    assert_eq!(doc.pointer("/tools/shell/backgroundCompletionBehavior"), Some(&json!("inject")));
-    assert_eq!(doc.pointer("/tools/shell/enableInteractiveShell"), Some(&json!(true)));
-    assert_eq!(doc.pointer("/experimental/modelSteering"), Some(&json!(true)));
-    assert!(crate::plugins::gemini::lead_model_steering(&inst.data_dir));
-    let policy = fs::read_to_string(inst.data_dir.join("policies/meowo-lead.toml")).unwrap();
-    assert!(policy.contains(MANAGED_MARK));
-    let parsed: toml_edit::DocumentMut = policy.parse().unwrap();
-    let rule = parsed["rule"].as_array_of_tables().unwrap().get(0).unwrap();
-    assert_eq!(rule["toolName"].as_str(), Some("run_shell_command"));
-    assert_eq!(rule["commandPrefix"].as_str(), Some(waiter_command_prefix(WaiterShell::PowerShellOnWindows, "gemini", reporter).as_str()));
-    // 刷新安装不改记下的原值。
-    assert!(install(cap, &inst, Some("0.68.0"), "C:/Meowo Next/meowo-reporter.exe").unwrap().installed);
-    uninstall(cap, &inst).unwrap();
-    let doc: Value = serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
-    assert_eq!(doc.pointer("/tools/shell/backgroundCompletionBehavior"), Some(&json!("notify")));
-    assert_eq!(doc.pointer("/experimental"), None);
-    assert_eq!(doc["theme"], "keep");
-    assert!(!inst.data_dir.join("policies/meowo-lead.toml").exists());
-    assert!(!inst.data_dir.join("meowo-lead-settings.json").exists());
-    assert!(!crate::plugins::gemini::lead_model_steering(&inst.data_dir));
-    assert!(!managed_present(cap, &inst));
-}
-
 /// 第一轮做空 M6：续跑能力按机制查证的版本单独设门，低于它（或读不出版本）走手动提示；
 /// 2.5.x 照样能装 Lead，但状态里标未实测。
 #[test]
 fn native_continue_requires_the_version_its_mechanism_was_verified_on() {
     let kimi = crate::plugins::kimi::Kimi;
-    let gemini = crate::plugins::gemini::Gemini;
     let kimi_cap = AgentPlugin::lead(&kimi).unwrap();
-    let gemini_cap = AgentPlugin::lead(&gemini).unwrap();
     assert!(native_continue_for(kimi_cap, Some("2.6.0")).is_some());
     assert!(native_continue_for(kimi_cap, Some("kimi, version 2.6.3")).is_some());
     assert!(native_continue_for(kimi_cap, Some("2.5.9")).is_none());
     assert!(native_continue_for(kimi_cap, None).is_none(), "读不出版本不冒险");
-    assert!(native_continue_for(gemini_cap, Some("0.68.0")).is_some());
-    assert!(native_continue_for(gemini_cap, Some("0.67.2")).is_none());
-    assert!(native_continue_for(gemini_cap, Some("0.65.0")).is_none());
     // 没声明门槛的（codex/opencode）不受影响。
     for (plugin, _) in providers() {
         let cap = plugin.lead().unwrap();
@@ -566,18 +520,12 @@ fn native_continue_requires_the_version_its_mechanism_was_verified_on() {
     let state = install(kimi_cap, &inst, Some("2.5.3"), "C:/Meowo/meowo-reporter.exe").unwrap();
     assert!(state.installed);
     assert!(state.limitations.iter().any(|l| l == "lead/version_untested"), "{state:?}");
-    let plugin: &dyn AgentPlugin = &gemini;
-    let inst = fixture.installation(plugin);
-    fs::write(inst.data_dir.join("settings.json"), "{}").unwrap();
-    let state = install(gemini_cap, &inst, Some("0.68.0"), "C:/Meowo/meowo-reporter.exe").unwrap();
-    assert!(!state.limitations.iter().any(|l| l == "lead/version_untested"), "{state:?}");
 }
 
 /// 共享层不按 provider 身份分支（做空 M7）：等待器 shell 由插件声明。
 #[test]
 fn waiter_shell_comes_from_the_plugin_description() {
     assert_eq!(waiter_shell("kimi"), Some(WaiterShell::PosixDoubleQuoted));
-    assert_eq!(waiter_shell("gemini"), Some(WaiterShell::PowerShellOnWindows));
     assert_eq!(waiter_shell("codex"), None);
     assert_eq!(waiter_shell("opencode"), None);
     assert_eq!(waiter_shell("nope"), None);
@@ -587,7 +535,7 @@ fn waiter_shell_comes_from_the_plugin_description() {
 /// 起等待器，与面板「手动继续」一致；已起来的等待器仍按插件声明认参数。
 #[test]
 fn waiter_requirement_uses_the_same_version_gate_as_the_host() {
-    for (provider, old, ok) in [("kimi", "2.5.3", "2.6.0"), ("gemini", "0.67.0", "0.68.0")] {
+    for (provider, old, ok) in [("kimi", "2.5.3", "2.6.0")] {
         let cap = crate::by_id(provider).unwrap().lead().unwrap();
         for version in [Some(old), Some(ok), None, Some("3.0.0"), Some("1.0.0")] {
             assert_eq!(

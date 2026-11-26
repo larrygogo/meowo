@@ -272,7 +272,7 @@ pub fn read_with_size(
             break;
         }
     }
-    // prompt_prefix 可列几个提示符，用 `|` 分隔（Gemini 平常 `>`、YOLO `*`）；空串 = 没有提示符。
+    // prompt_prefix 可列几个提示符，用 `|` 分隔（为已移除的 gemini 插件引入：平常 `>`、YOLO `*`；现役插件都只有一个）；空串 = 没有提示符。
     let prefix = spec
         .prompt_prefix
         .split('|')

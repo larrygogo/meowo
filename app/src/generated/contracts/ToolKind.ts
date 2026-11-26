@@ -2,7 +2,7 @@
 
 /**
  * 工具调用的语义类别。由各家插件在适配层按**自己的工具名表**给出，前端只认这个字段，
- * 不再按工具名的子串去猜（猜的规则是照 Claude 的命名调的，Gemini 的 read_file / replace
+ * 不再按工具名的子串去猜（猜的规则是照 Claude 的命名调的，当时 gemini 的 read_file / replace
  * 全落进「其他」，Codex 的 wait_agent 因为名字含 agent 被当成子任务）。
  * 插件不认识的工具一律 `Other`，界面显示原始工具名。
  */

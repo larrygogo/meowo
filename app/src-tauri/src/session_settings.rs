@@ -518,7 +518,7 @@ pub(crate) fn pinned_model(
 
 /// 钉子作废那一刻，把存档的模型改成新回复报的模型（第七轮 R4 的 S8）：回合结束同步可能赶在 Stop 落库之前、
 /// 被钉子拒掉（用户其实已在 TUI 里切回），不改的话，接回会按存档里的旧值回放，直到下一次同步才改正。
-/// 只对带参重启的两家（Gemini/Kimi，接回时回放存档里的模型）做，而且回复报的要能在清单里对上。
+/// 只对带参重启的两家（Kimi/Antigravity，接回时回放存档里的模型）做，而且回复报的要能在清单里对上。
 fn resync_stored_model(store: &meowo_store::Store, session_id: i64, reported: Option<&str>) {
     let Some(reported) = reported.filter(|reported| !reported.is_empty()) else {
         return;
@@ -821,7 +821,7 @@ fn apply_blocking(
             next.insert("model".into(), model.clone());
         }
         persist(&store, session_id, &next, None);
-        // 带参重启的两家（Kimi/Gemini）恢复时按存档回放，「下次打开时生效」属实。会话服务（Codex）与
+        // 带参重启的两家（Kimi/Antigravity）恢复时按存档回放，「下次打开时生效」属实。会话服务（Codex）与
         // 对话框（OpenCode）恢复时不回放模型、Codex 协作模式也没有启动参数（做空 N6）：排进队列，
         // 打开后由宿主经服务 / 对话框补一次。
         if !plan.server.is_empty() || plan.dialog_model.is_some() || plan.dialog_agent.is_some() {
@@ -837,7 +837,7 @@ fn apply_blocking(
                 .map_err(|_| "settings/mode_unknown")?;
         // 做空第五轮 P3：目标档要的启动参数（Codex workspace-write 档在没配 Windows 沙箱时的
         // `-c windows.sandbox=unelevated`）进程启动时没带——会话内改成 workspace-write 也是 SandboxType::None，
-        // 命令不进沙箱。这时改走带参接回（接回路径会补上这个参数），接回后再经服务补设新档。守卫同 Kimi/Gemini 的
+        // 命令不进沙箱。这时改走带参接回（接回路径会补上这个参数），接回后再经服务补设新档。守卫同 Kimi/Antigravity 的
         // 带参重启：输入框要空（对话页已把草稿搬走）、后台子任务不忙。
         let mut target = stored.clone();
         target.extend(modes.clone());
@@ -959,7 +959,7 @@ fn apply_blocking(
                 return Ok(not_now);
             }
         }
-        // Lead 在等关卡答复：Kimi/Gemini 的等待器是 TUI 里的后台进程，重启连它一起杀掉，答复后就不会
+        // Lead 在等关卡答复：Kimi/Antigravity 的等待器是 TUI 里的后台进程，重启连它一起杀掉，答复后就不会
         // 自动继续（宿主不代投）。排到续跑之后由宿主执行（做空 N3）。
         if lead_holds_restart(&header) {
             return Ok(SettingsOutcome::queued(session_id, "settings/lead_waiting", "lead"));
@@ -1694,7 +1694,7 @@ fn run_queued(app: &tauri::AppHandle, session_id: i64) {
     let Some(history) = crate::chat::session_snapshot(&state, session_id) else {
         return; // 会话行在（上面查过），读不出来只是这一轮跳过
     };
-    // 连着且在跑 / 等审批：继续等，不计时。没连着：执行（Kimi/Gemini 记成下次打开的启动参数，
+    // 连着且在跑 / 等审批：继续等，不计时。没连着：执行（Kimi/Antigravity 记成下次打开的启动参数，
     // Codex/OpenCode 转成等打开，见 apply_blocking）。
     if history.connected && !host_idle(&state, &history) {
         not_blocked(session_id);
@@ -2244,20 +2244,21 @@ mod tests {
         assert_eq!(perm.restart.get("model").map(String::as_str), Some("kimi-code/k3"));
     }
 
-    /// 做空 H1 复现 c（Gemini）：存档 yolo、底栏读到当前是 default。读不到当前值、存档那一档又带参数时不重启。
+    /// 做空 H1（原 Gemini 复现 c，换成 antigravity）：存档 plan、状态栏读到当前是 auto。读不到当前值、
+    /// 存档那一档又带参数时不重启。
     #[test]
     fn restart_refuses_when_current_value_is_unknown() {
-        let gemini = meowo_agent::by_id("gemini").unwrap();
-        let catalog = vec![ModelCatalogEntry::new("gemini-2.5-pro", "gemini-2.5-pro")];
-        let stored = modes(&[("approval", "yolo")]);
-        let known = plan(gemini, Some("gemini-2.5-pro"), None, &none(), &catalog, &[], &modes(&[("approval", "default")]), &stored).unwrap();
-        assert_eq!(known.restart.get("approval").map(String::as_str), Some("default"));
-        let args = meowo_agent::resolve_session_args(gemini, &known.restart, &catalog, &[], true);
-        assert!(!args.iter().any(|a| a == "--yolo"), "{args:?}");
-        let unknown = plan(gemini, Some("gemini-2.5-pro"), None, &none(), &catalog, &[], &none(), &stored);
+        let agy = meowo_agent::by_id("antigravity").unwrap();
+        let catalog = vec![ModelCatalogEntry::new("gemini-4-neon-high", "Gemini 4 Neon (High)")];
+        let stored = modes(&[("approval", "plan")]);
+        let known = plan(agy, Some("gemini-4-neon-high"), None, &none(), &catalog, &[], &modes(&[("approval", "auto")]), &stored).unwrap();
+        assert_eq!(known.restart.get("approval").map(String::as_str), Some("auto"));
+        let args = meowo_agent::resolve_session_args(agy, &known.restart, &catalog, &[], true);
+        assert!(!args.iter().any(|a| a == "plan"), "{args:?}");
+        let unknown = plan(agy, Some("gemini-4-neon-high"), None, &none(), &catalog, &[], &none(), &stored);
         assert_eq!(unknown.unwrap_err(), "settings/current_unknown");
         // 存档里有模型、当前模型读不到：同样不重启（否则回放旧模型）。
-        let model_unknown = plan(gemini, None, None, &modes(&[("approval", "plan")]), &catalog, &[], &none(), &modes(&[("model", "gemini-2.5-pro")]));
+        let model_unknown = plan(agy, None, None, &modes(&[("approval", "plan")]), &catalog, &[], &none(), &modes(&[("model", "gemini-4-neon-high")]));
         assert_eq!(model_unknown.unwrap_err(), "settings/current_unknown");
     }
 
@@ -2366,30 +2367,22 @@ mod tests {
         assert_eq!(catalog_id_for(&catalog, "gpt-x"), None);
     }
 
-    /// gemini 审批模式底栏 → 当前档位，用插件现行的标记表。前四行是 0.68.0 真机原文
-    /// （app/src/test/fixtures/composer-frames.json 的 g2-0、g7-1、g8-0、g7-2-yolo 四帧，2026-11-14）；
-    /// 0.65 的整句字面量与它们逐字相同，所以新老版本一起认。
+    /// antigravity 状态栏右侧 `<模式> · <模型> · <effort>` → 当前档位，用插件现行的标记表。原文来自
+    /// agy 1.5.18 真机屏幕（接入 antigravity 的 Lead 任务 research-screen-work run1/04_mode_*、
+    /// run2/27_idle_after_intro，2026-11-26）；default 档不写模式名，读不出来，不猜。
     #[test]
-    fn gemini_footer_lines_map_to_approval_modes() {
-        let gemini = meowo_agent::by_id("gemini").unwrap();
-        let markers = gemini.mode_controls()[0].screen_markers;
-        let above = " > Type your message or @path/to/file\n";
+    fn antigravity_status_line_maps_to_approval_modes() {
+        let agy = meowo_agent::by_id("antigravity").unwrap();
+        let markers = agy.mode_controls()[0].screen_markers;
+        let above = "\u{2500}\u{2500}\u{2500}\u{2500}\n>\n\u{2500}\u{2500}\u{2500}\u{2500}\n";
         for (footer, want) in [
-            (" Shift+Tab to accept edits                                   29 skills", "default"),
-            (" auto-accept edits Shift+Tab to plan", "autoEdit"),
-            (" plan Shift+Tab to manual", "plan"),
-            (" YOLO Ctrl+Y", "yolo"),
-            // 回合进行中 plan 切不过去，autoEdit 的提示以 `Shift+Tab to manual` 结尾（按 0.68.0 bundle
-            // ApprovalModeIndicator.tsx 的模板拼出，未实拍）。只认 `shift+tab to manual` 时它被读成 plan。
-            (" auto-accept edits Shift+Tab to manual", "autoEdit"),
+            ("? for shortcuts                       auto \u{00B7} Gemini 4 Neon \u{00B7} high", Some("auto")),
+            ("esc to cancel                         plan \u{00B7} Gemini 4 Neon \u{00B7} high", Some("plan")),
+            ("? for shortcuts               accept-edits \u{00B7} Gemini 4 Neon \u{00B7} high", Some("accept-edits")),
+            ("? for shortcuts                              Gemini 4 Neon \u{00B7} high", None),
         ] {
-            assert_eq!(mode_from_screen(&format!("{above}{footer}"), markers), Some(want), "{footer}");
+            assert_eq!(mode_from_screen(&format!("{above}{footer}"), markers), want, "{footer}");
         }
-        // 正文里提到过别的档位，底栏在更靠后的位置：以底栏为准。
-        let screen = "  I switched to YOLO Ctrl+Y earlier, then to plan Shift+Tab to manual.\n Shift+Tab to accept edits";
-        assert_eq!(mode_from_screen(screen, markers), Some("default"));
-        // 用户改了键位（0.68.0 起按键提示按键位表格式化）：读不到，不猜。
-        assert_eq!(mode_from_screen(" Alt+M to accept edits", markers), None);
     }
 
     /// 做空 M8：服务通道的连接类错误在切换语境下不能落到 Lead「回答已保存…」。
@@ -2473,31 +2466,31 @@ mod tests {
         let project = store.upsert_project_by_root("/tmp/pin7", "pin7", now).unwrap();
         let (sid, _) = store.start_session(project, "cc-pin7", now).unwrap();
         store.finish_turn(sid, Some("Shall I go on with the tests?"), now + 10).unwrap();
-        store.set_session_launch_args(sid, r#"{"model":"gemini-3.8-flash","approval":"autoEdit"}"#).unwrap();
+        store.set_session_launch_args(sid, r#"{"model":"gemini-3.8-flash-low","approval":"accept-edits"}"#).unwrap();
         let turn = |store: &meowo_store::Store| turn_of(store, sid);
 
-        // 1. 对话页切到 B（gemini-2.5-pro），restarted：宿主记钉子，回合标识是已结束的回合数。
-        pin_model(&store, sid, "gemini-2.5-pro");
+        // 1. 对话页切到 B（gemini-4-neon-high），restarted：宿主记钉子，回合标识是已结束的回合数。
+        pin_model(&store, sid, "gemini-4-neon-high");
         let stored = stored_selections(&store, sid);
         assert_eq!(stored[PIN_TURN], "1");
         // 2. 换会话再回来 / 手机 / 重启 Meowo：会话报的仍是 A，显示 B。
-        assert_eq!(pinned_history_model(&store, sid, Some("gemini-3.8-flash".into())).as_deref(), Some("gemini-2.5-pro"));
+        assert_eq!(pinned_history_model(&store, sid, Some("gemini-3.8-flash-low".into())).as_deref(), Some("gemini-4-neon-high"));
         // 3. 打开菜单：同步不收会话报的旧模型。
         assert!(!record_model_allowed(&stored_selections(&store, sid), &turn(&store)));
         // 4. 再切审批档：前端报的 current 还是 A，拼出来的命令行带 B。
-        let gemini = meowo_agent::by_id("gemini").unwrap();
+        let agy = meowo_agent::by_id("antigravity").unwrap();
         let catalog = vec![
-            ModelCatalogEntry::new("gemini-3.8-flash", "Gemini 3.8 Flash"),
-            ModelCatalogEntry::new("gemini-2.5-pro", "Gemini 2.5 Pro"),
+            ModelCatalogEntry::new("gemini-3.8-flash-low", "Gemini 3.8 Flash (Low)"),
+            ModelCatalogEntry::new("gemini-4-neon-high", "Gemini 4 Neon (High)"),
         ];
         let mut current = HashMap::from([
-            ("model".to_string(), "gemini-3.8-flash".to_string()),
-            ("approval".to_string(), "autoEdit".to_string()),
+            ("model".to_string(), "gemini-3.8-flash-low".to_string()),
+            ("approval".to_string(), "accept-edits".to_string()),
         ]);
         let stored = stored_selections(&store, sid);
         pin_switched_model(&mut current, &stored, &turn(&store));
-        let planned = plan(gemini, None, None, &modes(&[("approval", "default")]), &catalog, &[], &current, &stored).unwrap();
-        assert_eq!(planned.restart.get("model").map(String::as_str), Some("gemini-2.5-pro"));
+        let planned = plan(agy, None, None, &modes(&[("approval", "auto")]), &catalog, &[], &current, &stored).unwrap();
+        assert_eq!(planned.restart.get("model").map(String::as_str), Some("gemini-4-neon-high"));
 
         // 5. 第七轮 R1：用户在 TUI 里 /model 切回 A 并回复。下面三种回复的正文都和上一轮「一样」（同一句问话
         //    收尾 / 前 200 字相同 / 只有工具调用没有正文），但回合计数变了，钉子都作废、照回复。
@@ -2508,16 +2501,16 @@ mod tests {
             ("只有工具调用", None),
         ] {
             store.set_session_status(sid, meowo_store::SessionStatus::Running, now + 15).unwrap();
-            pin_model(&store, sid, "gemini-2.5-pro");
+            pin_model(&store, sid, "gemini-4-neon-high");
             assert!(pin_holds(&stored_selections(&store, sid), &turn(&store)), "{case}：切换后钉子成立");
             store.finish_turn(sid, reply, now + 20).unwrap();
-            assert_eq!(pinned_history_model(&store, sid, Some("gemini-3.8-flash".into())).as_deref(), Some("gemini-3.8-flash"), "{case}");
+            assert_eq!(pinned_history_model(&store, sid, Some("gemini-3.8-flash-low".into())).as_deref(), Some("gemini-3.8-flash-low"), "{case}");
             let stored = stored_selections(&store, sid);
             assert!(!stored.contains_key(PIN_TURN), "{case}：钉子已清");
             assert!(record_model_allowed(&stored, &turn(&store)), "{case}：之后的同步照回复写回 A");
-            let mut current = HashMap::from([("model".to_string(), "gemini-3.8-flash".to_string())]);
+            let mut current = HashMap::from([("model".to_string(), "gemini-3.8-flash-low".to_string())]);
             pin_switched_model(&mut current, &stored, &turn(&store));
-            assert_eq!(current["model"], "gemini-3.8-flash", "{case}：下一次重启带用户自己选的 A");
+            assert_eq!(current["model"], "gemini-3.8-flash-low", "{case}：下一次重启带用户自己选的 A");
         }
 
         // 6. Q2：OpenCode 连切两次 agent，读回 big-pickle、再读回 gpt-x，中间没有新回复。
@@ -2745,12 +2738,12 @@ mod tests {
     /// 清单外的模型、未知的档一律拒绝（防注入）；OpenCode 的模型走对话框。
     #[test]
     fn unknown_values_never_reach_any_mechanism() {
-        let gemini = meowo_agent::by_id("gemini").unwrap();
-        let catalog = vec![ModelCatalogEntry::new("gemini-2.5-pro", "gemini-2.5-pro")];
-        assert!(plan(gemini, Some("x; calc"), None, &none(), &catalog, &[], &none(), &none()).is_err());
-        assert!(plan(gemini, None, None, &modes(&[("approval", "bogus")]), &catalog, &[], &none(), &none()).is_err());
-        let ok = plan(gemini, Some("gemini-2.5-pro"), None, &modes(&[("approval", "plan")]), &catalog, &[], &none(), &none()).unwrap();
-        assert_eq!(ok.restart, modes(&[("model", "gemini-2.5-pro"), ("approval", "plan")]));
+        let agy = meowo_agent::by_id("antigravity").unwrap();
+        let catalog = vec![ModelCatalogEntry::new("gemini-4-neon-high", "Gemini 4 Neon (High)")];
+        assert!(plan(agy, Some("x; calc"), None, &none(), &catalog, &[], &none(), &none()).is_err());
+        assert!(plan(agy, None, None, &modes(&[("approval", "bogus")]), &catalog, &[], &none(), &none()).is_err());
+        let ok = plan(agy, Some("gemini-4-neon-high"), None, &modes(&[("approval", "plan")]), &catalog, &[], &none(), &none()).unwrap();
+        assert_eq!(ok.restart, modes(&[("model", "gemini-4-neon-high"), ("approval", "plan")]));
         let opencode = meowo_agent::by_id("opencode").unwrap();
         let oc_catalog = vec![ModelCatalogEntry::new("fake/fake-model-2", "Fake Two")];
         let oc = plan(opencode, Some("fake/fake-model-2"), None, &modes(&[("agent", "plan")]), &oc_catalog, &[], &none(), &none()).unwrap();
@@ -2758,7 +2751,7 @@ mod tests {
         assert_eq!(oc.dialog_agent.as_deref(), Some("plan"));
         assert!(oc.restart.is_empty() && oc.server.is_empty());
         // 做空 L5：临时会话的改选同样过声明表。
-        assert!(validate_modes(gemini, &modes(&[("approval", "bogus")]), &[]).is_err());
-        assert!(validate_modes(gemini, &modes(&[("approval", "plan")]), &[]).is_ok());
+        assert!(validate_modes(agy, &modes(&[("approval", "bogus")]), &[]).is_err());
+        assert!(validate_modes(agy, &modes(&[("approval", "plan")]), &[]).is_ok());
     }
 }

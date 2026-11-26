@@ -1,7 +1,33 @@
 import { describe, expect, it } from "vitest";
-import { modeFromScreen, terminalAttention, terminalNeedsAttention } from "./terminalAttention";
+import { modeFromScreen, terminalAttention, terminalNeedsAttention, type AttentionGrammar } from "./terminalAttention";
 import { chatUi, grammar } from "./test/agents";
-import { CLAUDE_APPROVAL_SCREEN, OPENCODE_ALWAYS_CONFIRM_SCREEN, OPENCODE_PERMISSION_SCREEN } from "./test/requestSamples";
+import { ANTIGRAVITY_APPROVAL_SCREEN, ANTIGRAVITY_APPROVAL_SCREEN_NARROW, CLAUDE_APPROVAL_SCREEN, OPENCODE_ALWAYS_CONFIRM_SCREEN, OPENCODE_PERMISSION_SCREEN } from "./test/requestSamples";
+
+/// 框线对话框（framed_box）、框线表单（framed_form）与带框线的选择框：现役几家都不声明这几种屏幕文法，
+/// 原 gemini 实拍样本随 provider 移除。文法本身留着（新 CLI 长成这样时插件直接声明即可），这里用最小
+/// 合成样本与合成规则测它，规则 id 与文案都不代表任何一家。
+const FRAMED: AttentionGrammar = {
+  provider: "framed-sample",
+  selectorAnchors: [],
+  attentionPatterns: [
+    {
+      id: "sample:framed-approval",
+      patterns: [String.raw`^\s*│\s*allow execution of [^\n]*\?`, String.raw`^\s*│\s*to run \[[^\]\n]+\], allow access to the following\?`],
+      last: true,
+      details: "framed_box",
+      kind: "approval",
+      confirms: null,
+      options: [
+        { pattern: "^allow once$", role: "allow_once", scope: null, typed: null },
+        { pattern: "^allow for this session$", role: "allow_persistent", scope: "session", typed: null },
+        { pattern: String.raw`^no, suggest changes(?: \(esc\))?$`, role: "deny", scope: null, typed: null },
+      ],
+      unparsed_keys: [{ role: "deny", input: "\x1b" }],
+    },
+    { id: "sample:framed-choice", patterns: [String.raw`^\s*│\s*pick a fallback\b`], last: true, details: "none", kind: "choice", options: [] },
+    { id: "sample:framed-form", patterns: [String.raw`^\s*│\s*answer questions\b`], last: true, details: "framed_form", kind: "question", options: [] },
+  ],
+};
 
 describe("terminalAttention", () => {
   it("returns the provider-declared trust screen for the GUI", () => {
@@ -10,6 +36,19 @@ describe("terminalAttention", () => {
     expect(attention?.id).toContain("provider:");
     expect(attention?.options?.map((option) => option.label)).toEqual(["Yes, I trust this folder", "No, exit"]);
     expect(terminalNeedsAttention(prompt, ["do you trust the contents of this directory"])).toBe(true);
+  });
+
+  it("forgets a trust screen drawn in the alternate screen once the CLI leaves it", () => {
+    // agy 1.5.18 原始流形状（research-screen-work/run1/00_start.bin、01_trust_prompt.bin）：备用屏里
+    // 清屏画信任页，确认后 `ESC[?1049l` 回主屏重画输入框，中间不再发清屏。
+    const markers = chatUi("antigravity")!.startup_attention_markers;
+    const trust =
+      "\x1b[?1049h\x1b[H\x1b[2JC:\\work\r\nDo you trust the contents of this project?\r\n"
+      + "> Yes, I trust this folder\r\n  No, exit\r\n  ↑/↓ Navigate · enter Confirm";
+    const agy = grammar("antigravity");
+    expect(terminalAttention(trust, markers, false, false, agy)?.id).toBe("antigravity:trust");
+    const after = trust + "\x1b[?1049l> Accept-edits mode: file edits auto-approved (shift+tab to cycle)\r\n? for shortcuts";
+    expect(terminalAttention(after, markers, false, false, agy)).toBeNull();
   });
 
   it("recognizes the codex 0.166.0 trust screen and still the old directory title", () => {
@@ -361,9 +400,9 @@ describe("terminalAttention", () => {
     expect(terminalAttention(prompt.replace("❯ 1.", "  1."), [], true, false, grammar("someagent"))).toBeNull();
   });
 
-  /// gemini `/model` 对话框(真机 PTY 取证,gemini-cli 0.51):框线包裹的编号项 + ● 焦点,
-  /// 无导航提示行。↑/↓ 移动、Enter 确认经按键探针证实——按钮输入 = 相对移动 + 回车。
-  it("把 gemini 的框线数字菜单转成 GUI 选项(仅 expectMenu 窗口)", () => {
+  /// 框线数字菜单:框线包裹的编号项 + ● 焦点,无导航提示行,按钮输入 = 相对移动 + 回车。
+  /// 原 gemini `/model` 对话框实拍样本随 provider 移除,这里是最小合成样本。
+  it("把框线数字菜单转成 GUI 选项(仅 expectMenu 窗口)", () => {
     const menu = [
       "\x1b[2J > /model",
       "╭──────────────────────────────╮",
@@ -371,17 +410,16 @@ describe("terminalAttention", () => {
       "│ Select Model│",
       "│                              │",
       "│ ● 1. Auto│",
-      "│      Let Gemini CLI decide the best model for the task: gemini-3.1-pro-preview│",
+      "│      Let the CLI decide the best model for the task│",
       "│   2. Manual│",
       "│      Manually select a model│",
       "│                              │",
       "│ Remember model for future sessions: false (Press Tab to toggle)│",
-      "│ > To use a specific Gemini model on startup, use the --model flag.│",
       "│                              │",
       "│ (Press Esc to close)│",
       "╰──────────────────────────────╯",
     ].join("\r\n");
-    const attention = terminalAttention(menu, [], false, true, grammar("gemini"));
+    const attention = terminalAttention(menu, [], false, true, grammar("someagent"));
     expect(attention?.id).toBe("interactive:cursor-menu");
     expect(attention?.text).toBe("Select Model");
     expect(attention?.options?.map((option) => option.label)).toEqual(["Auto", "Manual"]);
@@ -392,7 +430,7 @@ describe("terminalAttention", () => {
     // 对话框尾注(Remember…/Press Esc…)不得折进最后一个选项的描述。
     expect(attention?.options?.[1].description).toBe("Manually select a model");
     // 不在菜单窗口内不认——框线数字形态只在刚发出菜单命令时有意义。
-    expect(terminalAttention(menu, [], false, false, grammar("gemini"))).toBeNull();
+    expect(terminalAttention(menu, [], false, false, grammar("someagent"))).toBeNull();
   });
 
   it("turns Claude's long-session token warning into explicit GUI choices", () => {
@@ -553,9 +591,9 @@ describe("terminalAttention", () => {
     expect(terminalAttention(prompt, [], false, false, { provider: "kimi", selectorAnchors: [] })).toBeNull();
   });
 
-  /// gemini 工具确认框(0.61 真机屏,`--approval-mode default` 下让它跑一条带重定向的 shell):
-  /// 选项行带外框 │,焦点是 ●。上一屏的确认框残留在上方时,按钮必须对准下方的活动框。
-  it("turns Gemini's framed confirmation box into focus-relative choices", () => {
+  /// framed_box 文法(合成样本,原 gemini 实拍样本随 provider 移除):选项行带外框 │,焦点是 ●。
+  /// 上一屏的确认框残留在上方时,按钮必须对准下方的活动框。
+  it("framed_box：框线确认框拆成按焦点相对移动的按钮，只取活动框", () => {
     const box = (command: string, focus: number) => [
       "╭────────────────────────────────────────────╮",
       `│ ? Shell  ${command}                         │`,
@@ -563,7 +601,6 @@ describe("terminalAttention", () => {
       `│ │ ${command}                             │ │`,
       "│ ╰────────────────────────────────────────╯ │",
       "│ Allow execution of [Shell]?                │",
-      "│ Redirection detected. To auto-accept, press Shift+Tab │",
       "│                                            │",
       `│ ${focus === 1 ? "●" : " "} 1. Allow once                           │`,
       `│ ${focus === 2 ? "●" : " "} 2. Allow for this session               │`,
@@ -571,8 +608,8 @@ describe("terminalAttention", () => {
       "╰────────────────────────────────────────────╯",
     ];
     const screen = [...box("echo stale > old.txt", 1), "✦ next step", ...box("echo meowo-probe > probe-out.txt", 2)].join("\n");
-    const attention = terminalAttention(screen, [], false, false, grammar("gemini"));
-    expect(attention?.id).toBe("gemini:command-approval");
+    const attention = terminalAttention(screen, [], false, false, FRAMED);
+    expect(attention?.id).toBe("sample:framed-approval");
     expect(attention?.details).toBe("framed_box");
     // 详情只取活动框,残影里的旧命令不得混入。
     expect(attention?.text).toContain("echo meowo-probe > probe-out.txt");
@@ -585,7 +622,82 @@ describe("terminalAttention", () => {
     // 焦点在第 2 项:1 = ↑+回车,2 = 回车,3 = ↓+回车。
     expect(attention?.options?.map((option) => option.input)).toEqual(["\x1b[A\r", "\r", "\x1b[B\r"]);
     // 模型正文引用同一句(无外框)不弹卡。
-    expect(terminalAttention("Allow execution of [Shell]?\n1. Allow once", [], false, false, grammar("gemini"))).toBeNull();
+    expect(terminalAttention("Allow execution of [Shell]?\n1. Allow once", [], false, false, FRAMED)).toBeNull();
+  });
+
+  /// framed_box 的另一种问句(合成样本):框里列出要放开的权限,选项同一套。
+  it("framed_box：扩权问句同样拆成框线审批卡", () => {
+    const screen = [
+      "╭────────────────────────────────────────────────╮",
+      "│ ? Shell  npm install                           │",
+      "│ To run [Shell], allow access to the following? │",
+      "│ • Network: All Urls                            │",
+      "│                                                │",
+      "│ ● 1. Allow once                                │",
+      "│   2. Allow for this session                    │",
+      "│   3. No, suggest changes (esc)                 │",
+      "╰────────────────────────────────────────────────╯",
+    ].join("\n");
+    const attention = terminalAttention(screen, [], false, false, FRAMED);
+    expect(attention?.id).toBe("sample:framed-approval");
+    expect(attention?.details).toBe("framed_box");
+    expect(attention?.text).toContain("Network: All Urls");
+    expect(attention?.options?.map((option) => option.input)).toEqual(["\r", "\x1b[B\r", "\x1b[B\x1b[B\r"]);
+  });
+
+  /// antigravity 1.5.18 命令审批面板(真机屏幕取证 2026-11-26):问句独占一行,`> ` 是焦点,
+  /// 四个编号选项,数字键即选即确认。
+  it("Antigravity 命令审批面板：认成审批，四个选项各有角色", () => {
+    const attention = terminalAttention(ANTIGRAVITY_APPROVAL_SCREEN, [], false, false, grammar("antigravity"));
+    expect(attention?.id).toBe("antigravity:command-approval");
+    expect(attention?.kind).toBe("approval");
+    expect(attention?.details).toBe("proceed_box");
+    expect(attention?.options?.map((option) => [option.label, option.role])).toEqual([
+      ["Yes, run command", "allow_once"],
+      ["Yes, and always allow in this conversation for commands that start with 'Get-ChildItem -Force'", "allow_persistent"],
+      ["Yes, and always allow for commands that start with 'Get-ChildItem -Force' (Persist to settings.json)", "allow_persistent"],
+      ["No, cancel", "deny"],
+    ]);
+    // 模型正文里提到同一句、没有面板（无编号选项）时，别家会话不弹 antigravity 的卡。
+    expect(terminalAttention(ANTIGRAVITY_APPROVAL_SCREEN, [], false, false, grammar("kimi"))?.id).not.toBe("antigravity:command-approval");
+  });
+
+  /// 窄终端里长选项折行（dev 实例实拍 2026-11-26）：续行并回原选项，两种持久放行仍分得开；
+  /// 最后一项后面的页脚不被并进「No, cancel」。
+  it("Antigravity 命令审批面板折行：续行并回选项，范围照样认得出", () => {
+    const attention = terminalAttention(ANTIGRAVITY_APPROVAL_SCREEN_NARROW, [], false, false, grammar("antigravity"));
+    expect(attention?.id).toBe("antigravity:command-approval");
+    expect(attention?.options?.map((option) => [option.label, option.role, option.scope ?? null])).toEqual([
+      ["Yes, run command", "allow_once", null],
+      ["Yes, and always allow in this conversation for commands that start with 'Get-Date -Format yyyy-MM-dd'", "allow_persistent", "session"],
+      ["Yes, and always allow for commands that start with 'Get-Date -Format yyyy-MM-dd' (Persist to settings.json)", "allow_persistent", "remember"],
+      ["No, cancel", "deny", null],
+    ]);
+  });
+
+  /// 红队构造屏（redteam-1 F2）：长命令整词折行，被折的那行离屏宽很远，照样要并回去；
+  /// 宽末项后面紧跟顶格状态栏时，状态栏不能被吞进选项。
+  it("Antigravity 折行边界：长命令整词折行照并，顶格页脚不吞", () => {
+    const sep = "─".repeat(100);
+    const longCmd = "'npm run build:production-with-a-really-long-script-name-xyz'";
+    const wrapped = terminalAttention([
+      "Command", sep, "Requesting permission for:", "   npm run x", "", "Run this command?",
+      "> 1. Yes, run command",
+      "  2. Yes, and always allow in this conversation for commands that start with",
+      longCmd,
+      "  3. Yes, and always allow for commands that start with",
+      `${longCmd} (Persist to settings.json)`,
+      "  4. No, cancel", "", "  ↑/↓ Navigate · tab Amend", "esc to cancel",
+    ].join("\n"), [], false, false, grammar("antigravity"));
+    expect(wrapped?.options?.map((option) => option.scope ?? option.role)).toEqual(["allow_once", "session", "remember", "deny"]);
+    const footer = terminalAttention([
+      "Command", sep, "Requesting permission for:", "   x", "", "Run this command?",
+      "> 1. Yes, run command",
+      "  2. Yes, and always allow in this conversation for commands that start with 'x'",
+      "  3. Yes, and always allow for commands that start with 'x' (Persist to settings.json)",
+      "esc to cancel                                                                    plan · Gemini 4 Neon",
+    ].join("\n"), [], false, false, grammar("antigravity"));
+    expect(footer?.options?.at(-1)?.label).toBe("Yes, and always allow for commands that start with 'x' (Persist to settings.json)");
   });
 
   /// opencode 权限框(1.19.5 真机，2026-11-14 probe_tui_script):横排选项按 option_row 文法拆成按钮。
@@ -638,14 +750,17 @@ describe("terminalAttention", () => {
 
   /// 种类由规则声明，不看 id：额度耗尽与长会话确认是「等你选择」，信任页是 trust，登录类是 startup。
   it("每条识别结果都带种类：审批、提问、计划、等你选择、信任页、启动步骤、菜单", () => {
-    const usage = terminalAttention([
-      "╭──────────────────────────────────────────────╮",
-      "│ Usage limit reached for gemini-3.8-flash.    │",
-      "│ ● 1. Keep trying                             │",
-      "│   2. Stop                                    │",
-      "╰──────────────────────────────────────────────╯",
-    ].join("\n"), [], false, false, grammar("gemini"));
-    expect(usage?.kind).toBe("choice");
+    // antigravity 首次进入未信任目录的信任页(run1/01_trust_prompt.txt 原文)：插件声明为等你选择。
+    const agyTrust = terminalAttention([
+      "Accessing workspace:",
+      "C:/work/demo",
+      "Do you trust the contents of this project?",
+      "Antigravity CLI requires permission to read, edit, and execute files here.",
+      "> Yes, I trust this folder",
+      "  No, exit",
+      "  ↑/↓ Navigate · enter Confirm",
+    ].join("\n"), [], false, false, grammar("antigravity"));
+    expect(agyTrust?.kind).toBe("choice");
     const plan = terminalAttention("Claude has written up a plan and is ready to execute. Would you like to proceed?\n❯ 1. Yes, and bypass permissions\n  2. Yes, manually approve edits", [], false, false, grammar("claude"));
     expect(plan?.kind).toBe("plan");
     const trust = terminalAttention("Do you trust the files in this folder?\n❯ 1. Yes, proceed\n  2. No, exit", ["do you trust the files in this folder"], false, false, grammar("codex"));
@@ -656,103 +771,36 @@ describe("terminalAttention", () => {
     expect(menu?.kind).toBe("menu");
   });
 
-  /// gemini 额度耗尽框(0.64 真机):它取代输入框,不识别时对话页发的正文全被吞掉。
-  /// 选项行带外框 │：按框线数字菜单拆成按钮（● 焦点做相对移动），每一项都点得到。此前不拆，
-  /// 卡上只有「确认 / 取消」，手机上选不到 Stop（做空审查 2026-11-14）。
-  it("recognizes Gemini's usage-limit dialog that replaces the composer", () => {
-    const screen = [
-      " > say hi",
-      "╭──────────────────────────────────────────────╮",
-      "│                                              │",
-      "│ Usage limit reached for gemini-3.8-flash.    │",
-      "│ /stats model for usage details               │",
-      "│ /model to switch models.                     │",
-      "│                                              │",
-      "│ ● 1. Keep trying                             │",
-      "│   2. Stop                                    │",
-      "╰──────────────────────────────────────────────╯",
-    ].join("\n");
-    const attention = terminalAttention(screen, [], false, false, grammar("gemini"));
-    expect(attention?.id).toBe("gemini:usage-limit");
-    expect(attention?.text).toContain("Usage limit reached");
-    // 这条规则没有声明选项角色：两项都是 other，卡片照原文列出。
-    expect(attention?.options?.map((option) => [option.label, option.input, option.role])).toEqual([
-      ["Keep trying", "\r", "other"],
-      ["Stop", "\x1b[B\r", "other"],
-    ]);
-  });
-
-  it("Gemini's quota dialog: every option is reachable from wherever the focus is", () => {
+  /// 带框线的选择框(合成样本,原 gemini 额度框实拍样本随 provider 移除):选项行带外框 │,按框线
+  /// 数字菜单拆成按钮(● 焦点做相对移动),每一项都点得到;焦点没抓到时不出按钮。
+  it("带框线的选择框：焦点在哪一项，每个选项都点得到", () => {
     const dialog = (focus: number) => [
-      "╭──────────────────────────────────────────────────────────╮",
-      "│ We are currently experiencing high demand for gemini-3.8-pro. │",
-      "│                                                          │",
-      `│ ${focus === 1 ? "●" : " "} 1. Keep trying                                         │`,
-      `│ ${focus === 2 ? "●" : " "} 2. Switch to gemini-3.8-flash                          │`,
-      `│ ${focus === 3 ? "●" : " "} 3. Stop                                                │`,
-      "╰──────────────────────────────────────────────────────────╯",
+      "╭──────────────────────────────────────────╮",
+      "│ Pick a fallback for this request.        │",
+      "│                                          │",
+      `│ ${focus === 1 ? "●" : " "} 1. Keep trying                         │`,
+      `│ ${focus === 2 ? "●" : " "} 2. Switch model                        │`,
+      `│ ${focus === 3 ? "●" : " "} 3. Stop                                │`,
+      "╰──────────────────────────────────────────╯",
     ].join("\n");
-    const inputs = (focus: number) => terminalAttention(dialog(focus), [], false, false, grammar("gemini"))?.options?.map((option) => option.input);
-    expect(inputs(1)).toEqual(["\r", "\x1b[B\r", "\x1b[B\x1b[B\r"]);
-    expect(inputs(3)).toEqual(["\x1b[A\x1b[A\r", "\x1b[A\r", "\r"]);
+    const attention = (focus: number) => terminalAttention(dialog(focus), [], false, false, FRAMED);
+    expect(attention(1)?.id).toBe("sample:framed-choice");
+    expect(attention(1)?.kind).toBe("choice");
+    // 这条规则没有声明选项角色：都是 other，卡片照原文列出。
+    expect(attention(1)?.options?.map((option) => [option.label, option.input, option.role])).toEqual([
+      ["Keep trying", "\r", "other"],
+      ["Switch model", "\x1b[B\r", "other"],
+      ["Stop", "\x1b[B\x1b[B\r", "other"],
+    ]);
+    expect(attention(3)?.options?.map((option) => option.input)).toEqual(["\x1b[A\x1b[A\r", "\x1b[A\r", "\r"]);
     // 焦点标记没抓到：相对移动的起点未知，不出按钮（卡片退回确认与取消，原文照常摆出来）。
-    expect(inputs(0)).toBeUndefined();
+    expect(attention(0)?.options).toBeUndefined();
   });
 
-  /// gemini 0.65 额度框的高负载形态(npm bundle useQuotaAndFallback 源码取证,2026-11-12):
-  /// 同一个 ProQuotaDialog,首行换成 `We are currently experiencing high demand for <模型>.`。
-  /// 旧版的 `Usage limit reached` 照认(上一条用例)。
-  it("recognizes Gemini 0.65's high-demand variant of the quota dialog", () => {
-    const screen = [
-      " > say hi",
-      "╭──────────────────────────────────────────────────────────╮",
-      "│                                                          │",
-      "│ We are currently experiencing high demand for gemini-3.8-pro. │",
-      "│ We apologize and appreciate your patience.               │",
-      "│ /model to switch models.                                 │",
-      "│                                                          │",
-      "│ ● 1. Keep trying                                         │",
-      "│   2. Switch to gemini-3.8-flash                          │",
-      "│   3. Stop                                                │",
-      "╰──────────────────────────────────────────────────────────╯",
-    ].join("\n");
-    const attention = terminalAttention(screen, [], false, false, grammar("gemini"));
-    expect(attention?.id).toBe("gemini:usage-limit");
-    expect(attention?.text).toContain("experiencing high demand");
-    // 模型正文里说一句 high demand(不在框里)不弹卡。
-    expect(terminalAttention("We are currently experiencing high demand for x.", [], false, false, grammar("gemini"))).toBeNull();
-  });
-
-  /// gemini 0.65 沙箱扩权审批(ToolConfirmationMessage 的 sandbox_expansion 分支,源码取证
-  /// 2026-11-12):问句 `To run [Shell], allow access to the following?`,选项同 Allow once 一套。
-  it("turns Gemini 0.65's sandbox expansion prompt into the framed approval card", () => {
-    const screen = [
-      "╭────────────────────────────────────────────────╮",
-      "│ ? Shell  npm install                           │",
-      "│ ╭────────────────────────────────────────────╮ │",
-      "│ │ npm install                                │ │",
-      "│ ╰────────────────────────────────────────────╯ │",
-      "│ To run [Shell], allow access to the following? │",
-      "│ • Network: All Urls                            │",
-      "│ • Write: C:\\repo\\node_modules                  │",
-      "│                                                │",
-      "│ ● 1. Allow once                                │",
-      "│   2. Allow for this session                    │",
-      "│   3. No, suggest changes (esc)                 │",
-      "╰────────────────────────────────────────────────╯",
-    ].join("\n");
-    const attention = terminalAttention(screen, [], false, false, grammar("gemini"));
-    expect(attention?.id).toBe("gemini:command-approval");
-    expect(attention?.details).toBe("framed_box");
-    expect(attention?.text).toContain("Network: All Urls");
-    expect(attention?.options?.map((option) => option.input)).toEqual(["\r", "\x1b[B\r", "\x1b[B\x1b[B\r"]);
-  });
-
-  /// gemini 0.65 提问表单(ask_user,AskUserTool 默认注册)。画面按 npm bundle 源码拼出
-  /// (2026-11-12,未实拍):ToolConfirmationQueue 绿框头行 `Answer Questions`、AskUserDialog 的
-  /// BaseSelectionList(`● 1.  选项`,描述缩进在下一行)、末项恒为自定义答案(占位
-  /// `Enter a custom value`)、DialogFooter 提示行。修复前认不出,对话页不出卡。
-  describe("Gemini 0.65 ask_user form", () => {
+  /// framed_form 文法(合成样本与合成规则;原 gemini ask_user 样本随 provider 移除):框头行
+  /// `Answer Questions`、`● 1.  选项`(描述缩进在下一行)、末项恒为自定义答案(占位
+  /// `Enter a custom value`)、底部提示行。
+  describe("framed_form 提问表单", () => {
     const frame = (body: string[]) => [
       "⠏ Waiting for user confirmation...",
       "╭──────────────────────────────────────────────────────╮",
@@ -774,7 +822,7 @@ describe("terminalAttention", () => {
         "│                                                      │",
         "│ Enter to select · ↑/↓ to navigate · Esc to cancel    │",
       ]);
-      const attention = terminalAttention(screen, [], false, false, grammar("gemini"));
+      const attention = terminalAttention(screen, [], false, false, FRAMED);
       // 与 claude 屏幕上认出的选择器同一张可作答的提问卡。
       expect(attention?.id).toBe("interactive:numbered-selector");
       expect(attention?.text).toBe("Which database should we use?");
@@ -782,7 +830,7 @@ describe("terminalAttention", () => {
         ["PostgreSQL", "Relational, strong consistency", "choice", "\x1b[A\r"],
         ["SQLite", "Single file", "choice", "\r"],
       ]);
-      // 别家会话引用同一屏不弹 gemini 的卡。
+      // 没声明这条规则的会话引用同一屏不弹卡。
       expect(terminalAttention(screen, [], false, false, grammar("kimi"))?.id).not.toBe("interactive:numbered-selector");
     });
 
@@ -802,7 +850,7 @@ describe("terminalAttention", () => {
         "│                                                      │",
         "│ Enter to select · ←/→ to switch questions · Esc to cancel │",
       ]);
-      const attention = terminalAttention(screen, [], false, false, grammar("gemini"));
+      const attention = terminalAttention(screen, [], false, false, FRAMED);
       expect(attention?.id).toBe("interactive:numbered-selector");
       expect(attention?.text).toBe("Which features do you want?");
       expect(attention?.options?.map((option) => [option.label, option.kind, option.selected ?? false, option.input, option.position])).toEqual([
@@ -824,7 +872,7 @@ describe("terminalAttention", () => {
         "│                                                      │",
         "│ Enter to submit · Tab/Shift+Tab to edit answers · Esc to cancel │",
       ]);
-      const attention = terminalAttention(screen, [], false, false, grammar("gemini"));
+      const attention = terminalAttention(screen, [], false, false, FRAMED);
       expect(attention?.id).toBe("interactive:numbered-selector");
       expect(attention?.text).toBe("Review your answers:\nDatabase → SQLite\nFeatures → Auth, Billing");
       expect(attention?.options).toEqual([{ label: "Submit", input: "\r", kind: "submit", position: 0 }]);
@@ -838,7 +886,7 @@ describe("terminalAttention", () => {
         "│                                                      │",
         "│ Enter to submit · Esc to cancel                      │",
       ]);
-      expect(terminalAttention(screen, [], false, false, grammar("gemini"))).toBeNull();
+      expect(terminalAttention(screen, [], false, false, FRAMED)).toBeNull();
     });
 
     it("stale form above the active one: buttons follow the bottom form", () => {
@@ -855,7 +903,8 @@ describe("terminalAttention", () => {
         "│   3.  Enter a custom value                           │",
         "│ Enter to select · ↑/↓ to navigate · Esc to cancel    │",
       ]);
-      const attention = terminalAttention(`${first}\n${second}`, [], false, false, grammar("gemini"));
+      const attention = terminalAttention(`${first}\n${second}`, [], false, false, FRAMED);
+
       expect(attention?.text).toBe("New question?");
       expect(attention?.options?.map((option) => option.label)).toEqual(["Fresh A", "Fresh B"]);
     });

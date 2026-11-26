@@ -43,7 +43,7 @@ describe("independent review draft protection", () => {
 
   // 认不出输入框（菜单、对话框、布局漂移）：不往里按键、不写正文，原文留在对话页。错误条说明原因，并给能在
   // 对话页完成的出路：看终端画面，或者人看过之后点「仍然发送」。
-  it.each(["codex", "gemini"])("%s refuses a native frame it cannot recognize, keeps the web draft, and offers a way out", async (provider) => {
+  it.each(["codex", "antigravity"])("%s refuses a native frame it cannot recognize, keeps the web draft, and offers a way out", async (provider) => {
     const base = adapter.setup(9751, provider);
     invoke.mockImplementation((command, args) => command === "managed_terminal_frame"
       ? Promise.resolve({ lines: ["native draft already present"], cursorRow: 0, cursorCol: 5, cursorVisible: true })

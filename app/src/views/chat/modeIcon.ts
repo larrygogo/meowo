@@ -4,7 +4,7 @@
  *
  * - 计划开关（Kimi 工作模式、Codex 协作模式）：开 = 实心灯泡，关 = 空心灯泡。
  * - OpenCode agent：只出方案的 agent（plan）= 实心灯泡，其余 agent = agent 图标。
- * - 权限一类（Codex approval、Kimi permission、Gemini approval，以及 Claude permission）：同一个盾牌外形，
+ * - 权限一类（Codex approval、Kimi permission、Antigravity approval，以及 Claude permission）：同一个盾牌外形，
  *   里面的记号按插件声明的三维（改文件 / 跑命令要不要问、是否只出方案）区分；高风险档（启动选项声明了
  *   risk，如「都不问」）一律叹号盾牌，颜色由按钮的 is-risk 给危险色（--cc-err-text）。
  *   Codex「自动审查」与「必要时询问」三维相同（都是越界才问），差别在谁来审，单独用星号盾牌；Codex「只读」
@@ -62,7 +62,9 @@ export function modeIconName(option: LaunchOption | undefined, dimension: string
   // 只读按沙箱认（Codex readOnly）：三维上它和「改动先问」一样是改文件要问，但改不了才是它的本意。
   if (traits.edits === "blocked" || choice.desc?.endsWith(".readOnly")) return "shield-lock";
   if (traits.edits === "always") return "shield-check";
-  if (traits.edits === "never") return "shield-pen";
+  // 改文件不问、命令越界才问（antigravity auto）与改文件不问、命令都问（accept-edits）要分得开：
+  // 前者半盾，后者笔形盾。
+  if (traits.edits === "never" && traits.commands !== "risky") return "shield-pen";
   return "shield-half";
 }
 

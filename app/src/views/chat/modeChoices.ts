@@ -1,7 +1,7 @@
 /**
  * 模式的统一说法：对话框（composer 模式菜单）与新建会话页（桌面与手机）共用这一份。
  *
- * 各家模式原名不同、语义错位（Kimi `--yolo` 是「危险仍问」，Gemini `--yolo` 才是「都不问」），
+ * 各家模式原名不同、语义错位（Kimi `--yolo` 是「危险仍问」、`--auto` 才是「都不问」，Antigravity 的 `auto` 又是「危险命令才问」），
  * 菜单每档的名字按插件声明的三维（改文件 / 跑命令要不要问、是否只出方案）查共用短名，下一行一律是
  * 各家官方原文提炼的一句话（t.modes.desc，三维只管短名与分组，第三轮 C1），右边小字是 CLI 原名（任务 20261114-tui-model-switch，leader：「模式最好在交互界面能有一个统一的解释」）。
  */
@@ -35,10 +35,8 @@ export function traitsSummary(t: Dict, traits: ModeTraits): string {
 }
 
 /** 三维（粗分「问 / 不问」）表达不出的差别：官方说明与同三维的档语义不同，走共用表里单独的一项
- *  （第四轮 M2：Gemini default 已知安全的命令不问，不能和 Kimi「每步都问」同名）。 */
-const SHARED_BY_DESC: Record<string, string> = {
-  "gemini.approval.default": "askChanges",
-};
+ *  （第四轮 M2 曾为已移除的 gemini 插件的 default 档加过一项，随插件删除；目前没有需要单列的档）。 */
+const SHARED_BY_DESC: Record<string, string> = {};
 
 /** 共用短名：按三维查表，同一语义跨家同一个名字（「统一解释」，2026-11-14 截图复核）。
  *  三维相同、同一栏里又必须分开的档由 `t.modes.short[说明键]` 单独命名（Codex 自动审查）。

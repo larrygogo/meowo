@@ -57,7 +57,7 @@ function HeroConnect() {
   return (
     <div className="obm-connect" aria-hidden>
       <div className="obm-connect-agents">
-        {["claude", "codex", "kimi", "gemini", "opencode"].map((id) => (
+        {["claude", "codex", "kimi", "antigravity", "opencode"].map((id) => (
           <AgentAppIcon key={id} provider={id} className="obm-connect-agent" tiled />
         ))}
       </div>

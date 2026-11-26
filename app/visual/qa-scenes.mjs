@@ -118,12 +118,12 @@ export const QA_SHOTS = [
   { name: "qa-screen-prompt", scene: "flow-screen-prompt", sel: ".chat-screen-approval" },
   // ── 五家的审批卡、提问卡、提示卡（数据在 cardScenes.ts，样本出处见 src/test/requestSamples.ts）──
   // 五家的审批卡是同一张：换一家只有能力不同的按钮不同（broker 有「说明并拒绝」，屏幕通道有「仅收起」）。
-  ...["claude-approval", "codex-approval", "kimi-approval", "gemini-approval", "opencode-approval", "claude-screen"].flatMap((card) => [
+  ...["claude-approval", "codex-approval", "kimi-approval", "antigravity-approval", "opencode-approval", "claude-screen"].flatMap((card) => [
     { name: `qa-card-${card}`, scene: `flow-card-${card}`, size: W620, sel: ".chat-approval-actions" },
     { name: `qa-m-card-${card}`, page: "mobile", scene: `mobile-card-${card}`, size: PHONE, sel: ".chat-approval-actions" },
   ]),
-  // 屏幕上认出的提问表单（kimi 方括号、gemini 框线）与提示卡（gemini 额度耗尽、opencode 的二次确认页）。
-  ...["kimi-form", "gemini-form", "gemini-limit", "opencode-confirm", "claude-lsp"].flatMap((card) => [
+  // 屏幕上认出的提问表单（kimi 方括号、antigravity 编号表单）与提示卡（antigravity 信任页、opencode 的二次确认页）。
+  ...["kimi-form", "antigravity-form", "antigravity-trust", "opencode-confirm", "claude-lsp"].flatMap((card) => [
     { name: `qa-card-${card}`, scene: `flow-card-${card}`, size: W620, sel: ".chat-screen-approval" },
     { name: `qa-m-card-${card}`, page: "mobile", scene: `mobile-card-${card}`, size: PHONE, sel: ".chat-screen-approval" },
   ]),
@@ -132,9 +132,9 @@ export const QA_SHOTS = [
   { name: "qa-m-card-long-command-kbd", page: "mobile", scene: "mobile-card-long-command", size: [375, 476], sel: ".chat-approval-actions" },
   // 手机页审批卡「已过期」：假时钟一次拨快 302 秒（jump），倒计时归零。?clock=live 让 Date.now 跟着假时钟走。
   { name: "qa-m-card-expired", page: "mobile", scene: "mobile-card-claude-approval", params: "clock=live", size: PHONE, sel: ".chat-approval-actions", steps: [["jump", 302000]] },
-  // ── 五家的工具行与运行状态（harness 见 toolScenes.ts，条目取自五家回放样本）──
+  // ── 四家的工具行与运行状态（harness 见 toolScenes.ts，条目取自四家回放样本；antigravity 的样本待补）──
   // 整份时间线（过程块点开）、运行中、等待审批（工具行写待批准、过程块不收起）、回合出错。手机拍等待审批与整份时间线的底部。
-  ...["claude", "codex", "kimi", "gemini", "opencode"].flatMap((agent) => [
+  ...["claude", "codex", "kimi", "opencode"].flatMap((agent) => [
     { name: `qa-tools-${agent}`, scene: `flow-tools-${agent}-all`, size: W620, sel: ".chat-flat-steps .chat-tool", steps: [OPEN_FOLDS, ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"]] },
     { name: `qa-tools-${agent}-running`, scene: `flow-tools-${agent}-running`, size: W620, sel: '.chat-tool[data-state="running"]' },
     { name: `qa-tools-${agent}-waiting`, scene: `flow-tools-${agent}-waiting`, size: W620, sel: ".chat-tool-status.is-waiting" },
@@ -144,11 +144,11 @@ export const QA_SHOTS = [
   ]),
   // 展开一行 diff（codex 的补丁不带行号）、一行失败的命令；待办行（样本里没有，场景里按各家规则补的一条）。
   { name: "qa-tools-codex-diff", scene: "flow-tools-codex-all", size: W620, sel: ".chat-tool[open] .chat-tool-udiff", steps: [OPEN_FOLDS, ["click", '.chat-tool[data-state="done"]:has(.chat-tool-verb[data-kind="edit"]) > summary']] },
-  { name: "qa-m-tools-gemini-diff", page: "mobile", scene: "mobile-tools-gemini-all", size: PHONE, sel: ".chat-tool[open] .chat-tool-udiff", steps: [OPEN_FOLDS, ["click", '.chat-tool[data-state="done"]:has(.chat-tool-verb[data-kind="edit"]) > summary']] },
+  { name: "qa-m-tools-claude-diff", page: "mobile", scene: "mobile-tools-claude-all", size: PHONE, sel: ".chat-tool[open] .chat-tool-udiff", steps: [OPEN_FOLDS, ["click", '.chat-tool[data-state="done"]:has(.chat-tool-verb[data-kind="edit"]) > summary']] },
   { name: "qa-tools-claude-fail", scene: "flow-tools-claude-all", size: W620, sel: ".chat-tool.is-error[open]", steps: [OPEN_FOLDS, ["click", ".chat-tool.is-error > summary"]] },
   { name: "qa-tools-claude-todo", scene: "flow-tools-claude-todo", size: W620, sel: '.chat-tool-icon[data-kind="todo"]', steps: [OPEN_FOLDS, ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"]] },
   // 运行中又发了一条：命令还在跑，后面跟着回合中途送进去的那句话，那条命令仍是运行中（做空 ③）。
-  // opencode 是真实的一场：那句话排在跑完的 ping 之后。gemini 没有这种时间线（调用连同结果一起落盘）。
+  // opencode 是真实的一场：那句话排在跑完的 ping 之后。
   ...["claude", "codex", "kimi"].flatMap((agent) => [
     { name: `qa-tools-${agent}-midturn`, scene: `flow-tools-${agent}-midturn`, size: W620, sel: '.chat-tool[data-state="running"]' },
     { name: `qa-m-tools-${agent}-midturn`, page: "mobile", scene: `mobile-tools-${agent}-midturn`, size: PHONE, sel: '.chat-tool[data-state="running"]' },
@@ -241,13 +241,13 @@ export const QA_SHOTS = [
   { name: "qa-m-images-bottom", page: "mobile", scene: "mobile-images-main", size: PHONE, sel: ".chat-sent", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 1e6"], ["tick", 300]] },
   { name: "qa-m-images-states", page: "mobile", scene: "mobile-images-states", size: PHONE, sel: ".chat-sent-failed", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 1e6"], ["tick", 300]] },
   { name: "qa-m-images-lightbox", page: "mobile", scene: "mobile-images-main", size: PHONE, sel: ".chat-lightbox", steps: [["tick", 400], ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"], ["tick", 300], ["click", ".chat-sent-open >> nth=0"]] },
-  // 五家真机发图样本（后端真实解析的条目，imageScenes.ts 的 real-<家>）：桌面深浅、手机浅色各一张，外加灯箱打开态。
-  ...["claude", "codex", "kimi", "gemini", "opencode"].flatMap((agent) => [
+  // 四家真机发图样本（后端真实解析的条目，imageScenes.ts 的 real-<家>；antigravity 的待补）：桌面深浅、手机浅色各一张，外加灯箱打开态。
+  ...["claude", "codex", "kimi", "opencode"].flatMap((agent) => [
     { name: `qa-images-real-${agent}`, scene: `flow-images-real-${agent}`, size: [1100, 760], sel: ".chat-sent img", steps: [["tick", 400], OPEN_FOLDS, ["tick", 300]] },
     { name: `qa-m-images-real-${agent}`, page: "mobile", scene: `mobile-images-real-${agent}`, size: PHONE, themes: ["light"], sel: ".chat-sent img", steps: [["tick", 400], OPEN_FOLDS, ["tick", 300]] },
   ]),
-  { name: "qa-images-real-lightbox", scene: "flow-images-real-gemini", size: [1100, 760], sel: ".chat-lightbox", steps: [["tick", 400], ["click", ".chat-sent-open >> nth=0"], ["tick", 300]] },
-  { name: "qa-m-images-real-lightbox", page: "mobile", scene: "mobile-images-real-gemini", size: PHONE, themes: ["light"], sel: ".chat-lightbox", steps: [["tick", 400], ["click", ".chat-sent-open >> nth=0"], ["tick", 300]] },
+  { name: "qa-images-real-lightbox", scene: "flow-images-real-opencode", size: [1100, 760], sel: ".chat-lightbox", steps: [["tick", 400], ["click", ".chat-sent-open >> nth=0"], ["tick", 300]] },
+  { name: "qa-m-images-real-lightbox", page: "mobile", scene: "mobile-images-real-opencode", size: PHONE, themes: ["light"], sel: ".chat-lightbox", steps: [["tick", 400], ["click", ".chat-sent-open >> nth=0"], ["tick", 300]] },
   { name: "qa-lightbox", scene: "flow-image", sel: ".chat-lightbox", steps: [["click", ".chat-image-thumb-btn"]] },
   { name: "qa-drop", scene: "flow-drop", sel: ".chat-drop-overlay" },
   { name: "qa-search", scene: "flow-states", sel: ".chat-search-host", steps: [["key", "Control+f"], ["type", ".chat-search-input", "schema"]] },
@@ -341,8 +341,8 @@ export const QA_SHOTS = [
   { name: "qa-title-gitee", scene: "panel-changes", params: "forge=gitee", size: [2560, 1440], sel: ".tb-pr" },
   { name: "qa-set-forge-add-gitee", scene: "settingswin-github", size: SETTINGS, sel: "[data-testid=forge-add]", steps: [["eval", FORGE_SCROLL], ["click", "[data-testid=forge-empty] button"], ["click", "[data-testid=forge-add] [role=radio] >> nth=4"], ["eval", FORGE_ADD_SCROLL]] },
   // 查看非 active 账号只换用量视图：账号名、按下态和非 active 用量都要入镜。
-  // Agent 页：发图工具没接上（配置文件读不懂），切到 Gemini CLI 那张卡。
-  { name: "qa-set-mcp-unreadable", scene: "settingswin-account", params: "mcp=unreadable", size: [620, 640], sel: "[data-testid=agent-mcp-unreadable-gemini]", langs: ["zh", "en"], steps: [["click", ".account-agent-switch .dd-btn"], ["click", "[role=option]:has-text('Gemini CLI')"], ["tick", 300], ["eval", "document.querySelector('[data-testid=agent-mcp-unreadable-gemini]').scrollIntoView({ block: 'center' })"]] },
+  // Agent 页：发图工具没接上（配置文件读不懂），切到 Antigravity CLI 那张卡。
+  { name: "qa-set-mcp-unreadable", scene: "settingswin-account", params: "mcp=unreadable", size: [620, 640], sel: "[data-testid=agent-mcp-unreadable-antigravity]", langs: ["zh", "en"], steps: [["click", ".account-agent-switch .dd-btn"], ["click", "[role=option]:has-text('Antigravity CLI')"], ["tick", 300], ["eval", "document.querySelector('[data-testid=agent-mcp-unreadable-antigravity]').scrollIntoView({ block: 'center' })"]] },
   { name: "qa-set-profile-usage", scene: "settingswin-account", size: SETTINGS, sel: ".usage-card-title", steps: [["click", '[data-testid="profile-usage-claude-work"]']], langs: ["zh", "en"] },
   { name: "qa-set-dropdown-sessions", scene: "settingswin-sessions", size: SETTINGS, sel: ".dd-menu", steps: [["click", ".dd > .dd-btn >> nth=1"]] },
   { name: "qa-set-focus", scene: "settingswin-general", params: "proxy=custom", size: SETTINGS, sel: ".settings", steps: [["click", ".main-body input[type=text], .main-body input:not([type])"]] },

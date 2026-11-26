@@ -57,7 +57,7 @@ site/
 │   ├── global-not-found.tsx  # 全局 404（experimental.globalNotFound，整文档组件）
 │   ├── sitemap.ts · robots.ts
 │   └── globals.css           # 设计系统（浅色高级风：白底 + 翡翠绿点缀）
-├── assets/                   # 从 app/ 复制的代理 logo（kimi.png、gemini.svg），避免跨目录引用
+├── assets/                   # 从 app/ 复制的代理 logo（kimi.png、antigravity.svg），避免跨目录引用
 ├── components/
 │   ├── Nav.tsx · Footer.tsx · LangHint.tsx   # 全站导航、页脚与语言提示（按路径识别语言）
 │   ├── pages/                      # 六个页面的正文组件（HomeContent / FeaturesContent / DownloadContent / DocsContent / ChangelogContent / FaqContent）

@@ -1,12 +1,14 @@
-// 功能页「五家 Agent 能力对照」。每一格取自 0.8.1 的插件声明，改之前先核对出处：
+// 功能页「五家 Agent 能力对照」。每一格取自插件声明，改之前先核对出处：
 // - 多账号 / 切账号会话跟着搬 / 上下文 / SOCKS / 代理写进配置 / API Key 登录：
 //   app/src-tauri/crates/meowo-agent/src/descriptor.rs 的字段，逐家取值见 app/src/test/agents.ts
 //   （那份夹具与后端矩阵有绊线测试钉着同源）
 // - 额度读数：各插件 account.rs 的 usage_supported（claude 要 OAuth 登录、codex 要 ChatGPT 登录、kimi 要有官方凭据、
-//   gemini / opencode 恒 false）
-// - Agent 操作浏览器：声明了 mcp_attach 的 claude / codex / kimi（0.8.1 发版说明同）
-// - 提问卡作答：claude（0.6.1）、kimi（0.8.0）
-// - 登录入口：claude/codex/kimi 的 `login`、opencode 的 `auth login`；gemini 只有 API Key（OAuth 被官方停用）
+//   antigravity / opencode 没有 account.rs，恒 false）
+// - Agent 操作浏览器：声明了 mcp_attach 的 claude / codex / kimi / antigravity
+// - 提问卡作答：claude（0.6.1）、kimi（0.8.0）；antigravity 的提问表单只认出「等你」，没有选项规则，不能在卡片上作答
+// - 登录入口：claude/codex/kimi 的 `login`、opencode 的 `auth login`；antigravity 的 auth 为 None（agy 没有 login 子命令，
+//   凭据在系统钥匙串），只能在 agy 的界面里登录
+// - antigravity 的上下文用量：plugins/antigravity/mod.rs 的 provides_context；SOCKS：其 ProxySpec.socks
 // 做空审查（2026-11-09）抓到官网把五家写成一样，这张表就是为了把差别摆明。
 import type { Lang } from "@/lib/i18n";
 import { AgentLogo, type ProviderId } from "./SupportedAgents";
@@ -18,7 +20,7 @@ const AGENTS: { id: ProviderId; name: string }[] = [
   { id: "claude", name: "Claude Code" },
   { id: "codex", name: "Codex" },
   { id: "kimi", name: "Kimi Code" },
-  { id: "gemini", name: "Gemini CLI" },
+  { id: "antigravity", name: "Antigravity CLI" },
   { id: "opencode", name: "OpenCode" },
 ];
 
@@ -27,21 +29,21 @@ const ROWS: Record<Lang, { groups: { title: string; rows: Row[] }[]; note: strin
     caption: "五家 Agent 能力对照",
     yes: "支持",
     no: "不支持",
-    note: "取自 Meowo 0.8.1 里各家插件的能力声明。CLI 自己更新后可能变化，以应用设置页的显示为准。",
+    note: "取自 Meowo 里各家插件的能力声明。CLI 自己更新后可能变化，以应用设置页的显示为准。",
     groups: [
       {
         title: "接入与登录",
         rows: [
           { label: "怎么接入", cells: ["hooks + 状态栏", "hooks", "hooks", "hooks", "桥接插件"] },
-          { label: "在 Meowo 里登录", cells: ["支持", "支持", "支持", "填 API Key", "支持"] },
+          { label: "在 Meowo 里登录", cells: ["支持", "支持", "支持", "在 agy 里登录", "支持"] },
         ],
       },
       {
         title: "对话窗",
         rows: [
           { label: "在卡片上回答提问", cells: [true, false, true, false, false] },
-          { label: "Agent 操作面板浏览器", cells: [true, true, true, false, false] },
-          { label: "上下文用量", cells: [true, true, true, false, false] },
+          { label: "Agent 操作面板浏览器", cells: [true, true, true, true, false] },
+          { label: "上下文用量", cells: [true, true, true, true, false] },
         ],
       },
       {
@@ -50,7 +52,7 @@ const ROWS: Record<Lang, { groups: { title: string; rows: Row[] }[]; note: strin
           { label: "额度读数", cells: ["官方账号登录时", "ChatGPT 登录时", "官方账号登录时", false, false] },
           { label: "多个账号", cells: [true, true, true, false, true] },
           { label: "切账号时运行中的会话一起切", cells: [true, true, true, false, false] },
-          { label: "API 中转", cells: [true, true, true, true, true] },
+          { label: "API 中转", cells: [true, true, true, false, true] },
         ],
       },
       {
@@ -67,21 +69,21 @@ const ROWS: Record<Lang, { groups: { title: string; rows: Row[] }[]; note: strin
     caption: "Agent capability comparison",
     yes: "Supported",
     no: "Not supported",
-    note: "Taken from each agent plugin's declared capabilities in Meowo 0.8.1. Things may change as the CLIs update; the Settings page shows what applies to you.",
+    note: "Taken from each agent plugin's declared capabilities in Meowo. Things may change as the CLIs update; the Settings page shows what applies to you.",
     groups: [
       {
         title: "Connect & sign in",
         rows: [
           { label: "How it connects", cells: ["hooks + statusline", "hooks", "hooks", "hooks", "bridge plugin"] },
-          { label: "Sign in from Meowo", cells: ["yes", "yes", "yes", "API key", "yes"] },
+          { label: "Sign in from Meowo", cells: ["yes", "yes", "yes", "inside agy", "yes"] },
         ],
       },
       {
         title: "Chat window",
         rows: [
           { label: "Answer questions on the card", cells: [true, false, true, false, false] },
-          { label: "Agent operates the panel browser", cells: [true, true, true, false, false] },
-          { label: "Context usage", cells: [true, true, true, false, false] },
+          { label: "Agent operates the panel browser", cells: [true, true, true, true, false] },
+          { label: "Context usage", cells: [true, true, true, true, false] },
         ],
       },
       {
@@ -90,7 +92,7 @@ const ROWS: Record<Lang, { groups: { title: string; rows: Row[] }[]; note: strin
           { label: "Quota readout", cells: ["with official sign-in", "with ChatGPT sign-in", "with official sign-in", false, false] },
           { label: "Multiple accounts", cells: [true, true, true, false, true] },
           { label: "Running sessions switch with the account", cells: [true, true, true, false, false] },
-          { label: "API relay", cells: [true, true, true, true, true] },
+          { label: "API relay", cells: [true, true, true, false, true] },
         ],
       },
       {

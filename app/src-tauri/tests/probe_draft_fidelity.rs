@@ -403,7 +403,7 @@ fn walk(
             "form": form.id,
             "how": if form.paste { "paste" } else { "typed" },
             "original": form.text,
-            // 原样存，不去行尾空格：生产读到的帧就是这样（Gemini 草稿里的空行是一串空格，去掉就认不出框）。
+            // 原样存，不去行尾空格：生产读到的帧就是这样（有的 CLI 草稿里的空行是一串空格，去掉就认不出框）。
             "lines": lines,
             "cursor": { "row": cursor.0, "col": cursor.1, "visible": cursor.2, "dim": cursor.3 },
             "rows": size.0,
@@ -441,7 +441,7 @@ fn walk(
         )
         .unwrap();
         assert!(clear(tui, spec), "{}：清不掉草稿，停", form.id);
-        // kimi / gemini 清空后挂「再按一次退出」的提示，等它过去再继续。
+        // kimi 清空后挂「再按一次退出」的提示，等它过去再继续。
         pause(2500);
     }
     println!("===== {agent}：样本写到 {} =====", out.join(&file).display());

@@ -116,7 +116,7 @@ interrupt_input: string | null,
  */
 interrupt_presses: number, 
 /**
- * 运行中排队的提交键。Codex 的 Enter 不等于排队（官方键盘文档）；gemini 0.64 实测 Enter 即排队。
+ * 运行中排队的提交键。Codex 的 Enter 不等于排队（官方键盘文档）；antigravity 的 Enter 即排队（research-screen.md §2）。
  */
 queue_input: string | null, 
 /**
@@ -146,8 +146,8 @@ newline_input: string | null,
  * 单行正文命中这条正则（JS 语法）时，也包成 bracketed paste 再写进终端；None = 单行照旧直接写。
  *
  * 多行正文本来就一律走 bracketed paste。单行直接写是为了兼容不开 bracketed paste 的旧 CLI，
- * 但有的 TUI 会把「一次写进来的一串字」里的某些字符当成快捷键吃掉（gemini 0.68.0 吞半角问号，
- * 见其插件注释）。命中的正文改走粘贴，TUI 按粘贴内容原样收下。
+ * 但有的 TUI 会把「一次写进来的一串字」里的某些字符当成快捷键吃掉（前科：已移除的 gemini 插件
+ * 0.68.0 吞半角问号；现役插件都不声明）。命中的正文改走粘贴，TUI 按粘贴内容原样收下。
  */
 single_line_paste_pattern: string | null, 
 /**

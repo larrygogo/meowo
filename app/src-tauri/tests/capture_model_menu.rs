@@ -122,7 +122,7 @@ fn read_answering_dsr(
 #[test]
 #[ignore = "会拉起真实 agent 进程并发一条 prompt(耗额度);仅供手动调研"]
 fn capture_interrupt() {
-    // boot_agent 返回后**立刻**发输入——空闲期不应答 DSR 会让某些 TUI(gemini)SessionEnd
+    // boot_agent 返回后**立刻**发输入——空闲期不应答 DSR 会让某些 TUI SessionEnd
     // 退出(能工作的 capture_model_menu 正是 boot 后马上发命令,不留空闲)。
     let (mut writer, rx, mut child, cwd) = boot_agent();
     let prompt = std::env::var("MEOWO_CAPTURE_PROMPT")
@@ -303,7 +303,7 @@ fn capture_model_menu() {
     // 菜单命令可覆盖:opencode 是 `/models`(复数),其余家是 `/model`。
     let menu_cmd = std::env::var("MEOWO_CAPTURE_MENU_CMD").unwrap_or_else(|_| "/model".into());
     // 正文与回车分两次写、隔一拍——合并写会被 TUI 当粘贴块,块内 \r 只换行不提交
-    // (probe_enter.rs 的实测结论,gemini 上也复现:合并写后 /model 留在 composer 里)。
+    // (probe_enter.rs 的实测结论)。
     writer.write_all(menu_cmd.as_bytes()).unwrap();
     writer.flush().unwrap();
     std::thread::sleep(Duration::from_millis(400));

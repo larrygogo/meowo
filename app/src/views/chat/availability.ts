@@ -31,7 +31,7 @@ export type Availability =
  * - command：往终端打一条带目标值的命令（`/model X`、`/effort high`、`/plan on`）。回合中打进去会
  *   混进正在跑的回合，但目标值已知，可以记下来等回合结束再打。
  * - service：经会话自带的服务改设置（Codex）。宿主在回合结束时执行。
- * - restart：带参数重启接回同一会话（Kimi、Gemini）。回合中重启会掐掉回合，排到回合之后。
+ * - restart：带参数重启接回同一会话（Kimi、Antigravity）。回合中重启会掐掉回合，排到回合之后。
  * - dialog：宿主替用户在 TUI 自己的对话框里选（OpenCode）。同上，排到回合之后。
  * - terminal_menu：要先让 CLI 弹出它自己的菜单再读屏（读模型清单、菜单型命令、不知道目标档的盲切）。
  *   没有目标值可记，回合中做不了，也排不了队。

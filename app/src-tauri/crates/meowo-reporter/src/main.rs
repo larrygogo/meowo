@@ -22,6 +22,10 @@ fn main() {
         for line in meowo_agent::mcp_config::uninstall_cleanup() {
             println!("{line}");
         }
+        // 已退役 agent（gemini）的接线：升级后第一次启动就会清，这里兜住「升级后没打开过就卸载」。
+        for line in meowo_agent::retired::sweep() {
+            println!("{line}");
+        }
         return;
     }
     // agent 拉起的 MCP 服务器（面板浏览器工具）。长驻读 stdin，必须在 run() 一次性读完
@@ -53,7 +57,7 @@ fn main() {
             }
             return;
         }
-        // 原生 TUI 的关卡等待器（kimi/gemini 在后台命令里跑）：身份全在参数里，且绝不读 stdin——
+        // 原生 TUI 的关卡等待器（kimi/antigravity 在后台命令里跑）：身份全在参数里，且绝不读 stdin——
         // 后台命令的 stdin 可能是 TUI 的伪终端，读它会永远等不到 EOF。
         if args.get(1).map(String::as_str) == Some("wait") {
             if let Some(registry) =
@@ -148,6 +152,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    // 负载形状与规范不同的 agent 先由插件改写（见 AgentPlugin::normalize_hook_payload）；
+    // 不归 Meowo 管的事件直接以 0 退出，什么都不输出。
+    let buf = match meowo_agent::by_id(&parse_provider()).map(|p| p.normalize_hook_payload(&buf)) {
+        Some(meowo_agent::HookPayload::Ignore) => return Ok(()),
+        Some(meowo_agent::HookPayload::Rewrite(text)) => text,
+        _ => buf,
+    };
     let ev = HookEvent::parse(&buf)?;
     // Kimi 读图前拦下它压不下去的大图（见 media_guard）：原图直发会让接口拒收整段对话。
     // 这是主路径里唯一改变 CLI 行为的输出：退出码 2 + stderr，kimi 把原因交给模型、跳过这次调用。
@@ -277,7 +288,7 @@ fn handle(
 /// 从命令行解析 `--provider <name>` / `--provider=<name>` 的**原始字符串**，缺省默认 agent。
 ///
 /// 刻意**不**归一到已注册的 `AgentId`：该参数由我们自己写进各 agent 的 hooks 命令行，但**跨版本**
-/// 时更新版 meowo 可能写入本版本尚不认识的 id（如 `gemini`）。若在此回退成 `DEFAULT_ID`，dispatch
+/// 时更新版 meowo 可能写入本版本尚不认识的 id（已退役的 `gemini` 留下的旧接线也是这种）。若在此回退成 `DEFAULT_ID`，dispatch
 /// 就会把这个未知会话落库成默认 agent（甚至因默认不写库而落成 NULL）——等于把未知 provider 冒名成
 /// claude，正是 `meowo_agent::resolve` 契约要杜绝的。
 ///

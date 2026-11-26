@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { zh } from "../../i18n/zh";
 import { markRemoteUi } from "../../remoteMode";
-import { terminalAttention, type TerminalAttention } from "../../terminalAttention";
+import { terminalAttention, type AttentionGrammar, type TerminalAttention } from "../../terminalAttention";
 import { grammar } from "../../test/agents";
 import { OPENCODE_ALWAYS_CONFIRM_SCREEN } from "../../test/requestSamples";
 import { promptContext, TerminalPromptCard, TerminalQuestionCard } from "./TerminalRequestCards";
@@ -30,19 +30,33 @@ const KIMI_MULTI = kimiForm(
   "   ↑↓ select  1-4 / ↵ toggle  ←/→/tab switch  esc cancel",
 );
 
-/// gemini 0.64 的额度耗尽框（真机，与 terminalAttention.test.ts 的样本同一份）。
-const GEMINI_USAGE_LIMIT = [
+/// 带框线的选择框与框线提问表单（framed_form）：现役几家都不声明这两种屏幕文法，原 gemini 实拍样本随
+/// provider 移除。这里用最小合成样本与合成规则测卡片，规则 id 与文案都不代表任何一家。
+const FRAMED: AttentionGrammar = {
+  provider: "framed-sample",
+  selectorAnchors: [],
+  attentionPatterns: [
+    { id: "sample:framed-choice", patterns: [String.raw`^\s*│\s*pick a fallback\b`], last: true, details: "none", kind: "choice", options: [] },
+    { id: "sample:framed-form", patterns: [String.raw`^\s*│\s*answer questions\b`], last: true, details: "framed_form", kind: "question", options: [] },
+  ],
+};
+const FRAMED_CHOICE = [
   " > say hi",
   "╭──────────────────────────────────────────────╮",
   "│                                              │",
-  "│ Usage limit reached for gemini-3.8-flash.    │",
-  "│ /stats model for usage details               │",
+  "│ Pick a fallback for this request.            │",
+  "│ /usage for details                           │",
   "│ /model to switch models.                     │",
   "│                                              │",
   "│ ● 1. Keep trying                             │",
   "│   2. Stop                                    │",
   "╰──────────────────────────────────────────────╯",
 ].join("\n");
+const framed = (screenText: string): TerminalAttention => {
+  const attention = terminalAttention(screenText, [], false, false, FRAMED);
+  if (!attention) throw new Error("合成的框线样本没认出来");
+  return attention;
+};
 
 function recognized(provider: string, screenText: string, markers: string[] = [], interactive = false): TerminalAttention {
   const attention = terminalAttention(screenText, markers, interactive, false, grammar(provider, provider === "claude"
@@ -55,7 +69,7 @@ describe("提问卡（屏幕通道）：三家的表单同一张卡", () => {
   const cases: [string, TerminalAttention][] = [
     ["claude 编号选择器", recognized("claude", "Which library?\n❯ 1. Zod\n  2. Yup\n  3. Type something.\n  4. Chat about this\nEnter to select · ↑/↓ to navigate · Esc to cancel", [], true)],
     ["kimi 方括号表单", recognized("kimi", KIMI_MULTI)],
-    ["gemini 框线表单", recognized("gemini", [
+    ["框线表单（合成）", framed([
       "╭──────────────────────────────────────────────╮",
       "│ Answer Questions                             │",
       "│ Which database should we use?                │",
@@ -136,9 +150,9 @@ describe("提示卡（屏幕通道）：标题与徽章由种类决定", () => {
     render(<TerminalPromptCard attention={attention} live={live} returnFocusTo={focus}
       onChoose={handlers.onChoose ?? noop} onKey={handlers.onKey ?? noop} onCollapse={noop} />);
 
-  /// 走查 输入 A3：gemini 额度耗尽此前标题是「Agent 需要你完成一个启动步骤」，徽章「待批准」。
-  it("gemini 额度耗尽：是「终端正在等待你的选择」，不是启动步骤，也不是待批准", () => {
-    const attention = recognized("gemini", GEMINI_USAGE_LIMIT);
+  /// 走查 输入 A3：「等你选择」类的框（原 gemini 额度耗尽框）此前标题是「Agent 需要你完成一个启动步骤」，徽章「待批准」。
+  it("带框线的选择框：是「终端正在等待你的选择」，不是启动步骤，也不是待批准", () => {
+    const attention = framed(FRAMED_CHOICE);
     card(attention);
     const dialog = screen.getByRole("alertdialog");
     expect(dialog.getAttribute("aria-label")).toBe("终端正在等待你的选择");
@@ -146,8 +160,8 @@ describe("提示卡（屏幕通道）：标题与徽章由种类决定", () => {
     expect(dialog.querySelector(".chat-approval-badge")?.textContent).toBe("待选择");
     // 题干摆出来（框线是排版不是内容，去掉）；选项一项一个按钮，不再混在原文里。
     expect(dialog.querySelector("pre")?.textContent).toBe([
-      "Usage limit reached for gemini-3.8-flash.",
-      "/stats model for usage details",
+      "Pick a fallback for this request.",
+      "/usage for details",
       "/model to switch models.",
     ].join("\n"));
     expect(Array.from(dialog.querySelectorAll(".chat-approval-options button")).map((button) => button.textContent)).toEqual(["Keep trying", "Stop"]);
@@ -158,11 +172,11 @@ describe("提示卡（屏幕通道）：标题与徽章由种类决定", () => {
   it.each([
     ["桌面", false],
     ["手机页", true],
-  ])("gemini 额度耗尽（%s）：Keep trying 与 Stop 都点得到，按的是各自那一项的键", (_name, remote) => {
+  ])("带框线的选择框（%s）：Keep trying 与 Stop 都点得到，按的是各自那一项的键", (_name, remote) => {
     if (remote) markRemoteUi();
     const onChoose = vi.fn();
     const onKey = vi.fn();
-    card(recognized("gemini", GEMINI_USAGE_LIMIT), true, { onChoose, onKey });
+    card(framed(FRAMED_CHOICE), true, { onChoose, onKey });
     // 不再有分不清选的是哪一项的「确认 / 取消」。
     expect(screen.queryByRole("button", { name: "确认" })).toBeNull();
     expect(screen.queryByRole("button", { name: "取消 / 返回" })).toBeNull();
@@ -172,23 +186,24 @@ describe("提示卡（屏幕通道）：标题与徽章由种类决定", () => {
     expect(onKey).not.toHaveBeenCalled();
   });
 
-  it("gemini 高负载框（三项）：Switch to <模型> 也是一个按钮", () => {
+  it("带框线的选择框（三项）：中间那一项也是一个按钮", () => {
     const onChoose = vi.fn();
-    card(recognized("gemini", [
+    card(framed([
       "╭──────────────────────────────────────────────────────────╮",
-      "│ We are currently experiencing high demand for gemini-3.8-pro. │",
+      "│ Pick a fallback for this request.                        │",
       "│ ● 1. Keep trying                                         │",
-      "│   2. Switch to gemini-3.8-flash                          │",
+      "│   2. Switch model                                        │",
       "│   3. Stop                                                │",
       "╰──────────────────────────────────────────────────────────╯",
     ].join("\n")), true, { onChoose });
-    expect(Array.from(document.querySelectorAll(".chat-approval-options button")).map((button) => button.textContent)).toEqual(["Keep trying", "Switch to gemini-3.8-flash", "Stop"]);
+    expect(Array.from(document.querySelectorAll(".chat-approval-options button")).map((button) => button.textContent)).toEqual(["Keep trying", "Switch model", "Stop"]);
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     expect(onChoose).toHaveBeenCalledWith(expect.objectContaining({ input: "\x1b[B\x1b[B\r" }));
   });
 
-  it("gemini 额度耗尽框没抓到焦点标记：不猜按键，退回确认与取消，原文连选项一起摆出来", () => {
-    const attention = recognized("gemini", GEMINI_USAGE_LIMIT.replace("│ ● 1. Keep trying", "│   1. Keep trying"));
+  it("带框线的选择框没抓到焦点标记：不猜按键，退回确认与取消，原文连选项一起摆出来", () => {
+    const attention = framed(FRAMED_CHOICE.replace("│ ● 1. Keep trying", "│   1. Keep trying"));
+
     card(attention);
     expect(document.querySelectorAll(".chat-approval-options button")).toHaveLength(0);
     expect(screen.getByRole("button", { name: "确认" })).toBeTruthy();

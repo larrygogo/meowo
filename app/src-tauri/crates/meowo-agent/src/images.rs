@@ -129,7 +129,7 @@ impl From<Result<PathBuf, ImageError>> for ResolvedChatImage {
 }
 
 /// Meowo MCP 服务器在各家那边的名字与发图工具名（meowo-reporter mcp.rs）。各家插件按自己的
-/// MCP 命名形态拼全名（claude/kimi `mcp__meowo__send_image`、gemini `mcp_meowo_send_image`、
+/// MCP 命名形态拼全名（claude/kimi `mcp__meowo__send_image`、antigravity `mcp_meowo_send_image`、
 /// opencode `meowo_send_image`、codex 命名空间 `mcp__meowo` + `send_image`）。
 pub const MCP_SERVER: &str = "meowo";
 pub const SEND_IMAGE: &str = "send_image";
@@ -150,7 +150,7 @@ pub const SHOW_HTML: &str = "show_html";
 pub const IMAGE_TOOLS: &[&str] = &[SEND_IMAGE, COMPARE_IMAGES, OFFER_CHOICES, SEND_FILE, NOTIFY_USER, ASK_FORM, SHOW_HTML];
 
 /// Meowo 自己的 MCP 工具（发图、浏览器）在对话页上统一叫 `mcp__meowo__<工具>`：claude、kimi
-/// 原样就是这个形态，codex 的命名空间形态由插件拼成它。gemini（`mcp_meowo_<工具>`）与 opencode
+/// 原样就是这个形态，codex 的命名空间形态由插件拼成它。antigravity（`mcp_meowo_<工具>`）与 opencode
 /// （`meowo_<工具>`）把服务器名与工具名用单下划线拼在一起，前端拆不开，按原名显示出
 /// `mcp_meowo_browser_screenshot` 这种乱码（2026-11-21 五家回放截图）。插件传入自己的前缀，
 /// 认出来就换成统一名字，前端只认一种形态；不是 Meowo 的工具原样返回。
@@ -1505,7 +1505,7 @@ pub fn readable_roots() -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    /// 视图卡与其他 Meowo 工具一样：gemini（mcp_meowo_）、opencode（meowo_）的名字换成统一名，前端只认这一种；
+    /// 视图卡与其他 Meowo 工具一样：antigravity（mcp_meowo_）、opencode（meowo_）的名字换成统一名，前端只认这一种；
     /// claude / kimi / codex 原样就是统一名。五家免审批都从 IMAGE_TOOLS 读，show_html 必须在里面。
     #[test]
     fn show_html_gets_the_unified_name_for_every_provider() {

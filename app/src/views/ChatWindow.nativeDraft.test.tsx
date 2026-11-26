@@ -25,11 +25,12 @@ function liveFrame(name: string) {
 const errorBar = () => document.querySelector(".chat-send-error[role=alert], .chat-send-error")!;
 
 describe("终端输入框里有草稿时从对话页发送", () => {
-  // 四家各自取证过的清空键：按下去草稿清掉，内容搬进对话页输入框，然后消息照常写入并回车。
+  // 三家各自取证过的清空键：按下去草稿清掉，内容搬进对话页输入框，然后消息照常写入并回车。
+  // （antigravity 不声明清空键：有草稿时对话页不替用户清。）
   const cases = [
     { provider: "codex", draft: "codex-0.167.2-same-text-draft", empty: "codex-0.167.2-placeholder-cursor", clear: ["\x03"], cleared: "\x03", text: "Ask Codex to do anything" },
     { provider: "kimi", draft: "kimi-2.6.1-draft", empty: "kimi-2.6.1-cleared", clear: ["\x03"], cleared: "\x03", text: "DRAFT-TWO" },
-    { provider: "gemini", draft: "gemini-0.68-same-text-draft", empty: "gemini-0.68-placeholder-cursor", clear: ["\x0b", "\x15"], cleared: "\x15", text: "Type your message or @path/to/file" },
+
     { provider: "opencode", draft: "opencode-1.19.5-draft-multiline", empty: "opencode-1.19.5-placeholder-cursor", clear: ["\x03"], cleared: "\x03", text: "DRAFT-ONE\nDRAFT-TWO" },
   ];
   it.each(cases)("$provider：Meowo 自己清掉草稿、内容进对话页输入框，消息照常发出", async ({ provider, draft, empty, clear, cleared, text }) => {
@@ -72,33 +73,8 @@ describe("终端输入框里有草稿时从对话页发送", () => {
     expect([...errorBar().querySelectorAll("button")].map((button) => button.textContent)).toEqual([zh.chat.errorRetry, zh.chat.goTerminal, zh.chat.slashMenuDismiss]);
   }, 15_000);
 
-  it("gemini 停在 shell 模式：先按 Esc 退出再发，不把消息当成 shell 命令", async () => {
-    const base = setup(820, "gemini");
-    let left = false;
-    invoke.mockImplementation((command, args) => {
-      if (command === "write_managed_terminal" && args?.data === "\x1b") left = true;
-      if (command === "managed_terminal_frame") return Promise.resolve(liveFrame(left ? "gemini-0.68-placeholder-cursor" : "gemini-0.68-shell-mode"));
-      return base(command, args);
-    });
-    render(<ChatWindow />);
-    await screen.findByText("适配-820");
-    await chatUiReady();
-    fireEvent.change(box(), { target: { value: "你好" } });
-    fireEvent.keyDown(box(), { key: "Enter" });
-    await waitFor(() => expect(writes(820)).toEqual(["\x1b", "你好", "\r"]), { timeout: 4000 });
-  });
-
-  it("gemini 开着 vim 模式的空输入框算空的，照常发送（此前被当成「已有草稿」）", async () => {
-    const base = setup(821, "gemini");
-    invoke.mockImplementation((command, args) => (command === "managed_terminal_frame"
-      ? Promise.resolve(liveFrame("gemini-0.68-vim-insert-placeholder")) : base(command, args)));
-    render(<ChatWindow />);
-    await screen.findByText("适配-821");
-    await chatUiReady();
-    fireEvent.change(box(), { target: { value: "你好" } });
-    fireEvent.keyDown(box(), { key: "Enter" });
-    await waitFor(() => expect(writes(821)).toEqual(["你好", "\r"]), { timeout: 4000 });
-  });
+  // 特殊输入模式（shell、vim NORMAL）先退出再发：现役几家都不声明，原 gemini 用例随 provider 移除，
+  // 读法与按键流程由 composerPrepare.test.ts 的合成规格覆盖。
 });
 
 describe("手敲撤回命令走撤回流程", () => {
