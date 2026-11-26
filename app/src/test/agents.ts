@@ -407,6 +407,9 @@ export function descriptors(installed: string[]): AgentDescriptor[] {
     proxy_accepts_socks: PROXY_ACCEPTS_SOCKS.has(id),
     supports_account: SUPPORTS_ACCOUNT.has(id),
     supports_api_key_login: SUPPORTS_API_KEY_LOGIN.has(id),
+    // 现役有账号能力的几家都声明了登录入口、也能登出；antigravity 在测试环境不注册账号能力。
+    supports_login: SUPPORTS_ACCOUNT.has(id),
+    supports_logout: SUPPORTS_ACCOUNT.has(id),
     supports_profiles: SUPPORTS_PROFILES.has(id),
     supports_context: SUPPORTS_CONTEXT.has(id),
     supports_chat_export: SUPPORTS_CHAT_EXPORT.has(id),

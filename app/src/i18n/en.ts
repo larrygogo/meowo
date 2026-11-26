@@ -2389,6 +2389,7 @@ export const en: Dict = {
     laneOpus: "Opus · 7 days",
     laneWeekly: "Weekly quota",
     laneModelWeekly: (model) => `${model} · weekly`,
+    laneGroupFiveHour: (group) => `${group} · 5-hour`,
     laneBalance: "Balance",
   },
   extensions: {

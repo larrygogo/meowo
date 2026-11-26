@@ -54,10 +54,10 @@ function fmtResetIn(iso: string, t: Dict): string {
 
 function laneLabel(lane: UsageLane, t: Dict): string {
   switch (lane.kind) {
-    case "five_hour": return t.account.laneFiveHour;
+    case "five_hour": return lane.label ? t.account.laneGroupFiveHour(lane.label) : t.account.laneFiveHour;
     case "seven_day": return t.account.laneSevenDay;
     case "opus": return t.account.laneOpus;
-    case "weekly": return t.account.laneWeekly;
+    case "weekly": return lane.label ? t.account.laneModelWeekly(lane.label) : t.account.laneWeekly;
     case "model_weekly": return lane.label ? t.account.laneModelWeekly(lane.label) : t.account.laneWeekly;
     case "balance": return t.account.laneBalance;
     default: return lane.kind;

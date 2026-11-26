@@ -72,7 +72,7 @@ export function AgentLogo({
       ) : id === "opencode" ? (
         <OpencodeLogo />
       ) : id === "antigravity" ? (
-        // Antigravity 徽标，与 app/src/assets/antigravity.svg 同一份（裸徽标，留一圈内边距免得顶到框）。
+        // Antigravity 徽标（裸徽标，留一圈内边距免得顶到框）。app 里用的是由它渲染出的 PNG：app/src/assets/antigravity.png。
         // eslint-disable-next-line @next/next/no-img-element
         <img src={antigravityLogo.src} width={Math.round(size * 0.82)} height={Math.round(size * 0.82)} alt="" style={{ display: "block" }} />
       ) : (

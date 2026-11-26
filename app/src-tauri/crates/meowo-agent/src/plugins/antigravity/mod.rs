@@ -22,6 +22,7 @@
 //!
 //! 没有 SessionEnd / Notification：会话结束靠进程退出判，等审批靠屏幕识别。
 
+mod account;
 mod cli_text;
 pub mod hook;
 mod lead;
@@ -495,6 +496,10 @@ impl AgentPlugin for Antigravity {
 
     fn telemetry(&self) -> Option<&'static dyn TelemetryCap> {
         Some(&telemetry::TELEMETRY)
+    }
+    /// 只在 Windows 注册：凭据在系统凭据库，macOS 读别家 Keychain 条目会弹授权框（见 account.rs）。
+    fn account(&self) -> Option<&'static dyn crate::account::AccountCap> {
+        cfg!(target_os = "windows").then_some(&account::ACCOUNT as &'static dyn crate::account::AccountCap)
     }
     fn proxy(&self) -> Option<&'static crate::proxy::ProxySpec> {
         Some(&PROXY)

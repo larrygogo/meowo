@@ -109,3 +109,16 @@ describe("团队子页没保存的改动", () => {
     expect(closed.n).toBe(0);
   });
 });
+
+describe("从搜索结果进团队子页", () => {
+  // 安装版实拍（2026-11-26）：搜「团队」后点「团队设置」没反应，清掉搜索词才冒出子页。
+  it("点「团队设置」直接进子页并清掉搜索词", async () => {
+    localStorage.setItem(SETTINGS_SECTION_KEY, "general");
+    render(<About />);
+    const input = screen.getByPlaceholderText(zh.settings.searchPlaceholder) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "团队" } });
+    fireEvent.click(await screen.findByText(zh.settings.teamSettings));
+    await screen.findByText("b-repo");
+    expect(input.value).toBe("");
+  });
+});

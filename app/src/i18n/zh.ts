@@ -2707,6 +2707,8 @@ export const zh = {
     laneWeekly: "每周配额",
     // 模型专属周限(Fable/Opus 等),模型名由 API 下发。
     laneModelWeekly: (model: string) => `${model} · 每周`,
+    // Antigravity 按模型组分额度（如「Claude and GPT models」，Gemini 不计），每条前缀组名，免得被当成总额度。
+    laneGroupFiveHour: (group: string) => `${group} · 5 小时`,
     laneBalance: "余额",
   },
   // 设置 › 扩展（对照 Kimi「插件」页）：各 agent 装了什么，只读。
