@@ -1802,6 +1802,13 @@
           "note": "1.5.18 真机 run1/00_start；agy.exe 1 处",
           "rule": "attention:antigravity:trust",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/mod.rs:426"
+        },
+        {
+          "legacy": false,
+          "needle": "daily-cloudcode-pa.googleapis.com",
+          "note": "1.5.18 运行日志（~/.gemini/antigravity-cli/log）里的请求地址；agy.exe 1 处，是 cloud_code_endpoint 的默认值。         agy 换了地址时用量会静默变成永远满额。CLI 升级后在程序文件里搜一下这个地址还在不在",
+          "rule": "record:quota-endpoint",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/antigravity/account.rs:42"
         }
       ],
       "id": "antigravity",
