@@ -1,4 +1,4 @@
-"""Lead 原生 TUI 探针用的本地假模型（lead_native/probe.rs）：记录请求头/正文，按脚本回复。兼容 OpenAI chat.completions（kimi）与 Gemini generateContent。
+"""Lead 原生 TUI 探针用的本地假模型（lead_native/probe.rs）：记录请求头/正文，按脚本回复。兼容 OpenAI chat.completions（kimi）。
 
 用法：python -I fake_llm.py <port> <logdir>
 脚本：看对话里最后几条消息决定回复，见 decide_*。
@@ -97,38 +97,6 @@ def decide(last_user, last_is_tool, last_tool_args, p, last_tool_text=""):
     return ("text", "READY")
 
 
-DENIED = "关卡只由主会话发"
-
-
-def decide_subagent(contents, last_user, last_is_tool, is_sub, p):
-    """gemini 子代理场景（SUBAGENT-GATE）：主会话像第三轮真机那样并行调 update_topic + invoke_agent，
-    子代理写挂起关卡后 complete_task；主会话看到子代理被拒就自己写关卡。不是这个场景返回 None。"""
-    st = STATE.setdefault(p.get("phase", "default"), {})
-    if is_sub:
-        # 子代理只看自己这段对话：第一条是派活的提示词。
-        first = "".join(x.get("text") or "" for x in (contents[0].get("parts") or [])) if contents else ""
-        if "SUB-WRITE-GATE" not in first:
-            return None
-        if not last_is_tool:
-            return ("tool_write", p["gate_path"], p.get("gate_body", "{}"))
-        verdict = "blocked" if DENIED in last_user else "written"
-        st.setdefault("sub_results", []).append(verdict)
-        return ("calls", [("complete_task", {"result": {"response": "SUB-" + verdict.upper()}})])
-    if "SUBAGENT-GATE" in last_user and not st.get("invoked"):
-        st["invoked"] = True
-        calls = []
-        if p.get("parallel_topic", True):
-            calls.append(("update_topic", {"title": "probe", "summary": "probe", "strategic_intent": "delegate"}))
-        calls.append(("invoke_agent", {"agent_name": "generalist", "prompt": "SUB-WRITE-GATE " + p.get("gate_path", "")}))
-        return ("calls", calls)
-    if st.get("invoked") and not st.get("main_wrote") and last_is_tool and "invoke_agent" in last_user:
-        st["main_wrote"] = True
-        if "SUB-BLOCKED" in last_user:
-            return ("tool_write", p["gate_path"], p.get("gate_body", "{}"))
-        return ("text", "SUBAGENT-NOT-BLOCKED")
-    return None
-
-
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -148,8 +116,6 @@ class H(BaseHTTPRequestHandler):
         except Exception:
             body = {"_raw": raw.decode("utf-8", "replace")}
         p = plan()
-        if "generateContent" in self.path or "streamGenerateContent" in self.path or "countTokens" in self.path:
-            return self.gemini(body, p)
         if "chat/completions" in self.path:
             return self.openai(body, p)
         log({"method": "POST", "path": self.path, "headers": dict(self.headers), "body": body})
@@ -199,89 +165,6 @@ class H(BaseHTTPRequestHandler):
         usage = {"id": f"c{n}", "object": "chat.completion.chunk", "choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12}}
         self.wfile.write(("data: " + json.dumps(usage) + "\n\n").encode())
         self.wfile.write(b"data: [DONE]\n\n")
-        self.wfile.flush()
-
-    # ---------------- Gemini ----------------
-    def gemini(self, body, p):
-        if "countTokens" in self.path:
-            self.send_response(200)
-            self.send_header("content-type", "application/json")
-            self.end_headers()
-            self.wfile.write(b'{"totalTokens": 10}')
-            return
-        contents = body.get("contents", [])
-        decls = [f.get("name") for t in (body.get("tools") or []) for f in (t.get("functionDeclarations") or [])]
-        # 子代理（LocalAgentExecutor）的工具表里有 complete_task，主会话没有。
-        is_sub = "complete_task" in decls
-        # 与真 API 一致：contents 里出现 system 角色直接 400（Lead 的 BeforeModel 注入曾这样踩过）。
-        # 原样记下整段 contents（截短文本），好追是哪一条、从哪来。
-        if any(c.get("role") not in ("user", "model") for c in contents):
-            def brief(c):
-                return {"role": c.get("role"), "parts": [
-                    {k: (v[:300] if isinstance(v, str) else json.dumps(v, ensure_ascii=False)[:300]) for k, v in x.items()}
-                    if isinstance(x, dict) else str(x)[:300] for x in (c.get("parts") or [])]}
-            log({"method": "POST", "path": self.path, "kind": "rejected_role", "subagent": is_sub,
-                 "roles": [c.get("role") for c in contents], "contents": [brief(c) for c in contents]})
-            self.send_response(400)
-            self.send_header("content-type", "application/json")
-            self.end_headers()
-            self.wfile.write(b'{"error":{"code":400,"message":"Role is not supported","status":"INVALID_ARGUMENT"}}')
-            return
-        last = contents[-1] if contents else {}
-        parts = last.get("parts", [])
-        last_is_tool = any("functionResponse" in x for x in parts)
-        # 末尾几条非 system 消息的全部文本（含工具结果）：后台完成注入的位置不固定。
-        tail_texts = []
-        for c in contents[-3:]:
-            if c.get("role") == "system":
-                continue
-            for x in c.get("parts", []):
-                if isinstance(x, dict):
-                    tail_texts.append(x.get("text") or json.dumps(x.get("functionResponse", ""), ensure_ascii=False))
-        last_user = chr(10).join(tail_texts) if last.get("role") == "user" else ""
-        last_tool_args = ""
-        for c in reversed(contents):
-            if c.get("role") == "model":
-                calls = [x["functionCall"] for x in c.get("parts", []) if isinstance(x, dict) and "functionCall" in x]
-                if calls:
-                    last_tool_args = json.dumps(calls, ensure_ascii=False)
-                    break
-        # 系统/路由类请求（如下一位发言者判定、标题生成）走 JSON 简答
-        gen = body.get("generationConfig", {}) or {}
-        if gen.get("responseMimeType") == "application/json" or gen.get("responseJsonSchema") or gen.get("responseSchema"):
-            n = log({"method": "POST", "path": self.path, "headers": dict(self.headers), "kind": "json", "last_user": last_user[-800:]})
-            return self.gemini_send(self.path, [{"text": json.dumps({"reasoning": "fake", "next_speaker": "user", "model_choice": "flash", "complexity_score": 1})}])
-        d = decide_subagent(contents, last_user, last_is_tool, is_sub, p) or decide(last_user, last_is_tool, last_tool_args, p)
-        n = log({"method": "POST", "path": self.path, "headers": dict(self.headers), "decision": d, "subagent": is_sub, "roles": [c.get("role") for c in contents], "last_user": last_user[-1500:], "n_contents": len(contents), "last_is_tool": last_is_tool, "contents_tail": contents[-3:]})
-        if p.get("delay"):
-            time.sleep(float(p["delay"]))
-        if d[0] == "text":
-            out = [{"text": d[1]}]
-        elif d[0] == "calls":
-            out = [{"functionCall": {"name": name, "args": args}} for name, args in d[1]]
-            # plan.realistic：像真模型那样带思考段与旁白文本（第三轮 run1 的主会话回复 content 为空、只有思考）
-            if p.get("realistic"):
-                out = [{"text": "Planning the delegation.", "thought": True}] + out
-        elif d[0] == "tool_write":
-            out = [{"functionCall": {"name": "write_file", "args": {"file_path": d[1], "content": d[2]}}}]
-            if p.get("realistic") and is_sub:
-                out = [{"text": "I will write the JSON to gate.json."}] + out
-        else:
-            out = [{"functionCall": {"name": "run_shell_command", "args": {"command": d[1], "is_background": True, "description": "lead waiter"}}}]
-        self.gemini_send(self.path, out)
-
-    def gemini_send(self, path, parts):
-        resp = {"candidates": [{"content": {"role": "model", "parts": parts}, "finishReason": "STOP", "index": 0}],
-                "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 2, "totalTokenCount": 12}, "modelVersion": "fake"}
-        self.send_response(200)
-        if "alt=sse" in path:
-            self.send_header("content-type", "text/event-stream")
-            self.end_headers()
-            self.wfile.write(("data: " + json.dumps(resp, ensure_ascii=False) + "\r\n\r\n").encode())
-        else:
-            self.send_header("content-type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(resp, ensure_ascii=False).encode())
         self.wfile.flush()
 
 ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()

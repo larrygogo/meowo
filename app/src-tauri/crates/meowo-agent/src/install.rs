@@ -14,7 +14,7 @@
 /// 一键安装的方式。
 ///
 /// 两条路子：**抓官方引导脚本**（claude/codex/kimi 的 `curl|sh` / `irm|iex` 落点），或**直接跑一条
-/// 本地命令**（gemini/opencode 走 `npm i -g …`，官方没有 `curl|sh` 脚本可抓）。
+/// 本地命令**（opencode 在 Windows 走 `npm i -g …`，它的官方脚本是 bash）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstallScript {
     /// 抓官方引导脚本再执行。脚本地址取回后**须经** [`is_runnable_script`]（含 [`looks_like_challenge`]）

@@ -14,8 +14,8 @@ pub fn dispatch(
     now_ms: i64,
     provider: &str,
 ) -> Result<(), StoreError> {
-    // 事件名先由该 agent 译成规范名。只有 gemini 真的要译（它把「用户提交」「回合结束」叫成
-    // `BeforeAgent` / `AfterAgent`），其余四家原样透传；未注册的 provider 同样透传，其未知事件
+    // 事件名先由该 agent 译成规范名。现役五家都原样透传（antigravity 的事件名在负载改写时已译好；
+    // 这一步最初为已移除的 gemini 插件的 `BeforeAgent` / `AfterAgent` 引入）；未注册的 provider 同样透传，其未知事件
     // 照旧落到末尾的 `_ => {}`。翻译表归插件所有——这里刻意不出现任何 agent 的名字。
     let event = meowo_agent::by_id(provider).map_or(ev.hook_event_name.as_str(), |p| {
         p.canonical_event(&ev.hook_event_name)

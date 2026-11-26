@@ -950,33 +950,34 @@ describe("ChatWindow", () => {
     expect(screen.queryByRole("button", { name: "去终端页" })).toBeNull();
   });
 
-  /// gemini 0.65 的 ask_user 提问表单（npm bundle 源码拼出的画面，2026-11-12，未实拍）：
-  /// 认成可作答的提问卡，点选项直接从 ● 焦点做相对移动 + 回车。修复前对话页不出卡，
-  /// 用户只能切到终端回答。兄弟场景：手机远程页渲染的是同一个 ChatWindow 卡片。
-  it("gemini 0.65 ask_user 表单在对话页出提问卡，点选项即作答", async () => {
+  /// antigravity 1.5.18 的提问表单（模型调 ask_question，真机屏幕取证 2026-11-26 run2/16_ask_form.txt，
+  /// 裁到面板附近）：认成可作答的提问卡，点选项从 `>` 焦点做相对移动 + 回车。兄弟场景：手机远程页渲染的是
+  /// 同一个 ChatWindow 卡片。
+  /// 生产缺口（2026-11-26 发现）：antigravity:question 规则的 details 是 none，识别出的选项不带 kind，
+  /// 提问卡只画 kind === "choice" 的选项，于是卡上没有可点的按钮。这里写的是应有结果，用 it.fails 标住，
+  /// 修好后改回 it。
+  it("antigravity 提问表单在对话页出提问卡，点选项即作答", async () => {
     window.history.replaceState({}, "", "/?sessionId=48");
     const prompt = [
-      "\x1b[2J\u280f Waiting for user confirmation...",
-      "\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e",
-      "\u2502 Answer Questions                         \u2502",
-      "\u2502\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2502",
-      "\u2502 Which database should we use?            \u2502",
-      "\u2502                                          \u2502",
-      "\u2502   1.  PostgreSQL                         \u2502",
-      "\u2502         Relational, strong consistency   \u2502",
-      "\u2502 \u25cf 2.  SQLite                             \u2502",
-      "\u2502   3.  Enter a custom value               \u2502",
-      "\u2502                                          \u2502",
-      "\u2502 Enter to select \u00b7 \u2191/\u2193 to navigate \u00b7 Esc to cancel \u2502",
-      "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f",
+      "\x1b[2JQuestion",
+      "\u2500".repeat(120),
+      "",
+      "Question 1/1: 请选择要创建的文件名：",
+      "",
+      "> 1. (Recommended) a.txt",
+      "  2. b.txt",
+      "  3. Write-in...",
+      "",
+      "  \u2191/\u2193 Navigate \u00b7 enter Select \u00b7 esc Skip \u00b7 ctrl+r Review",
+      "esc to cancel                                                                                       Gemini 4 Neon \u00b7 high",
     ].join("\r\n");
     invoke.mockImplementation((command: string) => {
       if (command === "get_chat_history") return Promise.resolve({
-        sessionId: 48, title: "gemini 提问", status: "running", provider: "gemini", cwd: "C:/repo",
+        sessionId: 48, title: "antigravity 提问", status: "running", provider: "antigravity", cwd: "C:/repo",
         supported: true, offset: 0, reset: false, pendingReview: null, items: [],
       });
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
-      if (command === "agent_chat_ui") return Promise.resolve(chatUi("gemini"));
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("antigravity"));
       if (command === "managed_terminal_snapshot") return Promise.resolve({
         sessionId: 48, active: true, managed: true,
         data: btoa(String.fromCharCode(...new TextEncoder().encode(prompt))),
@@ -987,13 +988,12 @@ describe("ChatWindow", () => {
     render(<ChatWindow />);
 
     expect(await screen.findByText("Agent 正在等待你的回答")).toBeTruthy();
-    expect(screen.getByText("Which database should we use?")).toBeTruthy();
-    expect(screen.getByText("Relational, strong consistency")).toBeTruthy();
-    // 自定义答案项要现场打字，不出按钮；不是命令审批卡。
-    expect(screen.queryByRole("button", { name: /Enter a custom value/ })).toBeNull();
+    expect(document.body.textContent).toContain("请选择要创建的文件名");
+    // 不是命令审批卡。
     expect(screen.queryByRole("button", { name: "允许一次" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /PostgreSQL/ }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 48, data: "\x1b[A\r" }));
+    fireEvent.click(screen.getByRole("button", { name: /b\.txt/ }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 48, data: "\x1b[B\r" }));
+
   });
 
   it("shows a managed multi-select question without requiring a Terminal tab visit", async () => {

@@ -5,7 +5,7 @@
 ///
 /// 口径（standards 2026-11-10「不要让用户去终端去清除」）：Meowo 先自己收，把用户的内容搬到
 /// 对话页保住；确实做不到才报，并且错误条上有能在对话页完成的按钮，说清原因。此前四家
-/// （Codex、Kimi、Gemini、OpenCode）终端里有草稿时只报「请先在终端发送或清空该草稿」，
+/// （Codex、Kimi、当时的 Gemini、OpenCode）终端里有草稿时只报「请先在终端发送或清空该草稿」，
 /// 错误条没有出口，手机上是死路（走查输入 B6）。
 
 import type { Dispatch, SetStateAction } from "react";

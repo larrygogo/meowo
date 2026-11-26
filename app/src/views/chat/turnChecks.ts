@@ -2,8 +2,8 @@
 //
 // 全部从会话记录里推：命令原文（tool_use 的 command 详情）+ 回执（is_error、exit_code 与输出）。不听 AI 自己说
 // 「测试都过了」——录屏、自述都只能证明做过，不能证明对（调研 landscape.md 第 3 节）。
-// 五家的命令调用都归一成 kind=run。失败的标记各家不一样：claude、codex 标 is_error；gemini 与 opencode 命令
-// 跑完就不标 is_error，非零退出码只在 exit_code 里（做空第一轮实测）。两个都看。
+// 五家的命令调用都归一成 kind=run。失败的标记各家不一样：claude、codex 标 is_error；opencode 命令跑完
+// 就不标 is_error，非零退出码只在 exit_code 里（做空第一轮实测，当时的 gemini 插件同样）；antigravity 也带 exit_code。两个都看。
 //
 // 退出码不总可信：`vitest run | tail -20` 的退出码是 tail 的，`cargo test || true` 永远是 0，
 // `tsc; echo done` 取的是 echo 的。这些情况改从输出里认常见的失败信号（vitest/jest/cargo/pytest/bun/go 的汇总行、
@@ -545,7 +545,7 @@ function commandOf(item: Extract<ChatItem, { type: "tool_use" }>): string {
   return item.detail?.kind === "command" ? item.detail.command : item.summary;
 }
 
-/** 整条命令有没有失败：is_error，或者非零退出码（gemini、opencode 跑完的命令不标 is_error）。 */
+/** 整条命令有没有失败：is_error，或者非零退出码（opencode 跑完的命令不标 is_error）。 */
 function runFailed(result: ToolResultItem): boolean {
   return result.is_error || (result.exit_code != null && result.exit_code !== 0);
 }

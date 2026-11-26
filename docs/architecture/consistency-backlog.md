@@ -44,7 +44,7 @@
 | P2-11 | Tooltip 与原生 `title` 混用（同一侧栏条目两种气泡） | `ChatSidebar.tsx`、`ChatWindow.tsx` | 已修：5 处换 `data-tip`（TooltipLayer 全窗口挂载，核实过）；`.dd-menu` 内的 2 处**刻意保留**原生 title——TooltipLayer 对菜单区域静默（自绘提示会糊在菜单上），已加注释 | 已修 |
 | P2-12 | i18n 7 个 `as Record<string,string>` 逃逸区绕过编译期 key 检查，漏翻静默降级为 id | `zh.ts:130-479`、`en.ts` 对应 | 运行时比对已覆盖 key 对齐；给逃逸区补一条「消费处 fallback 必须可读」的约定即可，不强改类型 | 已记录约定 |
 | P2-13 | `getOverview`/`getProjectTasks` 全链路死代码；`Todo` 同名异形；`getLiveSessionsPage` 兼容分支无删除时机 | `api.ts`、`session_query.rs`、`store/query.rs` | 死代码已删（前端 api + 两条 Tauri 命令 + store 的 `overview`/`project_tasks`/`ProjectOverview`/`TaskCard` + 7 个测试）；`Todo` 现由 ts-rs 生成、与 protocol 的 `TodoDto`（hook 输入形）各司其职；兼容分支仍待标注 | 大部分已修 |
-| P2-14 | 插件间模式漂移：Relay 结构体可见性与位置不一（F1）；`launch_options` 变体门控只有 kimi 做（F2）；`HookEvent.timeout` 字段承载秒/毫秒两种单位（F5）；事件白名单只有 kimi/gemini 有（F6）；`attachment_mention` 三家逐字重复（F7）；登出策略三分但宿主侧删凭据是同一段隐式逻辑（F9）；`login` 的 `Some(&[])` 隐式表示裸启动（F10）；绊线测试只断言部分 agent（F11）；impl 块方法顺序各异（F12） | `plugins/*/mod.rs` | 定一份「插件排版与惯例」清单写进 plugins/mod.rs rustdoc，新改动照做，存量顺手改 | 待修 |
+| P2-14 | 插件间模式漂移：Relay 结构体可见性与位置不一（F1）；`launch_options` 变体门控只有 kimi 做（F2）；`HookEvent.timeout` 字段承载秒/毫秒两种单位（F5）；事件白名单只有 kimi/antigravity 有（F6）；`attachment_mention` 三家逐字重复（F7）；登出策略三分但宿主侧删凭据是同一段隐式逻辑（F9）；`login` 的 `Some(&[])` 隐式表示裸启动（F10）；绊线测试只断言部分 agent（F11）；impl 块方法顺序各异（F12） | `plugins/*/mod.rs` | 定一份「插件排版与惯例」清单写进 plugins/mod.rs rustdoc，新改动照做，存量顺手改 | 待修 |
 | P2-15 | 通知指纹四套并行函数靠"让位"约定串联；`pending_review` 三来源靠 `pending_review_live` 校正；存活判定三处口径靠注释宣称一致 | `watch.rs`、`chat.rs:163-182`、`session_query.rs` | 各写一个单点函数供三处调用（roadmap 阶段 3/4 的延续） | 待修 |
 
 ## P3 —— 文档与代码偏差（详见 docs 治理）

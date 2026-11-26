@@ -38,7 +38,7 @@ describe.each([["zh", zh], ["en", en]] as const)("侧栏状态词取自词表（
       ? Promise.resolve([
         session(1, "alpha", "running", { provider: "codex" }),
         session(2, "beta", "waiting", { provider: "kimi" }),
-        session(3, "gamma", "waiting", { provider: "gemini" }),
+        session(3, "gamma", "waiting", { provider: "antigravity" }),
         session(4, "delta", "waiting", { provider: "opencode", errored: true }),
       ])
       : Promise.resolve());

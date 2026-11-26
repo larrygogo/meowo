@@ -10,7 +10,7 @@ export type ApprovalScopeTag =
   | { kind: "risky" }
   | { kind: "network" };
 
-/** 写文件类工具参数里放路径的键（claude 的 Edit/Write/MultiEdit/NotebookEdit，kimi/gemini 同名）。 */
+/** 写文件类工具参数里放路径的键（claude 的 Edit/Write/MultiEdit/NotebookEdit，kimi 同名）。 */
 const PATH_KEYS = ["file_path", "path", "notebook_path", "filePath", "absolute_path"];
 
 const DELETE_COMMAND = /(?:^|[\s;&|(])(?:rm|rmdir|unlink|shred|del|erase|rd|Remove-Item|ri)(?=\s|$)|\bgit\s+clean\b/i;

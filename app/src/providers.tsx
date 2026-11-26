@@ -8,9 +8,10 @@ import type { ReactElement } from "react";
 // Kimi 官方位图 logo（渐变颗粒纹理、非矢量友好）：作静态资源随打包分发（Vite 输出带哈希的文件），
 // 不再把整张 PNG 以超长 base64 内嵌进源码（增大 bundle/难 diff）。四角本就透明，无需圆角裁剪。
 import kimiLogo from "./assets/kimi.png";
-// Gemini 官方 "aurora" sparkle：那层蓝紫极光是**位图纹理**（四角星路径裁一张内嵌 JPEG），
-// 矢量渐变复刻不出来。取自官方 gstatic 资产、自包含（data-uri 内嵌，离线可用），当静态资源打包。
-import geminiLogo from "./assets/gemini.svg";
+// Antigravity 官方 logomark（多色渐变拱形）：取自官网 favicon.svg（antigravity.google），去掉圆形底、
+// viewBox 裁到图形本身，做成与旧 Gemini sparkle 同类的**裸**图标。渐变靠 mask + 模糊椭圆，
+// 当静态资源打包、用 <img> 显示（内联进 React 树会和别的 SVG 撞 id）。
+import antigravityLogo from "./assets/antigravity.svg";
 
 function ClaudeMark() {
   // 官方 Claude logomark（赤陶色 sunburst）：fill=currentColor，由容器着色——裸图标场景
@@ -48,16 +49,13 @@ function CodexMark() {
   );
 }
 
-function GeminiMark() {
-  // Gemini 官方 aurora sparkle（位图纹理，见 import 处说明）。自带固定品牌色，与 kimi 同款处理：
-  // 用 <img>、断开态只靠 .stk-agent-off 的 opacity 变暗（tint 为 undefined）。它是唯一的**裸**
-  // logomark（无方块底座）。
-  //
-  // 尺寸 13 对齐 codex/opencode——新建会话面板按原始尺寸并排渲染。设置页卡片会把它拉满 44px 外框，
-  // 那里需要的留白由 `.provider-card-icon[data-agent=gemini]` 单独给，两个上下文各自调、互不牵连。
+function AntigravityMark() {
+  // 自带固定品牌色，与 kimi 同款处理：用 <img>、断开态只靠 .stk-agent-off 的 opacity 变暗（tint 为
+  // undefined）。裸 logomark（无方块底座）：尺寸 13 对齐 codex/opencode；设置页 44px 卡片里的留白由
+  // `.provider-card-icon[data-agent=antigravity]` 单独给。
   return (
     <img
-      src={geminiLogo}
+      src={antigravityLogo}
       width={13}
       height={13}
       alt=""
@@ -110,7 +108,7 @@ const ASSETS: Record<string, AgentAssets> = {
   claude: { Icon: ClaudeMark, tint: "--cc-claude", needsTile: false },
   kimi: { Icon: KimiMark, needsTile: false },
   codex: { Icon: CodexMark, needsTile: false },
-  gemini: { Icon: GeminiMark, needsTile: false },
+  antigravity: { Icon: AntigravityMark, needsTile: false },
   opencode: { Icon: OpencodeMark, needsTile: false },
 };
 

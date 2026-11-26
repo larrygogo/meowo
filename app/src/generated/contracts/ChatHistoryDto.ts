@@ -39,10 +39,10 @@ effort?: string, agentModes: Array<AgentModeDto>, contextPct: number | null, con
 connected: boolean, 
 /**
  * 托管 PTY 的实时屏幕状态（"working" | "idle" | "blocked"，非托管为 None），与侧栏/看板
- * `LiveItem.screen_state` 同源。对话页的运行态必须同样经它校正：gemini 的 SessionStart
- * 就把 DB 置成 running、首个 BeforeAgent 之前没有任何事件纠正它，只看 DB 的对话页会把
- * 空闲会话当成「运行中」，发消息按了排队键 Tab 而非回车——正文停在输入框里发不出去
- * （0.6.11 实机，gemini 0.64）。
+ * `LiveItem.screen_state` 同源。对话页的运行态必须同样经它校正：DB 的 running 可能
+ * 迟迟没有事件纠正，只看 DB 的对话页会把空闲会话当成「运行中」，发消息按了排队键而非回车——
+ * 正文停在输入框里发不出去（前科：0.6.11 实机，已移除的 gemini 插件 0.64，SessionStart 就置
+ * running、首个 BeforeAgent 之前没有事件纠正）。
  */
 screenState: string | null, 
 /**
@@ -57,7 +57,7 @@ screenAssumed: boolean,
 screenBlockedKind?: string, 
 /**
  * 最近一轮以错误收场（transcript 分析口径，与侧栏/贴纸的 `LiveItem.errored` 同源）。
- * 五家都报：claude / gemini / kimi 的分析解析器本来就有，codex 与 opencode 的错误判据
+ * 五家都报：claude / kimi / antigravity 的分析解析器本来就有，codex 与 opencode 的错误判据
  * 与各自时间线的错误卡共用一个函数。
  */
 errored: boolean, 

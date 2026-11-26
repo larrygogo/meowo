@@ -148,7 +148,7 @@ pub(crate) fn env_of(agent: meowo_agent::AgentId, id: Option<&str>) -> Vec<(Stri
         return Vec::new();
     };
     let Some(inst) = plugin.installation_for_profile(&profile_root(agent.as_str(), id)) else {
-        // 该 agent 不支持多账号（gemini）→ 一个变量都不注入。绝不注入半套：
+        // 该 agent 不支持多账号（antigravity）→ 一个变量都不注入。绝不注入半套：
         // 只给 MEOWO_PROFILE 而不给隔离变量，会把一个跑在**默认账号**上的会话记成 profile 的。
         return Vec::new();
     };
@@ -243,7 +243,7 @@ fn notify_active_profile_changed(app: &tauri::AppHandle, provider: &str) {
     let _ = app.emit(ACTIVE_PROFILE_CHANGED, provider);
 }
 
-/// 该 agent 不支持多账号（gemini）→ **只返回默认账号一条**，前端据此不给「添加账号」入口。
+/// 该 agent 不支持多账号（antigravity）→ **只返回默认账号一条**，前端据此不给「添加账号」入口。
 #[tauri::command]
 pub(crate) async fn list_profiles(provider: String) -> Vec<ProfileView> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -836,8 +836,8 @@ mod tests {
             "凭据所在的数据目录也必须隔离"
         );
 
-        // gemini 不支持多账号（数据目录不可覆盖）→ 无论传什么 id 都不注入。
-        assert!(env_of(meowo_agent::id::GEMINI, Some("work")).is_empty());
+        // antigravity 不支持多账号（数据目录不可覆盖、凭据在系统钥匙串）→ 无论传什么 id 都不注入。
+        assert!(env_of(meowo_agent::id::ANTIGRAVITY, Some("work")).is_empty());
     }
 
     /// 活跃 profile 的展示名：命中给展示名；默认账号（无活跃 id）→ None，前端什么都不显示。

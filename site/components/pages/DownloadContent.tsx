@@ -50,14 +50,14 @@ const CONTENT: Record<Lang, Content> = {
     steps: [
       { title: "下载安装包", body: "在 GitHub Releases 里选择对应平台的安装包。" },
       { title: "安装并打开", body: "Windows 上双击安装包安装，没有 WebView2 的环境会换成经典安装界面。macOS 上把应用拖进「应用程序」，再双击打开。" },
-      { title: "安装并登录 AI CLI", body: "在设置里选择要用的 CLI，安装后登录账号，Gemini CLI 需要填 API Key。已经装好的 CLI 会被自动识别。" },
+      { title: "安装并登录 AI CLI", body: "在设置里选择要用的 CLI，安装后登录账号。Antigravity CLI 在 agy 自己的界面里登录。已经装好的 CLI 会被自动识别。" },
       { title: "开始使用", body: "Meowo 会自动配置所需的 hooks。在对话窗里选 Agent 和项目目录，输入第一句话就开始了。会话状态显示在屏幕顶部的灵动岛上，没有刘海的 Mac 上点菜单栏图标查看。要在手机上使用，在设置里开启「手机远程」并扫码。" },
     ],
     reqsEyebrow: "环境",
     reqsTitle: "环境要求",
     reqs: [
       { k: "操作系统", v: "Windows 10 / 11，或 macOS 14 Sonoma 及以上" },
-      { k: "AI 编程 CLI", v: "不需要提前安装。可以在 Meowo 里安装和登录 Claude Code、Codex、Kimi、Gemini CLI 或 OpenCode 中的任意一家" },
+      { k: "AI 编程 CLI", v: "不需要提前安装。可以在 Meowo 里安装 Claude Code、Codex、Kimi、Antigravity CLI 或 OpenCode 中的任意一家" },
       { k: "Windows 依赖", v: "WebView2 Runtime（Windows 11 自带），安装包会按需安装" },
       { k: "磁盘占用", v: "几十 MB。数据存在 ~/.meowo，本地 SQLite。" },
     ],
@@ -84,14 +84,14 @@ const CONTENT: Record<Lang, Content> = {
     steps: [
       { title: "Download the installer", body: "Pick the installer for your platform in GitHub Releases." },
       { title: "Install and open", body: "On Windows, double-click the installer. Without WebView2, it switches to the classic installer UI. On macOS, drag the app to Applications and double-click it." },
-      { title: "Install and sign in to an AI CLI", body: "In Settings, pick the CLI you want, install it and sign in. Gemini CLI needs an API key. CLIs that are already installed are detected automatically." },
+      { title: "Install and sign in to an AI CLI", body: "In Settings, pick the CLI you want, install it and sign in. For Antigravity CLI, you sign in inside agy itself. CLIs that are already installed are detected automatically." },
       { title: "Start", body: "Meowo sets up the hooks it needs. In the chat window, pick an agent and a project folder and type the first message. Session status appears on the island at the top of the screen; on a Mac without a notch, click the menu-bar icon. To use Meowo from your phone, turn on Phone access in Settings and scan the QR code." },
     ],
     reqsEyebrow: "Requirements",
     reqsTitle: "System requirements",
     reqs: [
       { k: "Operating system", v: "Windows 10 / 11, or macOS 14 Sonoma and later" },
-      { k: "AI coding CLI", v: "Not needed beforehand. You can install and sign in to Claude Code, Codex, Kimi, Gemini CLI or OpenCode from Meowo" },
+      { k: "AI coding CLI", v: "Not needed beforehand. You can install Claude Code, Codex, Kimi, Antigravity CLI or OpenCode from Meowo" },
       { k: "Windows dependency", v: "WebView2 Runtime (bundled on Windows 11); the installer adds it as needed" },
       { k: "Disk", v: "Tens of MB. Data lives in ~/.meowo, a local SQLite database." },
     ],

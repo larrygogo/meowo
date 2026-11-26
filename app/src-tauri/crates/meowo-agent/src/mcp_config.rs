@@ -1,6 +1,6 @@
 //! Meowo MCP 服务器（发图工具 + 面板浏览器）在「只认数据目录里配置文件」的 agent 那边的登记与
-//! 撤销（[`crate::McpAttach::DataDirJson`]：kimi 的 `mcp.json` + `config.toml` 审批规则、gemini 的
-//! `settings.json` + `policies/meowo-images.toml`）。
+//! 撤销（[`crate::McpAttach::DataDirJson`]：kimi 的 `mcp.json` + `config.toml` 审批规则、antigravity 的
+//! 全局 `~/.gemini/config/mcp_config.json`）。
 //!
 //! 放在 meowo-agent 而不是宿主：宿主启动时按设置登记（browser_agent.rs `sync_mcp_files`），
 //! 卸载器则调 sidecar `meowo-reporter uninstall-cleanup` 把这些写入全部撤掉（nsis-hooks.nsh
@@ -125,9 +125,11 @@ pub fn cleanup_home(home: &Path, rel: &str, approval: Option<crate::McpApproval>
 pub fn sync_mcp_file(path: &Path, entry: Option<Value>) -> McpFileSync {
     let path = path.to_path_buf();
     let mut root: Value = match std::fs::read(&path) {
+        // agy 会先建一个 0 字节的 `~/.gemini/config/mcp_config.json`（本机实测），等同空配置。
+        Ok(bytes) if bytes.iter().all(u8::is_ascii_whitespace) && entry.is_some() => json!({}),
         Ok(bytes) => match serde_json::from_slice(&bytes) {
             Ok(value) => value,
-            // 用户手写坏了的文件、带注释的 JSONC（gemini 的 settings.json 允许）不动，免得把
+            // 用户手写坏了的文件、带注释的 JSONC 不动，免得把
             // 他的配置冲掉；告诉调用方，好让界面说清楚为什么没接上。
             Err(_) => return McpFileSync::Unparsable,
         },
@@ -255,8 +257,9 @@ pub fn sync_permission_rule(path: &Path, prefix: &str, enabled: bool) {
     write_user_config(path, &doc.to_string());
 }
 
-/// gemini 用户级策略文件（整个文件归 Meowo 管）：开着时写一条只放行 `meowo` 服务器
-/// `send_image` 工具的规则，关着时删掉文件。
+/// 用户级策略文件（[`crate::McpApproval::PolicyFile`]，整个文件归 Meowo 管）：开着时写一条只放行
+/// `meowo` 服务器 `send_image` 工具的规则，关着时删掉文件。通用能力，目前没有插件声明（最初为已移除
+/// 的 gemini 插件的 `policies/*.toml` 引入）。
 pub fn sync_policy_file(path: &Path, enabled: bool) {
     if !enabled {
         let _ = std::fs::remove_file(path);
@@ -310,6 +313,8 @@ mod tests {
             };
             covered.push(plugin.id().as_str());
             let home = base.join(plugin.id().as_str());
+            // 数据目录本身要在（清理只看存在的数据目录）；antigravity 的配置在它上一层的 config/ 里。
+            std::fs::create_dir_all(&home).unwrap();
             std::fs::create_dir_all(home.join(rel).parent().unwrap()).unwrap();
             std::fs::write(
                 home.join(rel),
@@ -330,7 +335,7 @@ mod tests {
                 None => {}
             }
         }
-        assert!(covered.contains(&"gemini") && covered.contains(&"kimi"), "{covered:?}");
+        assert!(covered.contains(&"antigravity") && covered.contains(&"kimi"), "{covered:?}");
 
         let report = uninstall_cleanup_with(|plugin| vec![base.join(plugin.id().as_str())]);
         assert!(!report.is_empty());
@@ -358,7 +363,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    /// gemini 的 settings.json 允许注释（JSONC），serde_json 读不懂：不改写、原样保留，并告诉
+    /// 带注释的 JSONC（用户手写的配置常见），serde_json 读不懂：不改写、原样保留，并告诉
     /// 调用方「读不懂」（宿主据此写运行日志、在描述符里给前端标记）。
     #[test]
     fn jsonc_config_is_left_alone_and_reported() {
@@ -374,10 +379,10 @@ mod tests {
             vec![format!("skipped (unparsable): {}", path.display())]
         );
 
-        set_unreadable("gemini-test", Some(path.to_string_lossy().into_owned()));
-        assert_eq!(unreadable("gemini-test").as_deref(), Some(path.to_string_lossy().as_ref()));
-        set_unreadable("gemini-test", None);
-        assert_eq!(unreadable("gemini-test"), None);
+        set_unreadable("jsonc-test", Some(path.to_string_lossy().into_owned()));
+        assert_eq!(unreadable("jsonc-test").as_deref(), Some(path.to_string_lossy().as_ref()));
+        set_unreadable("jsonc-test", None);
+        assert_eq!(unreadable("jsonc-test"), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

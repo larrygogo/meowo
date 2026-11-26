@@ -14,13 +14,13 @@ const SRC = dirname(fileURLToPath(import.meta.url));
  * 整句识别规则。
  *
  * 这类回潮**没有任何失败信号**：不会有测试变红、也不会报错，只会让下一个接进来的
- * agent 悄悄少一块能力（用户侧表现为「为什么 gemini 没有这个」），所以只能靠守卫拦。
+ * agent 悄悄少一块能力（用户侧表现为「为什么 antigravity 没有这个」），所以只能靠守卫拦。
  *
  * 只禁**比较**（`=== "claude"`、`includes("kimi")`），不禁数据声明
  * （`provider: "claude"`、`["claude"]`）——后者是首帧占位、默认文法自述、预览页固件，
  * 都会被后端下发的真值覆盖，不构成能力判断。
  */
-const AGENT_IDS = ["claude", "codex", "kimi", "gemini", "opencode"];
+const AGENT_IDS = ["claude", "codex", "kimi", "antigravity", "opencode"];
 
 /**
  * 守卫覆盖面：src/ 下**全部**生产 ts/tsx，自动枚举——手工名单必然漂移（曾只列 6 个
@@ -81,7 +81,7 @@ const ALIAS_COMPARISONS = (name: string) => [
 ];
 
 /**
- * 带 Provider 前缀的标识（屏幕识别规则 id `claude:plan-approval`、说明键 `gemini.approval.default`）
+ * 带 Provider 前缀的标识（屏幕识别规则 id `claude:plan-approval`、说明键 `antigravity.approval.auto`）
  * 是按身份分支的另一种写法：比的不是 `"claude"` 本身，效果一样。`[.:]` 之后至少一个字符。
  */
 const PREFIXED = (id: string) => `["']${id}[.:][^"']+["']`;
@@ -98,14 +98,13 @@ const PREFIXED_COMPARISONS = (id: string) => [
 const PREFIXED_ALLOWED: Record<string, Record<string, string>> = {};
 
 /**
- * 以 Provider 为键的查表（`{ claude: …, kimi: … }`、`{ "gemini.approval.default": … }`）同样是按身份
+ * 以 Provider 为键的查表（`{ claude: …, kimi: … }`、`{ "antigravity.approval.auto": … }`）同样是按身份
  * 分支，只是写成了数据。只允许纯展示用途（图标、品牌色、显示名），逐个文件列出并写理由。
  */
 const KEYED_TABLE = new RegExp(`^\\s*["']?(${AGENT_IDS.join("|")})(?:[.:][\\w.:-]+)?["']?\\s*:\\s`);
 const KEYED_ALLOWED: Record<string, string> = {
   "providers.tsx": "各家的品牌图标与底色：纯展示，不决定任何功能有无",
   "views/island/islandParts.tsx": "灵动岛用量环的品牌色：纯展示",
-  "views/chat/modeChoices.ts": "模式短名的文案映射（键是后端声明的说明键）：只决定叫什么，不决定能不能做",
   "views/chatWindow.harness.tsx": "测试夹具（不叫 .test 所以被扫到）：按 id 造各家的终端画面样本",
 };
 
@@ -157,14 +156,14 @@ describe("架构守卫", () => {
     expect(branch(`if (agent === 'claude') {`)).toBe(true);
     expect(branch(`provider === "kimi" ? a : b`)).toBe(true);
     expect(branch(`case "codex":`)).toBe(true);
-    expect(branch(`["gemini"].includes(provider)`)).toBe(false); // 数组字面量是数据声明，见上
+    expect(branch(`["antigravity"].includes(provider)`)).toBe(false); // 数组字面量是数据声明，见上
     expect(branch(`ids.includes("opencode")`)).toBe(true);
     expect(prefixed(`attention.id === "claude:plan-approval"`)).toBe(true);
     expect(prefixed(`id.startsWith("kimi:")`)).toBe(true);
-    expect(prefixed(`case "gemini:usage-limit":`)).toBe(true);
+    expect(prefixed(`case "antigravity:command-approval":`)).toBe(true);
     expect(prefixed(`id: "claude:plan-approval",`)).toBe(false);
     expect(KEYED_TABLE.test(`  claude: { Icon: ClaudeMark },`)).toBe(true);
-    expect(KEYED_TABLE.test(`  "gemini.approval.default": "askChanges",`)).toBe(true);
+    expect(KEYED_TABLE.test(`  "antigravity.approval.auto": "askChanges",`)).toBe(true);
     expect(KEYED_TABLE.test(`  provider: "claude",`)).toBe(false);
   });
 

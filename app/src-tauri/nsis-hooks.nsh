@@ -201,9 +201,10 @@ Var LegacyHadStartMenuLnk
   ${EndIf}
 !macroend
 
-; 卸载时撤掉 Meowo 写进各家 CLI 配置文件的东西（发图工具 2026-11-21 起）：gemini settings.json 的
-; mcpServers.meowo 与 ~/.gemini/policies/meowo-images.toml、kimi mcp.json 的 meowo 一项与 config.toml
-; 里带 Meowo 标记的审批规则（各账号目录都清）。这些文件是用户自己的 CLI 配置，Meowo 卸了还留着，
+; 卸载时撤掉 Meowo 写进各家 CLI 配置文件的东西（发图工具 2026-11-21 起）：antigravity 全局
+; ~/.gemini/config/mcp_config.json 的 mcpServers.meowo、kimi mcp.json 的 meowo 一项与 config.toml
+; 里带 Meowo 标记的审批规则（各账号目录都清）；已退役的 gemini 插件当年写进 ~/.gemini 的接线也一并清
+; （meowo_agent::retired）。这些文件是用户自己的 CLI 配置，Meowo 卸了还留着，
 ; 就是一条指向已删除 exe 的 MCP 服务器和一条没人认领的免审批规则。
 ;
 ; 增删逻辑与应用启动时登记的是同一份（meowo_agent::mcp_config），所以交给 sidecar 子命令做，

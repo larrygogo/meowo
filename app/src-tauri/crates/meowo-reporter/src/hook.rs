@@ -21,7 +21,8 @@ pub struct HookEvent {
     pub prompt: Option<serde_json::Value>,
     #[serde(default)]
     pub tool_name: Option<String>,
-    /// Gemini 的 Notification 也用于普通通知，只把官方 ToolPermission 当成待审批。
+    /// Notification 也用于普通通知，只把 `ToolPermission` 当成待审批。这个取值出自已移除的 gemini
+    /// 插件；现役插件里只有 kimi 订阅 Notification，取值未查证，分支保留。
     #[serde(default)]
     pub notification_type: Option<String>,
     #[serde(default)]
@@ -35,9 +36,8 @@ pub struct HookEvent {
     #[serde(default)]
     pub permission_suggestions: Vec<serde_json::Value>,
     /// 回合结束时 hook 携带的最近一条 AI 正文。各家字段名不同，靠 alias 收束到同一个字段：
-    /// claude/codex 是 `last_assistant_message`，kimi 是 `assistant_message`，
-    /// gemini 的 `AfterAgent` 叫 `prompt_response`。
-    #[serde(default, alias = "assistant_message", alias = "prompt_response")]
+    /// claude/codex 是 `last_assistant_message`，kimi 是 `assistant_message`。
+    #[serde(default, alias = "assistant_message")]
     pub last_assistant_message: Option<String>,
     /// 事件来自子代理时的子代理 id（Claude Code 2.1.327 包内 hook 公共字段：「Present only when the
     /// hook fires from within a subagent … Absent for the main thread」）。子代理的工具调用同样触发

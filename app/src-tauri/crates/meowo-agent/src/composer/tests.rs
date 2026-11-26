@@ -85,6 +85,19 @@ fn reads_agree_with_shared_frames() {
         "../../../../../src/test/fixtures/composer-frames.json"
     ))
     .unwrap();
+    // 规格改了之后更新样例：`MEOWO_DUMP_COMPOSER_SPECS=<文件> cargo test -p meowo-agent --lib
+    // reads_agree_with_shared_frames`，把写出来的 JSON 填进样例的 `specs`（键是 provider，取样例里该家
+    // 帧标的版本）。
+    if let Ok(path) = std::env::var("MEOWO_DUMP_COMPOSER_SPECS") {
+        let mut specs = serde_json::Map::new();
+        for frame in fixture["frames"].as_array().unwrap() {
+            let provider = frame["provider"].as_str().unwrap();
+            if let Some(spec) = crate::by_id(provider).and_then(|p| p.composer(frame["version"].as_str())) {
+                specs.insert(provider.to_string(), serde_json::to_value(spec).unwrap());
+            }
+        }
+        std::fs::write(path, serde_json::to_string_pretty(&specs).unwrap()).unwrap();
+    }
     let mut checked = 0;
     let mut drafts = 0;
     let mut exact = 0;
@@ -122,7 +135,7 @@ fn reads_agree_with_shared_frames() {
             frame["cols"].as_u64().map(|cols| cols as usize),
             frame["rows"].as_u64().map(|rows| rows as usize),
         );
-        // rawOnly：这一帧去掉行尾空格后本来就认不出（Gemini 草稿里的空行是一串空格），只按原样判。
+        // rawOnly：这一帧去掉行尾空格后本来就认不出（已移除的 gemini 插件的草稿空行是一串空格，现役样例暂无），只按原样判。
         let raw_only = frame["rawOnly"].as_bool().unwrap_or(false);
         let screens: &[&Vec<String>] = if raw_only { &[&lines] } else { &[&lines, &trimmed] };
         for screen in screens {
@@ -176,13 +189,14 @@ fn reads_agree_with_shared_frames() {
     assert!(checked >= 25);
     // 五家 × 十来种草稿形态的保真帧都在（每帧按原样与去行尾空格各判一次）。
     assert!(drafts >= 100, "草稿保真的帧只核对了 {drafts} 次");
-    // 七个终端宽度 × 五家的折行形态都在（每个尺寸里读全的只有四五种）。
-    assert!(drafts >= 1200, "换终端尺寸的帧没进来，只核对了 {drafts} 次");
+    // 七个终端宽度 × 四家的折行形态都在（每个尺寸里读全的只有四五种）。antigravity 的草稿保真没有
+    // 取证（fidelity 为 None，任何草稿都按读不全处理），没有这类帧。
+    assert!(drafts >= 1000, "换终端尺寸的帧没进来，只核对了 {drafts} 次");
     assert!(exact >= 200, "与原文逐字核对的只有 {exact} 次");
     // 五家都要有实拍帧：规格只有一份，哪一家没有样例就等于没测。
     assert_eq!(
         providers.into_iter().collect::<Vec<_>>(),
-        ["claude", "codex", "gemini", "kimi", "opencode"]
+        ["antigravity", "claude", "codex", "kimi", "opencode"]
     );
 }
 

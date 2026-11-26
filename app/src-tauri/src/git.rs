@@ -681,7 +681,7 @@ pub(crate) fn changes_overview_detail(
 }
 
 /// 工作目录下一层里此刻有未提交改动的仓库。每个子仓库只跑一条 `git status --porcelain` 粗筛，
-/// 结果按目录缓存 CHILD_CACHE_TTL：codex / gemini 会话认不出改过的文件（touched 恒空），会一直
+/// 结果按目录缓存 CHILD_CACHE_TTL：codex 这类认不出改过文件的会话（touched 恒空），会一直
 /// 走这条路，workspace 下二十几个仓库挨个跑完整的 repo_changes 要好几秒（做空实测 6.7 秒，超过
 /// 5 秒的轮询间隔）。
 /// changed_children 的缓存。放在外面是为了让写操作（暂存 / 提交 / 放弃）之后能清掉，见 invalidate_caches。

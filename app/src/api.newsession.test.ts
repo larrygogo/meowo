@@ -12,7 +12,7 @@ describe("new-session api", () => {
   it("listAgents 透传后端下发的名单（前端不再自带一份）", async () => {
     invokeMock.mockResolvedValue([
       { id: "claude", display_name: "Claude Code", installed: true, supports_proxy: true },
-      // 一个本版本不认识的 id（曾用 "gemini" 举例，而它后来真成了 agent）。
+      // 一个本版本不认识的 id（别用真实存在过的 agent 名举例，它们可能某天被注册）。
       { id: "not-an-agent", display_name: "Not An Agent", installed: false, supports_proxy: false },
     ]);
     const agents = await listAgents();

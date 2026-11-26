@@ -6,7 +6,7 @@ import {
   runningPlaceholder, runningReceipt, runningSendMode, runningSendVerb, unrecognizedPromptNotice,
 } from "./sendCopy";
 
-const PROVIDERS = ["claude", "codex", "kimi", "gemini", "opencode"] as const;
+const PROVIDERS = ["claude", "codex", "kimi", "antigravity", "opencode"] as const;
 const LANGS = [["zh", zh], ["en", en]] as const;
 
 /// 验收 2：文案与发送结果对应。占位是发之前的许诺，回执是发之后的说法，两处必须是同一个去向。
@@ -16,7 +16,7 @@ describe("回合在跑时发消息的去向", () => {
       claude: "insert",
       codex: "queue",
       kimi: "handoff",
-      gemini: "queue",
+      antigravity: "queue",
       opencode: "queue",
     });
     expect(runningSendMode(null)).toBe("unavailable");

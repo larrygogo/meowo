@@ -1,4 +1,4 @@
-//! `InSessionWaiter`：kimi / gemini（任务 .lead/20261113-lead-tui，C 路）。
+//! `InSessionWaiter`：kimi / antigravity（任务 .lead/20261113-lead-tui，C 路；当时为 kimi 与已移除的 gemini 插件设计）。
 //!
 //! TUI 开着时：等待器（`meowo-reporter lead wait`，TUI 自己在后台跑）看到答复就退出，
 //! CLI 收到「后台任务完成」在空闲时自己开新回合，宿主什么都不推——不往 PTY 打字，草稿与审批框不受影响。
@@ -6,7 +6,7 @@
 //!
 //! TUI 不在时：只保存答复，不起任何后台进程（leader 2026-11-13「不需要离线」：原先 kimi 用 `-S -p`、
 //! gemini 用 `--resume -i` 代跑一轮，已删）。面板提示打开会话后说一句话，届时 hook 把答复交给模型
-//! （kimi Stop / gemini AfterAgent 的 undelivered_answer）。
+//! （kimi / antigravity Stop 的 undelivered_answer）。
 //!
 //! 为什么等待器唤醒不会答掉待批审批、不会发到子代理（做空 H3，2026-11-13 读本机 CLI 源码）：
 //! - kimi 2.6.0（kimi.exe 内嵌源码 agent loop）：后台任务结束走 completeDetached → drainDetachedCompletions，
@@ -18,7 +18,8 @@
 //!   （第二轮真机 run5 D）。现在两道闸：PreToolUse 按主 wire 认出子代理在写、直接拒绝并说明「关卡由主
 //!   会话发」（reporter lead_kimi / kimi_gate_guard）；等待器按自己的父进程链对各 agent wire 里的
 //!   task.started，认出是子代理启动的就不等、不交付（lead_waiter Guards）。
-//! - gemini 0.68.0（interactiveCli-ZJ2ZELJM.js:35141 起的空闲 effect）：只在 streamingState === idle、
+//! - antigravity 1.5.18：没有源码可读，这两点未查证，Lead 的 limitations 如实标出（lead/auto_continue_unverified）。
+//! - 已移除的 gemini 插件 0.68.0（留作当时的取证记录；interactiveCli-ZJ2ZELJM.js:35141 起的空闲 effect）：只在 streamingState === idle、
 //!   MCP 就绪、且 !isToolAwaitingConfirmation(pendingHistoryItems) 时才把 background_completion 注入
 //!   提交成新回合；提交的是单独构造的提示，不动输入框缓冲（草稿保留，假模型实测）。注入服务是会话级，
 //!   主界面空闲时一定消费（InjectionService 对所有监听者广播，在跑的子代理也会收到一份，但主界面不会漏）。

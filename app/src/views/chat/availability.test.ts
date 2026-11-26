@@ -7,7 +7,7 @@ import {
   modelListMechanism, modelMechanism, modelMenuState, needsNewSession, savesDefaultHint, sessionBusy, type ControlMechanism,
 } from "./availability";
 
-const PROVIDERS = ["claude", "codex", "kimi", "gemini", "opencode"] as const;
+const PROVIDERS = ["claude", "codex", "kimi", "antigravity", "opencode"] as const;
 const launchOptions = (provider: string) => descriptors([...PROVIDERS]).find((agent) => agent.id === provider)!.launch_options;
 const option = (provider: string, id: string) => launchOptions(provider).find((candidate) => candidate.id === id)!;
 const control = (provider: string, dimension: string) => chatUi(provider)!.mode_controls.find((candidate) => candidate.dimension === dimension) ?? null;
@@ -66,7 +66,7 @@ describe("controlAvailability 的规则", () => {
 describe("能力声明 → 机制（五家）", () => {
   it("切模型", () => {
     expect(Object.fromEntries(PROVIDERS.map((provider) => [provider, modelMechanism(chatUi(provider))]))).toEqual({
-      claude: "command", codex: "service", kimi: "restart", gemini: "restart", opencode: "dialog",
+      claude: "command", codex: "service", kimi: "restart", antigravity: "restart", opencode: "dialog",
     });
     expect(modelMechanism(null)).toBeNull();
     expect(modelMechanism({ model_switch: null, model_select_command: null, model_menu_command: "/model" })).toBe("terminal_menu");
@@ -79,9 +79,9 @@ describe("能力声明 → 机制（五家）", () => {
     }
   });
 
-  it("思考档：Claude、Kimi 打命令，Codex 走会话服务，Gemini、OpenCode 没有", () => {
+  it("思考档：Claude、Kimi 打命令，Codex 走会话服务，Antigravity、OpenCode 没有", () => {
     expect(Object.fromEntries(PROVIDERS.map((provider) => [provider, effortMechanism(chatUi(provider))]))).toEqual({
-      claude: "command", codex: "service", kimi: "command", gemini: null, opencode: null,
+      claude: "command", codex: "service", kimi: "command", antigravity: null, opencode: null,
     });
   });
 
@@ -94,8 +94,8 @@ describe("能力声明 → 机制（五家）", () => {
     // Kimi 权限：带参重启；计划开关：直达命令。
     expect(modeMechanism(option("kimi", "permission"), null, { inputs: [] })).toBe("restart");
     expect(modeMechanism(option("kimi", "work"), control("kimi", "work"), { inputs: [{ data: "/plan on", submit: true }] })).toBe("command");
-    // Gemini 审批：带参重启。OpenCode agent：TUI 对话框。
-    expect(modeMechanism(option("gemini", "approval"), null, { inputs: [] })).toBe("restart");
+    // Antigravity 审批：带参重启。OpenCode agent：TUI 对话框。
+    expect(modeMechanism(option("antigravity", "approval"), null, { inputs: [] })).toBe("restart");
     expect(modeMechanism(option("opencode", "agent"), control("opencode", "agent"), { inputs: [] })).toBe("dialog");
     // 什么都没声明。
     expect(modeMechanism(null, null, { inputs: [] })).toBeNull();
@@ -117,9 +117,9 @@ describe("收紧权限（走查输入 B8）", () => {
     expect(needsNewSession(kimi, choice("manual"), "manual")).toBe(false);
     expect(needsNewSession(kimi, choice("auto"), "manual")).toBe(false);
     expect(needsNewSession(kimi, choice("yolo"), "auto")).toBe(false);
-    // Gemini 也是带参重启，但每一档都带参数、接回可以收紧。
-    const gemini = option("gemini", "approval");
-    for (const candidate of gemini.choices) expect(needsNewSession(gemini, candidate, "yolo"), candidate.id).toBe(false);
+    // Antigravity 也是带参重启，但每一档都带参数、接回可以收紧。
+    const agy = option("antigravity", "approval");
+    for (const candidate of agy.choices) expect(needsNewSession(agy, candidate, "plan"), candidate.id).toBe(false);
     // Kimi 的计划开关声明了只能放宽，但它走直达命令不走重启。
     const work = option("kimi", "work");
     expect(needsNewSession(work, work.choices[0], "plan")).toBe(false);
@@ -159,8 +159,8 @@ describe("模式菜单每一档的状态（五家）", () => {
     expect(running.byId.auto).toEqual({ state: "queued", note: zh.chat.availability.queuedAfterTurn });
   });
 
-  it("Codex、Gemini、OpenCode：回合在跑时每一档都排队，没有置灰", () => {
-    for (const [provider, id, current] of [["codex", "approval", "ask"], ["codex", "collaboration", "default"], ["gemini", "approval", "default"], ["opencode", "agent", "build"]] as const) {
+  it("Codex、Antigravity、OpenCode：回合在跑时每一档都排队，没有置灰", () => {
+    for (const [provider, id, current] of [["codex", "approval", "ask"], ["codex", "collaboration", "default"], ["antigravity", "approval", "auto"], ["opencode", "agent", "build"]] as const) {
       const running = menu(provider, id, "running", current);
       for (const [value, availability] of Object.entries(running.byId)) {
         expect(availability.state, `${provider}.${id}.${value}`).toBe(value === current ? "available" : "queued");
@@ -206,8 +206,8 @@ describe("思考档入口（走查输入 B7）", () => {
     expect(effortEntry(chatUi("codex"), { ...model, efforts: ["medium"] })).toBeNull();
   });
 
-  it("Gemini、OpenCode：没有声明思考档能力，不出入口", () => {
-    expect(effortEntry(chatUi("gemini"), model)).toBeNull();
+  it("Antigravity、OpenCode：没有声明思考档能力，不出入口", () => {
+    expect(effortEntry(chatUi("antigravity"), model)).toBeNull();
     expect(effortEntry(chatUi("opencode"), model)).toBeNull();
     expect(effortEntry(null, model)).toBeNull();
   });
@@ -220,7 +220,7 @@ describe("切换会不会改 CLI 默认配置（走查输入 C1）", () => {
       claude: zh.chat.savesDefault.model,
       codex: null,
       kimi: zh.chat.savesDefault.effort,
-      gemini: null,
+      antigravity: null,
       opencode: null,
     });
   });

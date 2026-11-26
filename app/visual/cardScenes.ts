@@ -4,10 +4,10 @@
 // 能力表用测试夹具的 chatUi(provider)（与后端各插件声明同源），所以这里拍到的卡片与真实会话走的是同一条识别链。
 import { chatUi } from "../src/test/agents";
 import {
+  ANTIGRAVITY_APPROVAL_SCREEN,
   CLAUDE_APPROVAL_SCREEN,
   CLAUDE_BROKER_APPROVAL,
   CODEX_BROKER_APPROVAL,
-  GEMINI_APPROVAL_SCREEN,
   KIMI_APPROVAL_SCREEN,
   OPENCODE_ALWAYS_CONFIRM_SCREEN,
   OPENCODE_PERMISSION_SCREEN,
@@ -20,7 +20,7 @@ const startupScreen = (name: "bypass-permissions" | "custom-api-key") => startup
 
 type Lang = "zh" | "en";
 type Scene = {
-  provider: "claude" | "codex" | "kimi" | "gemini" | "opencode";
+  provider: "claude" | "codex" | "kimi" | "antigravity" | "opencode";
   /// 托管终端的屏幕文本（屏幕通道）。
   screen?: string;
   /// broker 挂起的审批。
@@ -58,7 +58,7 @@ export const CARD_SCENES: Record<string, Scene> = {
   "claude-approval": { provider: "claude", approval: CLAUDE_BROKER_APPROVAL, pendingReview: "approval", running: true },
   "codex-approval": { provider: "codex", approval: CODEX_BROKER_APPROVAL, pendingReview: "approval", running: true },
   "kimi-approval": { provider: "kimi", screen: KIMI_APPROVAL_SCREEN, running: true },
-  "gemini-approval": { provider: "gemini", screen: GEMINI_APPROVAL_SCREEN, running: true },
+  "antigravity-approval": { provider: "antigravity", screen: ANTIGRAVITY_APPROVAL_SCREEN, running: true },
   "opencode-approval": { provider: "opencode", screen: OPENCODE_PERMISSION_SCREEN, running: true },
   // 多选项：claude 2.1.325 的屏幕审批框有两个持久放行项。
   "claude-screen": { provider: "claude", screen: CLAUDE_APPROVAL_SCREEN, running: true },
@@ -80,26 +80,19 @@ export const CARD_SCENES: Record<string, Scene> = {
     "   [ ] Other",
     "   ↑↓ select  1-4 / ↵ toggle  ←/→/tab switch  esc cancel",
   ) },
-  // gemini 0.65 ask_user 的多选页（npm bundle 源码取证，与 terminalAttention.test.ts 的样本同一份）。
-  "gemini-form": { provider: "gemini", running: true, screen: [
-    "⠏ Waiting for user confirmation...",
-    "╭──────────────────────────────────────────────────────╮",
-    "│ Answer Questions                                     │",
-    "│──────────────────────────────────────────────────────│",
-    "│ ← ✓ Database │ □ Features │ ≡ Review →               │",
-    "│ Which features do you want?                          │",
-    "│ (Select all that apply)                              │",
-    "│                                                      │",
-    "│ ● 1. [x] Auth                                        │",
-    "│   2. [ ] Billing                                     │",
-    "│   3. [ ] All of the above                            │",
-    "│         Select all options                           │",
-    "│   4. [ ] Enter a custom value                        │",
-    "│        Done                                          │",
-    "│         Finish selection                             │",
-    "│                                                      │",
-    "│ Enter to select · ←/→ to switch questions · Esc to cancel │",
-    "╰──────────────────────────────────────────────────────╯",
+  // antigravity 1.5.18 的提问表单（模型调 ask_question，2026-11-26 屏幕取证 run2/16_ask_form.txt，裁到面板附近）。
+  "antigravity-form": { provider: "antigravity", running: true, screen: [
+    "Question",
+    "─".repeat(120),
+    "",
+    "Question 1/1: 请选择要创建的文件名：",
+    "",
+    "> 1. (Recommended) a.txt",
+    "  2. b.txt",
+    "  3. Write-in...",
+    "",
+    "  ↑/↓ Navigate · enter Select · esc Skip · ctrl+r Review",
+    "esc to cancel                                                                                       Gemini 4 Neon · high",
   ].join("\n") },
   "claude-selector": { provider: "claude", pendingReview: "question", running: true, screen: [
     "Which validation library should we use?", "", "❯ 1. Zod", "     TypeScript-first, already in the project", "  2. Yup", "     Larger bundle",
@@ -117,17 +110,15 @@ export const CARD_SCENES: Record<string, Scene> = {
     "", " Enter to select · ↑/↓ to navigate · Esc to cancel",
   ].join("\n") },
   // ── 提示卡 ──
-  "gemini-limit": { provider: "gemini", running: true, screen: [
-    " > say hi",
-    "╭──────────────────────────────────────────────╮",
-    "│                                              │",
-    "│ Usage limit reached for gemini-3.8-flash.    │",
-    "│ /stats model for usage details               │",
-    "│ /model to switch models.                     │",
-    "│                                              │",
-    "│ ● 1. Keep trying                             │",
-    "│   2. Stop                                    │",
-    "╰──────────────────────────────────────────────╯",
+  // antigravity 首次进入未信任目录的信任页（2026-11-26 屏幕取证 run1/01_trust_prompt.txt，路径换成占位）：插件声明为等你选择。
+  "antigravity-trust": { provider: "antigravity", running: true, screen: [
+    "Accessing workspace:",
+    "C:/work/demo",
+    "Do you trust the contents of this project?",
+    "Antigravity CLI requires permission to read, edit, and execute files here.",
+    "> Yes, I trust this folder",
+    "  No, exit",
+    "  ↑/↓ Navigate · enter Confirm",
   ].join("\n") },
   "opencode-confirm": { provider: "opencode", screen: OPENCODE_ALWAYS_CONFIRM_SCREEN, running: true },
   "claude-plan": { provider: "claude", running: true, screen: [
@@ -135,31 +126,13 @@ export const CARD_SCENES: Record<string, Scene> = {
     "❯ 1. Yes, and bypass permissions", "  2. Yes, manually approve edits", "  3. Tell Claude what to change",
   ].join("\n") },
   // ── 做空修复与验收 27 补的场景 ──
-  // 多选项审批卡：gemini 改文件的确认框，多一项认不出角色的「其他选项」和一项写进设置的放行。
-  "gemini-editor": { provider: "gemini", running: true, screen: [
-    "╭──────────────────────────────────────────────────╮",
-    "│ ? Edit  src/components/LoginForm.tsx             │",
-    "│ Apply this change?                               │",
-    "│                                                  │",
-    "│ ● 1. Allow once                                  │",
-    "│   2. Allow for this session                      │",
-    "│   3. Allow for this file in all future sessions  │",
-    "│   4. Modify with external editor                 │",
-    "│   5. No, suggest changes (esc)                   │",
-    "╰──────────────────────────────────────────────────╯",
-  ].join("\n") },
-  // gemini 高负载框（三项）。
-  "gemini-demand": { provider: "gemini", running: true, screen: [
-    "╭──────────────────────────────────────────────────────────╮",
-    "│ We are currently experiencing high demand for gemini-3.8-pro. │",
-    "│ We apologize and appreciate your patience.               │",
-    "│ /model to switch models.                                 │",
-    "│                                                          │",
-    "│ ● 1. Keep trying                                         │",
-    "│   2. Switch to gemini-3.8-flash                          │",
-    "│   3. Stop                                                │",
-    "╰──────────────────────────────────────────────────────────╯",
-  ].join("\n") },
+  // 多选项审批卡：antigravity 命令审批框（真机）里插一项认不出角色的「其他选项」（合成），连同本对话内与
+  // 写进 settings.json 的两项持久放行。
+  "antigravity-editor": { provider: "antigravity", running: true, screen: ANTIGRAVITY_APPROVAL_SCREEN.replace(
+    "  4. No, cancel",
+    "  4. Modify with external editor\n  5. No, cancel",
+  ) },
+
   // kimi 单选提问：末尾的 Other 是自定义答案输入框。
   "kimi-form-single": { provider: "kimi", running: true, screen: kimiForm(
     "   Q1    Submit",

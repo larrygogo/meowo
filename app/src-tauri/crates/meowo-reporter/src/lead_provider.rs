@@ -1,5 +1,6 @@
 //! 原生 hook 的身份/工具/输出适配。资料：Codex 官方 /docs/hooks；Kimi Code hooks；
-//! Gemini hooks/reference；OpenCode v1.19.3 packages/plugin/src/index.ts。
+//! Antigravity CLI 内置 hooks 文档与真机探针（负载先经插件的 normalize_hook_payload 改成规范形状）；
+//! OpenCode v1.19.3 packages/plugin/src/index.ts。
 //! MCP 工具参数不能提供会话身份；未知事件、工具、失败形状均放行且不认领。
 
 use crate::lead::{self, Output, TurnEvidence};
@@ -16,7 +17,7 @@ use std::{
 enum Provider {
     Codex,
     Kimi,
-    Gemini,
+    Antigravity,
     OpenCode,
 }
 impl Provider {
@@ -24,7 +25,7 @@ impl Provider {
         match name {
             "codex" => Some(Self::Codex),
             "kimi" => Some(Self::Kimi),
-            "gemini" => Some(Self::Gemini),
+            "antigravity" => Some(Self::Antigravity),
             "opencode" => Some(Self::OpenCode),
             _ => None,
         }
@@ -33,7 +34,7 @@ impl Provider {
         match self {
             Self::Codex => "codex",
             Self::Kimi => "kimi",
-            Self::Gemini => "gemini",
+            Self::Antigravity => "antigravity",
             Self::OpenCode => "opencode",
         }
     }
@@ -112,14 +113,10 @@ fn normalize(provider: Provider, raw: &Value) -> Option<Native> {
                     | "Stop"
                     | "PostCompact"
             ),
-            Provider::Gemini => matches!(
+            // 规范名：PreInvocation（每回合第一次）已改写成 UserPromptSubmit，见 plugins::antigravity::hook。
+            Provider::Antigravity => matches!(
                 event,
-                "SessionStart"
-                    | "BeforeAgent"
-                    | "BeforeModel"
-                    | "BeforeTool"
-                    | "AfterTool"
-                    | "AfterAgent"
+                "SessionStart" | "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "Stop"
             ),
             Provider::OpenCode => false,
         };
@@ -177,8 +174,7 @@ fn failed(response: &Value) -> bool {
 
 fn write_call(provider: Provider, native: &Native, raw: &Value) -> Option<Value> {
     let expected = match provider {
-        Provider::Codex | Provider::Kimi => "PostToolUse",
-        Provider::Gemini => "AfterTool",
+        Provider::Codex | Provider::Kimi | Provider::Antigravity => "PostToolUse",
         Provider::OpenCode => "tool.execute.after",
     };
     if native.event != expected {
@@ -197,11 +193,6 @@ fn write_call(provider: Provider, native: &Native, raw: &Value) -> Option<Value>
             raw.get("tool_response").unwrap_or(&Value::Null),
         )
     };
-    if provider == Provider::Gemini
-        && (!response.is_object() || response.get("llmContent").is_none())
-    {
-        return None;
-    }
     if provider == Provider::OpenCode && response.get("output").and_then(Value::as_str).is_none() {
         return None;
     }
@@ -231,14 +222,18 @@ fn write_call(provider: Provider, native: &Native, raw: &Value) -> Option<Value>
             name,
             json!({"file_path":string(input,"path").or_else(|| string(input,"file_path"))?}),
         ),
-        (Provider::Gemini, "write_file" | "replace") => {
-            ("Write", json!({"file_path":string(input,"file_path")?}))
-        }
+        // agy 的参数是 PascalCase（真机库：write_file 的 Path / Content）。
+        (Provider::Antigravity, "write_file" | "edit_file") => (
+            "Write",
+            json!({"file_path":string(input,"Path").or_else(|| string(input,"TargetFile"))?}),
+        ),
         (Provider::OpenCode, "write" | "edit") => {
             ("Write", json!({"file_path":string(input,"filePath")?}))
         }
+        (Provider::Antigravity, "run_command") => {
+            ("Bash", json!({"command":string(input,"CommandLine")?}))
+        }
         (Provider::Kimi, "Bash")
-        | (Provider::Gemini, "run_shell_command")
         | (Provider::OpenCode, "bash")
         | (Provider::Codex, "Bash") => {
             if provider == Provider::Codex
@@ -252,22 +247,6 @@ fn write_call(provider: Provider, native: &Native, raw: &Value) -> Option<Value>
                 && response.pointer("/metadata/exit").and_then(Value::as_i64) != Some(0)
             {
                 return None;
-            }
-            if provider == Provider::Gemini {
-                let output = response.get("llmContent").and_then(Value::as_str)?;
-                if input.get("is_background").and_then(Value::as_bool) == Some(true)
-                    || response.pointer("/data/pid").is_some()
-                    || [
-                        "Command was cancelled",
-                        "Command was automatically cancelled",
-                        "Command moved to background",
-                        "Signal:",
-                    ]
-                    .iter()
-                    .any(|marker| output.contains(marker))
-                {
-                    return None;
-                }
             }
             ("Bash", json!({"command":string(input,"command")?}))
         }
@@ -283,7 +262,8 @@ struct TurnState {
     user: String,
     calls: Vec<Value>,
     blocked: bool,
-    /// 本回合已经为哪个关卡要求过启动等待器（gemini 的 AfterAgent deny 不限次数，只问一次）。
+    /// 本回合已经为哪个关卡要求过启动等待器（agy 的 Stop continue 不限次数，续跑那轮的
+    /// continuationActive 也不可靠——真机探针仍是 false——只问一次）。
     #[serde(default)]
     waiter_asked: Option<String>,
 }
@@ -390,15 +370,11 @@ pub fn run(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
     if !matches!(mode, "session" | "claim" | "stop" | "gate") {
         return Output::default();
     }
-    if mode == "claim"
-        && !raw.contains(".lead")
-        && !raw.contains("lead wait --provider gemini")
-        && !raw.contains(GEMINI_AGENT_TOOL)
-    {
+    if mode == "claim" && !raw.contains(".lead") {
         return Output::default();
     }
-    // PreToolUse / BeforeTool 每次工具调用都会跑：不碰关卡文件、也不是派子代理的直接放行。
-    if mode == "gate" && !raw.contains("gate.json") && !raw.contains(GEMINI_AGENT_TOOL) {
+    // PreToolUse 每次工具调用都会跑：不碰关卡文件的直接放行。
+    if mode == "gate" && !raw.contains("gate.json") {
         return Output::default();
     }
     std::panic::catch_unwind(|| run_inner(provider, mode, raw, registry)).unwrap_or_default()
@@ -407,6 +383,14 @@ pub fn run(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
 fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
     let Some(provider) = Provider::parse(provider) else {
         return Output::default();
+    };
+    // agy 的负载是 camelCase、部分字段是 JSON 字符串，还会送来 App/IDE 的会话：先经插件改写成规范形状
+    // （与普通上报同一个入口，reporter 不按 agent 身份解析）。
+    let rewritten = meowo_agent::by_id(provider.id()).map(|plugin| plugin.normalize_hook_payload(raw));
+    let raw = match &rewritten {
+        Some(meowo_agent::HookPayload::Ignore) => return Output::default(),
+        Some(meowo_agent::HookPayload::Rewrite(text)) => text.as_str(),
+        _ => raw,
     };
     let Ok(raw) = serde_json::from_str::<Value>(raw) else {
         return Output::default();
@@ -418,33 +402,15 @@ fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
         .as_str()
         .unwrap_or_default()
         .to_string();
-    if provider == Provider::Gemini && matches!(native.event.as_str(), "BeforeAgent" | "AfterAgent") {
-        // 主回合开始/结束时不可能有子代理在跑（gemini 子代理在主回合的 invoke_agent 调用里同步执行）：
-        // 清掉可能残留的标记（invoke_agent 被取消时不一定有 AfterTool）。这两个事件只由主客户端触发
-        // （0.68 GeminiClient.fireBeforeAgentHookSafe / fireAfterAgentHookSafe）。
-        subagents_clear(registry, &session);
-    }
     if mode == "gate" {
         return match (provider, native.event.as_str()) {
-            (Provider::Kimi, "PreToolUse") => {
-                kimi_gate_guard(&native, &raw, &session, registry).unwrap_or_default()
-            }
-            (Provider::Gemini, "BeforeTool") => {
-                gemini_gate_guard(&native, &raw, &session, registry).unwrap_or_default()
+            (Provider::Kimi | Provider::Antigravity, "PreToolUse") => {
+                gate_guard(provider, &native, &raw, &session, registry).unwrap_or_default()
             }
             _ => Output::default(),
         };
     }
     if mode == "claim" {
-        if provider == Provider::Gemini {
-            if string(&raw, "tool_name") == Some(GEMINI_AGENT_TOOL) {
-                subagent_leave(registry, &session, &raw);
-                return Output::default();
-            }
-            if let Some(out) = gemini_waiter_started(&raw, &session) {
-                return out;
-            }
-        }
         let Some(call) = write_call(provider, &native, &raw) else {
             return Output::default();
         };
@@ -474,32 +440,18 @@ fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
         if native.turn.is_some() {
             state.turn = native.turn;
         }
-        let gate_written = touches_gate(&call);
         state.calls.push(call);
         if state.calls.len() > 64 {
             state.calls.remove(0);
         }
         let _ = save_state(&task, provider, &state);
-        // 子代理写的关卡不给它起等待器（BeforeTool 本该已拦下，这里兜住没拦到的写法）。
-        if provider == Provider::Gemini
-            && gate_written
-            && !lead::publication::exists(&task)
-            && !gemini_subagent_running(registry, &session, &raw)
-        {
-            if let Some(tail) = gemini_waiter_tail(&task, &session) {
-                return tail;
-            }
-        }
         return out;
     }
     let Some(task) = lead::task_of_session(&session, registry) else {
         return Output::default();
     };
     let mut state = read_state(&task, provider, &session);
-    let prompt_event = matches!(
-        native.event.as_str(),
-        "UserPromptSubmit" | "BeforeAgent" | "chat.message"
-    );
+    let prompt_event = matches!(native.event.as_str(), "UserPromptSubmit" | "chat.message");
     if prompt_event {
         state = TurnState {
             session: session.clone(),
@@ -526,10 +478,7 @@ fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
             if !(prompt_event
                 || matches!(
                     native.event.as_str(),
-                    "SessionStart"
-                        | "BeforeModel"
-                        | "experimental.chat.system.transform"
-                        | "session.created"
+                    "SessionStart" | "experimental.chat.system.transform" | "session.created"
                 ))
             {
                 return Output::default();
@@ -558,44 +507,10 @@ fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
                     }
                 }
                 Provider::OpenCode => json!({"additionalContext":context}),
-                Provider::Gemini if native.event == "BeforeModel" => {
-                    // 子代理在跑时这次请求多半是子代理发的：不改写。Lead 上下文叫模型「按 lead 流程推进」，
-                    // 子代理照做就会去写关卡；第三轮 run1 的两次 400 也都出在关卡被认领后改写过的请求上。
-                    if gemini_subagent_running(registry, &session, &raw) {
-                        return Output::default();
-                    }
-                    let Some(mut request) =
-                        raw.get("llm_request").cloned().filter(Value::is_object)
-                    else {
-                        return Output::default();
-                    };
-                    let Some(messages) = request.get_mut("messages").and_then(Value::as_array_mut)
-                    else {
-                        return Output::default();
-                    };
-                    // role 只能是 user：0.68 把 hook 消息原样转成 contents，Gemini API 对 system 角色回
-                    // 400「Role 'system' is not supported」（2026-11-13 真模型实测，假模型测不出）。
-                    // 已有的旧上下文就地替换、不删除：fromHookLLMRequest 按下标把带文本的消息对回原
-                    // contents，删掉中间一条会让后面的消息全部错位。
-                    let content = format!("[meowo-lead-context]\n{context}");
-                    let existing = messages.iter_mut().find(|message| {
-                        message["content"]
-                            .as_str()
-                            .is_some_and(|text| text.starts_with("[meowo-lead-context]\n"))
-                    });
-                    match existing {
-                        Some(message) => *message = json!({"role":"user","content":content}),
-                        None => messages.push(json!({"role":"user","content":content})),
-                    }
-                    // 原样回写的消息也只许 user / model：0.68 fromHookLLMRequest 对非 model 的角色原样照抄进
-                    // contents（`role: message.role === "model" ? "model" : message.role`），而 toHookLLMRequest
-                    // 会把 contents 里的 system 原样交给 hook。不管上游为什么带了 system，经我们手的请求都不能带出去。
-                    for message in messages.iter_mut() {
-                        if message["role"] != "model" {
-                            message["role"] = json!("user");
-                        }
-                    }
-                    json!({"hookSpecificOutput":{"llm_request":request}})
+                // agy：SessionStart / PreInvocation 的输出只认 injectSteps，系统消息会永久留在对话里
+                // （hooks.md Note）。每回合第一次调用才注入一次（PreInvocation invocationNum == 0）。
+                Provider::Antigravity => {
+                    json!({"injectSteps":[{"systemMessage":{"systemMessage":context}}]})
                 }
                 _ => {
                     json!({"hookSpecificOutput":{"hookEventName":native.event,"additionalContext":context}})
@@ -607,29 +522,19 @@ fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
             }
         }
         "stop" => {
-            if matches!(provider, Provider::Kimi | Provider::Gemini)
-                && matches!(native.event.as_str(), "Stop" | "AfterAgent")
-            {
+            if matches!(provider, Provider::Kimi | Provider::Antigravity) && native.event == "Stop" {
                 if let Some(out) = waiter_stop(provider, &task, &session, &mut state) {
                     return out;
                 }
             }
             if provider == Provider::OpenCode
-                || !matches!(native.event.as_str(), "Stop" | "AfterAgent")
+                || native.event != "Stop"
                 || state.user.is_empty()
             {
                 return Output::default();
             }
             if state.turn.is_some() && native.turn.is_some() && state.turn != native.turn {
                 return Output::default();
-            }
-            if provider == Provider::Gemini {
-                if let Some(prompt) = native.prompt {
-                    if prompt != state.user {
-                        return Output::default();
-                    }
-                    state.user = prompt;
-                }
             }
             if state.blocked {
                 native.data["stop_hook_active"] = json!(true);
@@ -660,8 +565,9 @@ fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
                     exit: 2,
                     stdout: None,
                 },
-                Provider::Gemini => Output {
-                    stdout: Some(json!({"decision":"deny","reason":reason}).to_string()),
+                // agy Stop：`continue` 阻止结束、reason 作为系统消息注入（真机探针 probe-hooks-1.md 第 7 条）。
+                Provider::Antigravity => Output {
+                    stdout: Some(json!({"decision":"continue","reason":reason}).to_string()),
                     ..Output::default()
                 },
                 _ => out,
@@ -671,41 +577,88 @@ fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
     }
 }
 
-/// kimi：写挂起关卡之前，会话里必须已有等待器。
+/// kimi / antigravity：写挂起关卡之前，会话里必须已有等待器。
 ///
 /// 为什么拦在 PreToolUse：kimi 2.6.0 的 Stop hook 实际从不触发（onDidFinishStep 里检查
 /// hasPendingRequests()，而回合进行中 loop.state.status 不是 idle，恒为真；假模型实测普通回合也不调用），
 /// PostToolUse 又是 fire-and-forget、不读输出。PreToolUse 是同步、可拦截、原因会交给模型的唯一入口：
 /// 拦下写 gate.json（status 为 pending）的调用，原因里给出原样等待命令，模型后台启动它后重写关卡。
 /// 等待器先启动时会等下一个挂起关卡出现再绑定（lead_waiter）。只拦本会话的任务，别人的任务不管。
-fn kimi_gate_guard(native: &Native, raw: &Value, session: &str, registry: &Path) -> Option<Output> {
-    kimi_gate_guard_with(native, raw, session, registry, crate::lead_kimi::writer_is_subagent)
+///
+/// agy 的 PreToolUse 同样同步、可拦（`{"decision":"deny","reason"}`，原因交给模型）；它的子代理是
+/// 单独的对话，负载带父对话 id，已在负载改写时整个丢掉，走到这里的只会是主 agent。
+fn gate_guard(provider: Provider, native: &Native, raw: &Value, session: &str, registry: &Path) -> Option<Output> {
+    match provider {
+        Provider::Kimi => gate_guard_with(provider, native, raw, session, registry, crate::lead_kimi::writer_is_subagent),
+        _ => gate_guard_with(provider, native, raw, session, registry, |_| false),
+    }
+}
+
+/// 拦下时的输出：kimi 认退出码 2 + stderr，agy 认 PreToolUse 的 deny 决定。
+fn deny(provider: Provider, reason: String) -> Output {
+    match provider {
+        Provider::Antigravity => Output {
+            stdout: Some(json!({"decision":"deny","reason":reason}).to_string()),
+            ..Output::default()
+        },
+        _ => Output {
+            stderr: Some(reason),
+            exit: 2,
+            stdout: None,
+        },
+    }
+}
+
+/// 怎么在后台启动等待器（说给模型听）。agy 的 run_command 没有后台开关：`WaitMsBeforeAsync` 到点
+/// 还没结束的命令转到后台，结束时唤醒 agent（changelog「when a background task … finishes and wakes the agent」）。
+fn start_how(provider: Provider) -> &'static str {
+    match provider {
+        // BypassSandbox：沙箱里的命令读不到 ~/.meowo（--add-dir 只管文件工具），等待器起来就报「没有找到本会话
+        // 认领的 Lead 任务」退出；agy 自己改成 BypassSandbox 后才起来（#7 真机测试 2026-11-26）。
+        Provider::Antigravity => "用 run_command 在后台启动它（WaitMsBeforeAsync 设为 500，命令会转到后台运行；BypassSandbox 设为 true，沙箱里读不到 Lead 目录；不要设 RunPersistent）",
+        _ => "用 Bash 工具在后台启动它（run_in_background=true，disable_timeout=true，description 写「等待 leader 答复」）",
+    }
 }
 
 /// 子代理写挂起关卡：直接拒绝并说明。不给等待命令——子代理拿到命令会自己在后台跑，答复就进了
 /// 子代理（第二轮真机 run5 D）。kimi 2.6 的载荷分不出子代理，判定见 [`crate::lead_kimi`]。
 const SUBAGENT_GATE_DENIED: &str = "[lead] 关卡只由主会话发：子代理不要写挂起的 gate.json，也不要启动关卡等待命令。把需要 leader 决定的问题写进你交回主会话的结果里，由主会话去发关卡。";
 
-fn kimi_gate_guard_with(
+fn gate_guard_with(
+    provider: Provider,
     native: &Native,
     raw: &Value,
     session: &str,
     registry: &Path,
     writer_is_subagent: impl Fn(&str) -> bool,
 ) -> Option<Output> {
-    let name = string(raw, "tool_name")?;
+    let raw_name = string(raw, "tool_name")?;
     let input = raw.get("tool_input")?;
+    // 各家工具名 → 统一的 Write / Edit / Bash（agy 是 write_file / edit_file / run_command，参数 PascalCase）。
+    let name = match (provider, raw_name) {
+        (Provider::Antigravity, "write_file") => "Write",
+        (Provider::Antigravity, "edit_file") => "Edit",
+        (Provider::Antigravity, "run_command") => "Bash",
+        (Provider::Antigravity, _) => return None,
+        (_, other) => other,
+    };
+    let path = || {
+        string(input, "path")
+            .or_else(|| string(input, "file_path"))
+            .or_else(|| string(input, "Path"))
+            .or_else(|| string(input, "TargetFile"))
+    };
     let (target, body) = match name {
         "Write" => (
-            string(input, "path").or_else(|| string(input, "file_path"))?,
-            string(input, "content").unwrap_or_default().to_owned(),
+            path()?,
+            string(input, "content")
+                .or_else(|| string(input, "Content"))
+                .unwrap_or_default()
+                .to_owned(),
         ),
-        "Edit" => (
-            string(input, "path").or_else(|| string(input, "file_path"))?,
-            input.to_string(),
-        ),
+        "Edit" => (path()?, input.to_string()),
         "Bash" => {
-            let command = string(input, "command")?;
+            let command = string(input, "command").or_else(|| string(input, "CommandLine"))?;
             if !lead::shell_writes(command) {
                 return None;
             }
@@ -726,11 +679,7 @@ fn kimi_gate_guard_with(
     let task = claim_target(&data)?;
     // 先认子代理、再认领：子代理不能借写关卡把任务认到自己名下（同一个 session_id）。
     if writer_is_subagent(session) {
-        return Some(Output {
-            stderr: Some(SUBAGENT_GATE_DENIED.into()),
-            exit: 2,
-            stdout: None,
-        });
+        return Some(deny(provider, SUBAGENT_GATE_DENIED.into()));
     }
     // 先认领：等待器按会话找任务，模型下一步就要启动它。
     if !reserve_owner(&task, session) {
@@ -751,15 +700,14 @@ fn kimi_gate_guard_with(
         .flatten()
         .and_then(|draft| draft.get("id").and_then(Value::as_str).map(str::to_owned));
     if draft_id.as_deref().is_some_and(|id| !lead_waiter::valid_target_id(id)) {
-        return Some(Output {
-            stderr: Some("[lead] 关卡 id 不能用于目标等待：请使用非空、不以 -- 开头且不含控制字符的新 id。草稿尚未写入。".into()),
-            exit: 2,
-            stdout: None,
-        });
+        return Some(deny(
+            provider,
+            "[lead] 关卡 id 不能用于目标等待：请使用非空、不以 -- 开头且不含控制字符的新 id。草稿尚未写入。".into(),
+        ));
     }
-    let kimi_pid = crate::proc::owner_pid("kimi");
+    let owner_pid = crate::proc::owner_pid(provider.id());
     let ready = || match draft_id.as_deref() {
-        Some(id) => lead_waiter::target_waiter_ready(&task, id, session, kimi_pid),
+        Some(id) => lead_waiter::target_waiter_ready(&task, id, session, provider.id(), owner_pid),
         None => lead_waiter::any_live_waiter(&task),
     };
     let rounds = if recently_asked { 50 } else { 1 };
@@ -774,248 +722,28 @@ fn kimi_gate_guard_with(
     let _ = fs::write(&asked, session);
     let reporter = lead_waiter::reporter_path()?;
     let command = match draft_id.as_deref() {
-        Some(id) => lead_waiter::command_for_gate("kimi", &reporter, session, id),
-        None => lead_waiter::command("kimi", &reporter, session),
+        Some(id) => lead_waiter::command_for_gate(provider.id(), &reporter, session, id),
+        None => lead_waiter::command(provider.id(), &reporter, session),
     }?;
     let next = if lead::publication::exists(&task) {
         "启动后重新写 gate.json 草稿，再按 lead skill 用刚查询的版本执行 publish；确认本次 pending 卡已发布后才能结束本轮。答复到达后用 status 核对权威版本，再通过 consume 确认接手，不修改草稿消费。"
     } else {
         "启动后再重新写这个 gate.json，然后结束本轮。答复到达后读 gate.json，按 lead skill 处理。"
     };
-    Some(Output {
-        stderr: Some(format!(
-            "[lead] 写关卡前，先用 Bash 工具在后台启动 Meowo 的关卡等待命令（run_in_background=true，disable_timeout=true，description 写「等待 leader 答复」），命令：`{command}`。{next}不要轮询。leader 答复后它会结束、你会收到后台任务完成的通知。"
-        )),
-        exit: 2,
-        stdout: None,
-    })
-}
-
-/// gemini 0.68 派子代理的唯一工具（agent-tool.js `AGENT_TOOL_NAME = "invoke_agent"`，Kind.Agent）。
-const GEMINI_AGENT_TOOL: &str = "invoke_agent";
-
-/// gemini：主 agent 的 invoke_agent 在跑期间，写挂起关卡的只能是子代理——拦下。
-///
-/// 为什么靠「invoke_agent 起止」认子代理：0.68 子代理（LocalAgentExecutor）与主 agent 共用同一个
-/// config 与 HookSystem，hook 载荷（createBaseInput：session_id / transcript_path / cwd）完全相同，
-/// 没有 agent 身份；子代理的工具表剔除了 Kind.Agent，不会再派孙代理；主 agent 调 invoke_agent 时
-/// 自己卡在这次调用里，不会并行写关卡。BeforeTool 在审批之前同步执行（scheduler evaluateBeforeToolHook），
-/// `decision: deny` 会把原因作为工具错误交给模型。
-fn gemini_gate_guard(
-    native: &Native,
-    raw: &Value,
-    session: &str,
-    registry: &Path,
-) -> Option<Output> {
-    let name = string(raw, "tool_name")?;
-    let input = raw.get("tool_input")?;
-    if name == GEMINI_AGENT_TOOL {
-        subagent_enter(registry, session, raw);
-        return None;
-    }
-    if !gemini_subagent_running(registry, session, raw) {
-        return None;
-    }
-    let (target, body) = match name {
-        "write_file" => (
-            string(input, "file_path")?,
-            string(input, "content").unwrap_or_default().to_owned(),
+    let how = start_how(provider);
+    Some(deny(
+        provider,
+        format!(
+            "[lead] 写关卡前，先启动 Meowo 的关卡等待命令：{how}，命令：`{command}`。{next}不要轮询。leader 答复后它会结束、你会收到后台任务完成的通知。"
         ),
-        "replace" => (string(input, "file_path")?, input.to_string()),
-        "run_shell_command" => {
-            let command = string(input, "command")?;
-            if !lead::shell_writes(command) {
-                return None;
-            }
-            (command, command.to_owned())
-        }
-        _ => return None,
-    };
-    if !target.replace('\\', "/").contains("gate.json") || !body.contains("pending") {
-        return None;
-    }
-    let mut data = native.data.clone();
-    data["tool_input"] = if name == "run_shell_command" {
-        json!({"command": target})
-    } else {
-        json!({"file_path": target})
-    };
-    claim_target(&data)?;
-    Some(Output {
-        stdout: Some(json!({"decision":"deny","reason":SUBAGENT_GATE_DENIED}).to_string()),
-        ..Output::default()
-    })
+    ))
 }
 
-/// 子代理在跑的标记：`<registry 目录>/lead-subagents/<session>/<调用指纹>`，一次 invoke_agent 一个文件
-/// （BeforeTool 建、AfterTool 删）。并行派多个子代理时各自独立，不用计数器、不怕并发 hook 互踩。
-/// 载荷里没有调用 id，指纹取参数（agent_name + prompt）的哈希；同参数的两次并行调用会共用一个，
-/// 先结束的那个会提前撤标记，只是少拦，不会误拦主 agent。
-fn subagents_dir(registry: &Path, session: &str) -> Option<PathBuf> {
-    let safe = !session.is_empty()
-        && session
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'));
-    safe.then(|| {
-        registry
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join("lead-subagents")
-            .join(session)
-    })
-}
-
-fn call_fingerprint(raw: &Value) -> String {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    raw.get("tool_input")
-        .map(Value::to_string)
-        .unwrap_or_default()
-        .hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
-}
-
-fn subagent_enter(registry: &Path, session: &str, raw: &Value) {
-    if let Some(dir) = subagents_dir(registry, session) {
-        let _ = fs::create_dir_all(&dir);
-        let _ = fs::write(dir.join(call_fingerprint(raw)), "");
-    }
-}
-
-fn subagent_leave(registry: &Path, session: &str, raw: &Value) {
-    if let Some(dir) = subagents_dir(registry, session) {
-        let _ = fs::remove_file(dir.join(call_fingerprint(raw)));
-    }
-}
-
-fn subagents_clear(registry: &Path, session: &str) {
-    if let Some(dir) = subagents_dir(registry, session) {
-        let _ = fs::remove_dir_all(dir);
-    }
-}
-
-fn subagents_running(registry: &Path, session: &str) -> bool {
-    subagents_dir(registry, session)
-        .and_then(|dir| fs::read_dir(dir).ok())
-        .is_some_and(|mut entries| entries.next().is_some())
-}
-
-/// gemini：这次 hook 是不是落在主会话的 invoke_agent 执行期间（即调用方多半是子代理）。两路证据任一成立就算：
-/// 1. invoke_agent 的 BeforeTool 建的标记（[`subagents_running`]）；
-/// 2. gemini 自己的会话记录（不依赖我们之前哪次 hook 跑没跑成）。
-///
-/// 为什么要第 2 路：第三轮真机 run1（2026-11-13，evidence/round3/gemini-subagent）整个子代理期间标记一次都没出现，
-/// 子代理把挂起关卡写进去了；同代码 run2 标记正常。单靠「上一次 hook 及时跑完」不可靠。
-/// 0.68 的会话记录（ChatRecordingService）：子代理一开跑就在 `<chats>/<主会话 id>/<子代理 id>.jsonl` 写文件头，
-/// 主会话的工具调用记录要等这一批工具全部结束才追加（run1/run2 记录：主会话 25.893 写完模型回复后，到 32.200
-/// 才追加 toolCalls 与 functionResponse，子代理文件头 26.753）。所以「有子代理文件比主会话记录新、且它还没
-/// complete_task 成功」就是子代理在跑。hook 载荷的 transcript_path 恒为主会话记录（子代理的 hook 也一样，run2 遥测）。
-fn gemini_subagent_running(registry: &Path, session: &str, raw: &Value) -> bool {
-    subagents_running(registry, session) || gemini_transcript_shows_subagent(raw, session)
-}
-
-fn gemini_transcript_shows_subagent(raw: &Value, session: &str) -> bool {
-    let Some(main) = string(raw, "transcript_path").map(PathBuf::from) else {
-        return false;
-    };
-    let modified = |path: &Path| fs::metadata(path).and_then(|m| m.modified()).ok();
-    let Some(main_at) = modified(&main) else {
-        return false;
-    };
-    let safe = !session.is_empty()
-        && session
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'));
-    let Some(dir) = main.parent().filter(|_| safe).map(|d| d.join(session)) else {
-        return false;
-    };
-    let Ok(entries) = fs::read_dir(dir) else {
-        return false;
-    };
-    entries.flatten().any(|entry| {
-        let path = entry.path();
-        path.extension().is_some_and(|e| e == "jsonl")
-            && modified(&path).is_some_and(|at| at > main_at)
-            && !subagent_completed(&path)
-    })
-}
-
-/// 子代理正常收尾时最后一条工具记录是 complete_task 成功（run2 子代理记录末尾）；之后它不会再调工具。
-/// 只读文件尾部：记录可能很长，判定只看最后几条。
-fn subagent_completed(path: &Path) -> bool {
-    use std::io::{Read, Seek, SeekFrom};
-    let Ok(mut file) = fs::File::open(path) else {
-        return false;
-    };
-    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
-    let _ = file.seek(SeekFrom::Start(len.saturating_sub(16 * 1024)));
-    let mut tail = Vec::new();
-    let _ = file.read_to_end(&mut tail);
-    let tail = String::from_utf8_lossy(&tail);
-    tail.lines().rev().find(|line| line.contains("\"toolCalls\"")).is_some_and(|line| {
-        line.contains("\"name\":\"complete_task\"") && line.contains("\"status\":\"success\"")
-    })
-}
-
-fn touches_gate(call: &Value) -> bool {
-    let input = &call["input"];
-    string(input, "file_path")
-        .or_else(|| string(input, "command"))
-        .is_some_and(|text| text.replace('\\', "/").contains("gate.json"))
-}
-
-/// 这次关卡要不要（再）启动等待器：挂起或已作答未送达，且没有活着的等待器。
-fn waiter_wanted(task: &Path, session: &str) -> bool {
-    lead_waiter::needs_waiter(task, session).is_some()
-        || lead_waiter::undelivered_answer(task, session)
-            .is_some_and(|gate| lead_waiter::live_waiter(task, &gate.id).is_none())
-}
-
-/// Gemini：写 gate.json 的工具调用之后，用 AfterTool 的尾调用让 CLI 自己在后台启动等待器，
-/// 不依赖模型照 skill 去做（0.68 源码：tailToolCallRequest 替换原调用的结果，仍走审批策略）。
-fn gemini_waiter_tail(task: &Path, session: &str) -> Option<Output> {
-    if !waiter_wanted(task, session) {
-        return None;
-    }
-    let reporter = lead_waiter::reporter_path()?;
-    let command = lead_waiter::command("gemini", &reporter, session)?;
-    Some(Output {
-        stdout: Some(
-            json!({"hookSpecificOutput":{"hookEventName":"AfterTool","tailToolCallRequest":{"name":"run_shell_command","args":{"command":command,"is_background":true,"description":"Meowo: wait for the leader's gate answer"}}}})
-                .to_string(),
-        ),
-        ..Output::default()
-    })
-}
-
-/// 尾调用会替换写 gate.json 那次调用的结果，模型只看到「命令已转到后台」。在等待器自己的
-/// AfterTool 上补一句说明，免得模型以为写入失败去重写关卡、或开始轮询。
-fn gemini_waiter_started(raw: &Value, session: &str) -> Option<Output> {
-    if raw.get("hook_event_name").and_then(Value::as_str) != Some("AfterTool")
-        || raw.get("tool_name").and_then(Value::as_str) != Some("run_shell_command")
-    {
-        return None;
-    }
-    let command = raw.pointer("/tool_input/command").and_then(Value::as_str)?;
-    if !command.ends_with(&format!(" lead wait --provider gemini --session {session}")) {
-        return None;
-    }
-    // 不用 [lead] 开头：真模型把它当成了 leader 的答复，直接消费了关卡（2026-11-13 实测）。
-    let context = "[Meowo] 这是 Meowo 自动启动的关卡等待器（还没有答复），gate.json 已写好。现在直接结束本轮：不要重写 gate.json，不要轮询或读它的日志。leader 答复后它会结束，答复会自动送回本会话，届时按 lead skill 处理。";
-    Some(Output {
-        stdout: Some(
-            json!({"hookSpecificOutput":{"hookEventName":"AfterTool","additionalContext":context}})
-                .to_string(),
-        ),
-        ..Output::default()
-    })
-}
-
-/// 回合结束时的关卡兜底（kimi Stop / gemini AfterAgent）：
+/// 回合结束时的关卡兜底（kimi / antigravity 的 Stop）：
 /// - 答复已到、还没送达：直接把答复交给模型接着做（同一回合内，零等待）；
 /// - 关卡挂起、会话里没有等待器：要求模型在后台启动等待器。kimi 只能靠这里（它的 PostToolUse
-///   是 fire-and-forget，不读输出），且 CLI 每回合只认一次 Stop 拦截；gemini 是尾调用被拒或
-///   用 shell 写关卡时的兜底，自己记一次，避免 AfterAgent 无限续跑。
+///   是 fire-and-forget，不读输出），且 CLI 每回合只认一次 Stop 拦截；agy 的 Stop continue 不限次数，
+///   自己记一次，避免无限续跑。
 fn waiter_stop(
     provider: Provider,
     task: &Path,
@@ -1029,7 +757,7 @@ fn waiter_stop(
         lead::answer_message(task, &gate)
     } else {
         let gate = lead_waiter::needs_waiter(task, session)?;
-        if provider == Provider::Gemini {
+        if provider == Provider::Antigravity {
             if state.waiter_asked.as_deref() == Some(gate.id.as_str()) {
                 return None;
             }
@@ -1038,24 +766,21 @@ fn waiter_stop(
         }
         let reporter = lead_waiter::reporter_path()?;
         let command = lead_waiter::command(provider.id(), &reporter, session)?;
-        let how = match provider {
-            Provider::Kimi => "用 Bash 工具在后台启动它（run_in_background=true，disable_timeout=true，description 写「等待 leader 答复」）",
-            _ => "用 run_shell_command 在后台启动它（is_background=true）",
-        };
+        let how = start_how(provider);
         format!(
             "[lead] 关卡 {} 在等 leader 答复，会话里还没有等待器。{how}，命令：`{command}`。启动后直接结束本轮，不要轮询；它结束时你会收到后台任务完成的通知，届时读它的输出，按 lead skill 查询权威关卡并处理答复。",
             gate.id
         )
     };
     Some(match provider {
-        Provider::Kimi => Output {
+        Provider::Antigravity => Output {
+            stdout: Some(json!({"decision":"continue","reason":reason}).to_string()),
+            ..Output::default()
+        },
+        _ => Output {
             stderr: Some(reason),
             exit: 2,
             stdout: None,
-        },
-        _ => Output {
-            stdout: Some(json!({"decision":"deny","reason":reason}).to_string()),
-            ..Output::default()
         },
     })
 }

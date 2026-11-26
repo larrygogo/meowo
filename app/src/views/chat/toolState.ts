@@ -60,8 +60,8 @@ export function useToolRunState(result: ToolResultItem | undefined): ToolRunStat
 ///   - codex：回合中途的话不另起回合，记录形态也和回合开头那条一样，只是 turn_id 与本回合第一条相同
 ///     （本机 98 份 rollout 里 15 条都是）。所以带 turn_id 的用户消息，前面还有同一个 turn_id 的，
 ///     就不是边界。
-///   - gemini、opencode：时间线里不会出现没有回执的调用（gemini 的调用连同结果一起落盘，opencode 的
-///     导出器只导出已收场的调用），这条边界对它们的运行态没有影响。
+///   - antigravity、opencode：时间线里不会出现没有回执的调用（两家的导出器都只导出已定稿 / 已收场的
+///     调用），这条边界对它们的运行态没有影响。
 /// 发给子代理的话（to_agent）不算边界。没有边界返回 -1（整段都属于当前回合）。
 ///
 /// 此前 codex 的用户消息不带 turn_id，回合中途再发一条，它之前还在跑的调用就被显示成「已中断」

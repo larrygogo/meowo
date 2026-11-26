@@ -99,13 +99,6 @@ fn tui_script() {
         Err(_) => {
             std::fs::create_dir_all(&temp).unwrap();
             std::fs::write(temp.join("notes.txt"), "the secret word is PELICAN\n").unwrap();
-            // gemini 关自更新只有 settings 一条路（无 env 开关）；项目级覆盖用户级，不改用户装机。
-            std::fs::create_dir_all(temp.join(".gemini")).unwrap();
-            std::fs::write(
-                temp.join(".gemini/settings.json"),
-                r#"{"general":{"enableAutoUpdate":false,"enableAutoUpdateNotification":false}}"#,
-            )
-            .unwrap();
             temp.clone()
         }
     };

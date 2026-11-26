@@ -166,47 +166,8 @@ describe("AccountSection agent 卡", () => {
     expect(await screen.findByTestId("agent-access-codex")).toBeTruthy();
   });
 
-  /**
-   * API Key 登录入口只给声明了能力的 agent（当前 gemini：OAuth 被官方停用，key 是唯一活路）。
-   * 判据是后端下发的 `supports_api_key_login`——别家未登录时不得出现这个按钮，
-   * 否则点保存只会得到后端一句「该 agent 不支持 API Key 登录」。
-   */
-  it("API Key 登录：gemini 有入口，保存成功即收起并重查账号；别家没有", async () => {
-    api.listAgents.mockResolvedValue(descriptors(["claude", "gemini"]));
-    api.getAccounts.mockResolvedValue([]); // 全员未登录
-    api.apiKeyLogin.mockResolvedValue(undefined);
-    render(<AccountSection />);
-    // claude（默认选中）未登录：只有交互式登录，没有 API Key 入口。
-    await screen.findByTestId("agent-card-claude");
-    expect(screen.queryByTestId("agent-api-key-login-claude")).toBeNull();
-
-    await selectAgent("Gemini CLI");
-    fireEvent.click(await screen.findByTestId("agent-api-key-login-gemini"));
-    const input = await screen.findByTestId("agent-api-key-input-gemini");
-    fireEvent.change(input, { target: { value: "AIzaTest123" } });
-    const accountQueries = api.getAccounts.mock.calls.length;
-    fireEvent.click(screen.getByTestId("agent-api-key-save-gemini"));
-    await waitFor(() => expect(api.apiKeyLogin).toHaveBeenCalledWith("gemini", "AIzaTest123"));
-    // 成功 → 输入区收起 + 重查账号（同步落盘、当场生效，不走 login-done 轮询）。
-    await waitFor(() => expect(screen.queryByTestId("agent-api-key-form-gemini")).toBeNull());
-    await waitFor(() => expect(api.getAccounts.mock.calls.length).toBeGreaterThan(accountQueries));
-  });
-
-  it("API Key 保存失败：错误就地展示，输入区保留可重试", async () => {
-    api.listAgents.mockResolvedValue(descriptors(["claude", "gemini"]));
-    api.getAccounts.mockResolvedValue([]);
-    api.apiKeyLogin.mockRejectedValue("API Key 含有空白或不可见字符");
-    render(<AccountSection />);
-    await selectAgent("Gemini CLI");
-    fireEvent.click(await screen.findByTestId("agent-api-key-login-gemini"));
-    fireEvent.change(await screen.findByTestId("agent-api-key-input-gemini"), {
-      target: { value: "bad key" },
-    });
-    fireEvent.click(screen.getByTestId("agent-api-key-save-gemini"));
-    const err = await screen.findByTestId("agent-api-key-error-gemini");
-    expect(err.textContent).toContain("API Key 含有空白或不可见字符");
-    expect(screen.getByTestId("agent-api-key-form-gemini")).toBeTruthy();
-  });
+  // API Key 登录入口（supports_api_key_login）原由 gemini 声明，随 provider 移除后现役几家都不声明，
+  // 对应的两条用例一并删除。
 
   it("模型菜单在下方空间不足时自动向上展开", () => {
     expect(modelMenuPlacement({ top: 430, bottom: 461 }, 500, 240)).toEqual({
@@ -230,7 +191,7 @@ describe("AccountSection agent 卡", () => {
 
     // 下拉里五家都在（含未装的 kimi）。
     fireEvent.click(document.querySelector(".account-agent-switch .dd-btn") as HTMLElement);
-    for (const name of ["Claude Code", "Codex", "Kimi Code", "Gemini CLI", "OpenCode"]) {
+    for (const name of ["Claude Code", "Codex", "Kimi Code", "Antigravity CLI", "OpenCode"]) {
       await waitFor(() => expect(findOption(name)).toBeTruthy());
     }
 
@@ -772,16 +733,16 @@ describe("AccountSection 登录", () => {
    * 回归：`getAccounts()` 只返回**声明了账号能力**的 agent。旧逻辑靠 `payload == null` 判定未登录，
    * 于是给没有账号能力的 agent 也亮出登录按钮——而它的 `login_argv()` 是 None，点下去后端只能回
    * 一句「拉起登录失败」。给出走不通的入口，比不给入口更糟：用户会以为是自己的环境有问题，
-   * 反复去点。（gemini / opencode 真的这么翻过车，直到它们的登录入口被补上。）
+   * 反复去点。（opencode 真的这么翻过车，直到它的登录入口被补上。）
    *
    * 判据必须是后端下发的 `supports_account`，不能靠「账号查不出来」去猜——那与「真的没登录」
-   * （codex 那种）长得一模一样。当前五家都有账号能力，故这里手造一个没有的。
+   * （codex 那种）长得一模一样。antigravity 就没有账号能力（凭据在系统钥匙串、没有登录子命令）。
    */
   it("无账号概念的 agent 已装也不给登录按钮，且不报未登录", async () => {
     api.listAgents.mockResolvedValue([
       { id: "claude", display_name: "Claude Code", installed: true, supports_proxy: true, supports_account: true, supports_profiles: true },
       { id: "codex", display_name: "Codex", installed: true, supports_proxy: true, supports_account: true, supports_profiles: true },
-      { id: "noacct", display_name: "No Account", installed: true, supports_proxy: false, supports_account: false, supports_profiles: false },
+      { id: "antigravity", display_name: "Antigravity CLI", installed: true, supports_proxy: true, supports_account: false, supports_profiles: false },
     ]);
     render(<AccountSection />);
 
@@ -790,11 +751,11 @@ describe("AccountSection 登录", () => {
     expect(await screen.findByTestId("agent-login-codex")).toBeTruthy();
 
     // 已装，但没有账号概念 → 卡片在，登录按钮不在。
-    await selectAgent("No Account");
-    expect(await screen.findByTestId("agent-card-noacct")).toBeTruthy();
-    expect(screen.queryByTestId("agent-login-noacct")).toBeNull();
+    await selectAgent("Antigravity CLI");
+    expect(await screen.findByTestId("agent-card-antigravity")).toBeTruthy();
+    expect(screen.queryByTestId("agent-login-antigravity")).toBeNull();
     // 也不该显示「未登录」——它没有「登录」这回事。
-    expect(screen.queryByTestId("agent-desc-noacct")).toBeNull();
+    expect(screen.queryByTestId("agent-desc-antigravity")).toBeNull();
   });
 
   it("点登录调 loginAgent 并进入等待态", async () => {
@@ -1224,7 +1185,7 @@ describe("AccountSection 多账号", () => {
   });
 
   /**
-   * 不支持多账号的 agent（gemini：数据目录不可被环境变量覆盖）不显示账号列表。
+   * 不支持多账号的 agent（数据目录不可被环境变量覆盖，谎称支持会让两个账号共用凭据）不显示账号列表。
    *
    * 判据必须是后端下发的 `supports_profiles`，不能靠「列表只有一条」推断——那与「只建了默认账号」
    * 长得一模一样。谎称支持的后果是两个「账号」静默共用同一份凭据。
@@ -1232,28 +1193,29 @@ describe("AccountSection 多账号", () => {
   it("不支持多账号的 agent 不显示账号列表", async () => {
     api.listAgents.mockResolvedValue([
       { id: "claude", display_name: "Claude Code", installed: true, supports_proxy: true, supports_account: true, supports_profiles: true },
-      { id: "gemini", display_name: "Gemini CLI", installed: true, supports_proxy: false, supports_account: true, supports_profiles: false },
+      // 有账号、但不能多账号：现役几家没有这种组合，手造一个。
+      { id: "single", display_name: "Single Account", installed: true, supports_proxy: false, supports_account: true, supports_profiles: false },
     ]);
     render(<AccountSection />);
 
     await waitFor(() => expect(screen.getByTestId("profiles-claude")).toBeTruthy());
-    expect(screen.queryByTestId("profiles-gemini")).toBeNull();
+    expect(screen.queryByTestId("profiles-single")).toBeNull();
   });
 
   /**
-   * 上下文占用不支持的 agent（gemini/opencode）明写「不支持」，不留空白让用户以为是 bug。
+   * 上下文占用不支持的 agent（opencode）明写「不支持」，不留空白让用户以为是 bug。
    * 支持的（claude）不显示这行。
    */
   it("上下文不支持的 agent 显式标注，支持的不标", async () => {
-    // gemini 需已装才谈得上「能力」——未装时卡片只有安装按钮。
-    api.listAgents.mockResolvedValue(descriptors(["claude", "codex", "gemini"]));
+    // opencode 需已装才谈得上「能力」——未装时卡片只有安装按钮。
+    api.listAgents.mockResolvedValue(descriptors(["claude", "codex", "opencode"]));
     render(<AccountSection />);
     // claude（默认选中、支持上下文）→ 没有这行。
     await screen.findByTestId("agent-card-claude");
     expect(screen.queryByTestId("agent-context-unsupported-claude")).toBeNull();
-    // 切到 gemini（已装、不支持上下文）→ 有这行。
-    await selectAgent("Gemini CLI");
-    expect(await screen.findByTestId("agent-context-unsupported-gemini")).toBeTruthy();
+    // 切到 opencode（已装、不支持上下文）→ 有这行。
+    await selectAgent("OpenCode");
+    expect(await screen.findByTestId("agent-context-unsupported-opencode")).toBeTruthy();
   });
 
   /**
@@ -1611,7 +1573,7 @@ describe("AccountSection 版本与更新", () => {
 });
 
 describe("AccountSection：发图工具没接上（mcp_config_unreadable）", () => {
-  const FILE = "C:\Users\me\.gemini\settings.json";
+  const FILE = "C:\Users\me\.kimi\config.toml";
 
   it("字段有值就提示：一句结论、原因、文件路径，点「在文件夹中显示」交给 reveal；不看是哪家", async () => {
     // 故意放在 claude 上：判据只是字段有无，不按 Provider 名。
@@ -1633,11 +1595,12 @@ describe("AccountSection：发图工具没接上（mcp_config_unreadable）", ()
   });
 
   it("「在文件夹中显示」失败时就地写原因", async () => {
-    api.listAgents.mockResolvedValue(descriptors(["gemini"]).map((agent) => ({ ...agent, mcp_config_unreadable: FILE })));
+    api.listAgents.mockResolvedValue(descriptors(["kimi"]).map((agent) => ({ ...agent, mcp_config_unreadable: FILE })));
     api.getAccounts.mockResolvedValue([]);
     api.revealTerminalPath.mockRejectedValue("not found");
     render(<AccountSection />);
-    fireEvent.click(await screen.findByTestId("agent-mcp-reveal-gemini"));
-    await waitFor(() => expect(screen.getByTestId("agent-mcp-unreadable-gemini").querySelector(".agent-mcp-unreadable-err")).toBeTruthy());
+    fireEvent.click(await screen.findByTestId("agent-mcp-reveal-kimi"));
+    await waitFor(() => expect(screen.getByTestId("agent-mcp-unreadable-kimi").querySelector(".agent-mcp-unreadable-err")).toBeTruthy());
+
   });
 });

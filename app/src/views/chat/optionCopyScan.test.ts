@@ -51,12 +51,10 @@ const OPTION_COPY = [
   "tell Claude what to do", "allow all edits during this session", "Tab to amend",
   // kimi
   "Approve once", "Approve for this session", "Reject with feedback", "Type feedback",
-  // gemini
-  "Allow for this session", "all future sessions", "suggest changes", "Modify with external editor", "Keep trying",
+  // antigravity
+  "Yes, run command", "always allow in this conversation", "Persist to settings.json", "No, cancel",
   // opencode
-  "Allow always", "Permission required",
-  // gemini / opencode 共有
-  "Allow once",
+  "Allow always", "Permission required", "Allow once",
 ];
 
 /// 后端清单里登记的选项规则片段（`option:` 与 `option-ready:` 条目的搜索片段），与上面的手列互补：

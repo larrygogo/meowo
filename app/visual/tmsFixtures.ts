@@ -1,7 +1,7 @@
 // 截图验收（任务 20261114-tui-model-switch）：四家原生 TUI 会话的模型 / 模式数据。
 // 能力表与启动选项直接用 src/test/agents.ts（与后端插件声明同源的那份），模型清单与 CLI 默认值
 // 照本机 CLI 配置与后端解析器的真实形状造（codex models_cache.json、kimi config.toml、
-// gemini models.rs FULL 表、opencode `models --verbose` 的 provider/model）。
+// antigravity `agy models` 的 id 与显示名（取自 plugins/antigravity/models.rs 的解析样例）、opencode `models --verbose` 的 provider/model）。
 // ?state=idle|running|lead|open|notnow|ready|readback|sandbox|termqueued 决定会话状态与切换结果；?modes=approval:yolo,collaboration:plan
 // 覆盖会话当前档（第四轮 L6 拍手机各档图标）；?cfg=proxy 让 CLI 配置的模型不在清单里（第四轮 M1）。
 import { chatUi, descriptors } from "../src/test/agents";
@@ -10,10 +10,10 @@ import { CHAT_SESSION_ID } from "./fixtures";
 import frames from "../src/test/fixtures/composer-frames.json";
 
 /** 输入框为空的真机帧（重启型切换前要先确认 TUI 输入框是空的）。 */
-const EMPTY_FRAME: Partial<Record<TmsProvider, string>> = { codex: "codex-0.167-03", kimi: "kimi-2.6-k2-1", gemini: "gemini-0.65-empty" };
+const EMPTY_FRAME: Partial<Record<TmsProvider, string>> = { codex: "codex-0.167-03", kimi: "kimi-2.6-k2-1", antigravity: "antigravity-1.5.18-empty-idle" };
 
-export type TmsProvider = "codex" | "kimi" | "gemini" | "opencode";
-export const TMS_PROVIDERS: TmsProvider[] = ["codex", "kimi", "gemini", "opencode"];
+export type TmsProvider = "codex" | "kimi" | "antigravity" | "opencode";
+export const TMS_PROVIDERS: TmsProvider[] = ["codex", "kimi", "antigravity", "opencode"];
 
 const entry = (id: string, label: string, extra: Record<string, unknown> = {}) =>
   ({ id, label, group: null, efforts: [], default_effort: null, is_default: false, uncertain: false, ...extra });
@@ -37,15 +37,9 @@ const CATALOG: Record<TmsProvider, ReturnType<typeof entry>[]> = {
     entry("kimi-code/k3.1-pro", "K3.1 Pro", { group: "managed:kimi-code", efforts: ["low", "medium", "high", "max"], default_effort: "high", is_default: true }),
     entry("kimi-code/k3.1-pro-highspeed", "K3.1 Pro Highspeed 2x Usage Cost", { group: "managed:kimi-code" }),
   ],
-  gemini: [
-    entry("auto", "Auto", { is_default: true }),
-    entry("gemini-3.1-pro-preview", "gemini-3.1-pro-preview"),
-    entry("gemini-3-flash-preview", "gemini-3-flash-preview"),
-    entry("gemini-2.5-pro", "gemini-2.5-pro"),
-    entry("gemini-3.8-flash", "gemini-3.8-flash"),
-    entry("gemini-3.5-flash-lite", "gemini-3.5-flash-lite"),
-    entry("gemma-4-31b-it", "gemma-4-31b-it"),
-    entry("gemma-4-26b-a4b-it", "gemma-4-26b-a4b-it"),
+  antigravity: [
+    entry("gemini-4-neon-high", "Gemini 4 Neon (High)", { is_default: true }),
+    entry("gemini-3.8-flash-low", "Gemini 3.8 Flash (Low)"),
   ],
   opencode: [
     entry("tensorfold/Qwen3.8-Flash-Next", "Qwen3.8 Flash Next", { group: "tensorfold", is_default: true }),
@@ -60,21 +54,21 @@ const DEFAULTS: Record<TmsProvider, { model: string | null; choices: Record<stri
   codex: { model: "gpt-5.6-terra", choices: { approval: "ask" } },
   // Kimi 配置默认 yolo：「每步都问」没有启动参数，应显示为置灰（configLocked）。
   kimi: { model: "kimi-code/k3.1-pro", choices: { permission: "yolo" } },
-  gemini: { model: null, choices: { approval: "default" } },
+  antigravity: { model: "gemini-4-neon-high", choices: { approval: "auto" } },
   opencode: { model: "tensorfold/Qwen3.8-Flash-Next", choices: { agent: "build" } },
 };
 
 const MODES: Record<TmsProvider, { dimension: string; value: string }[]> = {
   codex: [{ dimension: "approval", value: "ask" }, { dimension: "collaboration", value: "default" }],
   kimi: [{ dimension: "permission", value: "yolo" }, { dimension: "work", value: "default" }],
-  gemini: [{ dimension: "approval", value: "default" }],
+  antigravity: [{ dimension: "approval", value: "auto" }],
   opencode: [{ dimension: "agent", value: "build" }],
 };
 
 const MODEL_LABEL: Record<TmsProvider, string> = {
   codex: "GPT-5.6-Terra",
   kimi: "K3.1 Pro",
-  gemini: "Auto",
+  antigravity: "Gemini 4 Neon (High)",
   opencode: "Qwen3.8 Flash Next",
 };
 
@@ -90,7 +84,7 @@ export function tmsCommonMock(provider: TmsProvider, cfg?: string | null) {
     const p = (args as { provider?: string } | undefined)?.provider ?? provider;
     switch (cmd) {
       case "list_agents":
-        return descriptors(["claude", "codex", "kimi", "gemini", "opencode"]);
+        return descriptors(["claude", "codex", "kimi", "antigravity", "opencode"]);
       case "agent_chat_ui":
         return chatUi(p);
       case "agent_model_catalog":

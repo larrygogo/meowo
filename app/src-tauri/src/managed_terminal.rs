@@ -195,7 +195,7 @@ mod screen_explain_tests {
         assert_eq!(working.matched_rule, "osc_title_working");
 
         // 无规则集的 provider 如实说明，而不是假装判了个 idle。用未注册的身份串——
-        // 已注册的五家插件现在都声明了规则（这条断言本身被 gemini 加规则时抓到过）。
+        // 已注册的五家插件现在都声明了规则（这条断言本身在当时的 gemini 插件加规则时抓到过）。
         let unsupported =
             screen_detect_explain_text("not-an-agent".into(), "whatever".into(), None);
         assert_eq!(unsupported.raw_state, None);

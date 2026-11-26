@@ -19,7 +19,7 @@ pub enum Ask {
     Risky,
     /// 不问，直接做。
     Never,
-    /// 这一档根本不允许（只规划档改文件、Gemini plan 没有 shell）。
+    /// 这一档根本不允许（只规划档改文件、Antigravity plan 既不改文件也不跑命令）。
     Blocked,
     /// 不由这一栏决定，跟随另一栏的权限档（Kimi plan 只硬禁写文件、命令按权限档走，
     /// research-kimi-gemini §5；Codex 协作模式同理，research-codex-opencode §9）。
@@ -27,7 +27,7 @@ pub enum Ask {
 }
 
 /// 一档模式的统一说法：改文件 / 跑命令要不要问、是否只规划。各家原名不同、语义有错位
-/// （Kimi `--yolo` 是「危险仍问」，Gemini `--yolo` 才是「都不问」），界面一律按这三维说。
+/// （Kimi `--yolo` 是「危险仍问」、`--auto` 才是「都不问」，Antigravity 的 `auto` 又是「危险命令才问」），界面一律按这三维说。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
@@ -58,7 +58,7 @@ pub enum ModeSwitch {
     LaunchOnly,
     /// 会话里用同名维度的 [`crate::ModeControl`] 直达输入（Kimi `/plan on|off`、OpenCode Tab）。
     Control,
-    /// 空闲时带参数重启接回同一会话（Kimi `-r <id> --yolo`、Gemini `--resume <id> --approval-mode`）。
+    /// 空闲时带参数重启接回同一会话（Kimi `-r <id> --yolo`、Antigravity `--conversation <id> --mode <档>`）。
     Restart,
     /// 经会话自带服务改设置（Codex app-server `thread/settings/update`），不碰终端。
     Server,
@@ -73,10 +73,10 @@ pub enum ModelSwitch {
     /// 会话自带服务改设置（Codex `thread/settings/update {model, effort}`，下一回合生效，
     /// 草稿与待批审批都不受影响，research-codex-opencode §2/§4）。
     ServerSettings,
-    /// 带 `<flag> <id>` 重启接回同一会话（Kimi `-r <id> -m <alias>`、Gemini `--resume <uuid> -m <id>`，
-    /// research-kimi-gemini §2.3/§3.3 实测会话 id 与历史都保留、不改用户配置）。
+    /// 带 `<flag> <id>` 重启接回同一会话（Kimi `-r <id> -m <alias>`、Antigravity `--conversation <id> --model <id>`；
+    /// Kimi 见 research-kimi-gemini §2.3 实测会话 id 与历史都保留、不改用户配置）。
     /// `unsent_resume_args`：会话还没发过消息时 CLI 不留会话文件、resume 会报错，改用这组参数接上
-    /// 同一个 id（Gemini `--session-id <uuid>`，§3.3 E3-D）。
+    /// 同一个 id（现役插件都不声明；已移除的 gemini 插件曾用 `--session-id <uuid>`，§3.3 E3-D）。
     RestartResume {
         flag: &'static str,
         unsent_resume_args: Option<&'static [&'static str]>,
@@ -217,9 +217,9 @@ mod tests {
 
     #[test]
     fn model_ids_must_come_from_the_catalog_and_look_like_ids() {
-        let catalog = [entry("kimi-code/k3"), entry("gemini-2.5-pro"), entry("-rf")];
+        let catalog = [entry("kimi-code/k3"), entry("gemini-3.8-flash-low"), entry("-rf")];
         assert!(model_id_allowed("kimi-code/k3", &catalog));
-        assert!(model_id_allowed("gemini-2.5-pro", &catalog));
+        assert!(model_id_allowed("gemini-3.8-flash-low", &catalog));
         assert!(!model_id_allowed("gpt-x", &catalog), "不在清单里");
         assert!(!model_id_allowed("-rf", &catalog), "像参数的不收");
         assert!(!model_id_allowed("a\"b", &[entry("a\"b")]));

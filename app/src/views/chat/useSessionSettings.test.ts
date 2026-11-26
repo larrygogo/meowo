@@ -456,7 +456,7 @@ describe("会话里切模型 / 模式的分派", () => {
     apply.mockResolvedValue({ kind: "restarted", sessionId: 7, confirmed: false, reason: null });
     const rescueDraft = vi.fn(async () => "moved" as const);
     const moved = renderHook(() => useSessionSettings(deps({ rescueDraft })));
-    await act(async () => moved.result.current.request({ model: { id: "gemini-2.5-pro", label: "gemini-2.5-pro" }, label: "gemini-2.5-pro" }));
+    await act(async () => moved.result.current.request({ model: { id: "vendor/model-b", label: "model-b" }, label: "model-b" }));
     expect(rescueDraft).toHaveBeenCalled();
     expect(apply.mock.calls[0][0].tui.composerEmpty).toBe(true);
     apply.mockClear();

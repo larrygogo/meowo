@@ -51,7 +51,7 @@ fn run_with_owner(args: &[String], kimi_pid: Option<u32>) -> Result<Value, Strin
             publication::publish_checked(&task, (expected != "none").then_some(expected), |gate| {
                 let Some(pid) = kimi_pid else { return Ok(()); };
                 let owner = super::read_checked(&task.join(".owner")).map_err(|_| "lead/waiter_required")?;
-                let ready = crate::lead_waiter::target_waiter_ready(&task, &gate.id, owner.trim(), Some(pid));
+                let ready = crate::lead_waiter::target_waiter_ready(&task, &gate.id, owner.trim(), "kimi", Some(pid));
                 if !ready { return Err("lead/waiter_required".into()); }
                 Ok(())
             })?;

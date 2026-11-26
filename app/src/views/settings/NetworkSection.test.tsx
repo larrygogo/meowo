@@ -97,11 +97,11 @@ describe("代理优先级", () => {
 
   /// 未安装的 agent 不给代理行——还没有可运行的 agent，代理配了也无处生效。
   it("未安装的 agent 不显示代理行", async () => {
-    // gemini 支持代理但未装；claude 已装。
+    // antigravity 支持代理但未装；claude 已装。
     api.listAgents.mockResolvedValue(descriptors(["claude"]));
     await mount(DIRECT);
     expect(await screen.findByText("Claude Code")).toBeTruthy();
-    expect(screen.queryByText("Gemini CLI")).toBeNull();
+    expect(screen.queryByText("Antigravity CLI")).toBeNull();
     expect(screen.queryByText("OpenCode")).toBeNull();
   });
 
@@ -109,14 +109,14 @@ describe("代理优先级", () => {
   /// 不订阅 install-done 的话，用户装完还得关掉设置页重开才看得到。
   it("装完 agent 后代理行立刻出现，不必重开设置页", async () => {
     api.listAgents
-      .mockResolvedValueOnce(descriptors(["claude"]))         // 初次：gemini 未装
-      .mockResolvedValue(descriptors(["claude", "gemini"]));  // 装完重查：gemini 已装
+      .mockResolvedValueOnce(descriptors(["claude"]))         // 初次：antigravity 未装
+      .mockResolvedValue(descriptors(["claude", "antigravity"]));  // 装完重查：antigravity 已装
     await mount(DIRECT);
     expect(await screen.findByText("Claude Code")).toBeTruthy();
-    expect(screen.queryByText("Gemini CLI")).toBeNull();
+    expect(screen.queryByText("Antigravity CLI")).toBeNull();
 
-    fireInstallDone("gemini", true);
-    expect(await screen.findByText("Gemini CLI")).toBeTruthy();
+    fireInstallDone("antigravity", true);
+    expect(await screen.findByText("Antigravity CLI")).toBeTruthy();
   });
 
   it("选「自定义」但地址还空着时不落盘——后端会拒空地址", async () => {

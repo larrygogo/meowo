@@ -226,7 +226,7 @@ impl Drop for Tui {
     }
 }
 
-/// Windows 上 `child.kill()` 只杀直接子进程；npm 垫片（gemini、opencode 是 `node …`）和 CLI 自己起的
+/// Windows 上 `child.kill()` 只杀直接子进程；npm 垫片（opencode 是 `node …`）和 CLI 自己起的
 /// MCP 服务会留下来。`taskkill /T` 连同后代一起收。
 fn kill_tree(pid: u32) {
     #[cfg(windows)]
@@ -274,8 +274,8 @@ pub fn cli_version(agent: &str) -> String {
     if let Ok(version) = std::env::var("PROBE_VERSION") {
         return version;
     }
-    // 用完整的启动 argv 问版本：gemini 解析出来是 `node <bundle>/gemini.js`，只拿第一段问到的是
-    // node 自己的版本（2026-11-20 取到 26.4.0，按它找不到输入框规格）。
+    // 用完整的启动 argv 问版本：npm 装的 CLI 解析出来是 `node <bundle>.js`，只拿第一段问到的是
+    // node 自己的版本（2026-11-20 实测取到 26.4.0，按它找不到输入框规格）。
     let argv = meowo_agent::by_id(agent).unwrap().launch_argv();
     let exe = argv[0].clone();
     let output = std::process::Command::new(&exe)
@@ -291,16 +291,10 @@ pub fn cli_version(agent: &str) -> String {
         .to_string()
 }
 
-/// 探针的工作目录：一次性的，带 gemini 的项目级设置（关自更新只有 settings 一条路，
-/// 项目级覆盖用户级，不改用户装机）。
+/// 探针的工作目录：一次性的，不碰用户的项目目录。
 pub fn temp_cwd(tag: &str) -> std::path::PathBuf {
     let temp = std::env::temp_dir().join(format!("meowo-{tag}-{}", std::process::id()));
-    std::fs::create_dir_all(temp.join(".gemini")).unwrap();
-    std::fs::write(
-        temp.join(".gemini/settings.json"),
-        r#"{"general":{"enableAutoUpdate":false,"enableAutoUpdateNotification":false}}"#,
-    )
-    .unwrap();
+    std::fs::create_dir_all(&temp).unwrap();
     temp
 }
 

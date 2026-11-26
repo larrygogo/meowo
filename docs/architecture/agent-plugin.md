@@ -196,12 +196,12 @@ claude 的六处 `#[cfg(target_os = "macos")]` 收敛成一次 `ports.keychain.a
 对话页的斜杠命令补全与快速切模型预设后来也从前端硬编码表迁走,但**没有**进静态描述符,而是
 按会话查询的动态接口 `agent_chat_ui(provider, cwd)`(见 `chat_ui.rs`):插件声明的内置表
 (`slash_commands()` / `model_presets()`,按变体) ∪ 从安装实况**发现**的自定义命令
-(`CustomCommandSpec`:claude 的 `commands/*.md`、codex 的 `prompts/`、gemini 的
-`commands/**.toml`、opencode 的 `command/`,含项目级目录),外加宿主探测的 CLI 版本
+(`CustomCommandSpec`:claude 的 `commands/*.md`、codex 的 `prompts/`、opencode 的
+`command/`,含项目级目录),外加宿主探测的 CLI 版本
 (`--version`,进程级缓存)。装了新命令、换了版本,下一次打开会话就反映。
 
-旧的前端硬编码表给未知 agent 落一份通用 fallback —— 而 fallback 恰恰撒谎:gemini 的对应命令是
-`/stats`/`/compress` 而非 `/status`/`/compact`,opencode 是 `/models` 而非 `/model`。现在未知
+旧的前端硬编码表给未知 agent 落一份通用 fallback —— 而 fallback 恰恰撒谎:opencode 的对应命令是
+`/models` 而非 `/model`。现在未知
 agent 得到的是「不补全、不给菜单」的诚实降级;模型预设只有 claude 声明(唯一 `/model` 接受
 内联参数的 CLI,别家是交互式菜单,在对话页发出去用户什么也看不见)。内置命令的描述文案仍留
 前端 i18n(翻译是前端资产);自定义命令的描述从命令文件头里读(那是用户写的数据,不是翻译)。
@@ -211,11 +211,12 @@ agent 得到的是「不补全、不给菜单」的诚实降级;模型预设只�
 `ChatUiContext` 传入插件,真出现版本分叉时加分支即可,不必改接口。
 
 新建会话的**启动选项**走同一条路(`launch_options.rs`):插件声明「选择 → CLI flag」的映射表
-(claude 的 `--model`/`--permission-mode`,codex 的 `--full-auto`/`--sandbox`,gemini 的
-`--yolo`/`--approval-mode`),经 descriptor 下发,面板照表渲染。前端只回传 choice id,
+(claude 的 `--model`/`--permission-mode`,codex 的 `--full-auto`/`--sandbox`,antigravity 的
+`--mode auto|accept-edits|plan`),经 descriptor 下发,面板照表渲染。前端只回传 choice id,
 `resolve_launch_args` 按声明表翻译成 argv——未知 option 被忽略、未知 choice 落默认,
 **用户输入在任何分支下都进不了命令行**。默认项一律不传 flag(「默认」的诚实含义是「行为由
-CLI 自己决定」,不替它猜);模型名随版本频繁更迭的 codex/gemini **不声明**模型栏,kimi/opencode
+CLI 自己决定」,不替它猜);模型名随版本频繁更迭的 codex **不声明**模型栏,antigravity 的模型清单在运行时用
+`agy models` 现查(`model_catalog_command`),不写死;kimi/opencode
 未调研到稳定 flag、如实不声明——给一个点了会启动失败的下拉,比不给更糟。
 
 `--cc-claude` 变量本身**保留**:它是 claude 的品牌色资产。拔掉的是 `.stk-agent { color: var(--cc-claude) }`
@@ -223,19 +224,41 @@ CLI 自己决定」,不替它猜);模型名随版本频繁更迭的 codex/gemini
 任何新 agent 只要用 `currentColor` 绘制徽标就会被染成橙色。改由 `tintStyle(id, connected)` 按 agent 注入,
 断开态不给 tint(inline style 优先级高于 class,给了就盖掉 `.stk-agent-off` 的灰)。
 
-## 验收:加一个 gemini 要动哪些文件
+## 验收:加一个 agent 要动哪些文件(以 antigravity 为例)
 
-**后端两处**:
+目标是「加一家只动插件目录 + 注册表」。2026-11 用 antigravity(`agy`)替换 gemini 时,大部分做到了,
+但有几处为 agy 的特殊形状改了插件目录以外的地方,下面如实列出。
 
-1. 新增 `crates/meowo-agent/src/plugins/gemini/`(`mod.rs` 必需;`account.rs` / `setup.rs` /
-   `telemetry.rs` 按需 —— 不需要的能力就不声明)
-2. `crates/meowo-agent/src/registry.rs` 补一行 `&GEMINI`
+**插件与注册表**:
 
-`meowo-store` / `meowo-reporter` / `meowo-app` 均零改动。
+1. 新增 `crates/meowo-agent/src/plugins/antigravity/`(`mod.rs` 必需;hook 负载改写、屏幕规则、
+   模型清单、对话库读取、遥测各自一个文件 —— 不需要的能力就不声明,比如 antigravity 没有
+   `account.rs`,auth 为 `None`)
+2. `plugins/mod.rs` 加一行 `pub mod antigravity;`,`id.rs` 加 `ANTIGRAVITY`,
+   `registry.rs` 的 `ALL` 补一行 `&ANTIGRAVITY`
 
-**前端一处**:`providers.tsx` 的资产表加一项(图标 + 是否需要底座 + 可选的 tint 变量)。这**无法消除**——
-总得有人提供图标文件。但它是一条纯数据,没有逻辑分支;不加也不会崩,只是显示中性徽标 + id 字符串。
+**插件目录以外,这次实际改动的地方**:
 
-守住这个结论的测试:`providers.test.tsx` 断言未知 agent 走中性兜底且**不等于** claude 的图标;
-`api.newsession.test.ts` 断言 `listAgents()` 原样透传后端下发的未知 id、`agentName()` 未知回退成 id 本身;
-`Sticker.test.tsx` 渲染一个 `provider: "gemini"` 的会话,断言它显示 `"gemini"` 而非 `"Claude Code"`。
+- `config.rs` 新增 `ConfigFormat::AgyJson`:agy 的 hooks 写在全局 `~/.gemini/config/hooks.json`,
+  顶层是「命名 hook → 事件 → handler」,和已有格式都不一样。Meowo 只占顶层 `meowo` 一个键。
+- `registry.rs` 新增能力槽 `AgentPlugin::normalize_hook_payload`(返回 `HookPayload::Keep` /
+  `Rewrite` / `Ignore`,默认 `Keep`):agy 的负载是 camelCase,还会把 App/IDE 的会话送进同一个 hook,
+  只靠事件名翻译接不上。改写逻辑在插件里,宿主不按身份分支。
+- `meowo-reporter/src/main.rs` 在解析负载之前调用这个槽;`Ignore` 时什么都不写,以 0 退出。
+- `mcp_config.rs`:agy 会先建一个 0 字节的 `mcp_config.json`,空文件当作空配置处理。
+- 前端:`providers.tsx` 的资产表换成 antigravity 的图标;`islandParts.tsx` 的品牌色表、
+  `Onboarding.tsx` 的 agent 列表、`i18n/zh.ts` 与 `i18n/en.ts` 的启动模式说明和工具名各改一处数据。
+  这些都是纯数据,不加也不会崩,只是显示中性徽标和 id 字符串。
+- Lead 接入:`lead_install.rs` 给 `LeadCap` 加了 `asset_root`(agy 的 hook 与审查角色在数据目录的上一层,
+  相对路径又不许带 `..`)和 `LeadHookFormat::AgyJson`(Lead 的 hook 占 hooks.json 顶层 `meowo-lead` 一块);
+  `meowo-reporter/src/lead_provider.rs` 的 Lead 适配把 gemini 分支换成 antigravity:负载同样先经
+  `normalize_hook_payload`,写挂起关卡前在 PreToolUse 要求先起等待器,回合结束用 Stop 的
+  `{"decision":"continue"}` 交答复或补起等待器。
+- `retired.rs`(新模块):退役的 gemini 留在 `~/.gemini` 里的 Meowo 接线(hooks、MCP、Lead 文件、Lead 改过的设置),
+  宿主启动与卸载器各清一次,只动带 Meowo 标记的条目。
+
+`meowo-store` 零改动。
+
+守住「不按身份分支」的测试:`providers.test.tsx` 断言未知 agent 走中性兜底且**不等于** claude 的图标;
+`api.newsession.test.ts` 断言 `listAgents()` 原样透传后端下发的未知 id、`agentName()` 未知回退成 id 本身。
+已退役的 `gemini` 现在就是这样一个未知 provider:旧库里的 gemini 会话显示中性图标和原样的名字,不崩。

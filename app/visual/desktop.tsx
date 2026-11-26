@@ -83,7 +83,7 @@ const AGENTS_WITH_OPTIONS = [
   // supports_proxy：通用页「各 Agent 单独设置」代理只列支持代理的已装 agent，缺了这三项那一行拍不出来。
   { id: "codex", display_name: "Codex", installed: true, launch_options: [], supports_proxy: true, proxy_covers_all_launches: false, proxy_accepts_socks: false },
   { id: "kimi", display_name: "Kimi Code", installed: true, launch_options: [], supports_proxy: true, proxy_covers_all_launches: false, proxy_accepts_socks: true },
-  { id: "gemini", display_name: "Gemini CLI", installed: false, launch_options: [] },
+  { id: "antigravity", display_name: "Antigravity CLI", installed: false, launch_options: [] },
   { id: "opencode", display_name: "opencode", installed: false, launch_options: [] },
 ];
 const RECENT_DIRS = ["C:\\Users\\demo\\workspace\\web-app", "C:\\Users\\demo\\workspace\\billing-service", "D:\\code\\infra\\a-very-long-monorepo-name\\packages\\export-api"];
@@ -344,7 +344,7 @@ async function boot(): Promise<React.ReactNode> {
       : ["重构登录页表单校验", "修支付回调的重复扣款", "补齐导出接口的单测", "排查夜间构建在 ARM64 runner 上偶发失败的原因"];
     const kinds = ["pending", "error", "running", "waiting"] as const;
     const sessions = kinds.map((k, i) => {
-      const s = makeSession({ title: titles[i], project: ["web-app", "billing", "api", "infra"][i], provider: (["claude", "kimi", "codex", "gemini"] as const)[i], status: k === "waiting" ? "waiting" : "running", agoMin: i * 3, todoDone: 1, todoTotal: 3 });
+      const s = makeSession({ title: titles[i], project: ["web-app", "billing", "api", "infra"][i], provider: (["claude", "kimi", "codex", "antigravity"] as const)[i], status: k === "waiting" ? "waiting" : "running", agoMin: i * 3, todoDone: 1, todoTotal: 3 });
       s.session.id = i + 1;
       if (k === "pending") s.pending_review = "approval";
       if (k === "error") { s.errored = true; s.error_label = "API Error: 529"; }
@@ -451,9 +451,9 @@ async function boot(): Promise<React.ReactNode> {
     const relayAgents = relayParam
       ? AGENTS_WITH_OPTIONS.map((a) => a.id === "claude" ? { ...a, relay: { protocols: [], auth_modes: [{ value: "bearer", label: "Bearer Token" }, { value: "api_key", label: "API Key (x-api-key)" }], default_protocol: "", default_auth: "bearer", suggestions: [{ protocol: "", models: ["claude-sonnet-5"] }], env_options: [] } } : a)
       : AGENTS_WITH_OPTIONS;
-    // ?mcp=unreadable：Gemini 装着，但它的 settings.json 带注释、Meowo 读不懂，发图工具没接上（mcp_config_unreadable）。
+    // ?mcp=unreadable：Antigravity 装着，但它的 mcp_config.json 带注释、Meowo 读不懂，发图工具没接上（mcp_config_unreadable）。
     const agentList = q.get("mcp") === "unreadable"
-      ? relayAgents.map((a) => a.id === "gemini" ? { ...a, installed: true, mcp_config_unreadable: "C:\\Users\\demo\\.gemini\\settings.json" } : a)
+      ? relayAgents.map((a) => a.id === "antigravity" ? { ...a, installed: true, mcp_config_unreadable: "C:\\Users\\demo\\.gemini\\config\\mcp_config.json" } : a)
       : relayAgents;
     // ?upd=checking|error|available|downloading|ready：关于页的更新状态（设置窗开着 10 秒后自动查一次）。
     // ?fail=1：保存设置失败（各分区的错误提示）；远程分区另报一条端口之外的启动错误。

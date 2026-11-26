@@ -1,15 +1,15 @@
-//! 真机探针：Kimi / Gemini 原生 TUI 切模型、切模式（任务 .lead/20261114-tui-model-switch，验收 #3 #4 #7 #8）。
+//! 真机探针：Kimi 原生 TUI 切模型、切模式（任务 .lead/20261114-tui-model-switch，验收 #3 #4 #7 #8）。
 //!
-//! 两家都是「带参数重启接回」机制（ModelSwitch::RestartResume）：后端 apply_session_settings 空闲时
+//! Kimi 走「带参数重启接回」机制（ModelSwitch::RestartResume）：后端 apply_session_settings 空闲时
 //! 先 [`crate::session_settings::plan`] 拆计划，再 restart_session_with → prepare_resume_launch 拼
 //! argv（resolve_resume_plan + splice_stored_launch_args + swap_unsent_resume）重启；未建会话的临时 id
 //! 走 reopen_pending_with（launch_argv + args_for_selections）。这些都要 AppHandle / PtyBroker，探针不起
 //! Meowo，就用**同一组拼 argv 的函数**算出参数，自己在 PTY 里重启（与 broker.stop 一样硬杀子进程），
 //! 再看真实 TUI 的表现。本文件挂在 terminal 模块下，才能调到这几个私有函数。
 //!
-//! 全程隔离：KIMI_CODE_HOME / GEMINI_CLI_HOME / MEOWO_DB 指一次性目录，本地假模型（fake_llm.py），
-//! 不读写用户真实的 ~/.kimi-code、~/.gemini、~/.meowo；hook 用本分支构建的 meowo-reporter 落临时库。
-//! 证据写到 `MEOWO_TMS_EVIDENCE`（缺省 `$CARGO_TARGET_DIR/tms-probes`）下的 kimi/、gemini/。
+//! 全程隔离：KIMI_CODE_HOME / MEOWO_DB 指一次性目录，本地假模型（fake_llm.py），
+//! 不读写用户真实的 ~/.kimi-code、~/.meowo；hook 用本分支构建的 meowo-reporter 落临时库。
+//! 证据写到 `MEOWO_TMS_EVIDENCE`（缺省 `$CARGO_TARGET_DIR/tms-probes`）下的 kimi/。
 //!
 //! ```text
 //! cargo build -p meowo-reporter
@@ -69,7 +69,7 @@ impl Tui {
                     break;
                 }
                 let bytes = &chunk[..n];
-                // kimi/gemini 启动时问终端能力（DA1）与光标位置；不答就停在空白首帧（memory kimi-probe-da1）。
+                // kimi 启动时问终端能力（DA1）与光标位置；不答就停在空白首帧（memory kimi-probe-da1）。
                 let mut w = w2.lock().unwrap();
                 if bytes.windows(3).any(|x| x == b"\x1b[c") || bytes.windows(4).any(|x| x == b"\x1b[0c") {
                     let _ = w.write_all(b"\x1b[?1;2c");
@@ -139,9 +139,6 @@ impl Tui {
         self.type_text(text);
         std::thread::sleep(Duration::from_millis(300));
         self.send("\r");
-    }
-    fn alive(&mut self) -> bool {
-        self.child.try_wait().ok().flatten().is_none()
     }
     /// 与 PtyBroker::stop 同一刀：硬杀直接子进程（Windows TerminateProcess，CLI 来不及收尾）。
     fn hard_kill(&mut self) {
@@ -467,11 +464,6 @@ fn kimi_pass_trust(tui: &Tui) -> bool {
 fn kimi_approval(screen: &str) -> bool {
     let s = screen.to_lowercase();
     s.contains("↵ confirm") && (s.contains("write this file?") || s.contains("approve") || s.contains("run this command?"))
-}
-
-fn gemini_approval(screen: &str) -> bool {
-    let s = screen.to_lowercase();
-    s.contains("allow once") || s.contains("allow execution") || s.contains("allow for this session")
 }
 
 /// kimi 会话目录（KIMI_CODE_HOME/sessions/<wd>/<id>/）里的会话 id。
@@ -821,303 +813,5 @@ fn tms_probe_kimi() {
 
     let failed: Vec<_> = sb.checks.iter().filter(|c| c["ok"] == false).cloned().collect();
     eprintln!("[tms] kimi 证据：{}", sb.evidence.display());
-    assert!(failed.is_empty(), "{failed:#?}");
-}
-
-// ---------------------------------------------------------------- gemini
-
-fn gemini_ready(s: &str) -> bool {
-    s.contains("Type your message")
-}
-
-fn gemini_chats(home: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    for proj in std::fs::read_dir(home.join(".gemini/tmp")).into_iter().flatten().flatten() {
-        for f in std::fs::read_dir(proj.path().join("chats")).into_iter().flatten().flatten() {
-            out.push(f.path());
-        }
-    }
-    out.sort();
-    out
-}
-
-fn gemini_model_of(r: &Value) -> Option<String> {
-    let path = r["path"].as_str()?;
-    let rest = path.split("/models/").nth(1)?;
-    Some(rest.split(':').next()?.to_owned())
-}
-
-#[test]
-#[ignore = "拉起真实 gemini TUI（假模型）；手动复跑"]
-fn tms_probe_gemini() {
-    let mut sb = Sb::new("gemini");
-    sb.start_fake();
-    let gemini_dir = sb.home.join(".gemini");
-    std::fs::create_dir_all(&gemini_dir).unwrap();
-    let env: Vec<(String, String)> = vec![
-        ("GEMINI_CLI_HOME".into(), sb.home.to_string_lossy().into_owned()),
-        ("MEOWO_DB".into(), sb.db.to_string_lossy().into_owned()),
-        ("GEMINI_CLI_NO_RELAUNCH".into(), "true".into()),
-        ("GEMINI_API_KEY".into(), "fake-key".into()),
-        ("GOOGLE_GEMINI_BASE_URL".into(), format!("http://127.0.0.1:{}", sb.port)),
-    ];
-    for (k, v) in &env {
-        std::env::set_var(k, v);
-    }
-    let settings = json!({
-        "general": {"enableAutoUpdate": false, "enableAutoUpdateNotification": false, "defaultApprovalMode": "default"},
-        "model": {"name": "gemini-3.5-flash-lite"},
-        "ui": {"hideTips": true, "hideBanner": true},
-        "privacy": {"usageStatisticsEnabled": false},
-        "security": {"auth": {"selectedType": "gemini-api-key"}},
-    });
-    std::fs::write(gemini_dir.join("settings.json"), serde_json::to_string_pretty(&settings).unwrap()).unwrap();
-    std::fs::write(
-        gemini_dir.join("trustedFolders.json"),
-        json!({ sb.cwd.to_string_lossy(): "TRUST_FOLDER" }).to_string(),
-    )
-    .unwrap();
-    let gemini = meowo_agent::by_id("gemini").unwrap();
-    let version = std::process::Command::new("cmd")
-        .args(["/c", "gemini", "--version"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
-        .unwrap_or_default();
-    sb.note("cli_version", json!(version));
-    wire_hooks("gemini", &sb, "0.68.0", &gemini_dir);
-    let catalog = crate::session_settings::catalog_for(gemini, &env, Some(&sb.cwd));
-    sb.note("catalog", json!(catalog.iter().map(|c| json!({"id": c.id, "label": c.label, "group": c.group})).collect::<Vec<_>>()));
-    let settings_text = || std::fs::read_to_string(gemini_dir.join("settings.json")).unwrap();
-    let settings_before = settings_text();
-
-    // ---- G0 新会话：启动即有 uuid、hook 认领（与 Kimi 不同，不会「等第一条消息」）。
-    let argv0 = fresh_argv("gemini", &HashMap::new(), &env, &sb.cwd);
-    let mut tui = Tui::spawn(&argv0, &sb.cwd, &env, 140, 40);
-    let ready = tui.wait("gemini 输入框", 90, gemini_ready);
-    let claimed = wait_until(20, || !sb.sessions().is_empty());
-    let rows = sb.sessions();
-    let (mut sid, mut native) = rows.first().cloned().unwrap_or((0, String::new()));
-    sb.check("G0.session_claimed_at_startup", ready && claimed, json!({"argv": argv0, "db_rows": rows}));
-    {
-        let store = sb.store();
-        let _ = store.set_session_provider(sid, "gemini");
-        let _ = store.set_session_cwd(sid, &sb.cwd.to_string_lossy(), 3);
-    }
-
-    // ---- G1 还没发过消息就切模型：硬杀后会话文件是否还在决定 --resume / --session-id。
-    let plan = plan_for("gemini", Some("gemini-2.5-pro"), &[], &env, &sb.cwd, &[]).unwrap();
-    sb.note("g1_plan", json!({"restart": plan.restart}));
-    let chats_before_kill = gemini_chats(&sb.home);
-    tui.hard_kill();
-    std::thread::sleep(Duration::from_millis(800));
-    let chats_after_kill = gemini_chats(&sb.home);
-    let (argv, cwd) = restart_argv("gemini", sid, &native, &sb.cwd, &plan.restart);
-    let at = Instant::now();
-    let mut tui = Tui::spawn(&argv, &cwd, &env, 140, 40);
-    let resume_failed = |s: &str| s.contains("Invalid session") || s.contains("Error resuming session");
-    let ready = tui.wait("G1 接回", 60, |s| gemini_ready(s) || resume_failed(s));
-    let ready_ms = at.elapsed().as_millis() as u64;
-    std::thread::sleep(Duration::from_secs(2));
-    sb.save("g1-0-unsent-restart.txt", &tui.screen());
-    let invalid = resume_failed(&tui.screen()) || !tui.alive();
-    let first_argv = argv.clone();
-    if invalid {
-        // 硬杀（与 broker.stop 同一刀）后 gemini 来不及删空会话文件，swap_unsent_resume 看见文件就仍用
-        // --resume，CLI 却认为没有可恢复的会话直接退出。探针按「本该走的」--session-id 继续，好验后面几步。
-        sb.check("G1.unsent_restart_after_hard_kill", false, json!({"argv": first_argv, "ready_ms": ready_ms, "chats_after_hard_kill": chats_after_kill, "screen": tui.screen().trim()}));
-        // 再试「本该走的」--session-id：实测报 Session ID already exists——这个 id 两条路都接不回了。
-        let mut fixed = argv.clone();
-        if let Some(i) = fixed.iter().position(|a| a == "--resume") {
-            fixed[i] = "--session-id".into();
-        }
-        tui = Tui::spawn(&fixed, &cwd, &env, 140, 40);
-        let alt_ok = tui.wait("G1 --session-id", 40, |s| gemini_ready(s) || s.contains("already exists"));
-        std::thread::sleep(Duration::from_secs(2));
-        let alt_screen = tui.screen();
-        sb.check(
-            "G1.session_id_fallback_after_hard_kill",
-            alt_ok && gemini_ready(&alt_screen) && !alt_screen.contains("already exists"),
-            json!({"argv": fixed, "screen": alt_screen.trim()}),
-        );
-        // 后面几步要一个有消息的会话：另起新会话（带 -m，等同 reopen 的参数），换用新 id。
-        let argv = fresh_argv("gemini", &selections(&[("model", "gemini-2.5-pro")]), &env, &sb.cwd);
-        tui = Tui::spawn(&argv, &sb.cwd, &env, 140, 40);
-        tui.wait("G1 新会话", 90, gemini_ready);
-        wait_until(20, || sb.sessions().len() >= 2);
-        if let Some((id, n)) = sb.sessions().last().cloned() {
-            sid = id;
-            native = n;
-            let store = sb.store();
-            let _ = store.set_session_provider(sid, "gemini");
-            let _ = store.set_session_cwd(sid, &sb.cwd.to_string_lossy(), 3);
-        }
-    }
-    tui.submit("SAY g1first");
-    let replied = tui.wait("G1 回复", 60, |s| s.contains("SAID g1first"));
-    tui.settle(3, 30);
-    sb.save("g1-1-first-reply.txt", &tui.screen());
-    let model1 = sb.request_with("SAY g1first").as_ref().and_then(gemini_model_of);
-    let rows = sb.sessions();
-    sb.check(
-        "G1.unsent_switch_keeps_id_and_model",
-        !invalid && replied && model1.as_deref() == Some("gemini-2.5-pro") && rows.len() == 1,
-        json!({"argv_used": if invalid { "fallback --session-id" } else { "restart_argv" }, "argv": argv, "ready_ms": ready_ms, "chats_before_kill": chats_before_kill, "chats_after_hard_kill": chats_after_kill, "first_attempt_failed": invalid, "ready_ok": ready, "model": model1, "db_rows": rows}),
-    );
-
-    // ---- G2 空闲切模型（已有消息）：--resume <uuid> -m；历史在、id 不变、下一轮新模型；TUI 草稿去向。
-    let plan = plan_for("gemini", Some("gemini-3.8-flash"), &[], &env, &sb.cwd, &[]).unwrap();
-    tui.type_text("DRAFT-G2");
-    std::thread::sleep(Duration::from_millis(500));
-    let draft_before = tui.screen().contains("DRAFT-G2");
-    tui.hard_kill();
-    let (argv, cwd) = restart_argv("gemini", sid, &native, &sb.cwd, &plan.restart);
-    let at = Instant::now();
-    let tui = Tui::spawn(&argv, &cwd, &env, 140, 40);
-    let ready = tui.wait("G2 接回", 60, gemini_ready);
-    let history = tui.wait("G2 历史", 15, |s| s.contains("SAID g1first"));
-    let ready_ms = at.elapsed().as_millis() as u64;
-    tui.settle(2, 15);
-    sb.save("g2-0-restarted.txt", &tui.screen());
-    let draft_after = tui.screen().contains("DRAFT-G2");
-    sb.check("G2.tui_draft_after_restart_recorded", true, json!({"draft_in_tui_before": draft_before, "draft_in_tui_after": draft_after}));
-    tui.submit("SAY g2next");
-    // 假模型按末尾几段文本里的第一个 SAY 回话（会回成 SAID g1first），以「请求发出且回合结束」为准。
-    let replied = wait_until(60, || sb.request_with("SAY g2next").is_some());
-    tui.settle(3, 30);
-    sb.save("g2-1-next.txt", &tui.screen());
-    let model2 = sb.request_with("SAY g2next").as_ref().and_then(gemini_model_of);
-    let rows = sb.sessions();
-    sb.check(
-        "G2.resume_same_session_new_model",
-        ready && history && replied && model2.as_deref() == Some("gemini-3.8-flash") && sb.sessions().iter().filter(|r| r.1 == native).count() == 1 && argv.iter().any(|a| a == "--resume"),
-        json!({"argv": argv, "ready_ms": ready_ms, "model": model2, "db_rows": rows, "chats": gemini_chats(&sb.home), "status_bar_has_model": tui.screen().contains("gemini-3.8-flash")}),
-    );
-    let (m, _) = stop_model("gemini", &native);
-    sb.check("G2.stop_outputs_model", m.as_deref() == Some("gemini-3.8-flash"), json!(m));
-    sb.check("G2.settings_untouched", settings_text() == settings_before, json!(null));
-
-    // ---- G4 有待批审批：default 档写文件弹审批；库里 pending_review 被 hook 写上（前端据此不写终端
-    // 不重启）；等着不动，审批不被答掉。
-    let target = sb.cwd.join("approval-g.txt");
-    sb.plan(json!({"phase":"G4","gate_path": target.to_string_lossy(),"gate_body":"approved-content"}));
-    tui.submit("OPEN-GATE");
-    let shown = tui.wait("审批框", 60, gemini_approval);
-    std::thread::sleep(Duration::from_secs(2));
-    let review = sb.store().pending_review_of(sid).ok().flatten();
-    sb.save("g4-0-approval.txt", &tui.screen());
-    std::thread::sleep(Duration::from_secs(5));
-    let still = gemini_approval(&tui.screen());
-    sb.check(
-        "G4.approval_pending_marks_session",
-        shown && review.is_some() && still && !target.exists(),
-        json!({"pending_review": review, "approval_still_shown_after_7s": still, "file_written": target.exists()}),
-    );
-    tui.send("\x1b");
-    std::thread::sleep(Duration::from_secs(1));
-    tui.settle(3, 30);
-    sb.note("g4_after_decline", json!({"pending_review": sb.store().pending_review_of(sid).ok().flatten(), "file_written": target.exists()}));
-    sb.save("g4-1-declined.txt", &tui.screen());
-
-    // ---- G7 模式：default → plan（--approval-mode plan 接回，底栏 plan）；再 → autoEdit；新建带 --yolo。
-    let plan = plan_for("gemini", None, &[("approval", "plan")], &env, &sb.cwd, &[("approval", "default")]).unwrap();
-    let mut tui = tui;
-    tui.hard_kill();
-    let (argv, cwd) = restart_argv("gemini", sid, &native, &sb.cwd, &plan.restart);
-    let tui = Tui::spawn(&argv, &cwd, &env, 140, 40);
-    tui.wait("G7 接回", 60, gemini_ready);
-    let in_plan = tui.wait("plan 底栏", 15, |s| s.to_lowercase().contains("shift+tab to manual") || s.contains("plan"));
-    sb.save("g7-0-plan.txt", &tui.screen());
-    let screen_value = |lines: &[String]| -> Option<&'static str> {
-        let joined = lines.join("\n").to_lowercase();
-        gemini.mode_controls()[0]
-            .screen_markers
-            .iter()
-            .find(|m| joined.contains(m.marker))
-            .map(|m| m.value)
-    };
-    let seen = screen_value(&tui.lines());
-    sb.check("G7.approval_plan_via_restart", in_plan && seen == Some("plan"), json!({"argv": argv, "screen_marker": seen}));
-    let plan = plan_for("gemini", None, &[("approval", "autoEdit")], &env, &sb.cwd, &[("approval", "plan")]).unwrap();
-    let mut tui = tui;
-    tui.hard_kill();
-    let (argv, cwd) = restart_argv("gemini", sid, &native, &sb.cwd, &plan.restart);
-    let tui = Tui::spawn(&argv, &cwd, &env, 140, 40);
-    tui.wait("G7b 接回", 60, gemini_ready);
-    tui.settle(2, 15);
-    let seen = screen_value(&tui.lines());
-    sb.save("g7-1-autoedit.txt", &tui.screen());
-    sb.check("G7.approval_autoedit_via_restart", seen == Some("autoEdit"), json!({"argv": argv, "screen_marker": seen}));
-
-    // ---- G8 TUI 里自己切：/model set（本会话）→ 回合结束后 stop_outputs 读到；Shift+Tab 切审批档，
-    // 只能从底栏原文读（transcript/hook 都不带审批模式）。
-    tui.submit("/model set gemini-2.5-pro");
-    std::thread::sleep(Duration::from_secs(2));
-    let (m_now, _) = stop_model("gemini", &native);
-    tui.submit("SAY g8");
-    tui.wait("G8 回复", 60, |s| s.contains("SAID g8"));
-    tui.settle(3, 30);
-    let (m_after, _) = stop_model("gemini", &native);
-    let model8 = sb.request_with("SAY g8").as_ref().and_then(gemini_model_of);
-    sb.check(
-        "G8.tui_model_set_read_back",
-        m_now.as_deref() == Some("gemini-2.5-pro") && m_after.as_deref() == Some("gemini-2.5-pro") && model8.as_deref() == Some("gemini-2.5-pro"),
-        json!({"right_after_set": m_now, "after_turn": m_after, "request_model": model8}),
-    );
-    tui.send("\x1b[Z");
-    std::thread::sleep(Duration::from_millis(1200));
-    let seen = screen_value(&tui.lines());
-    sb.save("g8-0-shifttab.txt", &tui.screen());
-    sb.check("G8.shift_tab_read_from_footer", seen == Some("plan"), json!({"after_shift_tab_from_autoEdit": seen}));
-    sb.check("G8.settings_untouched", settings_text() == settings_before, json!(null));
-    drop(tui);
-    // 新建页默认值：改 settings.json 的 model.name / defaultApprovalMode，launch_defaults 现读跟上。
-    let before = gemini.launch_defaults(&env, Some(&sb.cwd));
-    let mut edited: Value = serde_json::from_str(&settings_text()).unwrap();
-    edited["model"]["name"] = json!("gemini-2.5-pro");
-    edited["general"]["defaultApprovalMode"] = json!("plan");
-    std::fs::write(gemini_dir.join("settings.json"), serde_json::to_string_pretty(&edited).unwrap()).unwrap();
-    let after = gemini.launch_defaults(&env, Some(&sb.cwd));
-    sb.check(
-        "G8.launch_defaults_follow_settings",
-        after.model.as_deref() == Some("gemini-2.5-pro") && after.choices.get("approval").map(String::as_str) == Some("plan"),
-        json!({"before": {"model": before.model, "choices": before.choices}, "after": {"model": after.model, "choices": after.choices}}),
-    );
-    // 多账号：env 里给另一个 GEMINI_CLI_HOME（profile 的隔离目录），清单与默认值是否跟着 env 走。
-    let other = sb.root.join("other-profile");
-    std::fs::create_dir_all(other.join(".gemini")).unwrap();
-    std::fs::write(
-        other.join(".gemini/settings.json"),
-        r#"{"model":{"name":"gemini-3-flash-preview"},"general":{"defaultApprovalMode":"auto_edit"},"security":{"auth":{"selectedType":"oauth-personal"}}}"#,
-    )
-    .unwrap();
-    let mut other_env = env.clone();
-    other_env.retain(|(k, _)| k != "GEMINI_CLI_HOME");
-    other_env.push(("GEMINI_CLI_HOME".into(), other.to_string_lossy().into_owned()));
-    let profile_defaults = gemini.launch_defaults(&other_env, Some(&sb.cwd));
-    let profile_catalog = crate::session_settings::catalog_for(gemini, &other_env, Some(&sb.cwd));
-    // Meowo 不给 gemini 建多账号（profile::env_of 对 gemini 不注入任何变量），env 里不会有别的
-    // GEMINI_CLI_HOME；插件读进程自己的数据目录，这里只记录，不算失败。
-    sb.note(
-        "g8_profile_env_ignored_info",
-        json!({"profile_defaults": {"model": profile_defaults.model, "choices": profile_defaults.choices}, "profile_catalog_len": profile_catalog.len(), "default_catalog_len": catalog.len()}),
-    );
-
-    // ---- G7c 新建会话带模式与模型：--yolo + -m。
-    let picks = selections(&[("model", "gemini-3.8-flash"), ("approval", "yolo")]);
-    let argv = fresh_argv("gemini", &picks, &env, &sb.cwd);
-    let tui = Tui::spawn(&argv, &sb.cwd, &env, 140, 40);
-    tui.wait("G7c", 60, gemini_ready);
-    tui.settle(2, 15);
-    let seen = screen_value(&tui.lines());
-    sb.save("g7-2-new-yolo.txt", &tui.screen());
-    sb.check(
-        "G7.new_session_with_mode_args",
-        seen == Some("yolo") && tui.screen().contains("gemini-3.8-flash"),
-        json!({"argv": argv, "screen_marker": seen}),
-    );
-    drop(tui);
-
-    let failed: Vec<_> = sb.checks.iter().filter(|c| c["ok"] == false).cloned().collect();
-    eprintln!("[tms] gemini 证据：{}", sb.evidence.display());
     assert!(failed.is_empty(), "{failed:#?}");
 }

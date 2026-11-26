@@ -97,7 +97,7 @@ fn respond(message: &Value, channel: Option<&(String, String)>, options: Options
                 "capabilities": { "tools": {} },
                 "serverInfo": { "name": "meowo", "version": env!("CARGO_PKG_VERSION") },
             });
-            // 没有 Meowo 会话令牌（外部终端、Kimi 桌面版、用户自己起的 gemini 读到同一份配置）时
+            // 没有 Meowo 会话令牌（外部终端、Kimi 桌面版、Antigravity App/IDE 读到同一份配置）时
             // 工具列表是空的，也不给说明：否则这段话会进那边模型的系统提示，教它用一组根本不存在的工具。
             if channel.is_some() {
                 result["instructions"] = json!(if options.browser {

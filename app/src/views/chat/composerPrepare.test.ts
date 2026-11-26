@@ -1,8 +1,11 @@
 // 往终端写正文之前收拾输入框（prepareComposer）：五家用本机真实 CLI 的画面回放。
 //
 // 假终端的每一帧都取自共享样例（test/fixtures/composer-frames.json，2026-11-14 probe_tui_script 实拍），
-// 按键之后切到哪一帧照真机的反应写：codex / kimi / opencode 的 Ctrl-C 一下清空，gemini 的 Ctrl-K、Ctrl-U、
-// 退格一轮清一行，claude 的 Ctrl-S 暂存后回到占位。断言到底：按了哪些键、草稿去了哪、最后画面是不是空的。
+// 按键之后切到哪一帧照真机的反应写：codex / kimi / opencode 的 Ctrl-C 一下清空，claude 的 Ctrl-S 暂存后回到
+// 占位。断言到底：按了哪些键、草稿去了哪、最后画面是不是空的。
+//
+// 「行编辑键逐行清、多轮清完」与「特殊输入模式（shell、vim NORMAL）先退出再写」两种规格现役几家都不声明，
+// 原 gemini 实拍帧随 provider 移除；读法留着，这里用最小合成规格与合成帧测（SYNTH）。
 import { describe, expect, it } from "vitest";
 import { chatUi } from "../../test/agents";
 import composerFrames from "../../test/fixtures/composer-frames.json";
@@ -43,6 +46,36 @@ function terminal(start: TerminalScreenFrameDto, react: (key: string, now: Termi
 
 const CTRL_C = "\x03";
 
+/// 合成规格：上下水平边框、`>` 提示符；清空键是 Ctrl-K、Ctrl-U、退格，一轮清一行，最多 12 轮；
+/// 两种特殊输入模式：提示符变成 `!` 的 shell 模式（Esc 退出），框下方出现 `[NORMAL]` 的 vim 模式（i 退出）。
+const SYNTH: ComposerSpec = {
+  prompt_footer: false,
+  input_start_pattern: String.raw`^(\s*> )`,
+  top_pattern: String.raw`^─+\s*$`,
+  bottom_pattern: String.raw`^─+\s*$`,
+  row_pattern: "^ (.*)$",
+  prompt_prefix: ">",
+  tail_rows: 0,
+  tail_pattern: null,
+  empty_pattern: "^(?:Type a message)?$",
+  suggestion_placeholder: false,
+  send_requires_recognition: true,
+  stash: null,
+  clear_inputs: ["\x0b", "\x15", "\x7f"],
+  clear_rounds: 12,
+  clear_while_running: true,
+  alt_modes: [
+    { id: "shell", prompt_pattern: String.raw`^!(?:\s|$)`, below_pattern: null, exit_input: "\x1b" },
+    { id: "vim_normal", prompt_pattern: null, below_pattern: String.raw`^\s*\[NORMAL\]`, exit_input: "i" },
+  ],
+  // 草稿保真按终端宽折行判读全；没有保真规格时草稿一律算读不全、不替用户清。
+  fidelity: { paste_pattern: String.raw`\[Pasted Text: \d+ lines\]`, overflow_pattern: null, overflow_rows: 10, overflow_height: null, wrap_edge: "terminal", wrap_inset: 3 },
+};
+const RULE = "─".repeat(40);
+const synth = (...rows: string[]): TerminalScreenFrameDto => ({ lines: [RULE, ...rows], cursorRow: 1, cursorCol: 3, cursorVisible: false, cursorDim: false, cols: 40 });
+
+const SYNTH_EMPTY = synth(" > Type a message", RULE);
+
 describe("四家终端输入框里有草稿：清掉并把内容交给对话页", () => {
   const cases = [
     { provider: "codex", draft: "codex-0.167.2-same-text-draft", empty: "codex-0.167.2-placeholder-cursor", text: "Ask Codex to do anything" },
@@ -70,23 +103,17 @@ describe("四家终端输入框里有草稿：清掉并把内容交给对话页"
     expect(pty.keys).toEqual([]);
   });
 
-  it("gemini：行编辑键逐行清，两行草稿两轮清完，全程不按 Ctrl-C（它会取消当前请求）", async () => {
-    const two = sample("gemini-0.68-draft-multiline");
-    // 真机：第一轮 Ctrl-K、Ctrl-U 之后只剩首行（` > AAA`），第二轮清空回到占位。
-    const one = { ...two, lines: two.lines.filter((line) => !line.includes("DRAFT-TWO")), cursorRow: two.cursorRow - 1 };
-    const empty = sample("gemini-0.68-placeholder-cursor");
-    const pty = terminal(two, (key, now) => (key === "\x15" ? (now === two ? one : empty) : undefined));
-    const prepared = await prepareComposer(pty.io, spec("gemini"), { running: true });
+  it("行编辑键逐行清（合成规格）：两行草稿两轮清完，只按声明的键，不按 Ctrl-C", async () => {
+    const two = synth(" > DRAFT-ONE", "   DRAFT-TWO", RULE);
+    // 第一轮 Ctrl-K、Ctrl-U 之后只剩首行，第二轮清空回到占位。
+    const one = synth(" > DRAFT-ONE", RULE);
+    const pty = terminal(two, (key, now) => (key === "\x15" ? (now === two ? one : SYNTH_EMPTY) : undefined));
+    const prepared = await prepareComposer(pty.io, SYNTH, { running: true });
     expect(prepared).toEqual({ kind: "moved", draft: "DRAFT-ONE\nDRAFT-TWO" });
     expect(pty.keys).not.toContain(CTRL_C);
     expect(pty.keys.slice(0, 2)).toEqual(["\x0b", "\x15"]);
     expect(new Set(pty.keys)).toEqual(new Set(["\x0b", "\x15", "\x7f"]));
-    expect(readComposerFrame(pty.current(), spec("gemini")).state).toBe("empty");
-  });
-
-  it("gemini：与占位同文的真实草稿也认得出并清掉（此前分不清，被当成空框把消息接在草稿后面发出去）", async () => {
-    const pty = terminal(sample("gemini-0.68-same-text-draft"), (key) => (key === "\x15" ? sample("gemini-0.68-placeholder-cursor") : undefined));
-    expect(await prepareComposer(pty.io, spec("gemini"), { running: false })).toEqual({ kind: "moved", draft: "Type your message or @path/to/file" });
+    expect(readComposerFrame(pty.current(), SYNTH).state).toBe("empty");
   });
 
   it.each(cases)("$provider：按了清空键画面没变，如实说没收起，不继续写", async ({ provider, draft, text }) => {
@@ -117,36 +144,38 @@ describe("claude：草稿用暂存键收起，提交后 CLI 自己还原", () =>
   });
 });
 
-describe("gemini 的特殊输入模式：先退出再写", () => {
+describe("特殊输入模式（合成规格）：先退出再写", () => {
+  const SHELL = synth(" !", RULE);
   it("shell 模式按 Esc 回到普通输入框", async () => {
-    const pty = terminal(sample("gemini-0.68-shell-mode"), (key) => (key === "\x1b" ? sample("gemini-0.68-placeholder-cursor") : undefined));
-    expect(await prepareComposer(pty.io, spec("gemini"), { running: false })).toEqual({ kind: "clean", verified: true });
+    const pty = terminal(SHELL, (key) => (key === "\x1b" ? SYNTH_EMPTY : undefined));
+    expect(await prepareComposer(pty.io, SYNTH, { running: false })).toEqual({ kind: "clean", verified: true });
     expect(pty.keys).toEqual(["\x1b"]);
   });
   it("vim NORMAL 按 i 回到 INSERT，里面的草稿接着清掉带回", async () => {
-    const insertDraft = { ...sample("gemini-0.68-vim-normal-draft"), cursorRow: 3, cursorCol: 8, cursorVisible: true };
-    insertDraft.lines = insertDraft.lines.map((line) => line.replace("[NORMAL]", "[INSERT]"));
-    const pty = terminal(sample("gemini-0.68-vim-normal-draft"), (key) => (key === "i" ? insertDraft
-      : key === "\x15" ? sample("gemini-0.68-vim-insert-placeholder") : undefined));
-    expect(await prepareComposer(pty.io, spec("gemini"), { running: false })).toEqual({ kind: "moved", draft: "hello" });
+    const normalDraft = synth(" > hello", RULE, " [NORMAL]");
+    const insertDraft = synth(" > hello", RULE, " [INSERT]");
+    const insertEmpty = synth(" > Type a message", RULE, " [INSERT]");
+    const pty = terminal(normalDraft, (key) => (key === "i" ? insertDraft : key === "\x15" ? insertEmpty : undefined));
+    expect(await prepareComposer(pty.io, SYNTH, { running: false })).toEqual({ kind: "moved", draft: "hello" });
     expect(pty.keys[0]).toBe("i");
   });
   it("回合进行中不按退出键（Esc 在运行中是取消请求），说明要等回合结束", async () => {
-    const pty = terminal(sample("gemini-0.68-shell-mode"), () => undefined);
-    const prepared = await prepareComposer(pty.io, spec("gemini"), { running: true });
+    const pty = terminal(SHELL, () => undefined);
+    const prepared = await prepareComposer(pty.io, SYNTH, { running: true });
     expect(prepared).toEqual({ kind: "alt_mode", mode: "shell", running: true });
     expect(pty.keys).toEqual([]);
   });
   it("退不出去：不写正文，说明是哪种模式", async () => {
-    const pty = terminal(sample("gemini-0.68-vim-normal-empty"), () => undefined);
-    expect(await prepareComposer(pty.io, spec("gemini"), { running: false })).toEqual({ kind: "alt_mode", mode: "vim_normal", running: false });
+    const pty = terminal(synth(" > Type a message", RULE, " [NORMAL]"), () => undefined);
+    expect(await prepareComposer(pty.io, SYNTH, { running: false })).toEqual({ kind: "alt_mode", mode: "vim_normal", running: false });
     expect(pty.keys).toEqual(["i"]);
   });
 });
 
 describe("认不出输入框", () => {
-  const menu = { lines: ["Select model", "● 1. gemini-2.5-pro", "  2. gemini-2.5-flash"], cursorRow: 1, cursorCol: 0, cursorVisible: false };
-  it.each(["codex", "kimi", "gemini", "opencode"])("%s 不写、不按键；用户点了「仍然发送」才放行", async (provider) => {
+  const menu = { lines: ["Select model", "● 1. model-a", "  2. model-b"], cursorRow: 1, cursorCol: 0, cursorVisible: false };
+  it.each(["codex", "kimi", "antigravity", "opencode"])(
+"%s 不写、不按键；用户点了「仍然发送」才放行", async (provider) => {
     const pty = terminal(menu, () => undefined);
     expect(await prepareComposer(pty.io, spec(provider), { running: false })).toEqual({ kind: "unrecognized" });
     expect(await prepareComposer(pty.io, spec(provider), { running: false, force: true })).toEqual({ kind: "clean", verified: false });

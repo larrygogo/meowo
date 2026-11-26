@@ -976,10 +976,11 @@ mod cli_version_tests {
             ("2.1.322 (Claude Code)", "2.1.322"),
             ("warning: ignored option\n2.5.3", "2.5.3"),
             ("v1.19.3", "1.19.3"),
-            ("Gemini CLI 0.65.0-preview.1", "0.65.0-preview.1"),
+            // `agy --version` 只打一行裸版本号（1.5.18 实测）。
+            ("1.5.18", "1.5.18"),
         ] {
             assert_eq!(
-                parse_cli_version(text, &["codex", "Claude Code", "kimi", "gemini"]).as_deref(),
+                parse_cli_version(text, &["codex", "Claude Code", "kimi", "agy"]).as_deref(),
                 Some(expected)
             );
         }
@@ -2181,7 +2182,8 @@ mod tests {
                 if code.starts_with("//") {
                     continue; // 注释里举例说明是正常的
                 }
-                for id in ["claude", "codex", "kimi", "gemini", "opencode"] {
+                // gemini 已退役（2026-11 换成 antigravity），仍在名单里：宿主也不许按这个旧 id 分支。
+                for id in ["claude", "codex", "kimi", "antigravity", "gemini", "opencode"] {
                     assert!(
                         !code.contains(&format!("\"{id}\"")),
                         "{name}:{} 按 agent 身份分支了（{id}）——该能力应走 AgentPlugin 的能力槽：\n  {code}",
@@ -2513,13 +2515,13 @@ mod tests {
             "凭据所在的数据目录没隔离，实得 {keys:?}"
         );
 
-        // gemini 不支持多账号（数据目录不可被环境变量覆盖）→ 一个隔离变量都不该注入。
+        // antigravity 不支持多账号（数据目录不可被环境变量覆盖）→ 一个隔离变量都不该注入。
         // 只注入 MEOWO_PROFILE 而不隔离目录，会把一个跑在**默认账号**上的会话记成 profile 的。
-        let env = launch_env_for_profile(Some("gemini"), Some("work"));
+        let env = launch_env_for_profile(Some("antigravity"), Some("work"));
         let keys: Vec<&str> = env.iter().map(|(k, _)| k.as_str()).collect();
         assert!(
             !keys.contains(&"MEOWO_PROFILE"),
-            "gemini 不支持多账号，实得 {keys:?}"
+            "antigravity 不支持多账号，实得 {keys:?}"
         );
     }
 
@@ -2541,12 +2543,14 @@ mod tests {
             ["-r".to_string(), "SID".to_string()]
         );
 
-        // 新接入的两家，各自的 resume 子命令都得对上。
-        let gemini = resume_argv_for(Some("gemini"), Some("SID"));
+        // 后接入的两家，各自的 resume 子命令都得对上。
+        let agy = resume_argv_for(Some("antigravity"), Some("SID"));
         assert_eq!(
-            &gemini[gemini.len() - 2..],
-            ["--resume".to_string(), "SID".to_string()]
+            &agy[agy.len() - 2..],
+            ["--conversation".to_string(), "SID".to_string()]
         );
+        // 退役的 gemini 与未知 agent 同样处理：库里的旧会话不会被拿别家的参数拉起。
+        assert!(resume_argv_for(Some("gemini"), Some("SID")).is_empty());
         let opencode = resume_argv_for(Some("opencode"), Some("SID"));
         assert_eq!(
             &opencode[opencode.len() - 2..],
@@ -2554,7 +2558,7 @@ mod tests {
         );
 
         // 未知 agent → 空 argv：绝不拿 claude 的参数去拉起别的 CLI。反例必须选一个永远不会被
-        // 注册的串——这里原本写的是 "gemini"，而它后来真成了一个 agent。
+        // 注册的串（这里曾写过 "gemini"，它后来真成了一个 agent，2026-11 又退役了）。
         assert!(resume_argv_for(Some("not-an-agent"), Some("SID")).is_empty());
         // 没有 session_id 就无从 resume。
         assert!(resume_argv_for(Some("claude"), None).is_empty());

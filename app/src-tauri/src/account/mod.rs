@@ -460,7 +460,8 @@ mod tests {
             all_with_account().map(|p| p.id().as_str()).collect();
         assert_eq!(
             with,
-            ["claude", "codex", "gemini", "kimi", "opencode"]
+            // antigravity 没有账号能力：凭据在系统钥匙串、没有登录登出子命令（插件不声明 account）。
+            ["claude", "codex", "kimi", "opencode"]
                 .into_iter()
                 .collect::<std::collections::BTreeSet<_>>(),
             "账号能力的覆盖面变了——加/减了 agent，还是漏声明了能力槽？"
@@ -478,7 +479,7 @@ mod tests {
 
     /// **有账号能力 ⇒ 必须有登录入口。** 两者一旦脱节，前端就会亮出一个点了必失败的登录按钮：
     /// 卡片按「有账号能力但没登录」显示登录按钮，后端的 `login_argv()` 却是 None，只能回一句
-    /// 「该 agent 未声明登录入口」。gemini 正是这么翻车的——它没有登录子命令（登录靠裸启动），
+    /// 「该 agent 未声明登录入口」。已移除的 gemini 插件当年正是这么翻车的——它没有登录子命令（登录靠裸启动），
     /// 而当时的 `login_args: &[]` 被当成「无入口」。
     #[test]
     fn every_agent_with_account_can_actually_be_logged_in() {

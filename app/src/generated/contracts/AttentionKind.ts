@@ -2,6 +2,6 @@
 
 /**
  * 屏幕上这条可操作提示**是什么事**。前端按它定卡片的标题、徽章和按钮形态，
- * 不再从 `id` 的后缀猜（`gemini:usage-limit` 曾因此被说成「启动步骤」、徽章写「待批准」）。
+ * 不再从 `id` 的后缀猜（已移除的 gemini 插件的 `gemini:usage-limit` 曾因此被说成「启动步骤」、徽章写「待批准」）。
  */
 export type AttentionKind = "approval" | "plan" | "question" | "choice";

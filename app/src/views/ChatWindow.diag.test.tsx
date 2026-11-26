@@ -14,7 +14,7 @@ const lineOf = (kind: string) => diagLines().find((entry) => entry.message.inclu
 describe("对话窗运行日志", () => {
   const { snapshot, setup, box } = adapter;
 
-  it.each(["claude", "codex", "kimi", "gemini", "opencode"])("%s 发送失败：写一行，带 Provider、会话 id、原因，不带正文", async (provider) => {
+  it.each(["claude", "codex", "kimi", "antigravity", "opencode"])("%s 发送失败：写一行，带 Provider、会话 id、原因，不带正文", async (provider) => {
     const base = setup(801, provider);
     const body = "机密正文 secret-payload-801";
     let fail!: (reason: string) => void;

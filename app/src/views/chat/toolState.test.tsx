@@ -249,8 +249,8 @@ describe("思考中", () => {
     expect(stopped.container.querySelector(".chat-reasoning > summary")?.textContent).toContain("思考过程");
   });
 
-  it("整条落盘的思考（claude、gemini、opencode）写完才出现，不显示思考中", () => {
-    const items = upTo("gemini", (item) => item.type === "reasoning");
+  it("整条落盘的思考（claude、opencode）写完才出现，不显示思考中", () => {
+    const items = upTo("opencode", (item) => item.type === "reasoning");
     const view = show(items, "running");
     expect(view.container.querySelector(".chat-reasoning > summary")?.textContent).toContain("思考过程");
   });

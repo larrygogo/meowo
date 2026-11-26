@@ -636,9 +636,9 @@ export function ChatWindow() {
   // ——它已把 pid 判活、事件宽限与托管 PTY 活性(pty registry,随每次轮询新鲜)合并成
   // 单一真相。不要再引入前端自计的 PTY 活性标志(曾有 managedPtyActive:探测循环移交
   // ManagedTerminal 后停更,PTY 退出后悬死 true,把 tone 钉死「运行中」——已整根拆除)。
-  // history 未加载时按离线处理,避免首帧闪一下运行态。屏幕状态与侧栏同口径带上:gemini
-  // 启动即落 running、首条消息前无事件纠正,只看 DB 会把空闲会话当运行中、发送改按排队键
-  // Tab——正文停在输入框里发不出去(0.6.11 实机)。
+  // history 未加载时按离线处理,避免首帧闪一下运行态。屏幕状态与侧栏同口径带上:DB 的
+  // running 可能迟迟没有事件纠正,只看 DB 会把空闲会话当运行中、发送改按排队键——正文停在输入框
+  // 里发不出去(前科:0.6.11 实机,已移除的 gemini 插件启动即落 running)。
   // 两个口径（见 historyTurnTone）：sessionWideTone 与侧栏、灵动岛同源，后台子任务还在跑也算
   // 「运行中」，管窗口标题记号与标记完成的确认；tone 只看主回合，管发送、排队、撤销、运行条——
   // 主回合停了、只剩后台子代理在跑时，终端输入框照常可用，对话页也要能直接发。
@@ -1887,7 +1887,7 @@ export function ChatWindow() {
       sessionId, modelSwitch: chatUi?.model_switch, currentModes: history?.agentModes,
       options: agentsForOptions?.find((agent) => agent.id === provider)?.launch_options,
     }),
-    // 会话此刻的实际值：transcript 的模式、底栏原文认的模式（Gemini 审批模式只有这里有），当前模型的清单 id。
+    // 会话此刻的实际值：transcript 的模式、底栏原文认的模式（Antigravity 审批模式只有这里有），当前模型的清单 id。
     readCurrent: async () => {
       const current: Record<string, string> = {};
       for (const mode of history?.agentModes ?? []) current[mode.dimension] = mode.value;
@@ -2484,7 +2484,7 @@ export function ChatWindow() {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useMainPages 的 useCallback([])，引用稳定
   }, [resetTo]);
 
-  // 会话的进程被就地换了一个（切账号把会话重启到新账号、Kimi 与 Gemini 重启续接切模型，都发 pty-restarted）：
+  // 会话的进程被就地换了一个（切账号把会话重启到新账号、Kimi 与 Antigravity 重启续接切模型，都发 pty-restarted）：
   // 上一个进程留下的东西作废。此前只有终端视图听这条事件，对话页不知道进程换了代：旧进程被杀时挂着的审批
   // 留下一条「该审批已在别处处理或已过期」，一直挂在新进程的画面上（用户实拍 2026-11-15）；旧进程屏幕上认出的
   // 卡与它的收起条同理。手机页收不到宿主事件，靠上面「新卡到来时清掉」那一条兜底。
@@ -3839,7 +3839,7 @@ export function ChatWindow() {
     tidyComposer: () => nativeDraft.tidy(),
     deferTerminal: (action, label) => deferTerminalRef.current(action, label),
   });
-  // 这家 CLI 的单行正文要不要也走粘贴（gemini 吞半角问号）：随能力声明登记，见 chat/terminalSubmit。
+  // 这家 CLI 的单行正文要不要也走粘贴（前科：已移除的 gemini 插件吞半角问号）：随能力声明登记，见 chat/terminalSubmit。
   useEffect(() => { setSingleLinePaste(sessionId, chatUi?.single_line_paste_pattern); }, [sessionId, chatUi?.single_line_paste_pattern]);
   // 思考档入口只看能力声明（chat/availability 的 effortEntry）：打命令的两家照旧，经会话服务的
   // （Codex）随当前模型一起下发，回合中同样排到这一轮之后（走查输入 B7）。
@@ -5865,7 +5865,7 @@ export function ChatWindow() {
             const states = history?.agentModes ?? [];
             const controls = new Map(modeControls.map((control) => [control.dimension, control]));
             // 插件声明在会话里能切、且带统一说法的栏（任务 20261114-tui-model-switch）：Codex 权限 / 协作模式经
-            // 会话服务、Kimi 权限与 Gemini 审批带参重启接回。菜单每档是统一说法 + 一句话说明 + CLI 原名小字。
+            // 会话服务、Kimi 权限与 Antigravity 审批带参重启接回。菜单每档是统一说法 + 一句话说明 + CLI 原名小字。
             const switchable = (agentsForOptions?.find((agent) => agent.id === provider)?.launch_options ?? [])
               .filter((option) => option.switch !== "launch_only" && option.choices.some((choice) => choice.traits));
             const dimensions = [...modeControls.map((control) => control.dimension)];
@@ -5984,8 +5984,8 @@ export function ChatWindow() {
                     if (options.length > 0) {
                       setModelPickerOpen(false);
                       setModeMenu((open) => open === dimension ? null : dimension);
-                      // 打开菜单时读一次当前值：Gemini 的审批模式 transcript 与 hook 都不带，只有底栏原文
-                      // （research-kimi-gemini §3.5），按插件声明的屏幕标记认。不轮询。
+                      // 打开菜单时读一次当前值：Antigravity 的审批模式只在底栏原文里
+                      // （`auto · Gemini 4 Neon · high`），按插件声明的屏幕标记认。不轮询。
                       const markers = control?.screen_markers ?? [];
                       if (modeMenu !== dimension) void sessionSettings.syncLive();
                       if (markers.length > 0 && modeMenu !== dimension) {

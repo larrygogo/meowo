@@ -86,45 +86,6 @@ exports[`五家回放：真实会话样本 → 解析 → 归并 → 渲染 > co
 图片消息｜1 张｜codex 探针"
 `;
 
-exports[`五家回放：真实会话样本 → 解析 → 归并 → 渲染 > gemini 的时间线大纲与快照一致 1`] = `
-"样本｜gemini.1b135d85
-用户｜@..\\..\\..\\.gemini\\tmp\\meowo\\images\\clipboard-1784526326234.png 感觉这个新建会话的…
-过程块｜读取了 1 个文件 · 搜索了 2 个模式 · 执行了 1 次工具调用 · 已写入 1 个文件 · 已运行 1 条命令 · 已编辑 2 处（1 …
-思考｜思考过程5s›
-工具[done]｜读取｜app/src/views/ NewSessionPanel.tsx:1-200｜读取了 200 行｜读取了 200 行
-工具[done]｜搜索｜ns-window｜找到 2 条结果｜找到 2 条结果
-工具[done]｜搜索｜app/src/views/*Settings*.tsx｜找到 0 条结果｜找到 0 条结果
-工具[done]｜列出目录｜app/src/views｜｜Directory listing for C:\\Users\\user\\Desktop\\workspace\\meowo\\app\\src\\view…
-工具[done]｜写入｜../../../.gemini/tmp/meowo/1b135d85-45ba-4cab-bd8c-1a6719c72867/plans/ i…｜+35｜
-工具[done]｜运行｜npm test NewSessionPanel.test.tsx｜｜
-思考｜思考过程›
-工具[done]｜编辑｜app/src/ styles.css｜+3-3｜
-工具[error]｜编辑｜app/src/ styles.css｜+5-5｜
-助手｜我已经完成了对「新建会话」窗口设计的改进。 主要改动： 容器化配置区：将模型、权限等「启动选项」包裹在一个带背景和边框的容器（.ns-optio…
-改动卡｜2 个文件已修改｜app/src/styles.css+3-3›；../../../.gemini/tmp/meowo/1b135d85-45ba-4cab-bd8c-1a6719c72…
-分隔｜已中断
-样本｜gemini.375ffadb
-用户｜Reply with only the product of 1234 and 3, as digits.
-思考｜思考过程›
-助手｜3702
-用户｜Run this exact shell command and nothing else: ping -n 45 127.0.0.1
-过程块｜已运行 1 条命令
-思考｜思考过程›
-工具[done]｜运行｜ping -n 45 127.0.0.1｜｜
-用户｜Also, after the command finishes, reply with the product of 2222 and 3, …
-助手｜Acknowledged (ADD_TASK: compute product of 2222 and 3). 6666
-样本｜gemini.882f0730
-用户｜hi
-出错卡｜API 请求出错｜[API Error: You have exhausted your daily quota on this model.] Please w…
-样本｜gemini.probe-screenshot
-工具[done]｜网页截图｜｜｜面板浏览器截图（探针）｜缩略图 1
-样本｜gemini.probe-send-image
-过程块｜执行了 2 次工具调用（1 失败）
-工具[done]｜更新主题｜Visual Tasks｜｜Current topic: "Visual Tasks" Topic summary: I am proceeding to take a b…
-工具[error]｜网页截图｜｜｜Tool "mcp_meowo_browser_screenshot" not found. Did you mean one of: "mcp…
-图片消息｜1 张｜gemini 探针"
-`;
-
 exports[`五家回放：真实会话样本 → 解析 → 归并 → 渲染 > kimi 的时间线大纲与快照一致 1`] = `
 "样本｜kimi.4f41d9c0
 过程块｜已运行 1 条命令 · 1 次已中断 · 7s

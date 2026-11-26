@@ -58,7 +58,16 @@ pub enum ConfigFormat {
     /// 用户自有条目一概不动」是两种不同的所有权模型——因为那三家的文件本就属于用户，
     /// 而这个文件从来只有 meowo 会写。
     OpencodeTs,
+    /// antigravity（agy）：全局 `~/.gemini/config/hooks.json`，顶层是「命名 hook → 事件 → handler」：
+    /// `{"<名>": {"enabled": true, "PreToolUse": [{"matcher":"*","hooks":[{...}]}], "Stop": [{...}]}}`。
+    /// 工具事件（Pre/PostToolUse）是 matcher 分组，其余事件直接是 handler 列表（agy 内置 hooks 文档，
+    /// agy-strings 119993-120066 行）。Meowo 只占顶层一个键 [`AGY_HOOK_NAME`]，整块由 Meowo 生成；
+    /// 用户和别的工具挂的命名 hook 一概不动。`settings.json` 里的 hooks 键 agy 不加载（官方 settings 文档）。
+    AgyJson,
 }
+
+/// Meowo 在 agy 的 hooks.json 里占用的顶层键。
+pub const AGY_HOOK_NAME: &str = "meowo";
 
 /// 配置文件不存在时怎么办。声明式，避免每个 agent 的 `apply` 各写一遍 NotFound 分支。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,13 +87,12 @@ pub struct CommandSpec {
     pub quote_exe: bool,
     /// 是否追加 `--provider <id>`（codex/kimi 加；claude 靠 settings 里的位置区分，不带参）。
     pub with_provider: bool,
-    /// Windows 上是否在命令串前加 PowerShell 调用运算符 `& `。
+    /// Windows 上是否在命令串前加 PowerShell 调用运算符 `& `。通用能力，目前没有插件声明。
     ///
-    /// gemini 的 hookRunner 在 Windows 恒经 PowerShell 执行 command（实测 0.51
-    /// `getShellConfiguration`：ComSpec 是 pwsh/powershell 用之，否则找 pwsh，兜底
-    /// powershell.exe——**没有 cmd 分支**），而 PowerShell 里以引号开头的
-    /// `"exe" --provider x` 是字符串表达式、解析即失败——codex 当年靠官方的
-    /// `commandWindows` 绕开同一个坑，gemini 没有该字段，只能写 `& "exe" --provider x`。
+    /// 给「在 Windows 恒经 PowerShell 执行 hook command」的 CLI 用：PowerShell 里以引号开头的
+    /// `"exe" --provider x` 是字符串表达式、解析即失败，只能写 `& "exe" --provider x`。最初为已移除的
+    /// gemini 插件引入（其 hookRunner 实测 0.51 `getShellConfiguration` 没有 cmd 分支）；codex 当年靠
+    /// 官方的 `commandWindows` 绕开同一个坑，antigravity 在 Windows 用 `cmd /c`，都不需要它。
     /// 非 Windows（bash -c）不加：`&` 在 bash 里是后台运算符。
     pub ps_call_operator: bool,
 }
@@ -179,6 +187,7 @@ impl HookSpec {
                 claude_json::ensure_hooks(self, cur_text, reporter, agent_id)
             }
             ConfigFormat::OpencodeTs => opencode_ts::ensure_hooks(cur_text, reporter, agent_id),
+            ConfigFormat::AgyJson => agy_json::ensure_hooks(self, cur_text, reporter, agent_id),
         }
     }
 
@@ -193,6 +202,7 @@ impl HookSpec {
             // 这份文件由 meowo 独占生成，任何内容都能被下一次生成整体取代——不存在「读得出但改不动」
             // 的中间态，故恒真（另三家要靠它区分「文件坏了」与「文件好但没接线」）。
             ConfigFormat::OpencodeTs => true,
+            ConfigFormat::AgyJson => agy_json::parse(cur_text).is_some(),
         }
     }
 
@@ -220,6 +230,7 @@ impl HookSpec {
             }
             // 插件是一体的：认领到它，就意味着它声明的每个事件都在（`event` 因此无从、也不必过滤）。
             ConfigFormat::OpencodeTs => opencode_ts::claimed(cur_text),
+            ConfigFormat::AgyJson => agy_json::claimed_at(self, cur_text, agent_id, event),
         }
     }
 }
@@ -231,7 +242,7 @@ const SESSION_START: &str = "SessionStart";
 
 /// 解析 hook command 为（可执行路径, 余参）。首 token 支持带双引号或裸路径。
 pub fn parse_hook_command(cmd: &str) -> Option<(String, Vec<String>)> {
-    // 剥掉 PowerShell 调用运算符前缀（gemini 的 Windows 命令形态，见 CommandSpec::ps_call_operator）：
+    // 剥掉 PowerShell 调用运算符前缀（见 CommandSpec::ps_call_operator；已移除的 gemini 插件写过这种形态）：
     // 认领只看「可执行 + 余参」，带不带 `&` 的新旧两种形态都要认，否则升级后旧条目成孤儿、新条目重复追加。
     let c = cmd.trim().trim_start_matches('&').trim_start();
     let (path, rest) = if let Some(r) = c.strip_prefix('"') {
@@ -580,8 +591,8 @@ mod json_common {
                 match claimed {
                     Some(path) if !kept => {
                         kept = true;
-                        // 路径过期 → 更新；命令**形态**不满足 spec 也要迁移——gemini 在 Windows
-                        // 必须带 PowerShell 调用运算符 `&`（无它则解析失败、hook 恒挂），只比路径
+                        // 路径过期 → 更新；命令**形态**不满足 spec 也要迁移——声明了 ps_call_operator
+                        // 的 CLI 在 Windows 必须带 `&`（无它则解析失败、hook 恒挂），只比路径
                         // 会让旧形态永远留在配置里继续失败。刻意不做整串强一致：手工接线的等价
                         // 形态（裸路径 vs 引号）原样保留，幂等按解析后内容判定。
                         let form_bad = spec.command.ps_call_operator
@@ -597,9 +608,9 @@ mod json_common {
                             changed = true;
                         }
                         // 普通 hook 沿用用户/旧版本已有 timeout；只有声明了非默认值的 hook 需要
-                        // 迁移：PermissionRequest 的长等待（310s），以及 gemini 全部事件——它的
-                        // timeout 单位是**毫秒**（hookRunner `setTimeout(...,timeout)`，默认 6e4），
-                        // 按 claude 的秒语义写 5 会让 hook 5ms 即被整树击杀。
+                        // 迁移：PermissionRequest 的长等待（310s），以及 timeout 单位不是秒的 CLI——
+                        // 前科是已移除的 gemini 插件，单位是**毫秒**，按 claude 的秒语义写 5 会让 hook
+                        // 5ms 即被整树击杀。
                         if desired_timeout != 5
                             && hs[j].get("timeout").and_then(|v| v.as_u64())
                                 != Some(desired_timeout)
@@ -818,6 +829,89 @@ mod codex_json {
         format!(
             "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& '{reporter}' --provider {agent_id}\""
         )
+    }
+}
+
+// ═══ AgyJson ═══
+
+mod agy_json {
+    use super::*;
+    use serde_json::{json, Map, Value};
+
+    /// 文件内容 → JSON 对象。空文件（agy 自己会建 0 字节的配置文件，本机 mcp_config.json 即是）
+    /// 当 `{}`；不是对象的视为解析不了。
+    pub fn parse(text: &str) -> Option<Map<String, Value>> {
+        // 读时容忍 BOM（别的编辑器写的）；写出时 serde 不带 BOM——agy 1.5.8 之前会静默忽略
+        // 带 BOM 的 hooks.json（changelog 1.5.8）。
+        let text = text.trim_start_matches('\u{feff}');
+        if text.trim().is_empty() {
+            return Some(Map::new());
+        }
+        match serde_json::from_str::<Value>(text).ok()? {
+            Value::Object(map) => Some(map),
+            _ => None,
+        }
+    }
+
+    /// 工具事件要 matcher 分组；其余事件 matcher 被忽略，直接是 handler 列表。
+    fn is_tool_event(name: &str) -> bool {
+        matches!(name, "PreToolUse" | "PostToolUse")
+    }
+
+    /// Meowo 那一块的完整内容。timeout 单位是**秒**（默认 30，agy 内置 hooks 文档）。
+    fn block(spec: &HookSpec, reporter: &str, agent_id: &str) -> Value {
+        let command = spec.command.render(reporter, agent_id);
+        let mut obj = Map::new();
+        obj.insert("enabled".into(), Value::Bool(true));
+        for ev in spec.events {
+            let handler = json!({"type": "command", "command": command, "timeout": ev.timeout});
+            let entry = if is_tool_event(ev.name) {
+                json!([{"matcher": ev.matcher.unwrap_or("*"), "hooks": [handler]}])
+            } else {
+                json!([handler])
+            };
+            obj.insert(ev.name.to_string(), entry);
+        }
+        Value::Object(obj)
+    }
+
+    pub fn ensure_hooks(spec: &HookSpec, cur_text: &str, reporter: &str, agent_id: &str) -> EnsureOutcome {
+        let Some(mut root) = parse(cur_text) else {
+            return EnsureOutcome::Abandon(RepairReason::ConfigUnreadable);
+        };
+        let next = block(spec, reporter, agent_id);
+        if root.get(AGY_HOOK_NAME) == Some(&next) {
+            return EnsureOutcome::Unchanged;
+        }
+        root.insert(AGY_HOOK_NAME.into(), next);
+        json_common::render(&Value::Object(root))
+    }
+
+    /// Meowo 那一块里某事件（或任一事件）的 reporter 路径。
+    pub fn claimed_at(spec: &HookSpec, cur_text: &str, agent_id: &str, event: Option<&str>) -> Option<String> {
+        let root = parse(cur_text)?;
+        let ours = root.get(AGY_HOOK_NAME)?.as_object()?;
+        if ours.get("enabled").and_then(Value::as_bool) == Some(false) {
+            return None;
+        }
+        ours.iter()
+            .filter(|(name, _)| event.is_none_or(|e| e == name.as_str()))
+            .filter_map(|(name, entries)| {
+                let entries = entries.as_array()?;
+                let handlers: Vec<&Value> = if is_tool_event(name) {
+                    entries
+                        .iter()
+                        .filter_map(|e| e.get("hooks")?.as_array())
+                        .flatten()
+                        .collect()
+                } else {
+                    entries.iter().collect()
+                };
+                handlers.into_iter().find_map(|h| {
+                    spec.command.claim(h.get("command")?.as_str()?, agent_id)
+                })
+            })
+            .next()
     }
 }
 
@@ -1122,17 +1216,17 @@ mod tests {
         }
     }
 
-    /// gemini 形态的接线规格（ClaudeJson + `--provider` + PowerShell 调用运算符 + 毫秒 timeout）。
-    /// 与 plugins/gemini 同源，独立声明以免测试依赖插件表的演化。
-    static GEMINI_EVENTS: [HookEvent; 2] = [
+    /// PowerShell 调用运算符形态的接线规格（ClaudeJson + `--provider` + `& ` 前缀 + 非默认 timeout）。
+    /// 现役插件都不声明这种形态（最初是已移除的 gemini 插件），独立声明以免这条迁移分支失去覆盖。
+    static PS_CALL_EVENTS: [HookEvent; 2] = [
         HookEvent::plain("SessionStart").with_timeout(5_000),
-        HookEvent::plain("AfterAgent").with_timeout(5_000),
+        HookEvent::plain("Stop").with_timeout(5_000),
     ];
-    static GJ: HookSpec = HookSpec {
+    static PS_CALL: HookSpec = HookSpec {
         config_rel: "settings.json",
         format: ConfigFormat::ClaudeJson,
         missing: MissingConfig::CreateFrom("{}"),
-        events: &GEMINI_EVENTS,
+        events: &PS_CALL_EVENTS,
         command: CommandSpec {
             quote_exe: true,
             with_provider: true,
@@ -1140,26 +1234,26 @@ mod tests {
         },
     };
 
-    /// 已按旧版接线的 gemini 配置（无 `&` 前缀 + 秒语义 timeout 5）必须被原地迁移：
-    /// gemini 把 5 当 5**毫秒**，reporter 一 spawn 即被整树击杀；Windows 上无 `&` 的引号命令
-    /// 在 PowerShell 里是字符串表达式、以 code 1 失败。两者都不迁移，会话就永远落不了库。
+    /// 旧形态的接线（无 `&` 前缀 + 默认 timeout 5）必须被原地迁移到规格声明的形态：timeout 单位是
+    /// 毫秒的 CLI 把 5 当 5ms，reporter 一 spawn 即被整树击杀；Windows 上无 `&` 的引号命令在
+    /// PowerShell 里是字符串表达式、以 code 1 失败。两者都不迁移，会话就永远落不了库。
     #[test]
-    fn gemini_migrates_legacy_seconds_timeout_and_command_form() {
+    fn ps_call_operator_form_and_custom_timeout_migrate_in_place() {
         let ccr = "C:/x/meowo-reporter.exe";
         let src = format!(
             r#"{{"hooks":{{
-                "SessionStart":[{{"hooks":[{{"type":"command","command":"\"{ccr}\" --provider gemini","timeout":5}}]}}],
-                "AfterAgent":[{{"hooks":[{{"type":"command","command":"\"{ccr}\" --provider gemini","timeout":5}}]}}]
+                "SessionStart":[{{"hooks":[{{"type":"command","command":"\"{ccr}\" --provider acme","timeout":5}}]}}],
+                "Stop":[{{"hooks":[{{"type":"command","command":"\"{ccr}\" --provider acme","timeout":5}}]}}]
             }}}}"#
         );
-        let out = match GJ.ensure_hooks(&src, ccr, "gemini") {
+        let out = match PS_CALL.ensure_hooks(&src, ccr, "acme") {
             EnsureOutcome::Changed(s) => {
                 serde_json::from_str::<serde_json::Value>(&s).expect("产物应为合法 JSON")
             }
             other => panic!("旧接线应被迁移（Changed），实得 {other:?}"),
         };
-        let desired = GJ.command.render(ccr, "gemini");
-        for ev in ["SessionStart", "AfterAgent"] {
+        let desired = PS_CALL.command.render(ccr, "acme");
+        for ev in ["SessionStart", "Stop"] {
             let h = &out["hooks"][ev][0]["hooks"][0];
             assert_eq!(
                 h["command"],
@@ -1169,13 +1263,13 @@ mod tests {
             assert_eq!(
                 h["timeout"],
                 serde_json::json!(5_000),
-                "{ev} timeout 未迁移到毫秒"
+                "{ev} timeout 未迁移到声明值"
             );
         }
         // 幂等：迁移后的产物再跑一遍必须 Unchanged，不得反复改写用户文件。
         let migrated = serde_json::to_string(&out).unwrap();
         assert_eq!(
-            GJ.ensure_hooks(&migrated, ccr, "gemini"),
+            PS_CALL.ensure_hooks(&migrated, ccr, "acme"),
             EnsureOutcome::Unchanged
         );
     }

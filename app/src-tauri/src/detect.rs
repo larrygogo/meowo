@@ -1615,158 +1615,156 @@ mod tests {
         );
     }
 
-    // -- gemini --
+    // -- antigravity --
+    //
+    // 以下画面都是 agy 1.5.18 真机屏幕（120x40 ConPTY + pyte 重建，2026-11-26，接入 antigravity 的
+    // Lead 任务 research-screen-work/run2），只截了末尾十来行，路径与账号换成了占位。
 
+    const AGY_STATUS_BUSY: &str = "esc to cancel                                                                                       Gemini 4 Neon \u{00B7} high";
+
+    /// 命令审批面板取代输入框（run2/21_approval_cmd_2）。
     #[test]
-    fn gemini_approval_box_is_blocked() {
+    fn antigravity_command_approval_is_blocked() {
         let s = snap(&[
-            "  │ Apply this change to src/main.rs?",
-            "  │ \u{276F} Yes, apply",
-            "  │   No",
+            "\u{25CF} Ran (Get-ChildItem -Force) (ctrl+o to expand)",
+            "Command",
+            "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+            "Requesting permission for:",
+            "   Get-ChildItem -Force",
+            "Run this command?",
+            "> 1. Yes, run command",
+            "  2. Yes, and always allow in this conversation for commands that start with 'Get-ChildItem -Force'",
+            "  3. Yes, and always allow for commands that start with 'Get-ChildItem -Force' (Persist to settings.json)",
+            "  4. No, cancel",
+            "  \u{2191}/\u{2193} Navigate \u{00B7} tab Amend \u{00B7} ctrl+g edit/expand command \u{00B7} ctrl+r Review",
+            AGY_STATUS_BUSY,
         ]);
         assert_eq!(
-            state_of(evaluate("gemini", &s)),
-            Some((ScreenState::Blocked, "apply_or_allow_change"))
+            state_of(evaluate("antigravity", &s)),
+            Some((ScreenState::Blocked, "approval_panel"))
         );
     }
 
-    /// 选项指针与 yes 必须在**同一行**：拆成两个谓词会把「某处有 ❯、别处有 yes」的
-    /// 普通输出误判成审批（LineStartsWithContaining 存在的理由）。
+    /// 文件创建审批（run2/19_approval_file_2）：历史里还留着上一题的 `? 问句` / `> 答案` 回显。
     #[test]
-    fn gemini_pointer_and_yes_must_share_a_line() {
-        let same_line = snap(&["  \u{276F} Yes, allow it"]);
-        assert_eq!(
-            state_of(evaluate("gemini", &same_line)),
-            Some((ScreenState::Blocked, "apply_or_allow_change"))
-        );
-        // 指针行与 yes 分处两行、且无任何审批文案 → 不该判阻塞。
-        let split = snap(&["  \u{276F} run the tests", "  the answer is yes"]);
-        assert_ne!(
-            state_of(evaluate("gemini", &split)).map(|(state, _)| state),
-            Some(ScreenState::Blocked)
-        );
-    }
-
-    #[test]
-    fn gemini_esc_to_cancel_is_working() {
-        let s = snap(&["  generating response...", "  (esc to cancel)"]);
-        assert_eq!(
-            state_of(evaluate("gemini", &s)),
-            Some((ScreenState::Working, "esc_cancel_working"))
-        );
-    }
-
-    /// gemini 0.65 提问表单（ask_user）。画面按 npm bundle 源码拼出（2026-11-12，未实拍）：
-    /// ToolConfirmationQueue 的绿框 StickyHeader 头行 `Answer Questions`，AskUserDialog 的
-    /// BaseSelectionList（`● 1.  选项`）与 DialogFooter（`Enter to select · ↑/↓ to navigate ·
-    /// Esc to cancel`）。修复前提示行的 `Esc to cancel` 让兜底规则判成运行中。
-    #[test]
-    fn gemini_065_ask_user_dialog_is_blocked() {
+    fn antigravity_file_approval_is_blocked() {
         let s = snap(&[
-            "\u{280F} Waiting for user confirmation...",
-            "\u{256D}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{256E}",
-            "\u{2502} Answer Questions                                  \u{2502}",
-            "\u{2502}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2502}",
-            "\u{2502} Which database should we use?                     \u{2502}",
-            "\u{2502}                                                   \u{2502}",
-            "\u{2502} \u{25CF} 1.  PostgreSQL                                  \u{2502}",
-            "\u{2502}   2.  SQLite                                      \u{2502}",
-            "\u{2502}   3.  Enter a custom value                        \u{2502}",
-            "\u{2502}                                                   \u{2502}",
-            "\u{2502} Enter to select \u{00B7} \u{2191}/\u{2193} to navigate \u{00B7} Esc to cancel \u{2502}",
-            "\u{2570}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{256F}",
+            "? \u{8BF7}\u{9009}\u{62E9}\u{8981}\u{521B}\u{5EFA}\u{7684}\u{6587}\u{4EF6}\u{540D}\u{FF1A}",
+            "> b.txt",
+            "Create file",
+            "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+            "C:/Users/user/work/sandbox/b.txt",
+            "  1  +  hi",
+            "Allow creation of this file?",
+            "> 1. Yes, allow creation",
+            "  2. No, deny creation",
+            "  \u{2191}/\u{2193} Navigate \u{00B7} f full diff \u{00B7} ctrl+r Review",
+            AGY_STATUS_BUSY,
         ]);
         assert_eq!(
-            state_of(evaluate("gemini", &s)),
-            Some((ScreenState::Blocked, "ask_user_dialog"))
-        );
-        // 只剩头行（表单已答完、头行滚成残影）不算在等回答。
-        let stale = snap(&["\u{2502} Answer Questions   \u{2502}", "  plain output"]);
-        assert_ne!(
-            state_of(evaluate("gemini", &stale)).map(|(state, _)| state),
-            Some(ScreenState::Blocked)
+            state_of(evaluate("antigravity", &s)),
+            Some((ScreenState::Blocked, "approval_panel"))
         );
     }
 
-    /// 做空第一轮 #8（2026-11-12）：提示行按框宽折行时也要认出。样本按 0.65.0 bundle
-    /// （interactiveCli-*.js 的 AskUserDialog keyboardHints + DialogFooter 用 ` · ` 连接）拼出，非实拍：
-    /// 多题选择 `Enter to select · ←/→ to switch questions · Esc to cancel`，多题文本
-    /// `Enter to submit · Tab/Shift+Tab to switch questions · Esc to cancel`，确认页
-    /// `Enter to submit · Tab/Shift+Tab to edit answers · Esc to cancel`。修前要求整串单行，窄窗
-    /// 下 `Esc to cancel` 折到下一行就落回兜底判运行中。
+    /// 提问表单（run2/16_ask_form）。
     #[test]
-    fn gemini_065_ask_user_dialog_wrapped_and_multi_question() {
-        let frame = |body: &[&str]| {
-            let mut lines = vec![
-                "\u{280F} Waiting for user confirmation...",
-                "\u{256D}\u{2500}\u{2500}\u{2500}\u{2500}\u{256E}",
-                "\u{2502} Answer Questions              \u{2502}",
-                "\u{2502}\u{2500}\u{2500}\u{2500}\u{2500}\u{2502}",
-            ];
-            lines.extend_from_slice(body);
-            lines.push("\u{2570}\u{2500}\u{2500}\u{2500}\u{2500}\u{256F}");
-            snap(&lines)
-        };
-        let cases = [
-            // 多题选择，40 列框：导航段与取消段折到第二、三行。
-            frame(&[
-                "\u{2502} \u{2190} Q1 \u{2502} Q2 \u{2192}                   \u{2502}",
-                "\u{2502} Which database should we use?  \u{2502}",
-                "\u{2502} \u{25CF} 1.  PostgreSQL                \u{2502}",
-                "\u{2502}   2.  SQLite                    \u{2502}",
-                "\u{2502} Enter to select \u{00B7} \u{2190}/\u{2192} to switch  \u{2502}",
-                "\u{2502} questions \u{00B7} Esc to cancel       \u{2502}",
-            ]),
-            // 多题文本题，提示行折成两行。
-            frame(&[
-                "\u{2502} What should the table be named? \u{2502}",
-                "\u{2502} > users                         \u{2502}",
-                "\u{2502} Enter to submit \u{00B7} Tab/Shift+Tab to \u{2502}",
-                "\u{2502} switch questions \u{00B7} Esc to cancel \u{2502}",
-            ]),
-            // 确认页（多题答完），不折行。
-            frame(&[
-                "\u{2502} Review your answers:            \u{2502}",
-                "\u{2502} Q1 PostgreSQL                   \u{2502}",
-                "\u{2502} Enter to submit \u{00B7} Tab/Shift+Tab to edit answers \u{00B7} Esc to cancel \u{2502}",
-            ]),
-        ];
-        for s in &cases {
-            assert_eq!(
-                state_of(evaluate("gemini", s)),
-                Some((ScreenState::Blocked, "ask_user_dialog"))
-            );
-        }
-        // 正文里出现 Enter to select（没在框里、行首也不是它）不算。
-        let prose = snap(&[
-            "\u{2502} Answer Questions   \u{2502}",
-            "  Press Enter to select a file (esc to cancel, 3s)",
-        ]);
-        assert_ne!(
-            state_of(evaluate("gemini", &prose)).map(|(state, _)| state),
-            Some(ScreenState::Blocked)
-        );
-    }
-
-    /// gemini 0.65 沙箱扩权审批（ToolConfirmationMessage 的 sandbox_expansion 分支，源码取证
-    /// 2026-11-12）：问句 `To run [Shell], allow access to the following?` 在框内。
-    #[test]
-    fn gemini_065_sandbox_expansion_is_blocked() {
+    fn antigravity_question_form_is_blocked() {
         let s = snap(&[
-            "\u{2502} ? Shell  npm install                         \u{2502}",
-            "\u{2502} To run [Shell], allow access to the following? \u{2502}",
-            "\u{2502} \u{2022} Network: All Urls                        \u{2502}",
-            "\u{2502} \u{25CF} 1. Allow once                             \u{2502}",
+            "Question",
+            "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+            "Question 1/1: \u{8BF7}\u{9009}\u{62E9}\u{8981}\u{521B}\u{5EFA}\u{7684}\u{6587}\u{4EF6}\u{540D}\u{FF1A}",
+            "> 1. (Recommended) a.txt",
+            "  2. b.txt",
+            "  3. Write-in...",
+            "  \u{2191}/\u{2193} Navigate \u{00B7} enter Select \u{00B7} esc Skip \u{00B7} ctrl+r Review",
+            "esc to cancel",
         ]);
         assert_eq!(
-            state_of(evaluate("gemini", &s)),
-            Some((ScreenState::Blocked, "apply_or_allow_change"))
+            state_of(evaluate("antigravity", &s)),
+            Some((ScreenState::Blocked, "question_form"))
         );
-        // 正文引用同一句（不在框里）不算。
-        let prose = snap(&["To run [Shell], allow access to the following?"]);
+    }
+
+    /// 运行中：spinner 行 + 状态栏 `esc to cancel` 同屏（run2/26_running_intro_8）。答完的提问在历史里
+    /// 留下 `? 问句` / `> 答案` 两行（run2/18_after_answer_1），不能被当成还在等回答。
+    #[test]
+    fn antigravity_spinner_is_working_and_answered_question_echo_is_not_blocked() {
+        let running = snap(&[
+            "> \u{7528}\u{4E00}\u{53E5}\u{8BDD}\u{4ECB}\u{7ECD}\u{4F60}\u{81EA}\u{5DF1}",
+            "\u{287F}  Generating...",
+            "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+            ">",
+            "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+            AGY_STATUS_BUSY,
+        ]);
         assert_eq!(
-            state_of(evaluate("gemini", &prose)),
-            Some((ScreenState::Idle, FALLBACK_RULE_ID))
+            state_of(evaluate("antigravity", &running)),
+            Some((ScreenState::Working, "spinner_working"))
+        );
+        let answered = snap(&[
+            "? \u{8BF7}\u{9009}\u{62E9}\u{8981}\u{521B}\u{5EFA}\u{7684}\u{6587}\u{4EF6}\u{540D}\u{FF1A}",
+            "> b.txt",
+            "\u{28FD}  Working...",
+            "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+            ">",
+            "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+            AGY_STATUS_BUSY,
+        ]);
+        assert_eq!(
+            state_of(evaluate("antigravity", &answered)),
+            Some((ScreenState::Working, "spinner_working"))
+        );
+    }
+
+    /// 空闲时打开斜杠弹窗，状态栏左侧也是 `esc to cancel`（run2/24_slash_popup）：不能判成运行中。
+    #[test]
+    fn antigravity_slash_popup_with_esc_to_cancel_is_not_working() {
+        let s = snap(&[
+            "> /ti",
+            "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+            "> /title                          Toggle custom terminal window title",
+            "  /thinking                       Toggle streaming the model's full thinking in the transcript",
+            "   \u{2193} 4 more",
+            "  \u{2191}/\u{2193} Navigate \u{00B7} enter Select \u{00B7} tab Complete",
+            AGY_STATUS_BUSY,
+        ]);
+        let state = state_of(evaluate("antigravity", &s)).map(|(state, _)| state);
+        assert_ne!(state, Some(ScreenState::Working));
+        assert_ne!(state, Some(ScreenState::Blocked));
+    }
+
+    /// 回合结束回到空闲（run2/27_idle_after_intro）：状态栏左侧 `? for shortcuts`。
+    #[test]
+    fn antigravity_shortcuts_hint_is_idle() {
+        let s = snap(&[
+            "  \u{6211}\u{662F} Antigravity\u{3002}",
+            "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+            ">",
+            "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+            "? for shortcuts                                                                                     Gemini 4 Neon \u{00B7} high",
+        ]);
+        assert_eq!(
+            state_of(evaluate("antigravity", &s)),
+            Some((ScreenState::Idle, "shortcuts_hint_idle"))
+        );
+    }
+
+    /// 首次进入未信任目录（run1/00_start 的备用屏）。
+    #[test]
+    fn antigravity_trust_prompt_is_blocked() {
+        let s = snap(&[
+            "Accessing workspace:",
+            "C:\\Users\\user\\work\\sandbox",
+            "Do you trust the contents of this project?",
+            "Antigravity CLI requires permission to read, edit, and execute files here.",
+            "> Yes, I trust this folder",
+            "  No, exit",
+            "  \u{2191}/\u{2193} Navigate \u{00B7} enter Confirm",
+        ]);
+        assert_eq!(
+            state_of(evaluate("antigravity", &s)),
+            Some((ScreenState::Blocked, "trust_prompt"))
         );
     }
 

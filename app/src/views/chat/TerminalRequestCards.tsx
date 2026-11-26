@@ -2,7 +2,7 @@
 /// 审批走 ApprovalRequestCard（与 broker 审批同一张卡），不在这里。
 ///
 /// 标题与徽章只由种类决定（requestCard 的 cardTitle / cardBadge），不看规则 id：
-/// 此前 kimi 的提问落在提示卡上，徽章写「待批准」；gemini 额度耗尽被说成「启动步骤」。
+/// 此前 kimi 的提问落在提示卡上，徽章写「待批准」；当时的 gemini 插件额度耗尽被说成「启动步骤」。
 
 import type { ReactNode, RefObject } from "react";
 import { useT } from "../../i18n";
@@ -12,7 +12,7 @@ import { ApprovalCard } from "./ApprovalCard";
 import { cardBadge, cardKindOfAttention, cardTitle, type CardKind } from "./requestCard";
 
 /// 屏幕上认出的提问表单：单选点了就答完，多选逐项勾选后提交。
-/// claude 的编号选择器、gemini 的框线表单、kimi 的方括号表单都渲染这一张。
+/// claude 的编号选择器、kimi 的方括号表单、antigravity 的提问表单都渲染这一张。
 export function TerminalQuestionCard({ attention, kind, live, customText, returnFocusTo, onChoose, onCustomText, onCustomSubmit, onCollapse }: {
   attention: TerminalAttention;
   /** question 或 plan（计划模式的选择器由会话的待处理状态指明）。 */
@@ -75,7 +75,7 @@ export function TerminalQuestionCard({ attention, kind, live, customText, return
 /// - 其余（信任页、启动步骤、计划批准、菜单）：标题已经说清是什么事，只出选项按钮。
 ///
 /// 原文里的对话框框线（左右的竖线、整行的横线、框里的空行）是排版不是内容，一律去掉：
-/// gemini 的额度耗尽框带着框线进卡片，在手机上折行后把「1. Keep trying / 2. Stop」挤出了可视区，
+/// 前科：已移除的 gemini 插件的额度耗尽框带着框线进卡片，在手机上折行后把「1. Keep trying / 2. Stop」挤出了可视区，
 /// 用户看得到「确认」却看不到确认的是哪一项（2026-11-14 截图）。
 export function promptContext(attention: Pick<TerminalAttention, "text" | "options">, kind: CardKind): string {
   const options = attention.options ?? [];

@@ -13,8 +13,8 @@ describe("模式胶囊图标按档变化", () => {
   const cases: [string, string, Record<string, string>][] = [
     ["codex", "approval", { default: "shield", readOnly: "shield-lock", ask: "shield-half", approveForMe: "shield-spark", yolo: "shield-warn" }],
     ["kimi", "permission", { manual: "shield-check", yolo: "shield-half", auto: "shield-warn" }],
-    ["gemini", "approval", { default: "shield-check", autoEdit: "shield-pen", plan: "shield-plan", yolo: "shield-warn" }],
     ["opencode", "agent", { build: "agent", plan: "lightbulb-on" }],
+
     ["codex", "collaboration", { default: "lightbulb", plan: "lightbulb-on" }],
     ["kimi", "work", { default: "lightbulb", plan: "lightbulb-on" }],
   ];
@@ -29,8 +29,19 @@ describe("模式胶囊图标按档变化", () => {
     });
   }
 
+  /// 生产缺口（2026-11-26 发现）：antigravity 的 auto（改文件不问、危险命令才问）与 accept-edits（改文件
+  /// 不问、命令都问）在 modeIconName 里都落到 `edits === "never"` → 笔形盾牌，同一栏两档同图标。
+  /// 这里写的是应有结果（auto 越界才问用半盾），用 it.fails 标住：修好 modeIcon.ts 后并回上面的表。
+  it("antigravity.approval：三档图标互不相同", () => {
+    const option = optionOf("antigravity", "approval");
+    const names = option.choices.map((choice) => modeIconName(option, "approval", choice.id));
+    expect(Object.fromEntries(option.choices.map((choice, index) => [choice.id, names[index]]))).toEqual({ auto: "shield-half", "accept-edits": "shield-pen", plan: "shield-plan" });
+    expect(new Set(names).size).toBe(names.length);
+  });
+
   it("高风险档一律叹号盾牌（按钮另配危险色）", () => {
-    for (const [provider, id] of [["codex", "approval"], ["kimi", "permission"], ["gemini", "approval"]] as const) {
+
+    for (const [provider, id] of [["codex", "approval"], ["kimi", "permission"], ["antigravity", "approval"]] as const) {
       const option = optionOf(provider, id);
       for (const choice of option.choices.filter((candidate) => candidate.risk)) {
         expect(modeIconName(option, id, choice.id)).toBe("shield-warn");

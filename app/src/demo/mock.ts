@@ -140,12 +140,12 @@ export function installMocks(windowLabel = "main"): void {
         return "none";
       case "list_agents":
         // 后端 list_agents:agent 名单(展示名 + 安装态),前端 useAgents 取展示名并交叉过滤底栏配额。
-        // demo 演示多 Agent:装了 Claude Code / Codex / Kimi / Gemini CLI（不独尊 Claude）。
+        // demo 演示多 Agent:装了 Claude Code / Codex / Kimi / Antigravity CLI（不独尊 Claude）。
         return [
           { id: "claude", display_name: "Claude Code", installed: true, supports_profiles: true },
           { id: "codex", display_name: "Codex", installed: true },
           { id: "kimi", display_name: "Kimi Code", installed: true },
-          { id: "gemini", display_name: "Gemini CLI", installed: true },
+          { id: "antigravity", display_name: "Antigravity CLI", installed: true },
         ];
       case "agent_chat_ui":
         // 对话页能力按会话查询（真实后端由安装实况组装）。demo 只演 claude 的对话窗。

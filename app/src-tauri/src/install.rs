@@ -491,15 +491,16 @@ fn select_login_profile(
     }
 }
 
-/// 用 API Key 完成登录（声明了 `ApiKeyLoginCap` 的 agent，当前只有 gemini）。
+/// 用 API Key 完成登录（声明了 `ApiKeyLoginCap` 的 agent；通用能力，目前没有插件声明，最初为已移除的
+/// gemini 插件引入）。
 ///
 /// 与 [`login_agent`] 是并列入口，不是替代：那条拉终端走交互式流程，这条同步落盘、当场生效——
-/// gemini 的交互式登录只剩 OAuth 一条路，而 Google 已对个人账号关闸（*This client is no longer
-/// supported for Gemini Code Assist for individuals*），点它必然失败；key 又没有对应的登录子命令，
-/// 只能由宿主替用户写进 CLI 认的位置（`~/.gemini/.env` + settings 的 selectedType）。
+/// 给交互式登录走不通、key 又没有对应登录子命令的 CLI，只能由宿主替用户写进 CLI 认的位置。前科：
+/// 已移除的 gemini 插件的交互式登录只剩 OAuth，而 Google 对个人账号关了闸（*This client is no longer
+/// supported for Gemini Code Assist for individuals*），key 写进 `~/.gemini/.env` + settings 的 selectedType。
 ///
 /// key 是机密：不写日志、不进 Settings、不通过事件广播；具体落盘位置与权限由插件负责。
-/// 成功后顺手接线，与交互式登录成功后的行为一致（settings.json 此刻必然存在）。
+/// 成功后顺手接线，与交互式登录成功后的行为一致。
 ///
 /// 不 emit `login-done`：本命令同步返回，前端拿到 Ok 即重查账号。若此前有一轮交互式登录还在
 /// 轮询等待，它下一轮（≤2s）就会看到账号出现，自行以 success 收尾——两条路互不打架。
@@ -607,8 +608,8 @@ pub(crate) async fn logout_agent(
             remove_credentials_file(&path)?;
         }
 
-        // 支持 API Key 登录的 agent（gemini）：key 也是凭据，登出必须一并清掉——只删
-        // oauth_creds.json 的话，`.env` 里的 key 会让账号立刻又显示「已登录（API Key）」。
+        // 支持 API Key 登录的 agent：key 也是凭据，登出必须一并清掉——只删凭据文件的话
+        // （前科：已移除的 gemini 插件只删 oauth_creds.json），`.env` 里的 key 会让账号立刻又显示「已登录（API Key）」。
         if let Some(cap) = meowo_agent::by_id(key.as_str()).and_then(|p| p.api_key_login()) {
             cap.clear_api_key(&inst)?;
         }

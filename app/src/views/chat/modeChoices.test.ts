@@ -11,12 +11,12 @@ const optionOf = (provider: string, id: string) => {
 };
 
 describe("模式统一说法", () => {
-  it("Kimi yolo 是「危险时才问」，Gemini yolo 才是「都不问」：同名档不同说法", () => {
+  it("Kimi yolo 是「危险时才问」，Codex yolo 才是「都不问」：同名档不同说法", () => {
     const kimi = modeChoiceViews(zh, optionOf("kimi", "permission"));
-    const gemini = modeChoiceViews(zh, optionOf("gemini", "approval"));
+    const codex = modeChoiceViews(zh, optionOf("codex", "approval"));
     // 主文字是三维查表的短名，第二行一律是各家官方原文提炼的那句（第三轮 C1）。
     expect(kimi.find((view) => view.value === "yolo")).toMatchObject({ label: "必要时询问", desc: zh.modes.desc["kimi.permission.yolo"] });
-    expect(gemini.find((view) => view.value === "yolo")).toMatchObject({ label: "都不问", desc: zh.modes.desc["gemini.approval.yolo"] });
+    expect(codex.find((view) => view.value === "yolo")).toMatchObject({ label: "都不问", desc: zh.modes.desc["codex.approval.yolo"] });
     // 小字是 CLI 原名，说明来自各家原文提炼。
     expect(kimi.find((view) => view.value === "yolo")?.detail).toBe("Ask When Needed");
     expect(kimi.find((view) => view.value === "auto")?.label).toBe("都不问");
@@ -28,16 +28,16 @@ describe("模式统一说法", () => {
     expect(codex.find((view) => view.value === "approveForMe")?.short).toBe("自动审查");
     expect(planToggle(optionOf("kimi", "work"))).toEqual({ on: "plan", off: "default" });
     expect(planToggle(optionOf("codex", "collaboration"))).toEqual({ on: "plan", off: "default" });
-    // OpenCode 的 build / plan 各有自己的权限，不是开关；Gemini 的 plan 是审批四档之一。
+    // OpenCode 的 build / plan 各有自己的权限，不是开关；Antigravity 的 plan 是 --mode 三档之一。
     expect(planToggle(optionOf("opencode", "agent"))).toBeNull();
-    expect(planToggle(optionOf("gemini", "approval"))).toBeNull();
+    expect(planToggle(optionOf("antigravity", "approval"))).toBeNull();
     expect(modeChoiceViews(zh, optionOf("kimi", "work")).map((view) => view.short)).toEqual(["计划：关", "计划：开"]);
   });
 
   /// 截图复核：Codex「Ask for approval」与「Approve for me」主文字曾都是「常规自动做，危险的才问」，分不清。
   /// 同一家同一栏各档的短名必须互不重复；第二行说明 ≤20 字，菜单里不折出单字行。
   it("同一家各档短名唯一，说明不超过 20 字", () => {
-    for (const agent of descriptors(["claude", "codex", "kimi", "gemini", "opencode"])) {
+    for (const agent of descriptors(["claude", "codex", "kimi", "antigravity", "opencode"])) {
       for (const option of agent.launch_options) {
         const views = modeChoiceViews(zh, option, null, [{ option: option.id, id: "reviewer", label: "reviewer" }]);
         const shorts = views.map((view) => view.short);
@@ -50,16 +50,16 @@ describe("模式统一说法", () => {
     }
   });
 
-  /// 「统一解释」：三维相同的档跨家同一个短名（Kimi Never Ask / Codex Full Access / Gemini yolo 都是「都不问」）。
+  /// 「统一解释」：三维相同的档跨家同一个短名（Kimi Never Ask / Codex Full Access 都是「都不问」）。
   /// 例外只有同一栏里三维撞了、又必须分开的档（Codex 自动审查），它单独命名。
   it("三维相同的档跨家短名相同", () => {
     const byTraits = new Map<string, Set<string>>();
-    for (const agent of descriptors(["claude", "codex", "kimi", "gemini", "opencode"])) {
+    for (const agent of descriptors(["claude", "codex", "kimi", "antigravity", "opencode"])) {
       for (const option of agent.launch_options) {
         if (planToggle(option)) continue; // 计划开关说开没开，另有测试
         for (const choice of option.choices) {
-          // 单独命名的（Codex 自动审查）与三维表达不出差别、走共用表单独一项的（Gemini default）另测。
-          if (!choice.traits || (choice.desc && (zh.modes.short[choice.desc] || choice.desc === "gemini.approval.default"))) continue;
+          // 单独命名的（Codex 自动审查）另测。
+          if (!choice.traits || (choice.desc && zh.modes.short[choice.desc])) continue;
           const key = JSON.stringify(choice.traits);
           const short = modeChoiceViews(zh, option).find((view) => view.value === choice.id)!.short;
           byTraits.set(key, new Set([...(byTraits.get(key) ?? []), short]));
@@ -69,20 +69,18 @@ describe("模式统一说法", () => {
     for (const [traits, shorts] of byTraits) expect([...shorts], traits).toHaveLength(1);
     const short = (provider: string, option: string, value: string) =>
       modeChoiceViews(zh, optionOf(provider, option)).find((view) => view.value === value)?.short;
-    expect([short("kimi", "permission", "auto"), short("codex", "approval", "yolo"), short("gemini", "approval", "yolo")]).toEqual(["都不问", "都不问", "都不问"]);
-    // 第四轮 M2：语义不同必须不同名。Kimi 每步都问（只自动读文件）≠ Gemini default（已知安全的命令不问）。
-    expect([short("kimi", "permission", "manual"), short("gemini", "approval", "default")]).toEqual(["每步都问", "改动先问"]);
-    expect(modeChoiceViews(en, optionOf("gemini", "approval")).find((view) => view.value === "default")?.short).toBe("Ask before changes");
+    expect([short("kimi", "permission", "auto"), short("codex", "approval", "yolo")]).toEqual(["都不问", "都不问"]);
+
     // 共用表里每个名字只代表一种语义：不同键不能同名（中英都查）。
     for (const dict of [zh, en]) {
       const names = Object.values(dict.modes.shared);
       expect(new Set(names).size, names.join("/")).toBe(names.length);
     }
-    // Gemini plan 与 Kimi / Codex 的计划档同叫「计划」，第二行如实区分：Gemini 不能跑命令，Kimi 命令按权限档。
-    expect(short("gemini", "approval", "plan")).toBe("计划");
-    const geminiPlan = modeChoiceViews(zh, optionOf("gemini", "approval")).find((view) => view.value === "plan");
+    // Antigravity plan 与 Kimi / Codex 的计划档同叫「计划」，第二行如实区分：Antigravity 只调研出方案，Kimi 命令按权限档。
+    expect(short("antigravity", "approval", "plan")).toBe("计划");
+    const agyPlan = modeChoiceViews(zh, optionOf("antigravity", "approval")).find((view) => view.value === "plan");
     const kimiPlan = modeChoiceViews(zh, optionOf("kimi", "work")).find((view) => view.value === "plan");
-    expect(geminiPlan?.desc).toBe(zh.modes.desc["gemini.approval.plan"]);
+    expect(agyPlan?.desc).toBe(zh.modes.desc["antigravity.approval.plan"]);
     expect(kimiPlan).toMatchObject({ short: "计划：开", desc: zh.modes.desc["kimi.work.plan"] });
   });
 
@@ -92,8 +90,8 @@ describe("模式统一说法", () => {
     expect(kimi.find((view) => view.value === "manual")).toMatchObject({ disabled: true, desc: zh.modes.configLocked("必要时询问") });
     expect(kimi.find((view) => view.value === "yolo")?.disabled).toBeUndefined();
     expect(modeChoiceViews(zh, optionOf("kimi", "permission"), { model: null, choices: { permission: "manual" } }).some((view) => view.disabled)).toBe(false);
-    // Gemini「改动先问」显式带 --approval-mode default，配置默认是什么都选得到。
-    expect(modeChoiceViews(zh, optionOf("gemini", "approval"), { model: null, choices: { approval: "autoEdit" } }).some((view) => view.disabled)).toBe(false);
+    // Antigravity 三档都显式带 --mode，配置默认是什么都选得到。
+    expect(modeChoiceViews(zh, optionOf("antigravity", "approval"), { model: null, choices: { approval: "plan" } }).some((view) => view.disabled)).toBe(false);
   });
 
   it("只规划的档把「只出方案」放在最前", () => {
@@ -164,11 +162,12 @@ describe("模式统一说法", () => {
   });
 
   it("新建页预选：明确选过的非默认档 > CLI 配置默认 > 插件 default", () => {
-    const gemini = optionOf("gemini", "approval");
-    expect(initialChoice(gemini, undefined, { model: null, choices: { approval: "plan" } })).toBe("plan");
-    expect(initialChoice(gemini, "default", { model: null, choices: { approval: "plan" } })).toBe("plan");
-    expect(initialChoice(gemini, "yolo", { model: null, choices: { approval: "plan" } })).toBe("yolo");
-    expect(initialChoice(gemini, undefined, null)).toBe("default");
+    const agy = optionOf("antigravity", "approval");
+    expect(initialChoice(agy, undefined, { model: null, choices: { approval: "plan" } })).toBe("plan");
+    expect(initialChoice(agy, "auto", { model: null, choices: { approval: "plan" } })).toBe("plan");
+    expect(initialChoice(agy, "accept-edits", { model: null, choices: { approval: "plan" } })).toBe("accept-edits");
+    expect(initialChoice(agy, undefined, null)).toBe("auto");
+
   });
 
   /// Kimi 2.6 首条消息前的屏幕原文（research-kimi-gemini §2.6 e4 Q1）；窄终端会折行。

@@ -13,8 +13,6 @@ import composerFrames from "../src/test/fixtures/composer-frames.json";
 import claudeSend from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/claude.83386c1d.items.json";
 import codexSilent from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/codex.01a1f9bf.items.json";
 import codexSend from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/codex.probe-send-image.items.json";
-import geminiShot from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/gemini.probe-screenshot.items.json";
-import geminiSend from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/gemini.probe-send-image.items.json";
 import kimiSend from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/kimi.probe-send-image.items.json";
 import opencodeShot from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/opencode.probe-screenshot.items.json";
 import opencodeSend from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/opencode.probe-send-image.items.json";
@@ -180,13 +178,12 @@ function imageFor(path: string): string {
   return images[name] ?? (/[\\/]sent[\\/]/.test(path) ? images["chart.png"] : /[\\/]tool[\\/]/.test(path) ? images["login.png"] : path);
 }
 
-/// 五家真机样本（后端回放测试的快照，与 replayImages.test.tsx 同一份）：每家的发图会话在前、截图会话在后。
+/// 四家真机样本（antigravity 的发图样本待补；后端回放测试的快照，与 replayImages.test.tsx 同一份）：每家的发图会话在前、截图会话在后。
 /// 不改内容，只把时间整体平移到冻结时刻附近（每份样本内部的间隔不变，份与份之间隔一分钟），免得拍出「几天前」。
 const REAL_SAMPLES: Record<string, unknown[]> = {
   claude: [claudeSend],
   codex: [codexSend, codexSilent],
   kimi: [kimiSend],
-  gemini: [geminiSend, geminiShot],
   opencode: [opencodeSend, opencodeShot],
 };
 const REAL_CWD = "C:\\probe\\work";
