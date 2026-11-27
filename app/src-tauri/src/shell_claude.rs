@@ -111,7 +111,15 @@ fn try_prepare(command: &mut CommandBuilder, shell: &str) -> bool {
     }
     match shell {
         "pwsh" | "powershell" => {
-            command.args(["-NoExit", "-Command", ". (Join-Path $env:MEOWO_SHELL_DIR 'claude.ps1')"]);
+            // Bypass 只对这个 shell 进程生效：Windows PowerShell 5.1 的系统默认策略 Restricted 不许点源脚本，
+            // 每次开终端都报红字、函数也没挂上（红队 1 复现）。系统策略不改。
+            command.args([
+                "-ExecutionPolicy",
+                "Bypass",
+                "-NoExit",
+                "-Command",
+                ". (Join-Path $env:MEOWO_SHELL_DIR 'claude.ps1')",
+            ]);
         }
         "bash" => {
             command.arg("--rcfile");

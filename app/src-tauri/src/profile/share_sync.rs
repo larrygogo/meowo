@@ -31,6 +31,8 @@ const SEP: char = '\u{1f}';
 
 /// 记录里的元信息面：`setup` 记首次对齐做过没有（Orca 的 setup marker）。
 const META: &str = "meta";
+/// 记录里「默认目录的文件复制到账号」那部分：文件名 → 上次写进账号的内容摘要。
+const COPIED: &str = "copied";
 const SETUP_DONE: &str = "orca-1";
 
 /// 同一时刻只让一个同步在跑：两个会话同时在同一账号下启动时，各自读改写同一份 settings 会互相覆盖。
@@ -71,7 +73,7 @@ pub(crate) fn sync(surfaces: &[ShareSurface], dirs: &SyncDirs<'_>) -> SyncReport
     for surface in surfaces {
         match *surface {
             ShareSurface::AllEntries { exclude, exclude_prefixes, import } => {
-                setup_ok &= sync_all_entries(exclude, exclude_prefixes, import, first_setup, dirs, &mut report);
+                setup_ok &= sync_all_entries(exclude, exclude_prefixes, import, first_setup, dirs, &mut record, &mut report);
             }
             ShareSurface::HistoryDirs { dirs: names } => {
                 for name in names {
@@ -159,6 +161,7 @@ fn sync_all_entries(
     import: &[&str],
     first_setup: bool,
     dirs: &SyncDirs<'_>,
+    record: &mut Record,
     report: &mut SyncReport,
 ) -> bool {
     let mut ok = true;
@@ -209,13 +212,13 @@ fn sync_all_entries(
                 }
             }
         } else if source.is_file() {
-            let desired = if import.contains(&name.as_str()) {
-                Some(format!("@{}\n", import_path(&source, dirs.home)).into_bytes())
-            } else {
-                read_file(&source)
-            };
-            let Some(desired) = desired else { continue };
-            copy_file(&target, &desired, first_setup, report);
+            let copied = record.entry(COPIED.to_string()).or_default();
+            if import.contains(&name.as_str()) {
+                let line = format!("@{}", import_path(&source, dirs.home));
+                copy_import(&target, &line, &name, copied, report);
+            } else if let Some(desired) = read_file(&source) {
+                copy_file(&target, &desired, &name, copied, report);
+            }
         }
     }
     ok
@@ -241,26 +244,60 @@ fn is_link(path: &Path) -> bool {
 /// Orca `copyClaudeProfileFile`：内容不同就用默认的覆盖（文件不用链接：编辑器「写临时文件再改名」
 /// 的保存会让链接断开）。账号里同名的是链接时那是用户自己的，不碰。
 ///
-/// 与 Orca 不同：首次对齐时账号里已有的不同内容先改名留存再覆盖。真实账号副本上实测，Orca 的
-/// 直接覆盖会丢掉账号自己的 `settings.json.bak-*`（默认目录里恰好有同名备份）。
-fn copy_file(target: &Path, desired: &[u8], first_setup: bool, report: &mut SyncReport) {
+/// 与 Orca 不同：只有账号里的内容还是上次 Meowo 写进去的那份（`copied` 记着摘要）才直接覆盖；
+/// 否则是用户在这个账号里改过（比如 `/keybindings`），或首次对齐时账号原有的文件，先改名留存再写。
+/// 红队 1 复现：Orca 的做法每次开会话都把账号里改过的快捷键静默写回默认的；真实账号副本上还会
+/// 丢掉账号自己的 `settings.json.bak-*`（默认目录里恰好有同名备份）。
+fn copy_file(target: &Path, desired: &[u8], name: &str, copied: &mut BTreeMap<String, String>, report: &mut SyncReport) {
     match std::fs::symlink_metadata(target) {
         Ok(m) if !m.is_file() => return,
-        Ok(_) if read_file(target).as_deref() == Some(desired) => return,
-        Ok(_) if first_setup => {
-            let aside = free_aside(target);
-            if let Err(e) = std::fs::rename(target, &aside) {
-                report.errors.push(format!("{}: 留存原文件失败，不覆盖：{e}", target.display()));
+        Ok(_) => match read_file(target) {
+            Some(current) if current == desired => {
+                copied.insert(name.to_string(), digest(desired));
                 return;
             }
-            report.changed.push(format!("账号原有的 {} 留存为 {}", target.display(), aside.display()));
-        }
-        _ => {}
+            Some(current) if copied.get(name) == Some(&digest(&current)) => {}
+            _ => {
+                if !set_aside(target, report) {
+                    return;
+                }
+            }
+        },
+        Err(_) => {}
     }
     match write_bytes_atomic(target, desired) {
-        Ok(()) => report.changed.push(format!("写入 {}", target.display())),
+        Ok(()) => {
+            copied.insert(name.to_string(), digest(desired));
+            report.changed.push(format!("写入 {}", target.display()));
+        }
         Err(e) => report.errors.push(format!("{}: {e}", target.display())),
     }
+}
+
+/// 把账号里的文件改名留存。失败就不覆盖，返回 false。
+fn set_aside(target: &Path, report: &mut SyncReport) -> bool {
+    let aside = free_aside(target);
+    if let Err(e) = std::fs::rename(target, &aside) {
+        report.errors.push(format!("{}: 留存原文件失败，不覆盖：{e}", target.display()));
+        return false;
+    }
+    report.changed.push(format!("账号原有的 {} 留存为 {}", target.display(), aside.display()));
+    true
+}
+
+/// CLAUDE.md 这类：账号里放一行 `@默认文件` 引用。已有这一行就不动——用户在账号里用 `/memory`
+/// 追加的规则跟在后面，两份都加载（红队 1：之前每次都写回只剩引用行，账号自己的规则丢了）。
+/// 没有这一行时按 `copy_file` 的规则：上次写的原样就补成引用行，用户写过的先留存。
+fn copy_import(target: &Path, line: &str, name: &str, copied: &mut BTreeMap<String, String>, report: &mut SyncReport) {
+    if let Some(current) = read_file(target) {
+        let text = String::from_utf8_lossy(&current);
+        if text.lines().any(|l| l.trim() == line) {
+            copied.insert(name.to_string(), digest(&current));
+            return;
+        }
+    }
+    copy_file(target, format!("{line}
+").as_bytes(), name, copied, report);
 }
 
 // ═══ 默认改了才同步 ═══

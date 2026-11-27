@@ -306,11 +306,26 @@ fn all_entries_share_everything_but_runtime_state() {
     // 无变化：什么都不写。
     let report = t.run(&[all]);
     assert!(report.changed.is_empty(), "{:?}", report.changed);
-    // 默认改了文件：账号副本跟着变（账号里自己改的也被覆盖，Orca 同样）。
+    // 默认改了、账号没动：账号副本直接跟着变，不留存。
     write(&d.join("keybindings.json"), "[1]");
+    t.run(&[all]);
+    assert_eq!(read(&p.join("keybindings.json")), "[1]");
+    assert!(!p.join("keybindings.json.meowo-profile-merge").exists());
+    // 用户在账号里改过（/keybindings）：先留存再写默认的（红队 1：之前静默覆盖）。
     write(&p.join("keybindings.json"), "[mine]");
     t.run(&[all]);
     assert_eq!(read(&p.join("keybindings.json")), "[1]");
+    assert_eq!(read(&p.join("keybindings.json.meowo-profile-merge")), "[mine]");
+    // 用户在账号里用 /memory 往 CLAUDE.md 追加的规则留着，引用行还在就不动。
+    write(&p.join("CLAUDE.md"), "@~/.claude/CLAUDE.md\n\n- 这个账号自己的规则\n");
+    let report = t.run(&[all]);
+    assert!(report.changed.is_empty(), "{:?}", report.changed);
+    assert!(read(&p.join("CLAUDE.md")).contains("这个账号自己的规则"));
+    // 引用行被删掉了：用户内容留存，补回引用行。
+    write(&p.join("CLAUDE.md"), "- 只剩自己的规则\n");
+    t.run(&[all]);
+    assert_eq!(read(&p.join("CLAUDE.md")), "@~/.claude/CLAUDE.md\n");
+    assert_eq!(read(&p.join("CLAUDE.md.meowo-profile-merge")), "- 只剩自己的规则\n");
 }
 
 #[test]
