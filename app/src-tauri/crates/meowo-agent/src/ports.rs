@@ -37,6 +37,15 @@ pub enum HttpError {
     Transport(String),
 }
 
+/// 429 响应的 `Retry-After` 塞在响应体最前面一行（`retry-after=<秒>`）带给调用方：`HttpError` 只有
+/// 状态码和响应体两格，加字段要改遍所有匹配处，而只有用量请求关心这个头。
+pub const RETRY_AFTER_LINE: &str = "retry-after=";
+
+/// 从 429 的响应体里取宿主塞进去的 `Retry-After` 秒数。
+pub fn retry_after_secs(body: &str) -> Option<u64> {
+    body.lines().next()?.strip_prefix(RETRY_AFTER_LINE)?.trim().parse().ok()
+}
+
 impl std::fmt::Display for HttpError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

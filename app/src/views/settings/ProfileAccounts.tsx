@@ -24,6 +24,7 @@ import {
   renameProfile,
   deleteProfile,
   revealTerminalPath,
+  archiveProfileSetAside,
   type AgentId,
   type LoginDone,
   type ProfileView,
@@ -37,7 +38,9 @@ import { useTauriEvent } from "../../hooks/useTauriEvent";
 import { ACTIVE_PROFILE_CHANGED } from "../island/useIslandUsage";
 import type { LoginOperationState } from "../../hooks/useLoginOperations";
 import { Icon } from "../../icons/Icon";
-import { icAlert, icPencil, icPlus, icRefreshCw, icTrash } from "../../icons/glyphs";
+import { icClose, icPencil, icPlus, icRefreshCw, icTrash } from "../../icons/glyphs";
+import { AgentAppIcon } from "../chat/AgentAppIcon";
+import { isMac, isWindows } from "../../platform";
 import { remoteUi } from "../../remoteMode";
 import { busyProps } from "../../busyButton";
 import { AppModal } from "../AppModal";
@@ -221,17 +224,10 @@ export function ProfileList({ provider, agentName, highlightLogin = false, moves
     });
   };
 
-  if (!rows) {
-    return loadErr ? (
-      <div className="provider-card-body acct" data-testid={"profiles-" + provider}>
-        <div className="agent-install-error">{loadErr}</div>
-      </div>
-    ) : null;
-  }
-
-  const system = rows.find((p) => p.id === null);
-  const managed = rows.filter((p) => p.id !== null);
+  const system = rows?.find((p) => p.id === null);
+  const managed = rows?.filter((p) => p.id !== null) ?? [];
   const systemEmail = system ? identity(system) : null;
+  const runtime = runtimeLabel();
 
   const usageButton = (p: ProfileView, key: string) =>
     p.account && (
@@ -240,7 +236,8 @@ export function ProfileList({ provider, agentName, highlightLogin = false, moves
         className="acct-act"
         data-testid={"profile-usage-" + provider + "-" + key}
         aria-label={a.viewProfileUsage(profileLabel(p, t))}
-        aria-pressed={viewingProfile ? (viewingProfile.id ?? DEFAULT_KEY) === key : p.active}
+        // 只在点开看别的账号时标按下：默认看的就是当前账号，当前行常亮一块底色像是被选中了。
+        aria-pressed={viewingProfile ? (viewingProfile.id ?? DEFAULT_KEY) === key : undefined}
         {...busyProps(busy, () => onViewUsage(p))}
       >
         {a.viewUsage}
@@ -263,7 +260,8 @@ export function ProfileList({ provider, agentName, highlightLogin = false, moves
     );
   };
 
-  const systemCard = system && (
+  // 系统默认行：Orca 的写法是「系统默认：邮箱」+ 一句来源说明，没有改名/移除。
+  const systemRow = system && (
     <div className={"acct-card" + (system.active ? " is-active" : "")} data-testid={"profile-" + provider + "-" + DEFAULT_KEY}>
       <button
         type="button"
@@ -284,17 +282,17 @@ export function ProfileList({ provider, agentName, highlightLogin = false, moves
     </div>
   );
 
-  const managedCard = (p: ProfileView) => {
+  const managedRow = (p: ProfileView) => {
     const key = p.id!;
     const label = profileLabel(p, t);
     const email = identity(p);
     const needsSignIn = !p.account;
     const adding = addingId === p.id;
-    // 起过名的卡把登录邮箱放进详情行（名字就是邮箱时不重复）。
+    // 起过名的行把登录邮箱放进详情行（名字就是邮箱时不重复）；照 Orca：组织 · 套餐 · 邮箱。
     const namedEmail = p.name.trim() && email && !sameAccountName(p.name, email) ? email : null;
     const detail = needsSignIn
-      ? (adding ? a.addWaiting : a.signInRequired)
-      : [p.account?.plan, namedEmail].filter(Boolean).join(" · ") || a.signedIn;
+      ? [namedEmail, adding ? a.addWaiting : a.signInRequired].filter(Boolean).join(" · ")
+      : [p.account?.organization, p.account?.plan, namedEmail].filter(Boolean).join(" · ") || a.signedIn;
     return (
       <Fragment key={key}>
         <div
@@ -309,24 +307,24 @@ export function ProfileList({ provider, agentName, highlightLogin = false, moves
           >
             <span className="acct-title-row">
               <span className="acct-name">{label}</span>
+              {runtime && <span className="acct-badge acct-badge-runtime">{runtime}</span>}
               {p.active && <span className="acct-badge">{a.activeProfile}</span>}
             </span>
-            <span className={"acct-desc" + (needsSignIn && !adding ? " is-warn" : "")} data-tip={detail}>{detail}</span>
+            <span className="acct-desc" data-tip={detail}>{detail}</span>
           </button>
           {!adding && (
             <div className="acct-acts">
               {usageButton(p, key)}
               <button
                 type="button"
-                className="acct-act acct-act-icon"
+                className="acct-act"
                 data-testid={"profile-rename-" + provider + "-" + key}
-                aria-label={a.renameTitle}
-                data-tip={a.renameTitle}
                 {...busyProps(busy, () => setRenaming(p))}
               >
                 <Icon glyph={icPencil} size={12} />
+                {a.rename}
               </button>
-              {signInButton(p, key, needsSignIn ? a.login : a.signInAgain)}
+              {signInButton(p, key, a.signInAgain)}
               <button
                 type="button"
                 className="acct-act acct-act-danger"
@@ -339,66 +337,92 @@ export function ProfileList({ provider, agentName, highlightLogin = false, moves
             </div>
           )}
         </div>
-        {p.set_aside?.length > 0 && <ProfileSetAsideNote provider={provider} rowKey={key} items={p.set_aside} />}
+        {p.set_aside?.length > 0 && (
+          <ProfileSetAsideNote
+            provider={provider}
+            profileId={key}
+            items={p.set_aside}
+            onArchived={() => { setNotice(a.setAsideArchived); reload(); }}
+          />
+        )}
       </Fragment>
     );
   };
 
   return (
-    <div className="provider-card-body acct" data-testid={"profiles-" + provider}>
-      <div className="acct-head">
-        <div className="acct-head-text">
-          <div className="acct-head-title">{a.profiles}</div>
-          <div className="acct-head-sub">{a.accountsSub(agentName)}</div>
+    <section className="acct-group" data-testid={"profiles-" + provider}>
+      {/* 照 Orca 的 SettingsGroup：分区标题和说明在卡片外，卡片里是「账号」块和设置行。 */}
+      <div className="acct-group-head">
+        <div className="acct-group-title">
+          <AgentAppIcon provider={provider} className="acct-group-icon" />
+          {agentName}
         </div>
-        <div className="acct-head-acts">
-          {addingId && (
-            <button type="button" className="acct-act" data-testid={"profile-add-cancel-" + provider} onClick={cancelAdd}>
-              {a.cancelLogin}
-            </button>
-          )}
-          <button
-            type="button"
-            className="acct-add"
-            data-testid={"profile-add-" + provider}
-            disabled={(loginPending && !addingId) || undefined}
-            {...busyProps(busy || addingId !== null, () => void add())}
-          >
-            <Icon glyph={addingId ? icRefreshCw : icPlus} size={12} className={addingId ? "spin" : undefined} />
-            {a.addProfile}
-          </button>
-        </div>
+        <div className="acct-group-desc">{a.accountsGroupDesc(agentName)}</div>
       </div>
-      <ProfileShareSummary shares={profileShares} provider={provider} />
-      <div className="acct-list">
-        {systemCard}
-        {managed.length === 0 ? (
-          <div className="acct-empty" data-testid={"profiles-empty-" + provider}>{a.accountsEmpty(agentName)}</div>
+      <div className="row-card acct-group-card">
+        <div className="acct">
+          <div className="acct-head">
+            <div className="acct-head-text">
+              <div className="acct-head-title">{a.profiles}</div>
+              <div className="acct-head-sub">{a.accountsSub}</div>
+              <div className="acct-head-sub" data-testid={"profile-share-" + provider}>{shareLine(profileShares, t)}</div>
+            </div>
+            <div className="acct-head-acts">
+              <button
+                type="button"
+                className="acct-add"
+                data-testid={"profile-add-" + provider}
+                disabled={(loginPending && !addingId) || undefined}
+                {...busyProps(busy || addingId !== null, () => void add())}
+              >
+                <Icon glyph={addingId ? icRefreshCw : icPlus} size={12} className={addingId ? "spin" : undefined} />
+                {a.addProfile}
+              </button>
+              {addingId && (
+                <button type="button" className="acct-act" data-testid={"profile-add-cancel-" + provider} onClick={cancelAdd}>
+                  <Icon glyph={icClose} size={12} />
+                  {a.cancelEdit}
+                </button>
+              )}
+            </div>
+          </div>
+          {!rows ? (
+            loadErr && <div className="agent-install-error">{loadErr}</div>
+          ) : (
+            <div className="acct-list">
+              {systemRow}
+              {managed.length === 0 ? (
+                <div className="acct-empty" data-testid={"profiles-empty-" + provider}>{a.accountsEmpty(agentName)}</div>
+              ) : (
+                managed.map(managedRow)
+              )}
+            </div>
+          )}
+          {notice && <div className="acct-notice" role="status">{notice}</div>}
+          {err && <div className="agent-install-error" role="alert">{err}</div>}
+        </div>
+        {movesSessionsAcrossAccounts ? (
+          <div className="acct-setting-row" data-testid={"profile-switch-running-" + provider}>
+            <div className="acct-setting-text">
+              <div className="acct-setting-label">{a.switchRunningLabel(agentName)}</div>
+              <div className="acct-setting-desc">{a.switchRunningDesc}</div>
+            </div>
+            <Dropdown
+              value={switchRunning}
+              options={[
+                { value: "ask" as const, label: a.switchRunningAsk },
+                { value: "restart" as const, label: a.switchRunningRestart },
+                { value: "keep" as const, label: a.switchRunningKeep },
+              ]}
+              onChange={onSwitchRunningChange}
+            />
+          </div>
         ) : (
-          managed.map(managedCard)
+          <div className="acct-setting-row">
+            <div className="acct-setting-desc">{a.switchCoverage}</div>
+          </div>
         )}
       </div>
-      {notice && <div className="acct-notice" role="status">{notice}</div>}
-      {err && <div className="agent-install-error" role="alert">{err}</div>}
-      {movesSessionsAcrossAccounts ? (
-        <div className="profile-switch-row" data-testid={"profile-switch-running-" + provider}>
-          <div className="profile-switch-text">
-            <div className="profile-switch-label">{a.switchRunningLabel}</div>
-            <div className="profile-hint">{a.switchRunningDesc}</div>
-          </div>
-          <Dropdown
-            value={switchRunning}
-            options={[
-              { value: "ask" as const, label: a.switchRunningAsk },
-              { value: "restart" as const, label: a.switchRunningRestart },
-              { value: "keep" as const, label: a.switchRunningKeep },
-            ]}
-            onChange={onSwitchRunningChange}
-          />
-        </div>
-      ) : (
-        <div className="profile-hint">{a.switchCoverage}</div>
-      )}
       {renaming && (
         <RenameAccountModal
           profile={renaming}
@@ -410,11 +434,17 @@ export function ProfileList({ provider, agentName, highlightLogin = false, moves
           }}
         />
       )}
-    </div>
+    </section>
   );
 }
 
-/** 改名弹窗（照 Orca 的 account-rename-dialog）：只改显示名，留空 = 显示登录邮箱。 */
+/** 账号行上的运行时徽章（Orca 的「Windows」/「WSL」）。Meowo 只在本机跑，手机远程页不显示。 */
+function runtimeLabel(): string | null {
+  if (remoteUi()) return null;
+  return isWindows() ? "Windows" : isMac() ? "macOS" : null;
+}
+
+/** 改名弹窗（照 Orca 的 account-rename-dialog）：标题、说明、「显示名称」输入框；左下「恢复默认」，右下取消/保存。 */
 function RenameAccountModal({ profile, onClose, onSubmit }: {
   profile: ProfileView;
   onClose: () => void;
@@ -442,21 +472,30 @@ function RenameAccountModal({ profile, onClose, onSubmit }: {
   return (
     <AppModal label={a.renameTitle} onClose={onClose}>
       <div className="chat-modal-title">{a.renameTitle}</div>
-      <input
-        className="ns-input acct-modal-input"
-        autoFocus
-        value={value}
-        placeholder={email ?? ""}
-        data-testid="profile-rename-input"
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) void save(value); }}
-      />
       <div className="acct-modal-hint">{email ? a.renameHint(email) : a.renameHintPlain}</div>
+      <label className="acct-modal-field">
+        <span className="acct-modal-label">{a.renameLabel}</span>
+        <input
+          className="ns-input acct-modal-input"
+          autoFocus
+          value={value}
+          placeholder={email ?? ""}
+          data-testid="profile-rename-input"
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) void save(value); }}
+        />
+      </label>
       {error && <div className="chat-modal-error" role="alert">{error}</div>}
       <div className="chat-modal-actions">
-        {profile.name.trim() && email && (
-          <button type="button" className="ns-btn acct-modal-reset" data-testid="profile-rename-reset" onClick={() => void save("")}>{a.renameReset}</button>
-        )}
+        <button
+          type="button"
+          className="ns-btn btn-ghost acct-modal-reset"
+          data-testid="profile-rename-reset"
+          disabled={!profile.name.trim() || !email}
+          onClick={() => void save("")}
+        >
+          {a.renameReset}
+        </button>
         <button type="button" className="ns-btn" onClick={onClose}>{a.cancelEdit}</button>
         <button type="button" className="ns-btn btn-primary" data-testid="profile-rename-save" {...busyProps(saving, () => void save(value))}>{a.renameSave}</button>
       </div>
@@ -468,68 +507,73 @@ function RenameAccountModal({ profile, onClose, onSubmit }: {
 const SHARE_TOPIC_ORDER: ShareTopic[] = ["rules", "settings", "plugins", "skills", "commands", "mcp", "history"];
 
 /**
- * 账号区顶部「共用 / 各自」两排标签：一眼看出新账号带不带得上默认账号的规则、设置、会话历史，
- * 哪些是每个账号自己的（2026-11-27 三版样稿选的两排标签）。
- * 没写会话历史共用的 agent（codex/kimi/opencode），会话历史归到「各自」。
+ * 「共用什么、各自什么」收成卡片头的第二行说明（Orca 的 Codex 分区也是两行说明，没有标签）。
+ * 2026-11-27 三版样稿里选过两排标签；照 Orca 对齐时改成一句话，信息不变。
  */
-function ProfileShareSummary({ shares, provider }: { shares: ShareTopic[]; provider: AgentId }) {
-  const t = useT();
-  const shared = SHARE_TOPIC_ORDER.filter((topic) => shares.includes(topic));
+function shareLine(shares: ShareTopic[], t: ReturnType<typeof useT>): string {
+  const shared = SHARE_TOPIC_ORDER.filter((topic) => shares.includes(topic)).map((topic) => t.account.shareTopic[topic]);
   const own = [t.account.ownLogin, t.account.ownQuota, ...(shares.includes("history") ? [] : [t.account.shareTopic.history])];
-  return (
-    <div className="profile-share" data-testid={"profile-share-" + provider}>
-      {shared.length > 0 && (
-        <>
-          <span className="profile-share-label">{t.account.sharedLabel}</span>
-          <span className="profile-share-chips">
-            {shared.map((topic) => (
-              <span key={topic} className="profile-chip">{t.account.shareTopic[topic]}</span>
-            ))}
-          </span>
-        </>
-      )}
-      <span className="profile-share-label">{t.account.ownLabel}</span>
-      <span className="profile-share-chips">
-        {own.map((label) => (
-          <span key={label} className="profile-chip profile-chip-own">{label}</span>
-        ))}
-      </span>
-    </div>
-  );
+  return t.account.shareLine(shared, own);
 }
 
 /**
- * 账号首次对齐时和默认账号冲突、没合进来的条目：提醒摊开在这个账号下面（taste I14：做决定前必须
- * 知道的警示明细直接摊开），不收进徽章。提醒色底块不用报错红：账号照常能用，这些只是待挑拣的旧版本。
+ * 和系统默认内容不同、单独留下的条目。Orca 只写日志、界面不提；这里照 Orca 账号列表里提示行的样式
+ * （一行灰字 + 幽灵按钮，同它的 systemDefaultIsSaved），给出能点的处理：打开文件夹看看，或改用系统默认
+ * （移到归档文件夹，不删）。之前是一大块黄底提醒，账号照常能用却看着像出了错（2026-11-27 用户：「显示一大堆冲突」）。
  */
-function ProfileSetAsideNote({ provider, rowKey, items }: { provider: AgentId; rowKey: string; items: ProfileSetAside[] }) {
+function ProfileSetAsideNote({ provider, profileId, items, onArchived }: {
+  provider: AgentId;
+  profileId: string;
+  items: ProfileSetAside[];
+  onArchived: () => void;
+}) {
   const t = useT();
+  const a = t.account;
   const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const names = items.map((item) => item.name.replace(/\.meowo-profile-(merge|conflict)(-\d+)?$/, "")).join("、");
   const reveal = () => {
     setMsg(null);
     revealTerminalPath("", items[0].path).catch((e: unknown) => setMsg(formatBackendError(e, t.locale)));
   };
+  const archive = async () => {
+    const yes = await appConfirm(a.setAsideArchiveConfirm(items.length, names), {
+      title: a.setAsideArchiveTitle,
+      confirmLabel: a.setAsideUseDefault,
+    });
+    if (!yes) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      await archiveProfileSetAside(provider, profileId);
+      onArchived();
+    } catch (e) {
+      setMsg(formatBackendError(e, t.locale));
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
-    <div className="profile-aside" role="note" data-testid={"profile-aside-" + provider + "-" + rowKey}>
-      <div className="profile-aside-head">
-        <Icon glyph={icAlert} size={14} />
-        <strong>{t.account.setAsideTitle(items.length)}</strong>
-      </div>
-      <div className="profile-aside-hint">{t.account.setAsideHint}</div>
-      <ul className="profile-aside-list">
-        {items.map((item) => (
-          <li key={item.path}>
-            {item.name}
-            {item.files > 1 && <span className="profile-aside-count">{t.account.setAsideFiles(item.files)}</span>}
-          </li>
-        ))}
-      </ul>
-      {!remoteUi() && (
-        <button type="button" className="agent-path-gap-btn profile-aside-reveal" data-testid={"profile-aside-reveal-" + provider + "-" + rowKey} onClick={reveal}>
-          {t.account.mcpConfigReveal}
+    <div className="acct-aside" data-testid={"profile-aside-" + provider + "-" + profileId}>
+      <p className="acct-aside-text" data-tip={names}>
+        {a.setAsideLine(items.length)}
+        {msg && <span className="acct-aside-err"> {msg}</span>}
+      </p>
+      <div className="acct-aside-acts">
+        {!remoteUi() && (
+          <button type="button" className="acct-act" data-testid={"profile-aside-reveal-" + provider + "-" + profileId} onClick={reveal}>
+            {a.mcpConfigReveal}
+          </button>
+        )}
+        <button
+          type="button"
+          className="acct-act"
+          data-testid={"profile-aside-archive-" + provider + "-" + profileId}
+          {...busyProps(busy, () => void archive())}
+        >
+          {a.setAsideUseDefault}
         </button>
-      )}
-      {msg && <span className="agent-mcp-unreadable-err">{msg}</span>}
+      </div>
     </div>
   );
 }

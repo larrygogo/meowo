@@ -546,6 +546,10 @@ pub struct ChatHistoryDto {
     pub context_pct: Option<i64>,
     #[cfg_attr(test, ts(type = "number | null"))]
     pub context_window: Option<i64>,
+    /// 会话跑在哪个账号（profile id）上；缺省 = 默认账号。上下文卡片据此查这个对话所用账号的额度。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub profile: Option<String>,
     pub current_activity: Option<String>,
     /// 会话进程是否仍被认为存活（与看板 `session_connected` 同口径：pid 在进程表里，
     /// 或距最近事件不足宽限期）。status 是 hook 驱动的离散快照，进程死后 reaper 收尾前

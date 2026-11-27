@@ -2046,6 +2046,11 @@ export function deleteProfile(provider: AgentId, id: string): Promise<void> {
   return invoke("delete_profile", { provider, id });
 }
 
+/** 「改用系统默认」：把账号留存的冲突项移到 `~/.meowo/profile-merge-archive/…`（不删除），返回归档目录。 */
+export function archiveProfileSetAside(provider: AgentId, id: string): Promise<string> {
+  return invoke("archive_profile_set_aside", { provider, id });
+}
+
 /**
  * 把账号**合并进默认账号**：数据目录并入（不覆盖默认账号已有的文件）、会话改挂默认账号、
  * 账号从列表移除。与删除的根本区别是数据全留下。有进行中的会话时后端会拒绝。

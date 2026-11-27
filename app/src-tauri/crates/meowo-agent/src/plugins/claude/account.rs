@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::account::{Account, AccountCap, ProviderUsage, UsageKind, UsageLane, USAGE_UNSUPPORTED};
+use crate::account::{
+    classify_usage_http_error, Account, AccountCap, ProviderUsage, UsageKind, UsageLane, USAGE_EXPIRED, USAGE_UNSUPPORTED,
+};
 use crate::ports::{Body, HttpRequest, Ports};
 use crate::variant::Installation;
 
@@ -315,107 +317,27 @@ fn read_credentials_root(inst: &Installation, ports: &Ports) -> Option<serde_jso
     read_json_file(&credentials_path(inst)?)
 }
 
-/// 刷新 token 后把新凭据写回原存储（保留其余字段）。
-fn write_credentials_root(
-    inst: &Installation,
-    ports: &Ports,
-    value: &serde_json::Value,
-) -> Result<(), String> {
-    if ports.keychain.available() {
-        let (service, fallback_account) = keychain_spec(inst);
-        let body = serde_json::to_string(value).map_err(|e| e.to_string())?;
-        // 读得到实际 account 就按同名更新；读不到用变体表声明的兜底值。
-        let account = ports
-            .keychain
-            .read_account(service)
-            .unwrap_or_else(|| fallback_account.to_string());
-        return ports.keychain.write_password(service, &account, &body);
-    }
-    let path = credentials_path(inst).ok_or("解析不到 claude 凭据路径")?;
-    let body = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
-    crate::fsutil::write_atomic_secure(&path, &body).map_err(|e| e.to_string())
-}
-
-/// 确保有有效 access token：未过期直接返回；过期则刷新并写回原存储，再返回新 token。
-fn ensure_valid_token(inst: &Installation, ports: &Ports) -> Result<String, String> {
-    use std::sync::Mutex;
-    // 串行化刷新：并发刷新（多窗口/连点）会各自用旋转后失效的 refresh_token 重复请求、互相覆盖。
-    // 持锁后下面会重读凭据并重新判过期（双检）——若刚被另一调用方刷新过，直接走 fast-path 返回新
-    // token，不再重复刷新。
-    static REFRESH_LOCK: Mutex<()> = Mutex::new(());
-    let _guard = REFRESH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-
+/// 读 access token，**只读不刷新**（照 Orca）。过期了返回 [`USAGE_EXPIRED`]：替 CLI 刷新会轮换
+/// refresh token，CLI 进程里拿着的旧 refresh token 随之作废，下次它自己刷新就失败、要用户重新登录；
+/// 多账号时每个账号都可能撞上。等 CLI 下次运行自己刷新，额度就回来了。
+fn read_access_token(inst: &Installation, ports: &Ports) -> Result<String, String> {
     let root = read_credentials_root(inst, ports);
     // 读不到可用 OAuth 凭据 → 视为第三方/非官方登录，用量接口不适用，返回标记码。
     if oauth_credentials_missing(root.as_ref()) {
         return Err(USAGE_UNSUPPORTED.into());
     }
-    let root = root.expect("credentials present: oauth_credentials_missing 已排除 None");
-    let oauth = root.get("claudeAiOauth").ok_or("凭据缺 claudeAiOauth")?;
-    let access = oauth
-        .get("accessToken")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let refresh = oauth
-        .get("refreshToken")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let expires_at = oauth.get("expiresAt").and_then(|v| v.as_i64()).unwrap_or(0);
-
-    if !access.is_empty() && !is_token_expired(expires_at, now_ms()) {
-        return Ok(access);
+    let oauth = root.as_ref().and_then(|r| r.get("claudeAiOauth"));
+    let access = oauth.and_then(|o| o.get("accessToken")).and_then(|v| v.as_str()).unwrap_or("");
+    let expires_at = oauth.and_then(|o| o.get("expiresAt")).and_then(|v| v.as_i64()).unwrap_or(0);
+    if access.is_empty() || is_token_expired(expires_at, now_ms()) {
+        return Err(USAGE_EXPIRED.into());
     }
-    if refresh.is_empty() {
-        return Err("token 已过期且无 refreshToken".into());
-    }
-    // 刷新端点与 client_id 来自变体表；返回 `invalid_client` 即该变体的 client_id 与本机 claude 不符。
-    let Some(spec) = claude_auth(inst).and_then(|a| a.refresh) else {
-        return Err("claude 变体表未声明 OAuth 刷新参数".into());
-    };
-    let text = ports
-        .http
-        .send(&HttpRequest {
-            method: "POST",
-            url: spec.token_url,
-            headers: &[],
-            body: Body::Json(serde_json::json!({
-                "grant_type": "refresh_token",
-                "refresh_token": refresh,
-                "client_id": spec.client_id,
-            })),
-            timeout: HTTP_TIMEOUT,
-        })
-        .map_err(|e| format!("刷新 token 失败：{e}"))?;
-    let body: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    let new_access = body
-        .get("access_token")
-        .and_then(|v| v.as_str())
-        .ok_or("刷新响应缺 access_token")?
-        .to_string();
-    let new_refresh = body
-        .get("refresh_token")
-        .and_then(|v| v.as_str())
-        .unwrap_or(&refresh)
-        .to_string();
-    // 钳下限 600s：服务端若异常返回 0/负/极小值，避免写回一个立刻过期的 expiresAt 而陷入每次都刷新。
-    // 钳上限 86400s（24h）：防服务端异常返回超大值导致 now_ms() + expires_in*1000 溢出回绕。
-    let expires_in = body
-        .get("expires_in")
-        .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
-        .unwrap_or(3600)
-        .clamp(600, 86400);
-    let new_expires_at = now_ms() + expires_in * 1000;
-
-    let merged = merge_credentials(&root, &new_access, &new_refresh, new_expires_at);
-    write_credentials_root(inst, ports, &merged)?;
-    Ok(new_access)
+    Ok(access.to_string())
 }
 
-/// 联网拉实时用量（含按需刷新 token）。缓存/限频/写回归宿主编排层，本函数只负责拿一次。
+/// 联网拉实时用量。缓存/限频/退避归宿主编排层，本函数只负责拿一次；失败按分类码返回。
 fn fetch_usage_live(inst: &Installation, ports: &Ports) -> Result<Usage, String> {
-    let token = ensure_valid_token(inst, ports)?;
+    let token = read_access_token(inst, ports)?;
     let bearer = format!("Bearer {token}");
     let text = ports
         .http
@@ -426,7 +348,7 @@ fn fetch_usage_live(inst: &Installation, ports: &Ports) -> Result<Usage, String>
             body: Body::Empty,
             timeout: HTTP_TIMEOUT,
         })
-        .map_err(|e| format!("请求用量失败：{e}"))?;
+        .map_err(|e| classify_usage_http_error(&e))?;
     let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
     Ok(parse_usage(&v))
 }
@@ -706,62 +628,48 @@ mod tests {
         assert_eq!(merged["claudeAiOauth"]["subscriptionType"], "max");
     }
 
-    /// 走生产路径的防溢出回归：刷新响应给出病态大的 expires_in 时，写回的 expiresAt 必须被钳在
-    /// 24h 内——否则 now_ms() + expires_in*1000 溢出（debug panic / release 回绕成过去的时间戳，
-    /// 于是每次拉用量都重刷）。
+    /// 过期的 token 不刷新、不联网，直接报过期（照 Orca：刷新会让 CLI 手里的 refresh token 作废）。
     #[test]
-    fn refresh_clamps_pathological_expires_in() {
-        /// 假刷新端点：回一份 expires_in = i64::MAX 的响应。
-        struct HugeExpiresIn;
-        impl crate::ports::HttpPort for HugeExpiresIn {
-            fn send(&self, _req: &HttpRequest) -> Result<String, crate::ports::HttpError> {
-                Ok(r#"{"access_token":"new_access","refresh_token":"new_refresh","expires_in":9223372036854775807}"#
-                    .to_string())
+    fn expired_token_is_reported_without_refreshing_or_calling_the_api() {
+        struct NoCall;
+        impl crate::ports::HttpPort for NoCall {
+            fn send(&self, req: &HttpRequest) -> Result<String, crate::ports::HttpError> {
+                panic!("不该联网：{}", req.url)
             }
             fn download(
                 &self,
-                _url: &str,
-                _dest: &std::path::Path,
-                _timeout: std::time::Duration,
-                _on_progress: &mut dyn FnMut(u64, Option<u64>),
+                _: &str,
+                _: &std::path::Path,
+                _: Duration,
+                _: &mut dyn FnMut(u64, Option<u64>),
             ) -> Result<u64, crate::ports::HttpError> {
-                unreachable!("token 刷新不走下载")
+                unreachable!()
             }
         }
-
-        // profile 实况：凭据落在 <root>/.credentials.json；NoKeychain 恒不可用 → 走文件分支。
-        let root = std::env::temp_dir().join(format!("meowo-claude-clamp-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("meowo-claude-expired-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        let inst = crate::by_id("claude")
-            .unwrap()
-            .installation_for_profile(&root)
-            .expect("claude 支持多账号");
-        std::fs::write(
-            root.join(".credentials.json"),
-            json!({"claudeAiOauth":{"accessToken":"old","refreshToken":"oldr","expiresAt":0}})
-                .to_string(),
-        )
-        .unwrap();
-
-        let ports = Ports {
-            http: &HugeExpiresIn,
-            keychain: &crate::ports::NoKeychain,
-            local_cli: &crate::ports::NoLocalCli,
-        };
-        let before = now_ms();
-        let token = ensure_valid_token(&inst, &ports).expect("刷新应成功");
-        assert_eq!(token, "new_access");
-
-        let written: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(root.join(".credentials.json")).unwrap())
-                .unwrap();
-        let expires_at = written["claudeAiOauth"]["expiresAt"].as_i64().unwrap();
-        assert!(
-            expires_at >= before + 86400 * 1000 && expires_at <= now_ms() + 86400 * 1000,
-            "expires_in 必须被钳到 86400s（expires_at={expires_at}）"
-        );
+        let inst = crate::by_id("claude").unwrap().installation_for_profile(&root).expect("claude 支持多账号");
+        let body = json!({"claudeAiOauth":{"accessToken":"old","refreshToken":"oldr","expiresAt":0}}).to_string();
+        std::fs::write(root.join(".credentials.json"), &body).unwrap();
+        let ports = Ports { http: &NoCall, keychain: &crate::ports::NoKeychain, local_cli: &crate::ports::NoLocalCli };
+        let got = ClaudeAccount.fetch_usage(&inst, &ports);
+        let after = std::fs::read_to_string(root.join(".credentials.json")).unwrap();
         let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(got.unwrap_err(), USAGE_EXPIRED);
+        assert_eq!(after, body, "凭据原样不动");
+    }
+
+    #[test]
+    fn usage_http_errors_are_classified() {
+        use crate::account::{USAGE_NETWORK, USAGE_RATE_LIMITED, USAGE_SERVER};
+        use crate::ports::HttpError::{Status, Transport};
+        assert_eq!(classify_usage_http_error(&Status(401, String::new())), USAGE_EXPIRED);
+        assert_eq!(classify_usage_http_error(&Status(403, String::new())), USAGE_EXPIRED);
+        assert_eq!(classify_usage_http_error(&Status(429, "retry-after=120\n{}".into())), format!("{USAGE_RATE_LIMITED}:120"));
+        assert_eq!(classify_usage_http_error(&Status(429, "{}".into())), USAGE_RATE_LIMITED);
+        assert_eq!(classify_usage_http_error(&Status(503, String::new())), USAGE_SERVER);
+        assert_eq!(classify_usage_http_error(&Transport("timeout".into())), USAGE_NETWORK);
     }
 
     #[test]

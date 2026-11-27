@@ -1,17 +1,14 @@
 //! 账号/用量的**编排层**：缓存、限频、注入端口。
 //!
-//! 各 agent 的凭据格式、OAuth 刷新、用量 API schema 全部住在 `meowo_agent::plugins::<id>::account`，
+//! 各 agent 的凭据格式、用量 API schema 全部住在 `meowo_agent::plugins::<id>::account`，
 //! 由 `AgentPlugin::account()` 能力槽取用；本模块不认识任何具体 agent。
 //!
 //! 缓存与 60s 限频**刻意留在这里**：它们是「meowo 怎么管用量」的策略，不是「某个 agent 怎么查用量」
 //! 的知识。此前三家各自在 `usage()` 里重复了同一套读缓存/判鲜/写回逻辑。
 
-use meowo_agent::{AccountCap, AgentId, ProviderUsage};
+use meowo_agent::{AccountCap, AgentId, ProviderUsage, UsageKind};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-
-#[cfg(test)]
-use meowo_agent::UsageKind;
 pub use meowo_agent::{Account, USAGE_UNSUPPORTED};
 
 /// 用量缓存的新鲜期：期内的 force 刷新直接吃缓存，不打 API。
@@ -139,56 +136,139 @@ pub fn usage_supported_for_profile(id: AgentId, profile: Option<&str>) -> bool {
     account_cap(id).is_some_and(|c| c.usage_supported(&inst, &p.as_ports()))
 }
 
-/// 取用量。
+/// 取用量，失败带分类码（`USAGE_*`，见 meowo-agent `account.rs`）。
 ///
-/// - `force == false`：只读缓存，绝不联网。
-/// - `force == true`：缓存仍新鲜（< 60s）则复用，否则调 agent 的 `fetch_usage` 拉一次并写回。
+/// - `force == false`：只读缓存，绝不联网；没有缓存时报 `UNAVAILABLE`。
+/// - `force == true`：缓存仍新鲜（< 60s）则复用，否则走 [`fetch_with_policy`] 拿一次并写回。
 ///
 /// 这段策略此前被三个 agent 各抄了一份；现在它只存在于这里，插件只负责「去 API 拿」。
-pub fn usage_of(id: AgentId, force: bool) -> Option<ProviderUsage> {
+pub fn usage_of(id: AgentId, force: bool) -> Result<ProviderUsage, String> {
     if crate::settings::load_settings().relay.enabled(id) {
-        return None;
+        return Err(USAGE_UNSUPPORTED.into());
     }
     if !force {
-        return read_cached_usage(id);
+        return read_cached_usage(id).ok_or_else(|| UNAVAILABLE.into());
     }
     if cache_is_fresh(id, USAGE_FRESH_MS) {
         if let Some(cached) = read_cached_usage(id) {
-            return Some(cached);
+            return Ok(cached);
         }
     }
-    // 端口按 agent 绑定：代理是 per-agent 的（claude 走代理、kimi 直连是常态）。
-    let p = crate::ports::HostPorts::for_agent(id);
     // 固定本次请求对应的 profile。不能在取实况和完成请求时分别读“当前账号”：用户可能在
     // 网络请求途中切换账号，旧请求随后回写就会让新账号顶着旧账号的额度。
     let requested_profile = crate::profile::active_id(id.as_str());
-    let inst = installation_for_profile(id, requested_profile.as_deref())?;
-    match account_cap(id)?.fetch_usage(&inst, &p.as_ports()) {
-        Ok(u) => {
-            if !write_cached_usage_for_profile(id, &requested_profile, &u) {
-                eprintln!("Meowo usage[{id}]: 刷新期间账号已切换，丢弃旧账号结果");
-                return None;
-            }
-            Some(u)
-        }
-        Err(e) => {
-            eprintln!("Meowo usage[{id}]: {e}");
-            None
+    let inst = installation_for_profile(id, requested_profile.as_deref()).ok_or(UNAVAILABLE)?;
+    let u = fetch_with_policy(id, &requested_profile, &inst, read_cached_usage(id).as_ref())?;
+    if !write_cached_usage_for_profile(id, &requested_profile, &u) {
+        eprintln!("Meowo usage[{id}]: 刷新期间账号已切换，丢弃旧账号结果");
+        return Err(UNAVAILABLE.into());
+    }
+    Ok(u)
+}
+
+/// 取不到、也说不出具体原因（没装、读不到实况、缓存为空）。
+pub const UNAVAILABLE: &str = "UNAVAILABLE";
+
+/// statusline 额度多久内算新（Orca 的自动轮询默认 15 分钟一次，这之内的 statusline 不比轮询旧）。
+const STATUSLINE_FRESH_MS: i64 = 15 * 60_000;
+/// 失败退避的起点与上限（照 Orca：30 秒起翻倍，封顶 15 分钟）。
+const BACKOFF_START_MS: i64 = 30_000;
+const BACKOFF_MAX_MS: i64 = 15 * 60_000;
+
+/// 某账号上次失败后的退避：（连续失败次数，到这个时刻前不再联网，上次的分类码）。
+type BackoffMap = std::collections::HashMap<ProfileUsageKey, (u32, i64, String)>;
+static BACKOFF: std::sync::LazyLock<std::sync::Mutex<BackoffMap>> = std::sync::LazyLock::new(Default::default);
+
+/// 第 n 次连续失败后的等待时长。
+fn backoff_delay(fails: u32) -> i64 {
+    (BACKOFF_START_MS << fails.saturating_sub(1).min(10)).min(BACKOFF_MAX_MS)
+}
+
+/// 失败后下次联网的最早时刻；429 带了 Retry-After 就至少等那么久。
+fn next_attempt_at(now: i64, fails: u32, code: &str) -> i64 {
+    let retry = code
+        .strip_prefix(meowo_agent::USAGE_RATE_LIMITED)
+        .and_then(|r| r.strip_prefix(':'))
+        .and_then(|secs| secs.parse::<i64>().ok())
+        .map_or(0, |secs| secs.saturating_mul(1000));
+    now + backoff_delay(fails).max(retry)
+}
+
+/// 拿一次用量（照 Orca 的取数顺序）：
+/// 1. Claude 先看 statusline 带来的额度（CLI 自己 API 响应里的 `rate_limits`），15 分钟内的直接用；
+/// 2. 否则在退避期外才去问官方接口；退避期内直接回上次的分类码，前端保留旧数字。
+///
+/// `base` 是这个账号上一份完整用量：statusline 只有 5 小时 / 7 天两条，按模型的周额度等泳道从它补。
+fn fetch_with_policy(
+    id: AgentId,
+    profile: &Option<String>,
+    inst: &meowo_agent::Installation,
+    base: Option<&ProviderUsage>,
+) -> Result<ProviderUsage, String> {
+    if id == meowo_agent::id::CLAUDE {
+        if let Some(u) = statusline_usage(profile, base) {
+            return Ok(u);
         }
     }
+    let key = (id.as_str().to_owned(), profile.clone());
+    let now = now_ms();
+    let prev_fails = {
+        let map = BACKOFF.lock().unwrap_or_else(|e| e.into_inner());
+        match map.get(&key) {
+            Some((_, until, code)) if now < *until => return Err(code.clone()),
+            Some((fails, _, _)) => *fails,
+            None => 0,
+        }
+    };
+    let p = crate::ports::HostPorts::for_agent(id);
+    let result = account_cap(id).ok_or(UNAVAILABLE)?.fetch_usage(inst, &p.as_ports());
+    let mut map = BACKOFF.lock().unwrap_or_else(|e| e.into_inner());
+    match &result {
+        Ok(_) => {
+            map.remove(&key);
+        }
+        // 不支持、过期都不是「问得太勤」：过期本来就不联网，不支持的问多少次都一样。
+        Err(code) if code == USAGE_UNSUPPORTED || code == meowo_agent::USAGE_EXPIRED => {
+            map.remove(&key);
+        }
+        Err(code) => {
+            eprintln!("Meowo usage[{id}/{profile:?}]: {code}");
+            let fails = prev_fails + 1;
+            map.insert(key, (fails, next_attempt_at(now, fails, code), code.clone()));
+        }
+    }
+    result
+}
+
+/// 某个 Claude 账号最近的 statusline 额度，合上 `base` 里 statusline 没有的泳道。
+fn statusline_usage(profile: &Option<String>, base: Option<&ProviderUsage>) -> Option<ProviderUsage> {
+    use meowo_agent::plugins::claude::statusline_usage as sl;
+    let path = usage_cache_path()?.with_file_name(sl::FILE);
+    // 账号会话的 CLAUDE_CONFIG_DIR 就是它的数据目录；默认账号不设。
+    let config_dir = match profile {
+        Some(pid) => Some(crate::profile::data_dir(meowo_agent::id::CLAUDE.as_str(), Some(pid))?.to_string_lossy().into_owned()),
+        None => None,
+    };
+    let (lanes, _) = sl::read(&path, config_dir.as_deref(), STATUSLINE_FRESH_MS, now_ms())?;
+    let kinds: Vec<UsageKind> = lanes.iter().map(|l| l.kind).collect();
+    let mut merged = lanes;
+    if let Some(base) = base {
+        merged.extend(base.lanes.iter().filter(|l| !kinds.contains(&l.kind)).cloned());
+    }
+    Some(ProviderUsage { lanes: merged, note: base.and_then(|b| b.note.clone()), plan: base.and_then(|b| b.plan.clone()) })
 }
 
 /// 查看指定 profile 的用量。active 仍走现有缓存与限频；非 active 只查询并返回，不写缓存，
 /// 避免「只是看看另一个账号」把当前账号的额度覆盖掉。
-pub fn usage_of_profile(id: AgentId, profile: Option<&str>) -> Option<ProviderUsage> {
+pub fn usage_of_profile(id: AgentId, profile: Option<&str>) -> Result<ProviderUsage, String> {
     let requested = profile.map(str::to_owned);
     if same_profile(&requested, &crate::profile::active_id(id.as_str())) {
         return usage_of(id, true);
     }
     if crate::settings::load_settings().relay.enabled(id) {
-        return None;
+        return Err(USAGE_UNSUPPORTED.into());
     }
-    let key = (id.as_str().to_owned(), requested);
+    let key = (id.as_str().to_owned(), requested.clone());
     let now = now_ms();
     if let Some(hit) = profile_usage_cache_hit(
         &PROFILE_USAGE_CACHE
@@ -199,15 +279,13 @@ pub fn usage_of_profile(id: AgentId, profile: Option<&str>) -> Option<ProviderUs
     ) {
         return hit;
     }
-    let inst = installation_for_profile(id, profile)?;
-    let p = crate::ports::HostPorts::for_agent(id);
-    let result = match account_cap(id)?.fetch_usage(&inst, &p.as_ports()) {
-        Ok(usage) => Some(usage),
-        Err(e) => {
-            eprintln!("Meowo usage[{id}/{profile:?}]: {e}");
-            None
-        }
-    };
+    let inst = installation_for_profile(id, profile).ok_or(UNAVAILABLE)?;
+    let base = PROFILE_USAGE_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&key)
+        .and_then(|(_, r)| r.as_ref().ok().cloned());
+    let result = fetch_with_policy(id, &requested, &inst, base.as_ref());
     PROFILE_USAGE_CACHE
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -222,8 +300,8 @@ pub fn usage_of_profile(id: AgentId, profile: Option<&str>) -> Option<ProviderUs
 /// 打到 429，连带活跃账号也查不了（独立审查 2026-11-15 指出）。失败也记一下、窗口更短：
 /// 被限流时正是最不该接着打的时候。
 type ProfileUsageKey = (String, Option<String>);
-/// （记下的时刻 ms，结果；None = 那次失败）。
-type ProfileUsageCache = std::collections::HashMap<ProfileUsageKey, (i64, Option<ProviderUsage>)>;
+/// （记下的时刻 ms，结果；Err = 那次失败的分类码）。
+type ProfileUsageCache = std::collections::HashMap<ProfileUsageKey, (i64, Result<ProviderUsage, String>)>;
 static PROFILE_USAGE_CACHE: std::sync::LazyLock<std::sync::Mutex<ProfileUsageCache>> =
     std::sync::LazyLock::new(Default::default);
 const PROFILE_USAGE_FAIL_FRESH_MS: i64 = 10_000;
@@ -237,14 +315,14 @@ pub fn forget_profile_usage(provider: &str) {
         .retain(|(p, _), _| p != provider);
 }
 
-/// 命中则返回 `Some(结果)`（结果本身可能是「上次失败」的 None）；过期或没有返回 None。
+/// 命中则返回 `Some(结果)`（结果本身可能是「上次失败」的 Err）；过期或没有返回 None。
 fn profile_usage_cache_hit(
     cache: &ProfileUsageCache,
     key: &ProfileUsageKey,
     now: i64,
-) -> Option<Option<ProviderUsage>> {
+) -> Option<Result<ProviderUsage, String>> {
     let (at, result) = cache.get(key)?;
-    let window = if result.is_some() {
+    let window = if result.is_ok() {
         USAGE_FRESH_MS
     } else {
         PROFILE_USAGE_FAIL_FRESH_MS
@@ -400,22 +478,35 @@ mod tests {
         let work: ProfileUsageKey = ("claude".into(), Some("work".into()));
         let spare: ProfileUsageKey = ("claude".into(), Some("spare".into()));
         assert_eq!(profile_usage_cache_hit(&cache, &work, 1_000), None);
-        cache.insert(work.clone(), (1_000, Some(ProviderUsage::default())));
-        cache.insert(spare.clone(), (1_000, None));
+        cache.insert(work.clone(), (1_000, Ok(ProviderUsage::default())));
+        cache.insert(spare.clone(), (1_000, Err("USAGE_SERVER".to_string())));
         // 成功结果 60s 内复用，不再打上游
         assert_eq!(
             profile_usage_cache_hit(&cache, &work, 60_999),
-            Some(Some(ProviderUsage::default()))
+            Some(Ok(ProviderUsage::default()))
         );
         assert_eq!(profile_usage_cache_hit(&cache, &work, 61_000), None);
         // 失败 10s 内也不重打，之后放行重试
-        assert_eq!(profile_usage_cache_hit(&cache, &spare, 10_999), Some(None));
+        assert_eq!(profile_usage_cache_hit(&cache, &spare, 10_999), Some(Err("USAGE_SERVER".to_string())));
         assert_eq!(profile_usage_cache_hit(&cache, &spare, 11_000), None);
         // 按 (家, 账号) 分键：别的账号不命中
         assert_eq!(
             profile_usage_cache_hit(&cache, &("codex".into(), Some("work".into())), 2_000),
             None
         );
+    }
+
+    /// 照 Orca：失败从 30 秒起翻倍退避、封顶 15 分钟；429 带 Retry-After 时至少等那么久。
+    #[test]
+    fn failures_back_off_exponentially_and_honor_retry_after() {
+        assert_eq!(backoff_delay(1), 30_000);
+        assert_eq!(backoff_delay(2), 60_000);
+        assert_eq!(backoff_delay(5), 480_000);
+        assert_eq!(backoff_delay(6), 900_000);
+        assert_eq!(backoff_delay(40), 900_000);
+        assert_eq!(next_attempt_at(0, 1, "USAGE_SERVER"), 30_000);
+        assert_eq!(next_attempt_at(0, 1, "USAGE_RATE_LIMITED:600"), 600_000);
+        assert_eq!(next_attempt_at(0, 6, "USAGE_RATE_LIMITED:60"), 900_000);
     }
 
     #[test]

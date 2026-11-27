@@ -6104,10 +6104,19 @@ export function ChatWindow() {
               </div>;
             });
           })()}
-          {history?.contextPct != null
-            ? <ContextMeter pct={history.contextPct} window={history.contextWindow} t={t} />
-            // 这家 CLI 不上报用量（后端声明）：圆环留在原位置灰并说明，不整个消失。
-            : currentAgentDescriptor?.supports_context === false && <ContextMeter pct={null} window={null} t={t} />}
+          {(history?.contextPct != null || currentAgentDescriptor?.supports_context === false) && (
+            // 这家 CLI 不上报上下文（后端声明）时 pct=null：圆环留在原位置灰并说明，不整个消失。
+            // 卡片下半照 Orca 显示这个对话所用账号（history.profile）的额度。
+            <ContextMeter
+              pct={history?.contextPct ?? null}
+              window={history?.contextWindow ?? null}
+              t={t}
+              provider={provider ?? undefined}
+              profile={history?.profile ?? null}
+              agentName={agentDisplayName ?? undefined}
+              showUsage={currentAgentDescriptor?.supports_account === true}
+            />
+          )}
           {(modelPresets.length > 0 || modelMenuCommand || history?.model || switchTargets.length > 0) && <div className="chat-model chat-model-select" ref={modelPickerOpenUi.ref} onKeyDown={modelPickerOpenUi.onKeyDown}>
             <button
               ref={(node) => { assignRef(modelPickerOpenUi.btnRef, node); modelButtonRef.current = node; }}

@@ -180,8 +180,13 @@ fn sync_all_entries(
             // 我们自己留下的待合并目录、备份。
             && !name.contains(share_link::MERGE_PENDING_SUFFIX)
             && !name.ends_with(BACKUP_SUFFIX)
+            // 用户或工具留的备份（`settings.json.bak-*`、`*.cckb-bak`）不是 CLI 读的配置，不抄进账号。
+            // 之前照抄，账号里自己的同名备份就被挤成 `*.meowo-profile-merge` 冲突（本机 2026-11-27：
+            // 两个账号各 2 项）。Orca 照抄全部文件，这里刻意不跟。
+            && !is_backup_name(name)
     });
     names.sort();
+    restore_own_backups(dirs, record.entry(COPIED.to_string()).or_default(), report);
     for name in names {
         let source = dirs.default_data.join(&name);
         let target = dirs.profile_data.join(&name);
@@ -222,6 +227,43 @@ fn sync_all_entries(
         }
     }
     ok
+}
+
+/// 备份文件名：去掉首段后还有独立的 `bak` / `backup` 段（`settings.json.bak`、`settings.json.bak-lead`、
+/// `settings.json.cckb-bak`、`settings.json.before-fix-20260713.bak`）。首段不算：`backups/` 是 CLI 自己的目录。
+pub(crate) fn is_backup_name(name: &str) -> bool {
+    name.split(['.', '-', '_'])
+        .skip(1)
+        .any(|seg| seg.eq_ignore_ascii_case("bak") || seg.eq_ignore_ascii_case("backup"))
+}
+
+/// 迁移：旧版把默认目录的备份抄进账号时，账号自己的同名备份被改名成 `<名>.meowo-profile-merge`。
+/// 原名上现在要么空着，要么是 Meowo 抄来的默认那份（和默认目录逐字节相同）——两种都把账号自己的
+/// 那份放回原名；原名上是别的内容（用户后来自己写的）就不动。只动文件，不删任何东西以外的抄本。
+fn restore_own_backups(dirs: &SyncDirs<'_>, copied: &mut BTreeMap<String, String>, report: &mut SyncReport) {
+    let Ok(entries) = std::fs::read_dir(dirs.profile_data) else { return };
+    for entry in entries.flatten() {
+        let aside_name = entry.file_name().to_string_lossy().into_owned();
+        let Some(name) = aside_name.strip_suffix(share_link::MERGE_PENDING_SUFFIX) else { continue };
+        if !is_backup_name(name) || !entry.file_type().is_ok_and(|t| t.is_file()) {
+            continue;
+        }
+        let target = dirs.profile_data.join(name);
+        let replaceable = match std::fs::symlink_metadata(&target) {
+            Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+            Ok(m) => m.is_file() && read_file(&target).is_some_and(|t| read_file(&dirs.default_data.join(name)) == Some(t)),
+        };
+        if !replaceable {
+            continue;
+        }
+        match std::fs::rename(entry.path(), &target) {
+            Ok(()) => {
+                copied.remove(name);
+                report.changed.push(format!("账号自己的备份放回 {}", target.display()));
+            }
+            Err(e) => report.errors.push(format!("{}: 放回备份失败：{e}", target.display())),
+        }
+    }
 }
 
 /// `<文件>.meowo-profile-merge`，被占了就加序号。

@@ -1,5 +1,5 @@
 // 灵动岛的额度数据。取法与贴纸底栏一致（Sticker.tsx 的用量 effect）：先用账号快照里的缓存
-// 预填，再对有账号、支持用量、没走中转的 provider 每 5 分钟刷新一次。岛常驻，贴纸只在展开
+// 预填，再对有账号、支持用量、没走中转的 provider 每 15 分钟刷新一次。岛常驻，贴纸只在展开
 // 完整列表时挂载，所以这里单独取，不依赖贴纸。
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getAccounts, refreshUsage, type ProviderUsage } from "../../api";
@@ -28,6 +28,8 @@ export const USAGE_ACCOUNT_EVENTS = ["login-done", "install-done"] as const;
  *  岛上那份数字属于上一个账号：立刻丢掉并重取，不等五分钟的定时刷新（用户实拍 2026-11-15：
  *  「切换账号之后灵动岛上的用量没有刷新成新的账号的」）。 */
 export const ACTIVE_PROFILE_CHANGED = "active-profile-changed";
+/** 额度自动刷新的间隔（照 Orca 默认 15 分钟）。 */
+export const USAGE_POLL_MS = 15 * 60_000;
 
 export function useIslandUsage(): { usage: Record<string, ProviderUsage>; meta: Record<string, IslandUsageMeta> } {
   const [usage, setUsage] = useState<Record<string, ProviderUsage>>({});
@@ -86,7 +88,9 @@ export function useIslandUsage(): { usage: Record<string, ProviderUsage>; meta: 
                 });
             };
             refresh();
-            timers.push(window.setInterval(refresh, 5 * 60_000));
+            // 15 分钟一轮（照 Orca 的默认轮询）：Claude 跑着时额度来自 statusline，不用联网；没跑时才问
+            // 官方用量接口，那个接口额度紧，原来 5 分钟一轮、几个账号叠加就容易被 429。
+            timers.push(window.setInterval(refresh, USAGE_POLL_MS));
           });
       })
       .catch(() => {});

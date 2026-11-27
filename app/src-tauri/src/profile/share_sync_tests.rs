@@ -329,6 +329,46 @@ fn all_entries_share_everything_but_runtime_state() {
 }
 
 #[test]
+fn backup_files_are_not_shared_and_old_set_asides_go_back() {
+    for name in ["settings.json.bak", "settings.json.bak-lead", "settings.json.cckb-bak", "settings.json.before-fix-20260713.bak", "x.backup"] {
+        assert!(is_backup_name(name), "{name} 是备份");
+    }
+    for name in ["backups", "settings.json", "keybindings.json", "bake.md", "CLAUDE.md"] {
+        assert!(!is_backup_name(name), "{name} 不是备份");
+    }
+
+    let t = Tmp::new("backups");
+    let all = surface_of(|s| matches!(s, S::AllEntries { .. }));
+    let d = t.default_data();
+    let p = t.profile();
+    write(&d.join("settings.json.bak-team"), "default-bak");
+    write(&d.join("settings.json.cckb-bak"), "default-cckb");
+    write(&d.join("settings.json.bak-other"), "default-other");
+    // 旧版留下的现场（本机 2026-11-27）：原名上是抄来的默认那份，账号自己的被挤成待合并。
+    write(&p.join("settings.json.bak-team"), "default-bak");
+    write(&p.join("settings.json.bak-team.meowo-profile-merge"), "mine-bak");
+    // 原名空着：直接放回。
+    write(&p.join("settings.json.cckb-bak.meowo-profile-merge"), "mine-cckb");
+    // 原名上是用户后来自己写的：不动。
+    write(&p.join("settings.json.bak-other"), "mine-later");
+    write(&p.join("settings.json.bak-other.meowo-profile-merge"), "mine-older");
+
+    let report = t.run(&[all]);
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    assert_eq!(read(&p.join("settings.json.bak-team")), "mine-bak");
+    assert_eq!(read(&p.join("settings.json.cckb-bak")), "mine-cckb");
+    assert!(!p.join("settings.json.bak-team.meowo-profile-merge").exists());
+    assert!(!p.join("settings.json.cckb-bak.meowo-profile-merge").exists());
+    assert_eq!(read(&p.join("settings.json.bak-other")), "mine-later");
+    assert_eq!(read(&p.join("settings.json.bak-other.meowo-profile-merge")), "mine-older");
+
+    // 默认目录新出现的备份不再抄进账号。
+    write(&d.join("settings.json.bak-new"), "new");
+    t.run(&[all]);
+    assert!(!p.join("settings.json.bak-new").exists());
+}
+
+#[test]
 fn first_setup_merges_existing_profile_folders_without_losing_anything() {
     let t = Tmp::new("first-setup");
     let all = surface_of(|s| matches!(s, S::AllEntries { .. }));

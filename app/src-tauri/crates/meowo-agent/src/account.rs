@@ -117,6 +117,33 @@ pub struct Account {
 /// 前端据此显示「当前登录方式不支持用量查询」而非通用报错。
 pub const USAGE_UNSUPPORTED: &str = "USAGE_UNSUPPORTED";
 
+// 用量请求失败的分类码（照 Orca 的错误分类：401/403 过期、429 限流、5xx 服务端、连不上）。前端按码出
+// 说得清原因的文案，宿主按码决定退避多久。之前一律成了「用量获取失败」，看不出该等还是该重新登录。
+/// 凭据过期或被拒（本地 token 已过期，或接口回 401/403）。不替 CLI 刷新：刷新会轮换 refresh token，
+/// CLI 手里那份就失效了（Orca 同样只读凭据）。CLI 下次运行会自己刷新，额度随之恢复。
+pub const USAGE_EXPIRED: &str = "USAGE_EXPIRED";
+/// 被限流（429）。后面可带 `:<秒>`，是接口 Retry-After 给的等待时长。
+pub const USAGE_RATE_LIMITED: &str = "USAGE_RATE_LIMITED";
+/// 服务端出错（5xx）。
+pub const USAGE_SERVER: &str = "USAGE_SERVER";
+/// 连不上（网络、代理、超时）。
+pub const USAGE_NETWORK: &str = "USAGE_NETWORK";
+
+/// 把用量请求的 HTTP 失败归成上面的分类码；归不进的原样给出说明。
+pub fn classify_usage_http_error(e: &crate::ports::HttpError) -> String {
+    use crate::ports::HttpError;
+    match e {
+        HttpError::Status(401 | 403, _) => USAGE_EXPIRED.to_string(),
+        HttpError::Status(429, body) => match crate::ports::retry_after_secs(body) {
+            Some(secs) => format!("{USAGE_RATE_LIMITED}:{secs}"),
+            None => USAGE_RATE_LIMITED.to_string(),
+        },
+        HttpError::Status(500..=599, _) => USAGE_SERVER.to_string(),
+        HttpError::Transport(_) => USAGE_NETWORK.to_string(),
+        other => format!("请求用量失败：{other}"),
+    }
+}
+
 /// API Key 登录能力：把用户提供的 key 落成该 agent 自己认得的持久配置。
 ///
 /// 通用能力，目前没有插件声明。给「交互式登录走不通、又没有输入 key 的登录子命令」的 CLI 用：

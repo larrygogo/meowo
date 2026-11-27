@@ -2706,6 +2706,9 @@ button.stab {
   border-radius: var(--radius-full);
   transition: width var(--dur-slow) var(--ease-in-out);
 }
+/* 照 Orca：≥80% 提醒色、≥90% 警示色（图形用鲜亮变体，同上下文圆环）。 */
+.usage-track.is-warn > i { background: var(--cc-warn-vivid); }
+.usage-track.is-full > i { background: var(--cc-err-vivid); }
 .usage-reset { font-size: var(--text-2xs); color: var(--cc-text-faint); font-variant-numeric: tabular-nums; }
 .usage-extra { font-size: var(--text-xs); color: var(--cc-warn); margin-top: var(--sp-6); }
 .usage-stale { font-size: var(--text-xs); color: var(--cc-text-faint); padding: var(--sp-6) 0; }
@@ -3466,67 +3469,35 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
   color: var(--cc-text);
   background: var(--fill-hover);
 }
-/* 账号区顶部「共用 / 各自」两排标签（2026-11-27 三版样稿选 B 的这部分）：标签描边是共用的，填底是各自的，
-   对照一眼可见。字号随账号行的描述行，不抢账号名。 */
-.profile-share {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: var(--sp-6) var(--sp-10);
-  align-items: center;
-  margin: calc(var(--sp-2) * -1) 0 var(--sp-8);
-  font-size: var(--text-xs);
-  color: var(--cc-text-faint);
-}
-.profile-share-chips { display: flex; flex-wrap: wrap; gap: var(--sp-4); }
-.profile-chip {
-  font-size: var(--text-2xs);
-  line-height: 18px;
-  padding: 0 var(--sp-6);
-  border-radius: var(--radius-full);
-  box-shadow: inset 0 0 0 var(--hairline) var(--line-strong);
-  color: var(--cc-text-dim);
-  white-space: nowrap;
-}
-.profile-chip-own { box-shadow: none; background: var(--fill-selected); }
-/* 首次对齐留存的冲突：摊开在该账号行下面（样稿 A 的这部分）。提醒色底块同 .lead-stale，不用报错红。 */
-.profile-aside {
-  margin: 0 0 var(--sp-6);
-  padding: var(--sp-8) var(--sp-10);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--cc-warn-vivid) 10%, transparent);
-  font-size: var(--text-xs);
-  line-height: var(--leading-normal);
-  color: var(--cc-text);
-}
-.profile-aside-head { display: flex; align-items: flex-start; gap: var(--sp-6); font-size: var(--text-sm); }
-.profile-aside-head svg { flex: none; margin-top: calc(0.75em - 7px); color: var(--cc-warn-text); }
-.profile-aside-head strong { color: var(--cc-warn-text); font-weight: var(--fw-semibold); }
-/* 说明、清单、按钮都和标题文字对齐（让过 14px 图标 + 6px 间距）。 */
-.profile-aside-hint { margin: var(--sp-2) 0 0 20px; color: var(--cc-text-dim); }
-.profile-aside-list { margin: var(--sp-4) 0 0 20px; padding-left: var(--sp-14); font-family: var(--cc-mono); color: var(--cc-text-dim); }
-.profile-aside-list li { overflow-wrap: anywhere; }
-.profile-aside-count { font-family: var(--cc-font, inherit); color: var(--cc-text-faint); }
-.profile-aside-reveal { margin: var(--sp-6) 0 0 20px; }
 .profile-hint {
   font-size: var(--text-xs);
   color: var(--cc-text-faint);
   line-height: 1.5;
 }
 
-/* ── 账号区：照 Orca 设置 › Accounts（2026-11-27 重做）──
-   头部「账号 + 说明」左、「添加账号」右；系统默认与每个托管账号各一张描边卡，整卡点击切换，
-   使用中的卡描边加深、垫一层选中底（Orca：border-foreground/20 bg-accent/15）；行内动作是小号幽灵按钮。 */
-.acct { display: flex; flex-direction: column; gap: var(--sp-10); padding-top: var(--sp-14); border-top: var(--hairline) solid var(--cc-border); }
-.acct-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-12); }
+/* ── 账号区：照 Orca 设置 › AI 提供商账户（stablyai/orca SettingsGroup + accounts-pane-claude-*）──
+   分区标题（图标 + agent 名）和说明在卡片外；卡片里先是「账号」块（头部 + 账号行），再是用细线隔开的设置行。
+   数值对着 Orca 开发实例的实拍取：行 px-3 py-2.5、行距 8px、卡片左右 20px；当前行描边加深 + 极淡底
+   （Orca border-foreground/20 bg-accent/15），其余行淡描边、悬停才加深。卡片外壳沿用本页的 row-card，
+   不另起 Orca 的描边卡：同一页两种卡片更像两个产品。 */
+.acct-group { margin-top: var(--sp-24); }
+.acct-group-head { display: flex; flex-direction: column; gap: var(--sp-2); margin: 0 0 var(--sp-10) var(--sp-4); }
+.acct-group-title { display: flex; align-items: center; gap: var(--sp-8); font-size: var(--text-base); font-weight: var(--fw-semibold); color: var(--cc-text); }
+.acct-group-title .provider-card-icon { width: 16px; height: 16px; border-radius: var(--radius-sm); }
+.acct-group-title .provider-card-icon svg { width: 16px; height: 16px; }
+.acct-group-desc { font-size: var(--text-sm); line-height: var(--leading-normal); color: var(--cc-text-dim); }
+.acct-group-card { padding: 0 calc(20px * var(--cc-ui)); }
+.acct { display: flex; flex-direction: column; gap: var(--sp-12); padding: var(--sp-14) 0; }
+.acct-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-12); }
 .acct-head-text { min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
-.acct-head-title { font-size: var(--text-sm); font-weight: var(--fw-semibold); color: var(--cc-text); }
+.acct-head-title { font-size: var(--text-sm); font-weight: var(--fw-medium); color: var(--cc-text); }
 .acct-head-sub { font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--cc-text-faint); }
-.acct-head-acts { flex: none; display: flex; align-items: center; gap: var(--sp-4); }
+.acct-head-acts { flex: none; display: flex; align-items: center; gap: var(--sp-6); }
 .acct-add {
   display: inline-flex; align-items: center; gap: var(--sp-6);
-  box-sizing: border-box; height: var(--btn-h-md); padding: 0 var(--sp-10);
-  border-radius: var(--radius-md); border: var(--hairline) solid var(--line-strong);
-  background: none; color: var(--cc-text); font-size: var(--text-xs); white-space: nowrap; cursor: pointer;
+  box-sizing: border-box; height: var(--btn-h-sm); padding: 0 var(--sp-8);
+  border-radius: var(--radius-sm); border: var(--hairline) solid var(--line-strong);
+  background: var(--cc-panel-raised); color: var(--cc-text); font-size: var(--text-xs); font-weight: var(--fw-medium); white-space: nowrap; cursor: pointer;
   transition: background var(--dur-fast) var(--ease-in-out);
 }
 .acct-add:hover:not(:disabled, [aria-disabled="true"]) { background: var(--fill-hover); }
@@ -3534,69 +3505,72 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 .acct-list { display: flex; flex-direction: column; gap: var(--sp-8); }
 /* 名字放不下时动作整排换到下一行、靠右（Orca 窄屏 max-md:flex-col 的做法），不挤省略名字。 */
 .acct-card {
-  display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--sp-6) var(--sp-10);
-  box-sizing: border-box; min-height: 52px; padding: var(--sp-8) var(--sp-10) var(--sp-8) var(--sp-12);
-  border-radius: var(--radius-md); border: var(--hairline) solid var(--cc-border);
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--sp-6) var(--sp-12);
+  box-sizing: border-box; padding: var(--sp-10) var(--sp-12);
+  border-radius: var(--radius-md); border: var(--hairline) solid color-mix(in srgb, var(--cc-border) 70%, transparent);
   transition: background var(--dur-fast) var(--ease-in-out), border-color var(--dur-fast) var(--ease-in-out);
 }
-.acct-card.is-active { border-color: var(--line-strong); background: var(--fill-selected); }
+.acct-card.is-active {
+  border-color: color-mix(in srgb, var(--cc-text) 20%, transparent);
+  background: color-mix(in srgb, var(--fill-selected) 45%, transparent);
+}
 @media (hover: hover) {
-  .acct-card:not(.is-active, .needs-sign-in):hover { border-color: var(--line-strong); background: var(--fill-hover); }
+  .acct-card:not(.is-active):hover { border-color: var(--cc-border); background: color-mix(in srgb, var(--fill-hover) 55%, transparent); }
 }
 .acct-main {
   flex: 1 1 280px; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2);
   padding: 0; border: 0; background: none; color: inherit; text-align: left; cursor: pointer;
 }
 .acct-main:is(:disabled, [aria-disabled="true"]) { cursor: default; }
-.acct-title-row { display: flex; align-items: center; gap: var(--sp-6); min-width: 0; }
+.acct-title-row { display: flex; align-items: center; gap: var(--sp-8); min-width: 0; }
 .acct-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); font-weight: var(--fw-medium); color: var(--cc-text); }
 .acct-badge {
-  flex: none; padding: 0 var(--sp-6); border-radius: var(--radius-sm);
-  box-shadow: inset 0 0 0 var(--hairline) var(--line-strong);
-  font-size: var(--text-2xs); font-weight: var(--fw-medium); line-height: 16px; color: var(--cc-text-dim); white-space: nowrap;
+  flex: none; height: 16px; padding: 0 var(--sp-6); border-radius: var(--radius-xs, 4px);
+  box-shadow: inset 0 0 0 var(--hairline) var(--cc-border);
+  font-size: 10px; font-weight: var(--fw-medium); line-height: 16px; color: color-mix(in srgb, var(--cc-text) 80%, transparent); white-space: nowrap;
 }
-.acct-desc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); color: var(--cc-text-faint); }
-.acct-desc.is-warn { color: var(--cc-warn-text); }
-.acct-acts { flex: none; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: var(--sp-2); margin-right: calc(var(--sp-4) * -1); }
+.acct-badge-runtime { color: color-mix(in srgb, var(--cc-text) 70%, transparent); }
+.acct-desc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; line-height: 16px; color: var(--cc-text-faint); }
+.acct-acts { flex: none; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: var(--sp-4); }
 .acct-act {
   display: inline-flex; align-items: center; gap: var(--sp-4);
   box-sizing: border-box; height: var(--btn-h-sm); padding: 0 var(--sp-8);
   border: 0; border-radius: var(--radius-sm); background: none;
-  color: var(--cc-text-dim); font-size: var(--text-xs); white-space: nowrap; cursor: pointer;
+  color: var(--cc-text); font-size: var(--text-xs); font-weight: var(--fw-medium); white-space: nowrap; cursor: pointer;
   transition: background var(--dur-fast) var(--ease-in-out), color var(--dur-fast) var(--ease-in-out);
 }
-.acct-act-icon { width: var(--btn-h-sm); padding: 0; justify-content: center; }
-.acct-act:hover:not(:disabled, [aria-disabled="true"]) { color: var(--cc-text); background: var(--fill-hover); }
+.acct-act:hover:not(:disabled, [aria-disabled="true"]) { background: var(--fill-hover); }
 .acct-act-danger:hover:not(:disabled, [aria-disabled="true"]) { color: var(--cc-err); }
 .acct-act.btn-primary:hover:not(:disabled, [aria-disabled="true"]) { color: var(--cc-on-accent); background: var(--cc-accent-dim); }
-.acct-act[aria-pressed="true"] { color: var(--cc-text); background: var(--fill-selected); }
+.acct-act[aria-pressed="true"] { background: var(--fill-selected); }
 .acct-act:is(:disabled, [aria-disabled="true"]) { cursor: default; opacity: 0.5; }
 .acct-empty {
-  padding: var(--sp-12); border-radius: var(--radius-md); border: var(--hairline) dashed var(--line-strong);
+  padding: var(--sp-16) var(--sp-12); border-radius: var(--radius-md); border: var(--hairline) dashed color-mix(in srgb, var(--cc-border) 70%, transparent);
   font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--cc-text-faint);
 }
 .acct-notice { font-size: var(--text-xs); color: var(--cc-text-dim); }
+/* 和系统默认内容不同的留存项：Orca 账号列表里提示行的样子（灰字左、幽灵按钮右），不铺底色。 */
+.acct-aside { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-8); margin-top: calc(var(--sp-2) * -1); }
+.acct-aside-text { margin: 0; padding-top: 5px; min-width: 0; font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--cc-text-faint); }
+.acct-aside-err { color: var(--cc-err); }
+.acct-aside-acts { flex: none; display: flex; gap: var(--sp-2); }
+/* 卡片里的设置行（Orca SearchableSetting 行）：上方一道细线，文字左、控件右。 */
+.acct-setting-row {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-12);
+  padding: var(--sp-12) 0; border-top: var(--hairline) solid var(--cc-border);
+}
+.acct-setting-text { min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.acct-setting-label { font-size: var(--text-sm); font-weight: var(--fw-medium); color: var(--cc-text); }
+.acct-setting-desc { font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--cc-text-faint); }
+/* 改名弹窗（Orca account-rename-dialog）：说明在标题下，「显示名称」标签在输入框上。 */
+.acct-modal-field { display: flex; flex-direction: column; gap: var(--sp-6); }
+.acct-modal-label { font-size: var(--text-xs); font-weight: var(--fw-medium); color: var(--cc-text); }
 /* 弹窗是列方向 flex，.ns-input 的 flex: 1 会把输入框高度压扁（改名弹窗真机实拍，同 .forge-field）。 */
 .acct-modal-input.ns-input { flex: none; width: 100%; }
 .acct-modal-hint { font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--cc-text-faint); }
-.acct-modal-reset { margin-right: auto; }
-.acct > .profile-share { margin: 0; }
-
-/* 「切换后运行中的会话」设置行：文字在左、下拉在右，与设置页其它行同一排法。 */
-.profile-switch-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 4px;
-}
-.profile-switch-text {
-  min-width: 0;
-}
-.profile-switch-label {
-  font-size: var(--text-sm);
-  color: var(--cc-text);
-}
+/* 照 Orca：「重置为默认」是靠左的纯文字钮（btn-ghost 透明底），和取消/保存拉开。 */
+.ns-btn.acct-modal-reset { margin-right: auto; }
+.ns-btn.acct-modal-reset:disabled { opacity: 0.5; cursor: default; }
 
 /* 动作菜单里的危险项（删除账号）：连目录一起抹掉且不可逆，值得一眼看出来。 */
 .dd-item-danger { color: var(--cc-err); }
@@ -7035,11 +7009,11 @@ button.lead-entry-head:hover { background: var(--fill-hover); }
 .chat-compose-actions { order: 2; width: 100%; display: flex; align-items: center; gap: var(--sp-8); }
 /* Kimi toolbar 左右分栏：附件与权限在左，用量 + 模型同组靠右；无用量时模型自己靠右。 */
 .chat-compose-actions > .chat-model-select { margin-left: auto; }
-.chat-compose-actions > .chat-context { margin-left: auto; }
-.chat-compose-actions > .chat-context + .chat-model-select { margin-left: 0; }
+.chat-compose-actions > .chat-context-wrap { margin-left: auto; }
+.chat-compose-actions > .chat-context-wrap + .chat-model-select { margin-left: 0; }
 /* 模型钮与发送钮紧挨成一组（对照 Kimi：模型下拉锚在发送钮左侧 4px）；两者都没有时发送钮自己靠右。 */
 .chat-compose-actions > .chat-model-select + .chat-send-button { margin-left: calc(var(--sp-4) - var(--sp-8)); }
-.chat-compose-actions:not(:has(> .chat-context, > .chat-model-select)) > .chat-send-button:not(.chat-send-button ~ .chat-send-button) { margin-left: auto; }
+.chat-compose-actions:not(:has(> .chat-context-wrap, > .chat-model-select)) > .chat-send-button:not(.chat-send-button ~ .chat-send-button) { margin-left: auto; }
 .chat-compose .chat-attach-button:hover:not(:disabled) { background: var(--fill-selected); }
 /* 输入框被锁时「+」一并置灰（与模型/模式胶囊的禁用态同一档 .8 弱化之外再降一点：它没有文字，只剩图标）。 */
 .chat-compose .chat-attach-button:disabled { opacity: .5; cursor: default; }
@@ -7283,6 +7257,48 @@ button.lead-entry-head:hover { background: var(--fill-hover); }
 /* 这家 CLI 不上报用量：只留底圈并压淡，位置不变。 */
 .chat-context.is-unsupported { opacity: .6; }
 .chat-context.is-unsupported .chat-context-ring-fg { stroke: transparent; }
+/* 圆环改成可点的按钮（悬停 150ms 或点击弹卡片，照 Orca 的上下文圈）：
+   .chat-compose 前缀压过 `.chat-compose button` 的 accent 皮肤，按钮只占圆环那么大。 */
+.chat-context-wrap { position: relative; display: inline-flex; flex: 0 0 auto; }
+.chat-compose .chat-context {
+  height: auto; min-height: 0; padding: var(--sp-2); margin: 0;
+  border: 0; border-radius: var(--radius-full); background: transparent; color: var(--cc-text-faint);
+}
+@media (hover: hover) { .chat-compose .chat-context:hover { background: var(--fill-hover); } }
+.chat-compose .chat-context[aria-expanded="true"] { background: var(--fill-selected); }
+/* 卡片：外壳与弹出菜单同一套（--cc-menu-bg、细线、--shadow-menu），锚在圆环上方右对齐。 */
+.chat-context-card {
+  position: absolute; right: 0; bottom: calc(100% + var(--sp-8)); z-index: 40;
+  width: calc(272px * var(--cc-ui)); max-width: min(320px, 86vw);
+  padding: var(--sp-14); display: flex; flex-direction: column; gap: var(--sp-12);
+  border: var(--hairline) solid transparent; border-radius: var(--radius-lg);
+  background: var(--cc-menu-bg); box-shadow: var(--edge-float), var(--shadow-menu);
+  color: var(--cc-text); font-size: var(--text-xs); text-align: left; cursor: default;
+}
+.chat-context-sec { display: flex; flex-direction: column; gap: var(--sp-6); }
+.chat-context-sec + .chat-context-sec { padding-top: var(--sp-12); border-top: var(--hairline) solid var(--line-subtle); }
+.chat-context-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-8); }
+.chat-context-title { font-size: var(--text-sm); font-weight: var(--fw-medium); color: var(--cc-text); }
+.chat-context-amount { color: var(--cc-text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.chat-context-account { color: var(--cc-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-context-lane-label { color: var(--cc-text-dim); }
+.chat-context-lane { display: flex; flex-direction: column; gap: var(--sp-4); }
+.chat-context-lane + .chat-context-lane { margin-top: var(--sp-4); }
+.chat-context-bar { height: 6px; border-radius: var(--radius-full); background: var(--usage-track-bg); overflow: hidden; }
+.chat-context-bar > i { display: block; height: 100%; border-radius: inherit; background: var(--cc-accent); transition: width var(--dur-slow) var(--ease-in-out); }
+/* 照 Orca：≥80% 提醒色、≥90% 警示色，与设置页额度条同阈值。 */
+.chat-context-bar.is-warn > i { background: var(--cc-warn-vivid); }
+.chat-context-bar.is-full > i { background: var(--cc-err-vivid); }
+.chat-context-note { color: var(--cc-text-faint); font-size: var(--text-2xs); }
+.chat-context-skeleton { display: flex; flex-direction: column; gap: var(--sp-6); }
+.chat-context-skeleton > i { display: block; height: 6px; border-radius: var(--radius-full); background: var(--usage-track-bg); }
+.chat-context-fail { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-8); color: var(--cc-text-dim); }
+.chat-compose .chat-context-card .chat-context-retry {
+  height: auto; min-height: 0; padding: var(--sp-2) var(--sp-8); margin: 0;
+  border: var(--hairline) solid var(--line-strong); border-radius: var(--radius-md);
+  background: transparent; color: var(--cc-text); font-size: var(--text-xs);
+}
+@media (hover: hover) { .chat-compose .chat-context-card .chat-context-retry:hover { background: var(--fill-hover); } }
 /* 输入区 :is(button) 通用样式会改按钮高度与底色，斜杠菜单条目压回菜单条目（尺寸、悬停底见文末「弹出菜单」）。 */
 .chat-compose .chat-slash-menu .dd-item { height: auto; border: 0; color: var(--cc-text-dim); background: transparent; }
 /* 触屏点过会一直留着 :hover：菜单与下拉的悬停底色只在有悬停能力的指针下给（第四轮 L5，同 C4）。 */
@@ -7376,7 +7392,7 @@ button.lead-entry-head:hover { background: var(--fill-hover); }
 /* 对勾固定槽位：未选中行也占 16px，右侧 CLI 原名列各行右缘对齐到同一 x（第三轮 C5）。 */
 .chat-model-check-slot, .dd-check-slot { flex: 0 0 16px; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; }
 /* 名字旁的「默认」小字标签（新建页 CLI 配置的默认档，第三轮 C7）。 */
-.chat-model-item-tag { display: inline-block; margin-left: var(--sp-6); padding: 0 var(--sp-4); border-radius: var(--radius-sm); background: var(--fill-selected); color: var(--cc-text-dim); font-size: var(--text-2xs, 11px); font-weight: var(--fw-regular); line-height: 16px; vertical-align: 1px; }
+.chat-model-item-tag { display: inline-block; margin-left: var(--sp-6); padding: 0 var(--sp-4); border-radius: var(--radius-sm); background: var(--fill-selected); color: var(--cc-text-dim); font-size: var(--text-2xs); font-weight: var(--fw-regular); line-height: 16px; vertical-align: 1px; }
 /* 手机新建页下拉的右侧小字列（CLI 原名），与桌面 PillSelect 同一布局。 */
 .dd-item.has-detail { display: flex; align-items: center; gap: var(--sp-12); }
 .dd-item.has-detail > .dd-val { flex: 1 1 auto; min-width: 0; }

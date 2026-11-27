@@ -81,10 +81,21 @@ impl HttpPort for UreqHttp {
                 .into_string()
                 .map_err(|e| HttpError::Transport(e.to_string())),
             // 4xx/5xx：ureq 归为 Error::Status，响应体交给调用方判读（OAuth 错误码等）。
-            Err(ureq::Error::Status(code, resp)) => Err(HttpError::Status(
-                code,
-                resp.into_string().unwrap_or_default(),
-            )),
+            Err(ureq::Error::Status(code, resp)) => {
+                // 429 的 Retry-After 带给调用方（用量请求按它退避，照 Orca），见 RETRY_AFTER_LINE。
+                let retry = (code == 429)
+                    .then(|| resp.header("retry-after").and_then(|v| v.trim().parse::<u64>().ok()))
+                    .flatten();
+                let body = resp.into_string().unwrap_or_default();
+                Err(HttpError::Status(
+                    code,
+                    match retry {
+                        Some(secs) => format!("{}{secs}
+{body}", meowo_agent::ports::RETRY_AFTER_LINE),
+                        None => body,
+                    },
+                ))
+            }
             Err(e) => Err(HttpError::Transport(e.to_string())),
         }
     }

@@ -36,6 +36,7 @@ const api = vi.hoisted(() => ({
   renameProfile: vi.fn(),
   deleteProfile: vi.fn(),
   mergeProfileIntoDefault: vi.fn(),
+  archiveProfileSetAside: vi.fn(),
   // 本机可用终端：登录等待文案要拿它核对「存值的那个终端还在不在」（7S-1 尾）。
   availableTerminals: vi.fn(),
   // 发图工具没接上的提示里「在文件夹中显示」。
@@ -955,8 +956,10 @@ describe("AccountSection 多账号", () => {
     render(<AccountSection />);
 
     const activeView = await screen.findByTestId("profile-usage-claude-__default__");
-    expect(activeView.getAttribute("aria-pressed")).toBe("true");
+    // 默认看当前账号时不标按下（当前行常亮底色像被选中）；点开别的账号才标。
+    expect(activeView.getAttribute("aria-pressed")).toBeNull();
     fireEvent.click(await screen.findByTestId("profile-usage-claude-work"));
+    await waitFor(() => expect(screen.getByTestId("profile-usage-claude-work").getAttribute("aria-pressed")).toBe("true"));
     await waitFor(() => expect(screen.getByRole("progressbar", { name: zh.account.laneFiveHour }).getAttribute("aria-valuenow")).toBe("73"));
     expect(api.refreshProfileUsage).toHaveBeenCalledWith("claude", "work");
     expect(screen.getByText(zh.account.usageFor("工作"))).toBeTruthy();
@@ -1064,7 +1067,7 @@ describe("AccountSection 多账号", () => {
     await waitFor(() =>
       expect(screen.getByTestId("profile-claude-work").textContent).toContain(zh.account.activeProfile),
     );
-    expect(screen.getByTestId("profile-claude-__default__").textContent).not.toContain(zh.account.activeProfile);
+    expect(screen.getByTestId("profile-claude-__default__").querySelector(".acct-badge")).toBeNull();
     // 退回看当前账号，额度是新账号的
     expect(screen.getByText(zh.account.quota)).toBeTruthy();
     await waitFor(() => expect(screen.getByRole("progressbar", { name: zh.account.laneFiveHour }).getAttribute("aria-valuenow")).toBe("64"));
@@ -1285,7 +1288,7 @@ describe("AccountSection 多账号", () => {
     fireEvent.click(row.querySelector(".acct-main")!);
     await new Promise((r) => setTimeout(r, 20));
     expect(api.setActiveProfile).not.toHaveBeenCalled();
-    expect(screen.getByTestId("profile-login-claude-work").textContent).toBe(zh.account.login);
+    expect(screen.getByTestId("profile-login-claude-work").textContent).toBe(zh.account.signInAgain);
   });
 
   it("一个账号都没加时显示空状态", async () => {
@@ -1444,26 +1447,21 @@ describe("AccountSection 移除与改名", () => {
     expect(api.renameProfile).not.toHaveBeenCalled();
   });
 
-  /** 账号区顶部「共用 / 各自」按后端 profile_shares 出：claude 会话历史共用，opencode 的归到「各自」。 */
-  it("共用/各自两排按插件声明出；没共用会话历史的归到各自", async () => {
+  /** 卡片头第二行「共用什么、各自什么」按后端 profile_shares 出：claude 会话历史共用，opencode 的归到各自。 */
+  it("共用/各自写成一句说明；没共用会话历史的归到各自", async () => {
     api.listAgents.mockResolvedValue(descriptors(["claude", "opencode"]));
     twoProfiles();
     render(<AccountSection />);
     const claude = await screen.findByTestId("profile-share-claude");
-    const chips = (el: Element, own: boolean) =>
-      [...el.querySelectorAll(own ? ".profile-chip-own" : ".profile-chip:not(.profile-chip-own)")].map((c) => c.textContent);
-    expect(chips(claude, false)).toEqual(["规则", "设置", "插件", "skill", "命令", "MCP", "会话历史"]);
-    expect(chips(claude, true)).toEqual(["登录", "额度"]);
+    expect(claude.textContent).toBe(zh.account.shareLine(["规则", "设置", "插件", "skill", "命令", "MCP", "会话历史"], ["登录", "额度"]));
     expect(screen.getByTestId("profiles-claude").textContent).not.toContain("相互独立");
-
     await selectAgent("OpenCode");
     const opencode = await screen.findByTestId("profile-share-opencode");
-    expect(chips(opencode, false)).toEqual(["skill"]);
-    expect(chips(opencode, true)).toEqual(["登录", "额度", "会话历史"]);
+    expect(opencode.textContent).toBe(zh.account.shareLine(["skill"], ["登录", "额度", "会话历史"]));
   });
 
-  /** 首次对齐留存的冲突：摊开在该账号下面，列出条目和文件数，能在文件夹中显示。 */
-  it("账号有留存的冲突时在它下面摊开提醒，点按钮在文件夹中显示", async () => {
+  /** 留存的冲突：照 Orca 提示行，账号行下面一行灰字 + 打开文件夹 / 改用系统默认（确认后移到归档，不删）。 */
+  it("账号有留存项时在它下面给一行提示，能打开文件夹、能改用系统默认", async () => {
     api.listProfiles.mockResolvedValue([
       { id: null, name: "", active: true, account: { email: "a@b.c" }, set_aside: [] },
       {
@@ -1477,13 +1475,28 @@ describe("AccountSection 移除与改名", () => {
     api.revealTerminalPath.mockResolvedValue(undefined);
     render(<AccountSection />);
     const note = await screen.findByTestId("profile-aside-claude-work");
-    expect(note.textContent).toContain(zh.account.setAsideTitle(2));
-    expect(note.textContent).toContain("plugins.meowo-profile-merge" + zh.account.setAsideFiles(111));
+    expect(note.textContent).toContain(zh.account.setAsideLine(2));
     // 紧跟在该账号行后面，不在列表底部。
     expect(screen.getByTestId("profile-claude-work").nextElementSibling).toBe(note);
     expect(screen.queryByTestId("profile-aside-claude-default")).toBeNull();
     fireEvent.click(screen.getByTestId("profile-aside-reveal-claude-work"));
     await waitFor(() => expect(api.revealTerminalPath).toHaveBeenCalledWith("", "C:/p/work/keybindings.json.meowo-profile-merge"));
+
+    // 改用系统默认：先确认，确认框列出是哪几项（去掉内部后缀）。
+    dialog.confirm.mockResolvedValueOnce(false);
+    fireEvent.click(screen.getByTestId("profile-aside-archive-claude-work"));
+    await waitFor(() => expect(dialog.confirm).toHaveBeenCalledWith(zh.account.setAsideArchiveConfirm(2, "keybindings.json、plugins"), expect.anything()));
+    expect(api.archiveProfileSetAside).not.toHaveBeenCalled();
+    api.archiveProfileSetAside.mockResolvedValue("C:/a");
+    dialog.confirm.mockResolvedValueOnce(true);
+    api.listProfiles.mockResolvedValue([
+      { id: null, name: "", active: true, account: { email: "a@b.c" }, set_aside: [] },
+      { id: "work", name: "工作", active: false, account: { email: "w@b.c" }, set_aside: [] },
+    ]);
+    fireEvent.click(screen.getByTestId("profile-aside-archive-claude-work"));
+    await waitFor(() => expect(api.archiveProfileSetAside).toHaveBeenCalledWith("claude", "work"));
+    await waitFor(() => expect(screen.queryByTestId("profile-aside-claude-work")).toBeNull());
+    expect(screen.getByRole("status").textContent).toBe(zh.account.setAsideArchived);
   });
 
   /** 列表读失败不再静默当成空列表（看着像账号全丢了），就地报错。 */

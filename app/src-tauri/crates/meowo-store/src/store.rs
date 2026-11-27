@@ -58,6 +58,8 @@ pub struct SessionHeader {
     /// 本会话已被哪个后继接替。Some 时对话窗渲染「已切换至…」横幅并禁发——
     /// 向被接替的会话续话会让链分叉（set_session_lineage 拒绝分叉与之呼应）。
     pub superseded_by: Option<i64>,
+    /// 会话跑在哪个账号（profile id）上；None = 默认账号。对话页按它查这个对话所用账号的额度。
+    pub profile: Option<String>,
 }
 
 /// 接续链上的一段会话（session_lineage_chain 的行）。model 来自 session_context
@@ -1611,7 +1613,7 @@ impl Store {
             .query_row(
                 "SELECT s.cc_session_id, s.status, s.cwd, s.provider, s.pending_review, \
                         t.title, t.current_activity, s.last_user_text, s.last_ai_text, \
-                        s.pid, s.last_event_at, s.archived, s.predecessor_id, s.superseded_by \
+                        s.pid, s.last_event_at, s.archived, s.predecessor_id, s.superseded_by, s.profile \
                  FROM sessions s LEFT JOIN tasks t ON t.session_id = s.id \
                  WHERE s.id = ?1 ORDER BY t.id DESC LIMIT 1",
                 [session_id],
@@ -1639,6 +1641,7 @@ impl Store {
                         archived: row.get::<_, i64>(11)? != 0,
                         predecessor_id: row.get(12)?,
                         superseded_by: row.get(13)?,
+                        profile: row.get::<_, Option<String>>(14)?.filter(|p| !p.trim().is_empty()),
                     })
                 },
             )
@@ -2373,6 +2376,19 @@ mod stale_pid_tests {
 #[cfg(test)]
 mod session_header_tests {
     use super::*;
+
+    /// 对话页按 header.profile 查这个对话所用账号的额度：默认账号是 None，写过 profile 就带上。
+    #[test]
+    fn session_header_carries_the_profile() {
+        let store = Store::open_in_memory().unwrap();
+        let pid = store.upsert_project_by_root("C:/root", "root", 100).unwrap();
+        let (sid, _) = store.start_session(pid, "s-profile", 100).unwrap();
+        assert_eq!(store.session_header(sid).unwrap().profile, None);
+        store.set_session_profile(sid, Some("work")).unwrap();
+        assert_eq!(store.session_header(sid).unwrap().profile.as_deref(), Some("work"));
+        store.set_session_profile(sid, None).unwrap();
+        assert_eq!(store.session_header(sid).unwrap().profile, None);
+    }
 
     /// session_header 合并了原先 5 个单行查询，必须逐字保住它们各自的回退语义——
     /// 对话窗存活校正的数据源：header 必须带 pid 与 last_event_at,否则 chat 侧算不了

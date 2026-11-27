@@ -144,6 +144,17 @@ async function boot(): Promise<React.ReactNode> {
       savePanel(CHAT_SESSION_ID, { tabs: [{ key: "diff", type: "diff" }, { key: "files", type: "files" }], active: scene === "panel-files" ? "files" : "diff", visible: true, expanded: q.get("max") === "1" });
     }
     setExtraMock((cmd, args) => {
+      // ?usage=warn|limited|expired：对话页上下文卡片里「此对话使用的账号」的几种状态（照 Orca 对照用）。
+      const usageCase = q.get("usage");
+      if (usageCase && cmd === "refresh_profile_usage") {
+        if (usageCase === "limited") return Promise.reject("USAGE_RATE_LIMITED:300");
+        if (usageCase === "expired") return Promise.reject("USAGE_EXPIRED");
+        const at = (h: number) => new Date(Date.now() + h * 3_600_000).toISOString();
+        return { note: null, lanes: [
+          { kind: "five_hour", used_pct: 84, used: null, limit: null, unit: null, resets_at: at(2.3) },
+          { kind: "seven_day", used_pct: 37, used: null, limit: null, unit: null, resets_at: at(61) },
+        ] };
+      }
       if (cmd === "get_chat_history") {
         if (scene.startsWith("chat")) return withLongItems(chat(cmd), lang);
         // 最大化场景要让「全部 / 本会话 / 本轮」出现：它只在本会话改过文件时才显示，
@@ -492,16 +503,24 @@ async function boot(): Promise<React.ReactNode> {
       }
       if (cmd === "check_provider_hooks") return "installed";
       if (cmd === "plugin:app|version") return "0.6.20";
+      // ?os=windows：账号行带运行时徽章（照 Orca 的「Windows」）；缺省不给，其余场景的基线不受影响。
+      if (cmd === "host_os" && q.get("os")) return q.get("os");
+      // 账号区照 Orca 开发实例里的假账号摆：系统默认 + 三个托管账号（起过名的当前账号、带留存项的、没登录的）。
+      // ?acct=empty：一个都没加的空状态。
       if (cmd === "list_profiles") {
-        const account = (email: string, plan: string) => ({ email, display_name: null, organization: null, plan, login_label: null });
+        const account = (email: string, plan: string | null, organization: string | null = null) => ({ email, display_name: null, organization, plan, login_label: null });
+        const system = { id: null, name: "", active: false, account: account("me@example.com", "Pro"), set_aside: [] };
+        if (q.get("acct") === "empty") return [{ ...system, active: true }];
+        const at = (rel: string) => "C:\Users\demo\.meowo\profiles\claude\side\\" + rel;
         return [
-          { id: null, name: "", active: true, account: account("demo@example.com", "Pro") },
-          // 首次对齐留下冲突的账号：提醒摊开在它下面。
-          { id: "work", name: "work-account-with-a-rather-long-name@company.example.com", active: false, account: account("work-account-with-a-rather-long-name@company.example.com", "Max"), set_aside: [
-            { path: "C:\Users\demo\.meowo\profiles\claude\work\keybindings.json.meowo-profile-merge", name: "keybindings.json.meowo-profile-merge", files: 1 },
-            { path: "C:\Users\demo\.meowo\profiles\claude\work\plugins.meowo-profile-merge", name: "plugins.meowo-profile-merge", files: 111 },
+          system,
+          { id: "work", name: "工作", active: true, account: account("larry.work@example.com", "Max", "Acme Inc"), set_aside: [] },
+          { id: "side", name: "", active: false, account: account("side.project@example.com", "Pro"), set_aside: [
+            { path: at("agents.meowo-profile-merge"), name: "agents.meowo-profile-merge", files: 4 },
+            { path: at("projects.meowo-profile-merge"), name: "projects.meowo-profile-merge", files: 3 },
+            { path: at("skills.meowo-profile-merge"), name: "skills.meowo-profile-merge", files: 2 },
           ] },
-          { id: "spare", name: "备用", active: false, account: null },
+          { id: "old", name: "old.trial@example.com", active: false, account: null, set_aside: [] },
         ];
       }
       // 代码托管 › Git：?git=missing（找不到 git）；缺省找到了、身份已设。
@@ -532,6 +551,7 @@ async function boot(): Promise<React.ReactNode> {
       return undefined;
     });
     installMocks("about");
+    if (q.get("os")) await detectHostOs();
     bootAppearance({ scale: false });
     const { About } = await import("../src/views/About");
     return <About />;
