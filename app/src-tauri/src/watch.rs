@@ -1857,11 +1857,15 @@ mod tests {
             state: "idle",
             fallback: true,
             retry: None,
+            source: crate::detect::ScreenSource::Fallback,
+            blocked_kind: None,
         };
         let blocked = crate::pty::ScreenSight {
             state: "blocked",
             fallback: false,
             retry: None,
+            source: crate::detect::ScreenSource::Rules,
+            blocked_kind: None,
         };
         assert!(
             super::screen_blocked_fingerprint(false, false, unknown.confirmed_state()).is_none()

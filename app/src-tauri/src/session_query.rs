@@ -1710,11 +1710,15 @@ mod tests {
             state: "idle",
             fallback: true,
             retry: None,
+            source: crate::detect::ScreenSource::Fallback,
+            blocked_kind: None,
         };
         let idle = super::super::pty::ScreenSight {
             state: "idle",
             fallback: false,
             retry: None,
+            source: crate::detect::ScreenSource::Rules,
+            blocked_kind: None,
         };
         assert_eq!(
             super::tab_class(true, "running", None, unknown.confirmed_state(), || false),

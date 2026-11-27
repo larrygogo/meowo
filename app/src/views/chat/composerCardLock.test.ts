@@ -77,4 +77,16 @@ describe("有卡片待处理时输入框的规则", () => {
       expect(en.chat[key]).not.toMatch(/[—;]|--/);
     }
   });
+
+  it("CLI 自报在等人（OSC 7501）：没认出卡也先拦，原因按报告分类", () => {
+    expect(composerCardLock({ ...NONE, reportedBlocked: "permission" })).toEqual({ send: true, controls: false, reason: "approval" });
+    expect(composerCardLock({ ...NONE, reportedBlocked: "question" }).reason).toBe("question");
+    expect(composerCardLock({ ...NONE, reportedBlocked: "auth" }).reason).toBe("prompt");
+    // 认不出的原因、没有原因：不锁（认屏幕的 blocked 没有原因，照旧由卡片决定）。
+    expect(composerCardLock({ ...NONE, reportedBlocked: "coffee" }).send).toBe(false);
+    expect(composerCardLock({ ...NONE, reportedBlocked: null }).send).toBe(false);
+    // 更具体的来源优先：屏幕上的卡、broker、hook 报的待处理。
+    expect(composerCardLock({ ...NONE, reportedBlocked: "permission", terminalCard: { kind: "question", collapsed: false } }).reason).toBe("question");
+    expect(composerCardLock({ ...NONE, reportedBlocked: "permission", pendingReview: "question" }).reason).toBe("question");
+  });
 });

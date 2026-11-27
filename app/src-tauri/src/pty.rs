@@ -110,7 +110,42 @@ struct ScreenProbe {
     /// agent 标签（"claude" 等），由调用方从 DB 的 sessions.provider 传入（**不从 argv[0]
     /// 猜**，见 PtyBroker::start 的文档），决定用哪套规则。
     provider: String,
+    /// CLI 经 OSC 7501 自报的状态记录（reader 线程写，检测节拍读）。有根记录时它就是
+    /// 会话状态的结论，认屏幕规则只在没有报告时兜底。不依赖 parser：没有规则集的
+    /// provider 只要发报告也照收。
+    program: Mutex<meowo_agent::program_status::ProgramStatus>,
+    /// reader 写入新报告后置位：报告可能是一个读块里唯一的内容（摘除后没有字节进
+    /// backlog，output_end 不动），节拍不能只凭 output_end 判断有没有新东西。
+    program_dirty: AtomicBool,
+    /// 应答过的探测次数与最后一次的墙钟毫秒（诊断「为什么没报告」用）。
+    probe_replies: AtomicU32,
+    last_probe_ms: AtomicI64,
+    /// 有自报、但自报不是 blocked 时，认屏幕规则确凿认出的等人框（规则 id）。
+    /// 2026-11-26 实测：claude 2.1.332 打开自带的 /model、/permissions 选择框时只报 idle，
+    /// 不报 blocked；这类框不经 hook、没有 pendingReview（ChatWindow 2026-11-16 实拍的
+    /// LSP 插件推荐同类）。所以「等人」这一档认屏幕仍可压过自报：与改动前的判定一致，
+    /// 只会让状态更偏向「等你」，不会漏掉。
+    screen_blocked_rule: Mutex<Option<&'static str>>,
+    /// 上面那种分歧出现过几次（进入次数）：一个版本的统计决定要不要继续保留这一档。
+    /// 每次进入同时写一行运行日志（`[osc7501] screen-override`，安装版落 ~/.meowo/logs），
+    /// 会话结束后照样可统计。
+    screen_overrides: AtomicU32,
+    /// 候选的等人框（规则 id, 首次看到的时刻）。只认带可见证据的规则，且同一个框要在屏幕
+    /// 上停留满 [`SCREEN_OVERRIDE_HOLD`] 才生效：批准/拒绝审批框后，CLI 已改报 working/idle、
+    /// 屏幕上的表单要到下一次重绘才擦掉，这种过渡帧不算分歧（redteam-2 P2：5 份审批录流
+    /// 各被过渡帧误计 1 次）；真正等人的框会一直停在屏幕上。
+    screen_blocked_candidate: Mutex<Option<(&'static str, std::time::Instant)>>,
+    /// 自报 working、屏幕却说明主回合已停（只剩后台任务）时命中的规则，以及证据从屏幕上
+    /// 消失的起点。结束行在渲染中途的半帧里时有时无，证据要连续消失满
+    /// [`MAIN_IDLE_RELEASE`] 才撤销，否则主回合口径会在在跑/空闲之间闪。
+    main_idle: Mutex<Option<(crate::detect::Detection, Option<std::time::Instant>)>>,
 }
+
+/// 主回合空闲的证据连续消失多久才撤销。
+const MAIN_IDLE_RELEASE: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// 等人框在屏幕上停留多久才压过自报。
+const SCREEN_OVERRIDE_HOLD: std::time::Duration = std::time::Duration::from_secs(2);
 
 impl ScreenProbe {
     fn new(rows: u16, cols: u16, provider: String) -> Self {
@@ -129,7 +164,115 @@ impl ScreenProbe {
             scanned_end: AtomicU64::new(0),
             started_at: std::time::Instant::now(),
             provider,
+            program: Mutex::new(Default::default()),
+            program_dirty: AtomicBool::new(false),
+            probe_replies: AtomicU32::new(0),
+            last_probe_ms: AtomicI64::new(0),
+            screen_blocked_rule: Mutex::new(None),
+            screen_overrides: AtomicU32::new(0),
+            screen_blocked_candidate: Mutex::new(None),
+            main_idle: Mutex::new(None),
         }
+    }
+
+    /// reader 线程：把一块输出里摘出的 7501 事件记下来。返回要写回 PTY 的探测应答个数。
+    fn record_program_events(&self, events: Vec<meowo_agent::program_status::StreamEvent>) -> usize {
+        use meowo_agent::program_status::StreamEvent;
+        let mut probes = 0;
+        let Ok(mut program) = self.program.lock() else {
+            return 0;
+        };
+        for event in events {
+            match event {
+                StreamEvent::Probe => {
+                    probes += 1;
+                    self.probe_replies.fetch_add(1, Ordering::AcqRel);
+                    self.last_probe_ms.store(crate::now_ms(), Ordering::Release);
+                }
+                StreamEvent::Report(report) => {
+                    program.apply(report, crate::now_ms());
+                    self.program_dirty.store(true, Ordering::Release);
+                }
+                StreamEvent::Reset => {
+                    if !program.is_empty() {
+                        program.reset();
+                        self.program_dirty.store(true, Ordering::Release);
+                    }
+                }
+            }
+        }
+        probes
+    }
+
+    /// 返回此刻生效的等人框规则（候选停留满 [`SCREEN_OVERRIDE_HOLD`] 才算）。
+    /// 生效瞬间计数并写一行运行日志。
+    fn confirm_screen_blocked(&self, now: std::time::Instant) -> Option<&'static str> {
+        let confirmed = self
+            .screen_blocked_candidate
+            .lock()
+            .ok()?
+            .filter(|(_, since)| now.duration_since(*since) >= SCREEN_OVERRIDE_HOLD)
+            .map(|(rule, _)| rule);
+        let mut active = self.screen_blocked_rule.lock().ok()?;
+        if active.is_none() {
+            if let Some(rule) = confirmed {
+                self.screen_overrides.fetch_add(1, Ordering::AcqRel);
+                eprintln!(
+                    "[osc7501] screen-override provider={} rule={}",
+                    self.provider, rule
+                );
+            }
+        }
+        *active = confirmed;
+        confirmed
+    }
+
+    /// CLI 自报的会话状态（根记录），无报告时 None。
+    fn reported_state(
+        &self,
+    ) -> Option<(
+        crate::detect::ScreenState,
+        Option<meowo_agent::program_status::BlockedKind>,
+    )> {
+        self.program.lock().ok()?.session_state()
+    }
+
+    /// 诊断用：自报记录、探测应答与认屏幕分歧。
+    fn program_diagnostics(&self) -> ProgramDiagnosticsDto {
+        let last_probe_ms = self.last_probe_ms.load(Ordering::Acquire);
+        ProgramDiagnosticsDto {
+            records: self.program_records(),
+            probe_replies: self.probe_replies.load(Ordering::Acquire),
+            last_probe_ms: (last_probe_ms > 0).then_some(last_probe_ms),
+            screen_override_rule: self.screen_blocked_rule.lock().ok().and_then(|rule| *rule),
+            screen_overrides: self.screen_overrides.load(Ordering::Acquire),
+            main_idle_rule: self
+                .main_idle
+                .lock()
+                .ok()
+                .and_then(|held| held.map(|(det, _)| det.rule_id)),
+        }
+    }
+
+    /// 诊断用：全部自报记录。
+    fn program_records(&self) -> Vec<ProgramRecordDto> {
+        let Ok(program) = self.program.lock() else {
+            return Vec::new();
+        };
+        program
+            .records()
+            .into_iter()
+            .map(|(id, record)| ProgramRecordDto {
+                id: id.to_string(),
+                state: record.state.as_str(),
+                kind: record.kind.map(|kind| kind.as_str()),
+                progress: record.progress,
+                app: program.app_of(id).map(str::to_string),
+                title: record.title.clone(),
+                msg: record.msg.clone(),
+                updated_ms: record.updated_ms,
+            })
+            .collect()
     }
 
     /// 取末屏快照（行 + 标题）。锁内只做 grid 逐行导出，不跑规则。
@@ -171,6 +314,89 @@ impl ScreenProbe {
         current_end: u64,
         now: std::time::Instant,
     ) -> Option<crate::detect::ScreenState> {
+        let program_changed = self.program_dirty.swap(false, Ordering::AcqRel);
+        // CLI 自报优先（OSC 7501）：有根记录就以它为结论，不等启动宽限、不过防抖——宽限与
+        // 防抖防的都是认屏幕的误读，自报没有这个问题。屏幕仍照常扫，只为自动重试行（它
+        // 只在屏幕上，报告里没有）。
+        if let Some((state, kind)) = self.reported_state() {
+            if program_changed || self.scanned_end.load(Ordering::Acquire) != current_end {
+                if let Some(snapshot) = self.snapshot() {
+                    self.scanned_end.store(current_end, Ordering::Release);
+                    if let Ok(mut retry) = self.retry.lock() {
+                        *retry = crate::detect::retry_note(&self.provider, &snapshot);
+                    }
+                    let blocked_rule = if state == crate::detect::ScreenState::Blocked {
+                        None
+                    } else {
+                        match crate::detect::evaluate(&self.provider, &snapshot) {
+                            Some(crate::detect::Evaluation::Publish(det))
+                                if det.state == crate::detect::ScreenState::Blocked
+                                    && det.visible =>
+                            {
+                                Some(det.rule_id)
+                            }
+                            _ => None,
+                        }
+                    };
+                    if let Ok(mut candidate) = self.screen_blocked_candidate.lock() {
+                        *candidate = match (*candidate, blocked_rule) {
+                            (Some((rule, since)), Some(seen)) if rule == seen => Some((rule, since)),
+                            (_, seen) => seen.map(|rule| (rule, now)),
+                        };
+                    }
+                    if let Ok(mut main_idle) = self.main_idle.lock() {
+                        let seen = (state == crate::detect::ScreenState::Working)
+                            .then(|| crate::detect::evaluate_reported_working(&self.provider, &snapshot))
+                            .flatten();
+                        *main_idle = match (*main_idle, seen) {
+                            // 否决项命中：主回合确实在跑，立即撤销，不等迟滞。
+                            (_, Some(det)) if det.state == crate::detect::ScreenState::Working => None,
+                            (_, Some(det)) => Some((det, None)),
+                            // 自报不再是 working：立即撤销（新回合开始或回合结束都由自报说了算）。
+                            _ if state != crate::detect::ScreenState::Working => None,
+                            (Some((det, None)), None) => Some((det, Some(now))),
+                            (Some((det, Some(since))), None)
+                                if now.duration_since(since) < MAIN_IDLE_RELEASE =>
+                            {
+                                Some((det, Some(since)))
+                            }
+                            _ => None,
+                        };
+                    }
+                }
+            }
+            // 候选等人框停留够久才生效（屏幕没变就一直是同一个框）。
+            let screen_blocked = self.confirm_screen_blocked(now);
+            let main_idle = self.main_idle.lock().ok().and_then(|held| held.map(|(det, _)| det));
+            let mut debounce = self.debounce.lock().ok()?;
+            return match (screen_blocked, main_idle) {
+                (Some(_), _) if state != crate::detect::ScreenState::Blocked => {
+                    debounce.publish_screen_blocked()
+                }
+                (_, Some(det)) => {
+                    let changed =
+                        debounce.observe(&crate::detect::Evaluation::Publish(det), now);
+                    if changed == Some(crate::detect::ScreenState::Idle) {
+                        eprintln!(
+                            "[osc7501] main-turn-idle provider={} rule={}",
+                            self.provider, det.rule_id
+                        );
+                    }
+                    changed
+                }
+                _ => debounce.publish_reported(state, kind),
+            };
+        }
+        // 没有自报：分歧记号作废，规则照常全权判定。
+        if let Ok(mut rule) = self.screen_blocked_rule.lock() {
+            *rule = None;
+        }
+        if let Ok(mut candidate) = self.screen_blocked_candidate.lock() {
+            *candidate = None;
+        }
+        if let Ok(mut main_idle) = self.main_idle.lock() {
+            *main_idle = None;
+        }
         // parser 为 None 即无规则集（门在构造时，见字段注释），snapshot() 会返回 None，
         // 这里不必再判 provider。
         if now.duration_since(self.started_at) < DETECT_STARTUP_GRACE {
@@ -181,7 +407,9 @@ impl ScreenProbe {
             .lock()
             .map(|debounce| debounce.pending())
             .unwrap_or(false);
-        if !pending && self.scanned_end.load(Ordering::Acquire) == current_end {
+        // program_changed 且走到这里 = CLI 刚把记录清空：发布值还挂着自报的结论，必须
+        // 立刻按屏幕重判，不能等下一块输出。
+        if !pending && !program_changed && self.scanned_end.load(Ordering::Acquire) == current_end {
             return None;
         }
         let snapshot = self.snapshot()?;
@@ -203,6 +431,85 @@ pub(crate) struct TerminalSize {
 impl TerminalSize {
     pub(crate) const fn new(cols: u16, rows: u16) -> Self {
         Self { cols, rows }
+    }
+}
+
+/// 首帧前光标位置探测的代答：TUI 只要一个基准值（见 StartupProbeScanner）。
+const CURSOR_REPORT: &[u8] = b"\x1b[1;1R";
+
+/// PTY reader 单趟流的前半段:分发与 backlog 之前对每个读块必须且只能做一次的事。
+/// 抽成独立结构是为了让真机探针(tms 系列 ignored 测试)与生产走同一份代码。
+///
+/// 顺序有讲究:
+/// 1. 先摘 OSC 7501(StatusFilter):探测的应答必须赶在前端 xterm 答 DA1(`ESC[c`,探测后
+///    紧跟着发)之前到达,否则 CLI 判定终端不支持——这里在分发前就入队,天然更早;没有对话窗、
+///    手机或外部终端挂着的后台会话照样有人答。报告记进 ScreenProbe,字节不外流。
+/// 2. 私有模式开关:只在 TUI 启动时发一次,淘汰出 backlog 后任何基于快照的重扫都看不到。
+/// 3. 首帧前的光标位置探测代答(StartupProbeScanner):任何基于快照/回放的重扫都可能把同一个
+///    查询答第二遍,多出的应答会落进 agent 输入框。
+/// 4. 喂屏幕状态机(纯内存解析,锁只与低频的检测节拍争用)。放在 backlog 之外:它不参与
+///    偏移/回放语义,坏了也只影响状态角标。parser 为 None(provider 无规则集)时跳过。
+struct ReaderFront {
+    probe_scanner: StartupProbeScanner,
+    mode_tracker: ModeTracker,
+    status_filter: meowo_agent::program_status::StatusFilter,
+    status_events: Vec<meowo_agent::program_status::StreamEvent>,
+}
+
+impl ReaderFront {
+    fn new() -> Self {
+        Self {
+            probe_scanner: StartupProbeScanner::new(),
+            mode_tracker: ModeTracker::new(),
+            status_filter: meowo_agent::program_status::StatusFilter::new(),
+            status_events: Vec::new(),
+        }
+    }
+
+    /// 处理一个读块,返回要进 backlog 并分发的字节;None = 这块没有要分发的字节。
+    /// 代答一律 try_send:不阻塞 reader;队列满(128 条积压)说明子进程根本不读输入,
+    /// 丢一条代答无关大局——那种进程连首帧都不会有人等到。
+    fn process<'a>(
+        &mut self,
+        managed: &ManagedPty,
+        chunk: &'a [u8],
+    ) -> Option<std::borrow::Cow<'a, [u8]>> {
+        let raw = self.status_filter.feed(chunk, &mut self.status_events);
+        if !self.status_events.is_empty() {
+            let replies = managed
+                .probe
+                .record_program_events(std::mem::take(&mut self.status_events));
+            for _ in 0..replies {
+                let _ = managed
+                    .input_tx
+                    .try_send(meowo_agent::program_status::PROBE_REPLY.to_vec());
+            }
+        }
+        if raw.is_empty() {
+            return None;
+        }
+        self.mode_tracker.feed(&raw);
+        managed.modes.store(self.mode_tracker.bits(), Ordering::Release);
+        // 首帧前:扫描并把已代答的探测从流中摘除(下游 DsrFilter/xterm 看不到已答的查询就
+        // 不可能再答第二遍),疑似探测前缀暂存到下一读。首帧后:零拷贝直通。
+        let data = if self.probe_scanner.painted() {
+            raw
+        } else {
+            let (cleaned, probes) = self.probe_scanner.feed(&raw);
+            for _ in 0..probes {
+                let _ = managed.input_tx.try_send(CURSOR_REPORT.to_vec());
+            }
+            std::borrow::Cow::Owned(cleaned)
+        };
+        if data.is_empty() {
+            return None;
+        }
+        if let Some(parser) = managed.probe.parser.as_ref() {
+            if let Ok(mut parser) = parser.lock() {
+                parser.process(&data);
+            }
+        }
+        Some(data)
     }
 }
 
@@ -278,6 +585,42 @@ pub(crate) struct ScreenSight {
     pub(crate) fallback: bool,
     /// 屏幕上正挂着的自动重试（见 detect::retry_note）。与 state 同一轮扫描得出。
     pub(crate) retry: Option<crate::detect::ScreenRetry>,
+    /// 这个结论从哪来：CLI 自报 / 认屏幕规则 / 回退。诊断与前端判断卡片时机用。
+    pub(crate) source: crate::detect::ScreenSource,
+    /// CLI 自报 blocked 时的原因（"permission" / "question" / "auth"），其余为 None。
+    pub(crate) blocked_kind: Option<&'static str>,
+}
+
+/// 诊断用：OSC 7501 的整体情况（[`PtyBroker::program_diagnostics`]）。
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub(crate) struct ProgramDiagnosticsDto {
+    pub(crate) records: Vec<ProgramRecordDto>,
+    /// 应答过几次探测；为 0 而 CLI 版本又够新，说明探测没到 reader（排查起点）。
+    pub(crate) probe_replies: u32,
+    pub(crate) last_probe_ms: Option<i64>,
+    /// 此刻认屏幕压过自报的规则（自报不是 blocked、屏幕上却确凿是等人的框）。
+    pub(crate) screen_override_rule: Option<&'static str>,
+    /// 这种分歧出现过几次。
+    pub(crate) screen_overrides: u32,
+    /// 此刻把自报 working 改判为主回合空闲的规则（只剩后台任务时）。发布来源是 rules 而自报
+    /// 是 working 时，看它就知道是哪一档改的判（redteam-3：只有 eprintln 时诊断里看不出）。
+    pub(crate) main_idle_rule: Option<&'static str>,
+}
+
+/// 诊断用：一条 OSC 7501 记录。
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct ProgramRecordDto {
+    /// "" = 根记录；否则是子记录路径（子代理等）。
+    pub(crate) id: String,
+    pub(crate) state: &'static str,
+    pub(crate) kind: Option<&'static str>,
+    pub(crate) progress: Option<u8>,
+    /// 子记录没写时已按规范继承祖先。
+    pub(crate) app: Option<String>,
+    /// 子记录的说明（claude 子代理的任务名写在这里，如「在后台等待 40 秒」）。
+    pub(crate) title: Option<String>,
+    pub(crate) msg: Option<String>,
+    pub(crate) updated_ms: i64,
 }
 
 impl ScreenSight {
@@ -1657,45 +2000,16 @@ impl PtyBroker {
         let broker = self.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 16 * 1024];
-            // 启动探测代答必须在 reader 单趟流上做(见 StartupProbeScanner):任何基于
-            // 快照/回放的重扫都可能把同一个查询答第二遍,多出的应答会落进 agent 输入框。
-            let mut probe_scanner = StartupProbeScanner::new();
-            let mut mode_tracker = ModeTracker::new();
+            let mut front = ReaderFront::new();
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
-                        // 私有模式开关同样必须在 reader 单趟流上跟踪:它们只在 TUI 启动时
-                        // 发一次,淘汰出 backlog 后任何基于快照的重扫都看不到。
-                        mode_tracker.feed(&buf[..n]);
-                        managed.modes.store(mode_tracker.bits(), Ordering::Release);
-                        // 首帧前:扫描并把已代答的探测从流中摘除(理由见 StartupProbeScanner:
-                        // 下游 DsrFilter/xterm 看不到已答的查询就不可能再答第二遍),疑似探测
-                        // 前缀暂存到下一读。首帧后:零拷贝直通,不再产生任何暂存。
-                        let (data, probes): (std::borrow::Cow<'_, [u8]>, usize) =
-                            if probe_scanner.painted() {
-                                (std::borrow::Cow::Borrowed(&buf[..n]), 0)
-                            } else {
-                                let (cleaned, probes) = probe_scanner.feed(&buf[..n]);
-                                (std::borrow::Cow::Owned(cleaned), probes)
-                            };
-                        // try_send 不阻塞 reader;队列满(128 条积压)说明子进程根本不读
-                        // 输入,丢一条代答无关大局——那种进程连首帧都不会有人等到。
-                        for _ in 0..probes {
-                            let _ = managed.input_tx.try_send(b"\x1b[1;1R".to_vec());
-                        }
-                        // 整个 chunk 都被摘除/暂存(如恰好只有一条探测):没有字节要分发。
-                        if data.is_empty() {
+                        // 摘除/代答/模式跟踪/喂屏幕状态机,见 ReaderFront。整块都被摘除或
+                        // 暂存(如恰好只有一条探测)时没有字节要分发。
+                        let Some(data) = front.process(&managed, &buf[..n]) else {
                             continue;
-                        }
-                        // 喂屏幕状态机（纯内存解析，锁只与低频的检测节拍争用）。放在
-                        // backlog 之外：它不参与偏移/回放语义，坏了也只影响状态角标。
-                        // parser 为 None（provider 无规则集）时整段跳过，不付解析成本。
-                        if let Some(parser) = managed.probe.parser.as_ref() {
-                            if let Ok(mut parser) = parser.lock() {
-                                parser.process(&data);
-                            }
-                        }
+                        };
                         // 分发必须发生在追加 backlog 的同一把锁内：handle_attach 在一个
                         // backlog→subscribers 临界区里「回放 + 注册订阅者」，若这里先放掉
                         // backlog 锁再单独锁 subscribers，恰在缝隙注册的订阅者会把同一个
@@ -2390,6 +2704,14 @@ impl PtyBroker {
                     .filter_map(|(sid, managed)| {
                         let debounce = managed.probe.debounce.lock().ok()?;
                         let state = debounce.published()?;
+                        let source = debounce.source();
+                        // CLI 刚清空记录、节拍还没按屏幕重判（≤ 一个节拍）：自报的旧结论
+                        // 已没人担保，宁可暂缺（消费方退回 DB 状态）也不报过期值。
+                        if source == crate::detect::ScreenSource::Reported
+                            && managed.probe.reported_state().is_none()
+                        {
+                            return None;
+                        }
                         let retry = managed.probe.retry.lock().ok().and_then(|retry| *retry);
                         Some((
                             *sid,
@@ -2397,6 +2719,8 @@ impl PtyBroker {
                                 state: state.as_str(),
                                 fallback: debounce.published_is_fallback(),
                                 retry,
+                                source,
+                                blocked_kind: debounce.blocked_kind().map(|kind| kind.as_str()),
                             },
                         ))
                     })
@@ -2415,6 +2739,15 @@ impl PtyBroker {
         let managed = self.lookup(session_id).ok().flatten()?;
         let snapshot = managed.probe.snapshot()?;
         Some((snapshot, managed.probe.provider.clone()))
+    }
+
+    /// 诊断用：某会话此刻的 OSC 7501 情况（临时 id 同样经 lookup 解析）。
+    pub(crate) fn program_diagnostics(&self, session_id: i64) -> ProgramDiagnosticsDto {
+        self.lookup(session_id)
+            .ok()
+            .flatten()
+            .map(|managed| managed.probe.program_diagnostics())
+            .unwrap_or_default()
     }
 
     pub(crate) fn screen_frame(

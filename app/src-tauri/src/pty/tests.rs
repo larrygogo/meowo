@@ -2521,3 +2521,609 @@ fn external_v2_approval_uses_the_shared_framing_and_passes_without_consumer() {
     assert!(broker.pending_approval(78).is_none());
     handle.join().unwrap();
 }
+
+/// 真实录流走一遍 reader 的 7501 摘除 + 检测节拍，返回已发布状态的变化序列
+/// （状态, 来源, 阻塞原因）。`reported = false` 时丢掉报告，只剩认屏幕——用来对照。
+fn replay_published(
+    provider: &str,
+    bytes: &[u8],
+    reported: bool,
+) -> Vec<(&'static str, &'static str, Option<&'static str>)> {
+    let probe = ScreenProbe::new(40, 120, provider.into());
+    // 回放时钟：每 256 字节算 75ms（约 3.4KB/s，TUI 重绘的量级）、跑一个节拍；宽限期从
+    // 第一块起就已过（宽限只管认屏幕）。早先每块跑 4 个 250ms 节拍，等于把 256 字节拉长到
+    // 1 秒，屏幕上一闪而过的过渡帧会被当成停留了几秒（redteam-2 回放的教训）。
+    let mut now = probe.started_at + DETECT_STARTUP_GRACE + std::time::Duration::from_secs(1);
+    let mut filter = meowo_agent::program_status::StatusFilter::new();
+    let mut end = 0u64;
+    let mut seen = Vec::new();
+    // 小块回放：录制时相隔十几秒的两条报告（如信任框 blocked 与确认后的 idle）在大块里
+    // 会落进同一读、节拍只见后者；真实运行中节拍（300ms）早已在两者之间跑过。
+    for chunk in bytes.chunks(256) {
+        let mut events = Vec::new();
+        let raw = filter.feed(chunk, &mut events);
+        feed_screen(&probe, &raw);
+        end += raw.len() as u64;
+        let mut tick = |probe: &ScreenProbe, now: &mut std::time::Instant| {
+            *now += std::time::Duration::from_millis(75);
+            probe.tick(end, *now);
+            let debounce = probe.debounce.lock().unwrap();
+            if let Some(state) = debounce.published() {
+                let item = (
+                    state.as_str(),
+                    debounce.source().as_str(),
+                    debounce.blocked_kind().map(|kind| kind.as_str()),
+                );
+                if seen.last() != Some(&item) {
+                    seen.push(item);
+                }
+            }
+        };
+        // 录制时报告之间往往隔着几秒到十几秒（信任框 blocked 与确认后的 idle 相隔 18s，
+        // 中间没有别的输出），回放把它们挤进同一块；逐条记账、逐条跑节拍才贴近真实节奏。
+        if reported {
+            for event in events {
+                probe.record_program_events(vec![event]);
+                tick(&probe, &mut now);
+            }
+        }
+        tick(&probe, &mut now);
+    }
+    // 录完之后屏幕静止：再跑 3 秒节拍，让各种确认期走完，看最终结论。
+    for _ in 0..10 {
+        now += std::time::Duration::from_millis(300);
+        probe.tick(end, now);
+        let debounce = probe.debounce.lock().unwrap();
+        if let Some(state) = debounce.published() {
+            let item = (
+                state.as_str(),
+                debounce.source().as_str(),
+                debounce.blocked_kind().map(|kind| kind.as_str()),
+            );
+            if seen.last() != Some(&item) {
+                seen.push(item);
+            }
+        }
+    }
+    seen
+}
+
+/// 应答探测之后 claude 不再把转圈写进标题，认屏幕的主信号没了；会话状态全程由
+/// CLI 自报决定：信任框是等批准，跑命令时在跑，回合结束空闲，长回合被 Esc 中断后空闲。
+/// 对照组（同一录流丢掉报告、只认屏幕）漏掉了信任框和第二个回合——这正是不接管的后果。
+#[test]
+fn claude_reported_status_drives_the_published_state() {
+    let bytes = include_bytes!(
+        "../../crates/meowo-agent/tests/fixtures/program-status/claude-2.1.332-turn-interrupt.bin"
+    );
+    let published = replay_published("claude", bytes, true);
+    assert_eq!(
+        published,
+        vec![
+            // 第一条报告之前，屏幕上还什么都认不出。
+            ("idle", "fallback", None),
+            ("blocked", "osc7501", Some("permission")),
+            // 确认信任后 claude 在同一次写入里先 clear 再报 idle；逐条推进的回放在两条之间
+            // 多跑了一个节拍，于是看得到一瞬间退回认屏幕（生产中同一读的事件先全部记账再
+            // 跑节拍，没有这一步）。退回时用的是回退值，消费方本就不把它当证据。
+            ("idle", "fallback", None),
+            ("idle", "osc7501", None),
+            ("working", "osc7501", None),
+            ("idle", "osc7501", None),
+            ("working", "osc7501", None),
+            ("idle", "osc7501", None),
+        ],
+        "只认屏幕时的序列（对照）：{:?}",
+        replay_published("claude", bytes, false)
+    );
+    let rules_only = replay_published("claude", bytes, false);
+    assert!(
+        !rules_only.iter().any(|(state, _, _)| *state == "blocked"),
+        "对照组本应认不出信任框：{rules_only:?}"
+    );
+}
+
+#[test]
+fn codex_reported_approval_is_published_as_blocked() {
+    let bytes = include_bytes!(
+        "../../crates/meowo-agent/tests/fixtures/program-status/codex-0.169.0-approval.bin"
+    );
+    let published = replay_published("codex", bytes, true);
+    assert!(
+        published.contains(&("blocked", "osc7501", Some("permission"))),
+        "{published:?}"
+    );
+    assert_eq!(published.last(), Some(&("idle", "osc7501", None)), "{published:?}");
+}
+
+#[test]
+fn kimi_reported_question_is_published_as_blocked() {
+    let bytes = include_bytes!(
+        "../../crates/meowo-agent/tests/fixtures/program-status/kimi-2.7.3-question.bin"
+    );
+    let published = replay_published("kimi", bytes, true);
+    assert!(
+        published.contains(&("blocked", "osc7501", Some("question"))),
+        "{published:?}"
+    );
+    assert_eq!(published.last(), Some(&("idle", "osc7501", None)), "{published:?}");
+}
+
+/// CLI 清空全部记录后（没有根记录）退回认屏幕；清空前发布的自报结论不能在
+/// screen_states 里继续冒充（见 PtyBroker::screen_states 的过期过滤）。
+#[test]
+fn cleared_reports_fall_back_to_screen_rules() {
+    let probe = ScreenProbe::new(24, 80, "claude".into());
+    let after_grace = probe.started_at + DETECT_STARTUP_GRACE + std::time::Duration::from_secs(1);
+    let mut filter = meowo_agent::program_status::StatusFilter::new();
+    let mut events = Vec::new();
+    let raw = filter.feed(b"\x1b]7501;state=working:app=claude-code\x07", &mut events);
+    assert!(raw.is_empty());
+    probe.record_program_events(std::mem::take(&mut events));
+    assert_eq!(probe.tick(0, after_grace), Some(crate::detect::ScreenState::Working));
+    assert_eq!(probe.debounce.lock().unwrap().source(), crate::detect::ScreenSource::Reported);
+    // 清空记录；屏幕上是空闲的 ✳ 标题。
+    let raw = filter.feed(b"\x1b]7501;state=clear\x07\x1b]0;\xe2\x9c\xb3 claude\x07", &mut events);
+    probe.record_program_events(std::mem::take(&mut events));
+    feed_screen(&probe, &raw);
+    assert!(probe.reported_state().is_none());
+    assert_eq!(probe.tick(raw.len() as u64, after_grace), Some(crate::detect::ScreenState::Idle));
+    assert_ne!(probe.debounce.lock().unwrap().source(), crate::detect::ScreenSource::Reported);
+}
+
+/// 基准（验收 9）：PTY reader 管线加了 7501 摘除后的吞吐。数据是 6 份真实录流（含 7501
+/// 报告与探测）重复拼到 20MB，16KB 一读，管线与生产一致：摘除 → 私有模式跟踪 → 首帧
+/// 探测扫描 → vt100 → backlog。改前 = 不过摘除器。交替跑 5 轮取中位数，只在 release 下有意义：
+/// `cargo test -p meowo-app --release --lib bench_reader_pipeline -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn bench_reader_pipeline_with_status_filter() {
+    const FIXTURES: [&[u8]; 6] = [
+        include_bytes!("../../crates/meowo-agent/tests/fixtures/program-status/claude-2.1.332-turn-interrupt.bin"),
+        include_bytes!("../../crates/meowo-agent/tests/fixtures/program-status/claude-2.1.332-usage-limit.bin"),
+        include_bytes!("../../crates/meowo-agent/tests/fixtures/program-status/codex-0.169.0-turn.bin"),
+        include_bytes!("../../crates/meowo-agent/tests/fixtures/program-status/codex-0.169.0-approval.bin"),
+        include_bytes!("../../crates/meowo-agent/tests/fixtures/program-status/kimi-2.7.3-trust-turn.bin"),
+        include_bytes!("../../crates/meowo-agent/tests/fixtures/program-status/kimi-2.7.3-question.bin"),
+    ];
+    let mut data = Vec::with_capacity(21 << 20);
+    while data.len() < 20 << 20 {
+        for fixture in FIXTURES {
+            data.extend_from_slice(fixture);
+        }
+    }
+    let reports = data.windows(7).filter(|w| *w == b"\x1b]7501;").count();
+    let run = |with_filter: bool| -> std::time::Duration {
+        let probe = ScreenProbe::new(40, 120, "claude".into());
+        let mut filter = meowo_agent::program_status::StatusFilter::new();
+        let mut events = Vec::new();
+        let mut modes = ModeTracker::new();
+        let mut scanner = StartupProbeScanner::new();
+        let mut backlog: std::collections::VecDeque<u8> = std::collections::VecDeque::new();
+        let started = std::time::Instant::now();
+        for chunk in data.chunks(16 * 1024) {
+            let raw: std::borrow::Cow<'_, [u8]> = if with_filter {
+                let raw = filter.feed(chunk, &mut events);
+                if !events.is_empty() {
+                    probe.record_program_events(std::mem::take(&mut events));
+                }
+                raw
+            } else {
+                std::borrow::Cow::Borrowed(chunk)
+            };
+            modes.feed(&raw);
+            let data: std::borrow::Cow<'_, [u8]> = if scanner.painted() {
+                std::borrow::Cow::Borrowed(&raw[..])
+            } else {
+                std::borrow::Cow::Owned(scanner.feed(&raw).0)
+            };
+            probe.parser.as_ref().unwrap().lock().unwrap().process(&data);
+            backlog.extend(data.iter().copied());
+            if backlog.len() > 1 << 20 {
+                let excess = backlog.len() - (1 << 20);
+                backlog.drain(..excess);
+            }
+        }
+        std::hint::black_box(&backlog);
+        started.elapsed()
+    };
+    let mut before = Vec::new();
+    let mut after = Vec::new();
+    for _ in 0..5 {
+        before.push(run(false));
+        after.push(run(true));
+    }
+    before.sort();
+    after.sort();
+    let mb = data.len() as f64 / (1024.0 * 1024.0);
+    let (b, a) = (before[2].as_secs_f64(), after[2].as_secs_f64());
+    println!(
+        "reader pipeline: {mb:.1} MB, {reports} 条 7501 序列；改前中位 {:.1} ms（{:.1} MB/s），改后中位 {:.1} ms（{:.1} MB/s），改后/改前吞吐 = {:.3}",
+        b * 1000.0,
+        mb / b,
+        a * 1000.0,
+        mb / a,
+        b / a
+    );
+    assert!(b / a >= 0.95, "改后吞吐低于改前的 95%");
+}
+
+/// 真机探针（验收 1）：真实 CLI 的输出走生产的 ReaderFront，代答经 input_tx 写回 CLI——
+/// 与 reader/writer 线程同一条路径，但**没有任何前端**（对话窗、手机、外部终端都没挂），
+/// 也就是后台会话的处境。断言 CLI 收到应答后真的开始报告，且结论经节拍发布、来源是自报。
+/// 不发任何提示词，不消耗额度。临时目录未受信任：claude/kimi 先报信任框（blocked）。
+///
+/// ```text
+/// cargo test -p meowo-app --lib tms_probe_program_status -- --ignored --nocapture --test-threads=1
+/// ```
+#[test]
+#[ignore]
+fn tms_probe_program_status_background_sessions() {
+    use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+    use std::io::{Read, Write};
+    // codex 照其它探针（tms_probe_codex）关掉启动时的更新检查：有新版本时它先弹一个更新
+    // 选择框，主界面起来之前不报告（2026-11-26 实拍 0.169.0 → 0.172.0）。
+    let launches: [(&str, &[&str]); 3] = [
+        ("claude", &["claude"]),
+        ("codex", &["codex", "-c", "check_for_update_on_startup=false"]),
+        ("kimi", &["kimi"]),
+    ];
+    for (provider, argv) in launches {
+        let cwd = std::env::temp_dir().join(format!("meowo-osc7501-probe-{provider}-{}", std::process::id()));
+        std::fs::create_dir_all(&cwd).unwrap();
+        let pair = native_pty_system()
+            .openpty(PtySize { rows: 40, cols: 120, pixel_width: 0, pixel_height: 0 })
+            .unwrap();
+        let mut command = CommandBuilder::new(argv[0]);
+        command.args(&argv[1..]);
+        command.cwd(&cwd);
+        command.env("TERM", "xterm-256color");
+        // 本进程跑在 Meowo 托管会话里：外层 PTY 凭据与账号标识摘掉（同 tms_probe_restart）。
+        for (key, _) in std::env::vars() {
+            if key.starts_with("MEOWO_PTY_") || key.starts_with("CLAUDE") || key == "MEOWO_PROFILE" {
+                command.env_remove(key);
+            }
+        }
+        command.env("MEOWO_DB", cwd.join("probe-board.db"));
+        let mut child = pair.slave.spawn_command(command).unwrap();
+        drop(pair.slave);
+        let (input_tx, input_rx) = mpsc::sync_channel::<Vec<u8>>(128);
+        let managed = Arc::new(ManagedPty {
+            session_id: AtomicI64::new(1),
+            master: Mutex::new(None),
+            finalized: AtomicBool::new(false),
+            input_tx,
+            child: Mutex::new(Box::new(DummyChild)),
+            child_pid: None,
+            conhost_pid: None,
+            stop_requested_at: Mutex::new(None),
+            backlog: Mutex::new(VecDeque::new()),
+            output_end: AtomicU64::new(0),
+            subscribers: Mutex::new(Vec::new()),
+            probe: ScreenProbe::new(40, 120, provider.into()),
+            last_size: AtomicU32::new(0),
+            modes: AtomicU32::new(0),
+        });
+        // writer 线程：与生产一样，代答只经 input_tx 写回。
+        let writer = Arc::new(Mutex::new(pair.master.take_writer().unwrap()));
+        let w = writer.clone();
+        std::thread::spawn(move || {
+            while let Ok(bytes) = input_rx.recv() {
+                let mut writer = w.lock().unwrap();
+                let _ = writer.write_all(&bytes);
+                let _ = writer.flush();
+            }
+        });
+        // reader 线程：生产的 ReaderFront。DA1 由测试代答，模拟前端 xterm（总是更晚）。
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let (m, w) = (managed.clone(), writer.clone());
+        std::thread::spawn(move || {
+            let mut front = ReaderFront::new();
+            let mut buf = [0u8; 16 * 1024];
+            while let Ok(n) = reader.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                let da1 = buf[..n].windows(3).any(|x| x == b"\x1b[c");
+                if let Some(data) = front.process(&m, &buf[..n]) {
+                    m.output_end.fetch_add(data.len() as u64, Ordering::AcqRel);
+                }
+                if da1 {
+                    std::thread::sleep(std::time::Duration::from_millis(30));
+                    let _ = w.lock().unwrap().write_all(b"\x1b[?1;2c");
+                }
+            }
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut published = None;
+        while std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            let now = std::time::Instant::now() + DETECT_STARTUP_GRACE;
+            managed.probe.tick(managed.output_end.load(Ordering::Acquire), now);
+            let debounce = managed.probe.debounce.lock().unwrap();
+            if debounce.source() == crate::detect::ScreenSource::Reported {
+                published = Some((
+                    debounce.published().unwrap().as_str(),
+                    debounce.blocked_kind().map(|kind| kind.as_str()),
+                ));
+                break;
+            }
+        }
+        let records = managed.probe.program_records();
+        eprintln!("[osc7501] {provider}: published={published:?} records={records:?}");
+        if published.is_none() {
+            if let Some(snapshot) = managed.probe.snapshot() {
+                eprintln!("[osc7501] {provider} 末屏：
+{}", snapshot.lines.join("
+"));
+            }
+        }
+        let _ = child.kill();
+        let _ = std::fs::remove_dir_all(&cwd);
+        assert!(published.is_some(), "{provider}: 30s 内没有自报状态发布");
+        assert!(
+            records.iter().any(|record| record.id.is_empty()),
+            "{provider}: 应有根记录"
+        );
+    }
+}
+
+/// 自报不是 blocked、认屏幕却确凿认出等人的框时按 blocked 发布（来源：认屏幕）。
+/// 真实依据：claude 2.1.332 打开自带的 /model、/permissions 选择框时只报 idle（redteam-1 P2，
+/// 2026-11-26 探针）；这类框不经 hook，没有 pendingReview。框消失后回到自报。
+#[test]
+fn screen_confirmed_prompt_overrides_a_non_blocked_report() {
+    let probe = ScreenProbe::new(24, 80, "claude".into());
+    let after_grace = probe.started_at + DETECT_STARTUP_GRACE + std::time::Duration::from_secs(1);
+    let mut filter = meowo_agent::program_status::StatusFilter::new();
+    let mut events = Vec::new();
+    let raw = filter.feed(b"\x1b]7501;state=idle:app=claude-code\x07", &mut events);
+    probe.record_program_events(std::mem::take(&mut events));
+    assert!(raw.is_empty());
+    assert_eq!(probe.tick(0, after_grace), Some(crate::detect::ScreenState::Idle));
+    let at = |ms: u64| after_grace + std::time::Duration::from_millis(ms);
+    let prompt = " Bash command\r\n Do you want to proceed?\r\n \u{276F} 1. Yes\r\n   2. No\r\n";
+    // 过渡帧：表单在屏幕上不到 2 秒就被下一次重绘擦掉（批准/拒绝后的常态）——不算分歧。
+    feed_screen(&probe, prompt.as_bytes());
+    assert_eq!(probe.tick(1, at(0)), None);
+    assert_eq!(probe.tick(1, at(1500)), None);
+    feed_screen(&probe, "\x1b[2J\x1b[H\u{276F} \r\n".as_bytes());
+    assert_eq!(probe.tick(2, at(1600)), None);
+    assert_eq!(probe.program_diagnostics().screen_overrides, 0);
+    // 真正等人的框：一直停在屏幕上，满 2 秒后压过自报的 idle。
+    feed_screen(&probe, prompt.as_bytes());
+    assert_eq!(probe.tick(3, at(2000)), None);
+    assert_eq!(probe.tick(3, at(3000)), None, "不到 2 秒不生效");
+    assert_eq!(probe.tick(3, at(4100)), Some(crate::detect::ScreenState::Blocked));
+    {
+        let debounce = probe.debounce.lock().unwrap();
+        assert_eq!(debounce.source(), crate::detect::ScreenSource::Rules);
+        assert_eq!(debounce.blocked_kind(), None);
+    }
+    let diagnostics = probe.program_diagnostics();
+    assert_eq!(diagnostics.screen_override_rule, Some("bash_permission_prompt"));
+    assert_eq!(diagnostics.screen_overrides, 1);
+    // 同一个框不重复计数。
+    assert_eq!(probe.tick(3, at(4400)), None);
+    assert_eq!(probe.program_diagnostics().screen_overrides, 1);
+    // 框没了（清屏回到输入框），回到自报的 idle。
+    feed_screen(&probe, "\x1b[2J\x1b[H\u{276F} \r\n".as_bytes());
+    assert_eq!(probe.tick(4, at(4700)), Some(crate::detect::ScreenState::Idle));
+    assert_eq!(
+        probe.debounce.lock().unwrap().source(),
+        crate::detect::ScreenSource::Reported
+    );
+    assert_eq!(probe.program_diagnostics().screen_override_rule, None);
+}
+
+/// 探测应答计数进诊断（为 0 而 CLI 又够新时，说明探测没到 reader）。
+#[test]
+fn probe_replies_are_counted_for_diagnostics() {
+    let probe = ScreenProbe::new(24, 80, "claude".into());
+    let mut filter = meowo_agent::program_status::StatusFilter::new();
+    let mut events = Vec::new();
+    let _ = filter.feed(b"\x1b]7501;?\x07x\x1b]7501;?\x1b\\", &mut events);
+    assert_eq!(probe.record_program_events(events), 2);
+    let diagnostics = probe.program_diagnostics();
+    assert_eq!(diagnostics.probe_replies, 2);
+    assert!(diagnostics.last_probe_ms.is_some());
+}
+
+/// 真实录流：claude 自带的 /model、/permissions 选择框开着时只报 idle（2026-11-26 探针）。
+/// 这两个框认屏幕原本也认不出（只认屏幕的对照组同样全程 idle），接自报后结论不变——
+/// 没有退步；认屏幕认得出的框由 screen_confirmed_prompt_overrides_a_non_blocked_report 兜住。
+#[test]
+fn claude_own_pickers_report_idle_only() {
+    let bytes = include_bytes!(
+        "../../crates/meowo-agent/tests/fixtures/program-status/claude-2.1.332-model-picker.bin"
+    );
+    let published = replay_published("claude", bytes, true);
+    let rules_only = replay_published("claude", bytes, false);
+    assert!(published.iter().all(|(state, _, _)| *state == "idle"), "{published:?}");
+    assert!(rules_only.iter().all(|(state, _, _)| *state == "idle"), "{rules_only:?}");
+    assert_eq!(published.last(), Some(&("idle", "osc7501", None)));
+}
+
+/// 真实 Claude 的审批与提问一路走到侧栏分类（tab_class，与前端 activityTone 同序）：
+/// 自报 blocked → 「待交互」；在跑 → 「运行中」。数据库状态故意给成回合里的 running——
+/// 用户按 Esc 中断时 Claude 不触发 Stop hook，DB 会一直停在 running（验收 3 改写的依据），
+/// 自报 idle 必须把它纠正成「待交互」。
+#[test]
+fn claude_reported_states_reach_the_sidebar_classes() {
+    for (name, bytes, wanted) in [
+        (
+            "write-approval",
+            &include_bytes!(
+                "../../crates/meowo-agent/tests/fixtures/program-status/claude-2.1.332-write-approval.bin"
+            )[..],
+            ("blocked", "osc7501", Some("permission")),
+        ),
+        (
+            "question-subagent",
+            &include_bytes!(
+                "../../crates/meowo-agent/tests/fixtures/program-status/claude-2.1.332-question-subagent.bin"
+            )[..],
+            ("blocked", "osc7501", Some("question")),
+        ),
+    ] {
+        let published = replay_published("claude", bytes, true);
+        assert!(published.contains(&wanted), "{name}: {published:?}");
+        for (state, source, _) in &published {
+            if *source != "osc7501" {
+                continue;
+            }
+            let class = crate::session_query::tab_class(true, "running", None, Some(state), || false);
+            let expected = match *state {
+                "working" => "running",
+                _ => "waiting",
+            };
+            assert_eq!(class, Some(expected), "{name}: {state}");
+        }
+        // 结尾（Esc 中断 / 回合结束）自报 idle，DB 仍是 running：侧栏是「待交互」不是「运行中」。
+        assert_eq!(published.last().map(|item| item.0), Some("idle"), "{name}");
+    }
+}
+
+/// 主回合结束、只剩后台任务时 claude 仍自报 working（redteam-2 P1，真机录流）。主回合口径
+/// 必须回到空闲（对话窗可直接发送，不扣进排队），来源记为认屏幕；后台忙由侧栏的
+/// background_busy 另行显示。前台长回合不能被误判成空闲，审批后的过渡帧不能记成分歧。
+#[test]
+fn claude_background_only_work_is_a_main_turn_idle() {
+    let fixture = |name: &str| {
+        std::fs::read(format!(
+            "{}/crates/meowo-agent/tests/fixtures/program-status/claude-2.1.332-{name}.bin",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap()
+    };
+    // 后台子代理：`✻ Waiting for 1 background agent to finish` + 空闲 ❯。
+    let bg_agent = replay_published("claude", &fixture("bg-agent"), true);
+    assert_eq!(bg_agent.last(), Some(&("idle", "rules", None)), "{bg_agent:?}");
+    // 后台 shell：`✻ Cogitated for 3s · done … · 1 shell still running`。
+    let bg_shell = replay_published("claude", &fixture("long-turn"), true);
+    assert_eq!(bg_shell.last(), Some(&("idle", "rules", None)), "{bg_shell:?}");
+    // 主回合空闲 + 后台忙：侧栏仍是「运行中」，对话窗主回合口径是空闲。
+    assert_eq!(
+        crate::session_query::tab_class(true, "running", None, Some("idle"), || true),
+        Some("running")
+    );
+    // 前台 40 秒长回合：全程在跑，结束才空闲，中间不闪。
+    let foreground = replay_published("claude", &fixture("long-fg"), true);
+    let working_runs = foreground
+        .windows(2)
+        .filter(|pair| pair[0].0 == "working" && pair[1].0 != "working")
+        .count();
+    assert_eq!(working_runs, 2, "两个前台回合各一段在跑：{foreground:?}");
+    let first_working = foreground.iter().position(|item| item.0 == "working").unwrap();
+    assert!(
+        foreground[first_working..].iter().all(|(_, source, _)| *source == "osc7501"),
+        "前台回合开始后不应由认屏幕改判：{foreground:?}"
+    );
+}
+
+/// 按录制时的真实到达时间回放带 `.times` 的夹具（每行「块结束偏移 毫秒」）：每块到达即
+/// 解析、记录自报、喂屏幕，检测节拍按生产的 300ms 独立推进。返回 (毫秒, 状态, 来源) 的
+/// 变化序列。按字节折算的时钟会把 spinner 帧的停留压得很短，掩盖「每隔一帧证据回来」
+/// 这类问题（redteam-3 P3）。
+fn replay_timed(provider: &str, name: &str) -> Vec<(u64, &'static str, &'static str)> {
+    let path = format!(
+        "{}/crates/meowo-agent/tests/fixtures/program-status/{name}.bin",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let bytes = std::fs::read(&path).unwrap();
+    let chunks: Vec<(usize, u64)> = std::fs::read_to_string(format!("{path}.times"))
+        .unwrap()
+        .lines()
+        .filter_map(|line| {
+            let (off, ms) = line.split_once(' ')?;
+            Some((off.parse().ok()?, ms.parse().ok()?))
+        })
+        .collect();
+    let probe = ScreenProbe::new(40, 120, provider.into());
+    let base = probe.started_at + DETECT_STARTUP_GRACE + std::time::Duration::from_secs(1);
+    let mut filter = meowo_agent::program_status::StatusFilter::new();
+    let (mut end, mut start, mut next_tick) = (0u64, 0usize, 0u64);
+    let mut seen: Vec<(u64, &'static str, &'static str)> = Vec::new();
+    let mut tick_at = |probe: &ScreenProbe, ms: u64, end: u64| {
+        probe.tick(end, base + std::time::Duration::from_millis(ms));
+        let debounce = probe.debounce.lock().unwrap();
+        if let Some(state) = debounce.published() {
+            let item = (state.as_str(), debounce.source().as_str());
+            if seen.last().map(|(_, s, src)| (*s, *src)) != Some(item) {
+                seen.push((ms, item.0, item.1));
+            }
+        }
+    };
+    let last_ms = chunks.last().map_or(0, |(_, ms)| *ms);
+    for (off, ms) in chunks {
+        while next_tick <= ms {
+            tick_at(&probe, next_tick, end);
+            next_tick += 300;
+        }
+        let mut events = Vec::new();
+        let raw = filter.feed(&bytes[start..off], &mut events);
+        start = off;
+        if !events.is_empty() {
+            probe.record_program_events(events);
+        }
+        feed_screen(&probe, &raw);
+        end += raw.len() as u64;
+    }
+    while next_tick <= last_ms + 3000 {
+        tick_at(&probe, next_tick, end);
+        next_tick += 300;
+    }
+    seen
+}
+
+/// 后台任务结束后 claude 自动接着跑前台回合（redteam-3 P1，Lead 派后台审查代理后最常见的
+/// 情形）：上一回合的「Waiting for 1 background agent to finish」留在尾巴里，spinner 转到
+/// `*` 帧时曾被判成主回合空闲，36 秒里翻转 7 次。按真实时间回放：主回合只剩后台时空闲，
+/// 自动接续的回合一开跑就回到在跑、直到结束不再翻转。
+#[test]
+fn claude_auto_resumed_turn_after_background_stays_working() {
+    for (name, resume_ms, done_ms) in [
+        // 子代理 48.5s 结束，自动接续的回合 84.5s 报 done。
+        ("claude-2.1.332-autowake-long", 48_500u64, 84_500u64),
+        // 后台 shell 期间用户插话，回合 56.0s 开跑、84.8s 报 done。
+        ("claude-2.1.332-bg-then-fg", 56_000, 84_800),
+    ] {
+        let seen = replay_timed("claude", name);
+        let in_turn: Vec<_> = seen
+            .iter()
+            .filter(|(ms, _, _)| *ms > resume_ms + 1500 && *ms < done_ms)
+            .collect();
+        assert!(
+            in_turn.iter().all(|(_, state, _)| *state == "working"),
+            "{name}: 接续回合里不应再判空闲：{seen:?}"
+        );
+        // 接续回合开跑 1.5 秒内已是在跑（结束行还在屏幕上）。
+        let at_resume = seen.iter().rev().find(|(ms, _, _)| *ms <= resume_ms + 1500).unwrap();
+        assert_eq!(at_resume.1, "working", "{name}: {seen:?}");
+        // 接续之前，只剩后台时主回合是空闲。
+        assert!(
+            seen.iter().any(|(ms, state, source)| *ms < resume_ms
+                && *state == "idle"
+                && *source == "rules"),
+            "{name}: 只剩后台时应判主回合空闲：{seen:?}"
+        );
+        assert_eq!(seen.last().map(|(_, s, src)| (*s, *src)), Some(("idle", "osc7501")), "{name}");
+    }
+}
+
+/// 审批/提问录流里没有一次「认屏幕压过自报」：批准或拒绝后的过渡帧不算分歧（redteam-2 P2）。
+#[test]
+fn approval_transitions_are_not_counted_as_screen_overrides() {
+    for name in ["write-approval", "bash-approve-run", "question-subagent"] {
+        let bytes = std::fs::read(format!(
+            "{}/crates/meowo-agent/tests/fixtures/program-status/claude-2.1.332-{name}.bin",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        let published = replay_published("claude", &bytes, true);
+        assert!(
+            !published.contains(&("blocked", "rules", None)),
+            "{name}: {published:?}"
+        );
+    }
+}

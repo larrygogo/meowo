@@ -58,6 +58,7 @@ pub(crate) enum Evaluation {
     Hold { rule_id: &'static str },
 }
 
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct Detection {
     pub(crate) state: ScreenState,
     /// 有可见证据（审批 UI / 提示框 / spinner 标题）：防抖直接放行，不需要确认期。
@@ -118,6 +119,37 @@ fn rules_for(provider: &str) -> &'static [ScreenRule] {
 /// 连解析都不做（门必须设在生产端，否则 reader 每 chunk 白跑一遍 VT 状态机）。
 pub(crate) fn provider_supported(provider: &str) -> bool {
     !rules_for(provider).is_empty()
+}
+
+/// CLI 自报 working 时，屏幕能否说明主回合其实已停（见
+/// `AgentPlugin::reported_working_idle_rules`）。按 priority 取首个命中者；没有规则或没有
+/// 命中返回 None（照收自报）。
+///
+/// 返回 state 为 Working 的结果表示命中否决项（主回合确实在跑），宿主据此立即撤销主回合空闲。
+pub(crate) fn evaluate_reported_working(provider: &str, snap: &ScreenSnapshot) -> Option<Detection> {
+    let rules =
+        meowo_agent::resolve(Some(provider)).map_or(&[][..], |plugin| plugin.reported_working_idle_rules());
+    if rules.is_empty() {
+        return None;
+    }
+    let lower: Vec<String> = snap.lines.iter().map(|line| line.to_lowercase()).collect();
+    let title = snap.title.as_deref().unwrap_or("");
+    let lower_title = [title.to_lowercase()];
+    let lower_progress = [snap.progress.as_deref().unwrap_or("").to_lowercase()];
+    let mut best: Option<&ScreenRule> = None;
+    for rule in rules {
+        if best.is_some_and(|winner| winner.priority >= rule.priority) {
+            continue;
+        }
+        if matches_rule(rule, &lower, title, &lower_title, &lower_progress) {
+            best = Some(rule);
+        }
+    }
+    best.map(|rule| Detection {
+        state: rule.state,
+        visible: rule.visible,
+        rule_id: rule.id,
+    })
 }
 
 /// 按 provider 求值。None = 该 provider 没有规则集（不做屏幕检测）。
@@ -429,15 +461,39 @@ fn word_bounded_char(text: &str, set: &str) -> bool {
 const PENDING_IDLE_CONFIRMS: u8 = 3;
 const PENDING_IDLE_CAP: Duration = Duration::from_millis(700);
 
+/// 已发布状态的来源。优先级：CLI 自报（OSC 7501）> 认屏幕规则 > 无规则命中的回退。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum ScreenSource {
+    /// 认屏幕规则命中（plugins/*/screen.rs）。
+    #[default]
+    Rules,
+    /// 一条规则都没命中的回退 idle（[`FALLBACK_RULE_ID`]）。
+    Fallback,
+    /// CLI 通过 OSC 7501 自己报告（meowo_agent::program_status）。
+    Reported,
+}
+
+impl ScreenSource {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Rules => "rules",
+            Self::Fallback => "fallback",
+            Self::Reported => "osc7501",
+        }
+    }
+}
+
 /// 每会话一份的发布门。[`Self::observe`] 返回 Some = 对外发布的状态发生变化。
 #[derive(Default)]
 pub(crate) struct ScreenDebounce {
     published: Option<ScreenState>,
     /// (首次观察到待确认 idle 的时刻, 已确认次数)。
     pending_idle: Option<(Instant, u8)>,
-    /// 当前发布值是否来自无规则命中的回退（[`FALLBACK_RULE_ID`]）。回退 idle 是
-    /// 「什么都没认出来」而非「确认空闲」，前端据此把角标降级为中性点（T-15）。
-    fallback: bool,
+    /// 当前发布值从哪来。回退 idle 是「什么都没认出来」而非「确认空闲」，前端据此把角标
+    /// 降级为中性点（T-15）；CLI 自报的值不过防抖，直接是结论。
+    source: ScreenSource,
+    /// CLI 自报 blocked 时的原因（批准 / 回答 / 登录）；其余情况为 None。
+    kind: Option<meowo_agent::program_status::BlockedKind>,
 }
 
 impl ScreenDebounce {
@@ -447,7 +503,43 @@ impl ScreenDebounce {
 
     /// 当前发布值是否来自回退规则（仅 published() 为 Some 时有意义）。
     pub(crate) fn published_is_fallback(&self) -> bool {
-        self.fallback
+        self.source == ScreenSource::Fallback
+    }
+
+    pub(crate) fn source(&self) -> ScreenSource {
+        self.source
+    }
+
+    pub(crate) fn blocked_kind(&self) -> Option<meowo_agent::program_status::BlockedKind> {
+        self.kind
+    }
+
+    /// CLI 自报的状态：它就是结论，不做 idle 确认（防抖针对的是认屏幕时转圈换帧、清屏瞬间
+    /// 闪出的空屏，自报没有这种中间态）。返回 Some = 状态或 blocked 原因变了，调用方据此
+    /// 刷新看板；只是来源从规则换成自报而结论不变时不算变化。
+    pub(crate) fn publish_reported(
+        &mut self,
+        state: ScreenState,
+        kind: Option<meowo_agent::program_status::BlockedKind>,
+    ) -> Option<ScreenState> {
+        let kind = kind.filter(|_| state == ScreenState::Blocked);
+        let changed = self.published != Some(state) || self.kind != kind;
+        self.pending_idle = None;
+        self.source = ScreenSource::Reported;
+        self.kind = kind;
+        self.published = Some(state);
+        changed.then_some(state)
+    }
+
+    /// 有自报、但认屏幕确凿认出等人的框（见 pty.rs ScreenProbe::screen_blocked_rule）：
+    /// 按 blocked 发布，来源记为认屏幕，阻塞原因未知。
+    pub(crate) fn publish_screen_blocked(&mut self) -> Option<ScreenState> {
+        let changed = self.published != Some(ScreenState::Blocked) || self.kind.is_some();
+        self.pending_idle = None;
+        self.source = ScreenSource::Rules;
+        self.kind = None;
+        self.published = Some(ScreenState::Blocked);
+        changed.then_some(ScreenState::Blocked)
     }
 
     /// 是否有待确认的降级——ticker 据此在内容序号未变时也继续扫描（确认的正是「屏幕
@@ -461,11 +553,18 @@ impl ScreenDebounce {
             Evaluation::Hold { .. } => return None,
             Evaluation::Publish(det) => det,
         };
+        // 从自报退回认屏幕（CLI 清掉了全部记录）时，blocked 原因不再有人担保。
+        self.kind = None;
+        let source = if det.rule_id == FALLBACK_RULE_ID {
+            ScreenSource::Fallback
+        } else {
+            ScreenSource::Rules
+        };
         if self.published == Some(det.state) {
             self.pending_idle = None;
             // 同值再发布（如回退 idle → 带可见证据的 idle）不改变状态，但证据强度
             // 变了——角标的自信度跟着最新一次判定走。
-            self.fallback = det.rule_id == FALLBACK_RULE_ID;
+            self.source = source;
             return None;
         }
         if det.state == ScreenState::Idle
@@ -479,7 +578,7 @@ impl ScreenDebounce {
             }
         }
         self.pending_idle = None;
-        self.fallback = det.rule_id == FALLBACK_RULE_ID;
+        self.source = source;
         self.published = Some(det.state);
         Some(det.state)
     }

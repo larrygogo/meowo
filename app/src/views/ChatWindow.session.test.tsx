@@ -770,15 +770,61 @@ describe("ChatWindow", () => {
     });
     render(<ChatWindow />);
 
-    expect(await screen.findByRole("button", { name: "允许一次" })).toBeTruthy();
-    // Claude 的 hook 与 TUI 会竞速出现；RuntimeRequest 统一后仍由屏幕卡接管，不能双卡。
+    expect(await screen.findByText("hook 同步审批")).toBeTruthy();
+    // 等屏幕识别认出终端里的审批框（下面那条超时用例证明它在这个时限内认得出），再看谁的卡在场。
+    await act(() => new Promise((resolve) => setTimeout(resolve, 500)));
+    expect(screen.getByText("hook 同步审批")).toBeTruthy();
+    // Claude 的 hook 与 TUI 会竞速出现，只出一张卡，而且是 broker 那张：屏幕卡落键后 broker 扣着的
+    // hook 请求没人结算，工具跑多久侧栏就挂多久「待批准」（2026-11-26 dev 实测）。
+    expect(screen.getAllByRole("button", { name: "允许一次" })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "允许并记住 · cargo build *" })).toBeNull();
+    expect(screen.queryByText("该请求来自非托管会话，请在原终端中处理")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "允许一次" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("respond_runtime_request", {
+      sessionId: 45, requestId: "hook-45", choice: "allow_once",
+    }));
+    expect(invoke.mock.calls.some(([command]) => command === "write_managed_terminal")).toBe(false);
+  });
+
+  it("broker 审批超时交还终端后，屏幕上的审批框接管成屏幕卡", async () => {
+    window.history.replaceState({}, "", "/?sessionId=46");
+    const prompt = [
+      "\x1b[2JBash command",
+      "cargo build -p meowo-agent -p meowo-store 2>&1 | tail -20",
+      "Build rust crates",
+      "This command requires approval",
+      "Do you want to proceed?",
+      "> 1. Yes",
+      "  2. Yes, and don't ask again for: cargo build *",
+      "  3. No",
+    ].join("\r\n");
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 46, title: "托管命令审批", status: "waiting", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: "approval", items: [],
+      });
+      if (command === "pending_interaction") return Promise.resolve({
+        approval: null,
+        question: null,
+        runtimeRequests: [{
+          sessionId: 46, requestId: "hook-46", provider: "claude", kind: "approval", status: "expired",
+          toolName: "Bash", description: "hook 同步审批", input: "{}", permissionSuggestions: [],
+          responseCapability: { type: "broker_live" },
+        }],
+      });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
+      if (command === "managed_terminal_snapshot") return Promise.resolve({
+        sessionId: 46, active: true, managed: true, data: btoa(prompt), startOffset: 0, endOffset: prompt.length,
+        exited: false, exitCode: null,
+      });
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+
+    expect(await screen.findByRole("button", { name: "允许并记住 · cargo build *" })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "允许一次" })).toHaveLength(1);
     expect(screen.queryByText("hook 同步审批")).toBeNull();
-    expect(screen.getByRole("button", { name: "允许并记住 · cargo build *" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "拒绝" })).toBeTruthy();
-    expect(screen.getByText(/cargo build -p meowo-agent/)).toBeTruthy();
     expect(screen.getByText("Do you want to proceed?")).toBeTruthy();
-    expect(screen.queryByText("该请求来自非托管会话，请在原终端中处理")).toBeNull();
   });
 
   /**
@@ -1226,6 +1272,35 @@ describe("ChatWindow", () => {
     }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "允许一次" })).toBeNull());
     expect(screen.queryByText("该请求来自非托管会话，请在原终端中处理")).toBeNull();
+  });
+
+  // 自己在卡上放行时，后端结算发的 pending-approval-cleared 常比 respond 的返回先到。卡还挂着，
+  // 不能当成「在别处处理」提示出来（2026-11-26 dev 实测，每次放行都冒一句）。
+  it("卡上放行时 cleared 事件先于 respond 返回，不提示「已在别处处理」", async () => {
+    window.history.replaceState({}, "", "/?sessionId=14");
+    const request = {
+      sessionId: 14, requestId: "request-14", provider: "claude", toolName: "Bash",
+      description: "跑构建", input: "{\"command\":\"cargo build\"}", permissionSuggestions: [],
+    };
+    let pending: unknown = request;
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 14, title: "审批", status: "running", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: "approval", items: [],
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: pending, question: null });
+      if (command === "respond_runtime_request") {
+        pending = null;
+        eventListeners.get("pending-approval-cleared")?.({ payload: request });
+        return Promise.resolve();
+      }
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    expect(await screen.findByText("跑构建")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "允许一次" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "允许一次" })).toBeNull());
+    expect(screen.queryByText(zh.chat.approvalClearedNotice)).toBeNull();
   });
 
   /**

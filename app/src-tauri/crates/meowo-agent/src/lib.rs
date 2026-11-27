@@ -47,6 +47,7 @@ pub mod lead_paths;
 pub mod plugins;
 pub mod ports;
 pub mod profile;
+pub mod program_status;
 pub mod proxy;
 pub mod registry;
 pub mod relay;

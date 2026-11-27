@@ -143,6 +143,8 @@ struct LiveSignals {
     /// 托管 PTY 的屏幕状态(见 ChatHistoryDto.screen_state),纯内存查表。
     screen_state: Option<&'static str>,
     screen_assumed: bool,
+    /// CLI 自报 blocked 的原因（见 ChatHistoryDto.screen_blocked_kind）。
+    screen_blocked_kind: Option<&'static str>,
 }
 
 /// transcript 采样(错误徽标 + agent 起的标题)的重采样间隔:分析走共享 mtime 缓存,但 agent
@@ -247,6 +249,7 @@ fn load_chat_history(
         ),
         screen_state: live.screen_state.map(str::to_string),
         screen_assumed: live.screen_assumed,
+        screen_blocked_kind: live.screen_blocked_kind.map(str::to_string),
         // 待办由 hook 落库（快照式待办工具），与 transcript 解析无关，故所有 provider 都取。
         todos: store
             .task_id_of_session_pub(session_id)
@@ -663,6 +666,7 @@ pub(crate) async fn get_chat_history(
                 broker_approval,
                 screen_state: screen_sight.map(|sight| sight.state),
                 screen_assumed: screen_sight.is_some_and(|sight| sight.fallback),
+                screen_blocked_kind: screen_sight.and_then(|sight| sight.blocked_kind),
             },
             session_id,
             ChatRead {
@@ -691,6 +695,7 @@ pub(crate) fn session_snapshot(state: &super::AppState, session_id: i64) -> Opti
             broker_approval: state.ptys.pending_approval(session_id).is_some(),
             screen_state: screen_sight.map(|sight| sight.state),
             screen_assumed: screen_sight.is_some_and(|sight| sight.fallback),
+            screen_blocked_kind: screen_sight.and_then(|sight| sight.blocked_kind),
         },
         session_id,
         ChatRead {
@@ -1290,6 +1295,7 @@ mod tests {
                     runtimes: Default::default(),
                     screen_state: None,
                     screen_assumed: false,
+                    screen_blocked_kind: None,
                 },
                 id,
                 ChatRead::default(),
@@ -1341,6 +1347,7 @@ mod tests {
                     runtimes: Default::default(),
                     screen_state: None,
                     screen_assumed: false,
+                    screen_blocked_kind: None,
                 },
                 id,
                 ChatRead::default(),

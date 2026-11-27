@@ -50,6 +50,12 @@ screenState: string | null,
  */
 screenAssumed: boolean, 
 /**
+ * CLI 经 OSC 7501 自报 blocked 时的原因："permission"（等批准）/ "question"（等回答）/
+ * "auth"（等登录）。认屏幕得出的 blocked 没有原因，为 None。屏幕上还没认出卡、hook 也没
+ * 报待处理时，对话页据此先拦住发送并说清在等什么（正文打进终端里的框会丢）。
+ */
+screenBlockedKind?: string, 
+/**
  * 最近一轮以错误收场（transcript 分析口径，与侧栏/贴纸的 `LiveItem.errored` 同源）。
  * 五家都报：claude / kimi / antigravity 的分析解析器本来就有，codex 与 opencode 的错误判据
  * 与各自时间线的错误卡共用一个函数。

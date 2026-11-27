@@ -84,6 +84,15 @@ pub(crate) struct ScreenDetectExplain {
     provider: String,
     /// 防抖后对外发布的状态（卡片显示的那个）。
     published: Option<&'static str>,
+    /// 已发布状态的来源："osc7501"（CLI 自报）/ "rules"（认屏幕）/ "fallback"（无规则命中）。
+    /// 离线快照恒为 None。
+    published_source: Option<&'static str>,
+    /// CLI 自报 blocked 时的原因（permission / question / auth）。
+    blocked_kind: Option<&'static str>,
+    /// CLI 经 OSC 7501 自报的情况：全部记录（根记录 id 为 ""，含来源 app 与最后更新时间）、
+    /// 应答过几次探测、认屏幕压过自报的分歧。有根记录时它压过下面的规则判定（等人的框
+    /// 除外）；离线快照为空。
+    reported: crate::pty::ProgramDiagnosticsDto,
     /// 现场对当前屏重跑规则的原始判定（未过防抖）。
     raw_state: Option<&'static str>,
     matched_rule: &'static str,
@@ -96,7 +105,8 @@ pub(crate) struct ScreenDetectExplain {
 fn explain_snapshot(
     provider: String,
     snapshot: crate::detect::ScreenSnapshot,
-    published: Option<&'static str>,
+    published: Option<crate::pty::ScreenSight>,
+    reported: crate::pty::ProgramDiagnosticsDto,
 ) -> ScreenDetectExplain {
     let (raw_state, matched_rule) = match crate::detect::evaluate(&provider, &snapshot) {
         Some(crate::detect::Evaluation::Publish(det)) => (Some(det.state.as_str()), det.rule_id),
@@ -105,7 +115,10 @@ fn explain_snapshot(
     };
     ScreenDetectExplain {
         provider,
-        published,
+        published: published.map(|sight| sight.state),
+        published_source: published.map(|sight| sight.source.as_str()),
+        blocked_kind: published.and_then(|sight| sight.blocked_kind),
+        reported,
         raw_state,
         matched_rule,
         title: snapshot.title,
@@ -123,11 +136,9 @@ pub(crate) async fn screen_detect_explain(
         let (snapshot, provider) = ptys
             .screen_probe_snapshot(session_id)
             .ok_or("该会话没有托管 PTY 屏幕状态")?;
-        let published = ptys
-            .screen_states()
-            .get(&session_id)
-            .map(|sight| sight.state);
-        Ok(explain_snapshot(provider, snapshot, published))
+        let published = ptys.screen_states().get(&session_id).copied();
+        let reported = ptys.program_diagnostics(session_id);
+        Ok(explain_snapshot(provider, snapshot, published, reported))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -151,7 +162,7 @@ pub(crate) fn screen_detect_explain_text(
     let lines = text.lines().map(str::to_string).collect();
     let snapshot = crate::detect::ScreenSnapshot::new(lines, title);
     // 离线快照没有「已发布状态」：那是防抖后的运行时产物，与单帧无关。
-    explain_snapshot(provider, snapshot, None)
+    explain_snapshot(provider, snapshot, None, Default::default())
 }
 
 #[cfg(test)]
@@ -189,6 +200,49 @@ mod screen_explain_tests {
             screen_detect_explain_text("not-an-agent".into(), "whatever".into(), None);
         assert_eq!(unsupported.raw_state, None);
         assert_eq!(unsupported.matched_rule, "provider_unsupported");
+    }
+
+    /// 在线诊断要能回答「这个状态是 CLI 自己说的还是认屏幕认出来的」：自报时同时给出
+    /// 来源、等待原因与全部记录（含继承来的 app 和更新时间），屏幕重判结果照旧附上做对照。
+    #[test]
+    fn live_explain_shows_reported_records_and_source() {
+        let snapshot = crate::detect::ScreenSnapshot::new(vec!["  working…".into()], None);
+        let sight = crate::pty::ScreenSight {
+            state: "blocked",
+            fallback: false,
+            retry: None,
+            source: crate::detect::ScreenSource::Reported,
+            blocked_kind: Some("permission"),
+        };
+        let records = crate::pty::ProgramDiagnosticsDto {
+            records: vec![crate::pty::ProgramRecordDto {
+            id: String::new(),
+            state: "blocked",
+            kind: Some("permission"),
+            progress: None,
+            app: Some("claude-code".into()),
+            title: None,
+            msg: Some("approve Write: a.txt".into()),
+            updated_ms: 1_795_674_160_661,
+            }],
+            probe_replies: 1,
+            last_probe_ms: Some(1_795_674_160_000),
+            screen_override_rule: None,
+            screen_overrides: 0,
+            main_idle_rule: None,
+        };
+        let explain = explain_snapshot("claude".into(), snapshot, Some(sight), records);
+        let json = serde_json::to_value(&explain).unwrap();
+        assert_eq!(json["published"], "blocked");
+        assert_eq!(json["published_source"], "osc7501");
+        assert_eq!(json["blocked_kind"], "permission");
+        assert_eq!(json["reported"]["records"][0]["app"], "claude-code");
+        assert_eq!(json["reported"]["records"][0]["msg"], "approve Write: a.txt");
+        assert_eq!(json["reported"]["records"][0]["updated_ms"], 1_795_674_160_661_i64);
+        assert_eq!(json["reported"]["probe_replies"], 1);
+        assert!(json["reported"]["main_idle_rule"].is_null());
+        // 屏幕重判仍附上：两者不一致时一眼看出是谁在说话。
+        assert!(json["matched_rule"].is_string());
     }
 }
 

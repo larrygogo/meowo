@@ -37,6 +37,10 @@ export type CardLockInput = {
   pendingReview: "question" | "plan" | "approval" | null;
   /// 刚发出菜单命令、终端菜单还开着。
   terminalMenuOpen: boolean;
+  /// CLI 自己报告（OSC 7501）在等人："permission" / "question" / "auth"。屏幕上还没认出卡、
+  /// hook 也没报待处理时（CLI 自己弹的框、Codex/Kimi 的信任确认），终端里同样摆着一个等按键
+  /// 的框，正文打进去会丢，所以同样要拦。排在最后：其余来源都更具体。
+  reportedBlocked?: string | null;
 };
 
 export type CardLockReason = "approval" | "question" | "prompt" | "menu";
@@ -57,8 +61,18 @@ export function composerCardLock(input: CardLockInput): CardLock {
     : input.terminalMenuOpen ? "menu"
     : input.brokerQuestion || input.pendingReview === "question" ? "question"
     : input.pendingReview ? "approval"
-    : null;
+    : reportedBlockedReason(input.reportedBlocked);
   return { send: reason !== null, controls, reason };
+}
+
+/// CLI 自报的阻塞原因在锁定规则里算哪一类：批准是审批，回答是提问，登录是提示；没有或认不出的原因不锁。
+function reportedBlockedReason(kind: string | null | undefined): CardLockReason | null {
+  switch (kind) {
+    case "permission": return "approval";
+    case "question": return "question";
+    case "auth": return "prompt";
+    default: return null;
+  }
 }
 
 /// 屏幕上认出的请求在锁定规则里算哪一类：审批与计划批准是审批，提问是提问，其余是提示。

@@ -319,6 +319,9 @@ impl AgentPlugin for Claude {
     fn screen_rules(&self) -> &'static [crate::screen::ScreenRule] {
         screen::RULES
     }
+    fn reported_working_idle_rules(&self) -> &'static [crate::screen::ScreenRule] {
+        screen::REPORTED_WORKING_IDLE
+    }
     fn cross_account_session(&self) -> Option<&'static crate::profile::CrossAccountSession> {
         Some(&CROSS_ACCOUNT)
     }
