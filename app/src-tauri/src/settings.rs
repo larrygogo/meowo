@@ -41,6 +41,11 @@ fn default_session_open_in() -> String {
 }
 /// 卡片菜单（星标/重命名/归档等）触发方式：button = 卡片上的常显菜单按钮（默认），
 /// context = 右键菜单，两者二选一。
+/// 切换账号时运行中的会话：ask = 每次问（默认，Orca 的缺省同样是 ask）。
+fn default_profile_switch_running() -> String {
+    "ask".into()
+}
+
 fn default_card_menu_mode() -> String {
     "button".to_string()
 }
@@ -189,6 +194,11 @@ pub(crate) struct Settings {
     /// 卡片菜单触发方式：button = 卡片菜单按钮（默认），context = 右键菜单。兼容老 settings.json。
     #[serde(default = "default_card_menu_mode")]
     pub(crate) card_menu_mode: String,
+    /// 切换账号时运行中的会话怎么办：ask = 每次问 / restart = 直接重启到新账号 / keep = 留在原账号。
+    /// 照 Orca 的 `claudeAccountSwitchRunningSessions`（2026-11-27 leader 决定多账号完全照 Orca）。
+    /// 由前端在切换后执行（桌面设置页与手机端同一份判断），兼容老 settings.json（缺席 → ask）。
+    #[serde(default = "default_profile_switch_running")]
+    pub(crate) profile_switch_running: String,
     /// 是否显示卡片 hover「轻推」预览（最近一条 AI 正文）。缺省开启，兼容老 settings.json。
     #[serde(default = "default_true")]
     pub(crate) preview_enabled: bool,
@@ -355,6 +365,7 @@ impl Default for Settings {
             terminal_open_mode: default_terminal_open_mode(),
             session_open_in: default_session_open_in(),
             card_menu_mode: default_card_menu_mode(),
+            profile_switch_running: default_profile_switch_running(),
             preview_enabled: true,
             click_through_enabled: false,
             browser_agent: true,

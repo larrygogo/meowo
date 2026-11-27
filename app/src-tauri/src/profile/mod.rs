@@ -13,6 +13,8 @@ use std::path::PathBuf;
 use meowo_agent::WiringContext;
 
 mod share;
+mod share_link;
+mod share_sync;
 
 /// 一个自定义 profile。默认账号**不在**这个列表里。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -177,19 +179,79 @@ pub(crate) fn existing_data_dirs(agent: &str) -> Vec<PathBuf> {
         .collect()
 }
 
-/// 把默认账号里用户自己装的东西带进这个账号：skill（链接共享，见 [`share`]）与 Lead 工作流。
+/// 把默认账号里用户自己装的东西带进这个账号：[`sync_shared`] 的全部内容，外加 Lead 工作流。
 ///
 /// 建号时与每次启动（[`crate::setup`] 的 profile 接线）各调一次——后者负责补上老账号，
-/// 以及用户在默认目录里新装的 skill。best-effort：失败只留日志，不影响建号与接线。
+/// 以及用户在默认目录里新装的东西。best-effort：失败只留日志，不影响建号与接线。
 pub(crate) fn sync_user_extensions(agent: &str, id: &str) {
-    let (Some(home), Some(dir)) = (data_dir(agent, None), data_dir(agent, Some(id))) else {
+    sync_shared(agent, id);
+    if agent == meowo_agent::id::CLAUDE.as_str() {
+        if let Some(dir) = data_dir(agent, Some(id)) {
+            crate::lead::install_into_profile_if_enabled(&dir);
+        }
+    }
+}
+
+/// 把默认账号里用户配置的东西同步进这个账号：该 agent 在 [`meowo_agent::ProfileSpec::share`] 里
+/// 声明的条目（Claude 照 Orca 共享整个默认目录与会话历史，见 [`share_sync`]）；没有整目录共享的
+/// agent 另外逐个链接 skill（见 [`share`]）。
+///
+/// 除建号和启动外，**每次在该账号里拉起 agent 之前**也调一次（见
+/// [`crate::terminal::prepare_launch_profile`]）：用户在默认目录里改了设置，下一个会话就能用上。
+/// 无变化时只读不写。best-effort：失败只留日志，绝不挡住会话启动。
+pub(crate) fn sync_shared(agent: &str, id: &str) {
+    let Some(plugin) = meowo_agent::by_id(agent) else { return };
+    let (Some(default_data), Some(profile_data)) = (data_dir(agent, None), data_dir(agent, Some(id))) else {
         return;
     };
-    if let Err(e) = share::share_skills(&home, &dir) {
-        eprintln!("Meowo profile[{agent}/{id}]: 共享 skill 未完成：{e}");
+    // 账号目录不在（用户手删了？）：不凭空建出一个空账号。
+    if !profile_data.is_dir() {
+        return;
     }
-    if agent == meowo_agent::id::CLAUDE.as_str() {
-        crate::lead::install_into_profile_if_enabled(&dir);
+    let started = std::time::Instant::now();
+    let surfaces = plugin.profile().map(|spec| spec.share).unwrap_or_default();
+    // 整个默认目录都共享的 agent（Claude），skills/ 本身就是链接：再逐个建 skill 链接会建进
+    // 默认目录里、指向它自己。
+    let shares_all = surfaces
+        .iter()
+        .any(|s| matches!(s, meowo_agent::profile::ShareSurface::AllEntries { .. }));
+    if !shares_all {
+        if let Err(e) = share::share_skills(&default_data, &profile_data) {
+            eprintln!("Meowo profile[{agent}/{id}]: 共享 skill 未完成：{e}");
+        }
+    }
+    let Some(home) = meowo_agent::home_dir() else { return };
+    let record = profile_root(agent, id).join(share_sync::RECORD_FILE);
+    let report = share_sync::sync(
+        surfaces,
+        &share_sync::SyncDirs {
+            home: &home,
+            default_data: &default_data,
+            profile_data: &profile_data,
+            record: &record,
+        },
+    );
+    for line in &report.changed {
+        eprintln!("Meowo profile[{agent}/{id}]: {line}");
+    }
+    for line in &report.errors {
+        eprintln!("Meowo profile[{agent}/{id}]: 同步未完成：{line}");
+    }
+    let elapsed = started.elapsed();
+    if !report.changed.is_empty() || elapsed > std::time::Duration::from_millis(50) {
+        eprintln!("Meowo profile[{agent}/{id}]: 同步默认账号配置用时 {} ms", elapsed.as_millis());
+    }
+    // settings.json 改写过：默认改了 hooks/statusLine 时账号里的会被整份替换（Orca 的规则），
+    // Meowo 接的线可能随之没了或指向默认账号的写法，重新接一次。只在改写时做（接线可能要探 CLI 版本）。
+    if report.rewritten.contains(&"settings.json") {
+        if let Some(agent_id) = meowo_agent::by_id(agent).map(|p| p.id()) {
+            if let Some(reason) = wire_profile(agent_id, id) {
+                eprintln!("Meowo profile[{agent}/{id}]: 同步后重新接线未生效（{reason:?}）");
+            }
+        }
+        if agent == meowo_agent::id::CLAUDE.as_str() {
+            crate::lead::install_into_profile_if_enabled(&profile_data);
+        }
     }
 }
 
@@ -239,6 +301,9 @@ pub(crate) const ACTIVE_PROFILE_CHANGED: &str = "active-profile-changed";
 
 fn notify_active_profile_changed(app: &tauri::AppHandle, provider: &str) {
     use tauri::Emitter;
+    if provider == meowo_agent::id::CLAUDE.as_str() {
+        crate::shell_claude::write_pointer();
+    }
     crate::account::forget_profile_usage(provider);
     let _ = app.emit(ACTIVE_PROFILE_CHANGED, provider);
 }
@@ -630,7 +695,7 @@ fn merge_dir_no_overwrite(src: &std::path::Path, dst: &std::path::Path) -> Resul
 /// - 真分叉（两边各自长出了内容）→ 目标不动，源侧完整存为 `.merge-conflict.bak`
 ///   侧车。合并后删除 profile 目录不再可能销毁唯一副本；`.bak` 不以 `.jsonl` 结尾，
 ///   不会被 claude 的 transcript 扫描（按 `<sid>.jsonl` 命名）误认。
-fn merge_jsonl_no_loss(from: &std::path::Path, to: &std::path::Path) -> Result<(), String> {
+pub(super) fn merge_jsonl_no_loss(from: &std::path::Path, to: &std::path::Path) -> Result<(), String> {
     let read = |p: &std::path::Path| {
         std::fs::read(p)
             .map_err(|e| coded("profile/read-file-failed", format!("{}: {e}", p.display())))

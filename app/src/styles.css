@@ -3472,6 +3472,22 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
   line-height: 1.5;
 }
 
+/* 「切换后运行中的会话」设置行：文字在左、下拉在右，与设置页其它行同一排法。 */
+.profile-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+}
+.profile-switch-text {
+  min-width: 0;
+}
+.profile-switch-label {
+  font-size: var(--text-sm);
+  color: var(--cc-text);
+}
+
 /* 动作菜单里的危险项（删除账号）：连目录一起抹掉且不可逆，值得一眼看出来。 */
 .dd-item-danger { color: var(--cc-err); }
 /* 触屏点过会一直留着 :hover：菜单与下拉的悬停底色只在有悬停能力的指针下给（第四轮 L5，同 C4）。 */

@@ -73,6 +73,7 @@ pub mod profile;
 mod session_command;
 mod session_query;
 mod session_settings;
+mod shell_claude;
 mod shell_terminal;
 mod snap_layout;
 mod terminal;

@@ -90,6 +90,114 @@ pub struct ProfileSpec {
     /// （opencode 的是相对 home 的 `~/.local/share/opencode/auth.json`），而 profile 模式下整个
     /// 数据目录都被搬走了，那条路径不再成立。两者描述的是不同世界，硬要合并只会拼出错误的路径。
     pub creds_rel: &'static str,
+    /// 默认账号里哪些东西要带进每个账号（规则文件、设置、MCP、插件清单……）。宿主按声明
+    /// 执行同步，见 [`ShareSurface`]。凭据、会话、运行时状态一概不在这里声明。
+    pub share: &'static [ShareSurface],
+}
+
+/// 默认账号里**用户配置的东西**带进每个账号的一种方式。照 Orca（stablyai/orca c1bd89d 的
+/// `claude-profile-*`、`merged-directory-link.ts`）的多账号做法（2026-11-27 leader 决定完全照做）。
+///
+/// # 为什么要有
+///
+/// profile 把 agent 的整个数据目录搬走后，agent 只读 profile 目录：用户在默认目录里写的全局
+/// 规则、设置、用户级 MCP、自建命令、装的插件在新账号下全部消失，而且零报错（2026-11-27 对比
+/// 本机真实账号目录：language/model/env/用户 hooks/kimi-cu MCP/CLAUDE.md/keybindings 全缺）。
+///
+/// # 同步规则（Orca 的 `syncClaudeProfileSettings`，宿主对所有按条目同步的形态统一执行）
+///
+/// 每个条目记下上次同步时默认值的摘要 R：
+/// - 默认当前值的摘要等于 R：默认没变过，账号保持原样（账号自己改的值，如 `/model`，得以保留）；
+/// - 否则：账号的这个条目改成默认的（默认删了就删）。
+///
+/// 没有记录时（首次）所有条目都按「默认改过」处理，账号与默认一致（Meowo 在首次改写前备份）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShareSurface {
+    /// Orca 的 Claude 做法：默认目录里每个条目都共享，排除运行时状态。目录建链接（Windows
+    /// junction）；账号里已有非空真实目录时并进默认目录再建链接（同名冲突留在
+    /// `<目录>.meowo-profile-merge`，不删）；文件复制（默认改了就覆盖），`import` 里的文件改成
+    /// 一行引用。以 `.` 开头的条目不共享。
+    AllEntries {
+        /// 不共享的条目名（Orca 的 `CLAUDE_RUNTIME_STATE_ENTRIES` 加上走专门路径的那几个）。
+        exclude: &'static [&'static str],
+        /// 以这些前缀开头的条目不共享（守护进程文件、按目录的 agent 记忆）。
+        exclude_prefixes: &'static [&'static str],
+        /// 写成一行引用 `@<默认目录里的同名文件>` 的文件。
+        ///
+        /// Claude 的 CLAUDE.md：实测（假 API 截获系统提示，2.1.332）复制全文会在家目录下的项目里
+        /// 加载两次（祖先目录遍历还会读到 `~/.claude/CLAUDE.md`），引用则家目录内外都恰好一次。
+        import: &'static [&'static str],
+    },
+    /// 会话历史目录：并进默认目录后改成链接，所有账号看到同一批会话（leader 在关卡 B 授权）。
+    /// 同一会话两边都有时不覆盖：`*.jsonl` 走「并回默认」的无损消解，其余冲突留在待合并目录。
+    HistoryDirs { dirs: &'static [&'static str] },
+    /// 输入历史（↑ 翻到的提示词）：账号的条目去重并进默认文件，账号里换成指向同一文件的硬链接；
+    /// 链接被 CLI 改写断开后，下次同步再并一次再链。
+    PromptHistory { file: &'static str },
+    /// 目录里逐条共享：子目录建链接，文件按上面的规则复制（默认删了的也删）。
+    Entries {
+        /// 相对数据目录。
+        dir: &'static str,
+        /// 不共享的条目名。以 `.` 开头的条目一律不共享。
+        skip: &'static [&'static str],
+    },
+    /// 单个文件按上面的规则复制。
+    File {
+        /// 相对数据目录。
+        path: &'static str,
+    },
+    /// 结构化文件里某一层对象按键同步：每个键是一个条目。
+    Keys {
+        /// 账号侧文件，相对数据目录。
+        file: &'static str,
+        format: ShareFormat,
+        /// 对象所在的层级。空 = 顶层。
+        at: &'static [&'static str],
+        pick: SharePick,
+        /// 首次同步（没有记录）时，账号这一层与默认完全一致：账号独有的键也删掉。Orca 对
+        /// settings.json 就是这样（「Without a record the default home wins whole」）；按服务器、
+        /// 按项目合并的层（MCP、目录信任）设 false，账号自己加的保留。
+        exact_first: bool,
+    },
+    /// Claude 的 `.claude.json`：照 Orca `claude-profile-state.ts` 每次把默认里的用户配置叠到账号上
+    /// （不记录、不删除）。白名单键直接取默认的值；`mcpServers` 按服务器合并（默认的覆盖同名，
+    /// 账号独有的保留）；每个项目只叠 `project_keys`，账号已信任的目录保持信任；
+    /// `hasCompletedOnboarding` 只在账号没有时补上；`customApiKeyResponses.rejected` 取并集。
+    /// 账号身份（`oauthAccount`、`userID`…）和缓存不在白名单里，永远不动。写之前拿 Claude 的
+    /// 配置锁（proper-lockfile 的 `<文件>.lock` 目录，Claude 频繁改写它）。
+    ClaudeState {
+        /// 账号侧文件，相对数据目录。
+        file: &'static str,
+        /// 默认账号的文件，相对 home（`~/.claude.json` 在 home 根上）。
+        default_from_home: &'static str,
+        keys: &'static [&'static str],
+        project_keys: &'static [&'static str],
+    },
+}
+
+/// 结构化文件的格式。TOML 写回时保留账号文件里的注释与键序。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShareFormat {
+    Json,
+    Toml,
+}
+
+/// [`ShareSurface::Keys`] 取哪些键。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SharePick {
+    All,
+    Only(&'static [&'static str]),
+    Except(&'static [&'static str]),
+}
+
+impl SharePick {
+    pub fn includes(&self, key: &str) -> bool {
+        match self {
+            SharePick::All => true,
+            SharePick::Only(keys) => keys.contains(&key),
+            SharePick::Except(keys) => !keys.contains(&key),
+        }
+    }
 }
 
 impl ProfileSpec {

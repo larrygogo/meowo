@@ -18,6 +18,7 @@ import {
   type ProfileView,
   type ResumeTerminal,
   type Settings,
+  type ProfileSwitchRunning,
 } from "../../api";
 import {
   getAccounts,
@@ -923,6 +924,8 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsLogi
         <ProfileList
           provider={provider}
           movesSessionsAcrossAccounts={movesSessionsAcrossAccounts}
+          switchRunning={settings?.profile_switch_running ?? "ask"}
+          onSwitchRunningChange={(v) => void patchSettings({ profile_switch_running: v })}
           onChanged={profilesChanged}
           viewingProfile={viewingProfile}
           onViewUsage={viewProfile}
@@ -944,10 +947,13 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsLogi
 /** 默认账号在前端的行 key —— 后端给的 id 是 `null`（它不在 settings.profiles 里）。 */
 const DEFAULT_KEY = "__default__";
 
-function ProfileList({ provider, movesSessionsAcrossAccounts, onChanged, viewingProfile, onViewUsage, loginState, onStartLogin, onCancelLogin }: {
+function ProfileList({ provider, movesSessionsAcrossAccounts, switchRunning, onSwitchRunningChange, onChanged, viewingProfile, onViewUsage, loginState, onStartLogin, onCancelLogin }: {
   provider: AgentId;
-  /** 见 ProviderCard 同名 prop：决定切换后要不要问「运行中的会话也重启过去吗」。 */
+  /** 见 ProviderCard 同名 prop：决定切换后要不要处理「运行中的会话」。 */
   movesSessionsAcrossAccounts: boolean;
+  /** 设置「切换后运行中的会话」：每次问 / 直接重启 / 留在原账号（照 Orca）。 */
+  switchRunning: ProfileSwitchRunning;
+  onSwitchRunningChange: (v: ProfileSwitchRunning) => void;
   onChanged: () => void;
   /** null = 正在看 active；仅决定用量按钮的按下态，不改变 active。 */
   viewingProfile: ProfileView | null;
@@ -1074,14 +1080,19 @@ function ProfileList({ provider, movesSessionsAcrossAccounts, onChanged, viewing
       // 搬不了会话的 agent 不必问后端：它恒为 0（后端同样先判这一条）。
       if (!movesSessionsAcrossAccounts) return;
       // 必须切完再问：判据是「和当前活跃账号不同」。
+      // 设成「留在原账号」：只切设置，不碰运行中的会话。
+      if (switchRunning === "keep") return;
       const running = await sessionsOffActiveProfileCount(provider);
       if (running === 0) return;
-      const ok = await appConfirm(t.account.switchRestartConfirm(running), {
-        title: t.account.switchProfile,
-        // 会杀进程（正在生成的那一轮回答会丢），按危险操作办。
-        danger: true,
-        confirmLabel: t.account.switchRestartConfirmLabel,
-      });
+      // 「直接重启」是用户在设置里预先给的答复，不再弹确认。
+      const ok =
+        switchRunning === "restart" ||
+        (await appConfirm(t.account.switchRestartConfirm(running), {
+          title: t.account.switchProfile,
+          // 会杀进程（正在生成的那一轮回答会丢），按危险操作办。
+          danger: true,
+          confirmLabel: t.account.switchRestartConfirmLabel,
+        }));
       if (!ok) return;
       // 重启失败不该连累账号切换：设置已经写进去了，账号列表照常刷新，错误就地显示。
       await applyActiveProfileToSessions(provider).catch((e) =>
@@ -1303,9 +1314,25 @@ function ProfileList({ provider, movesSessionsAcrossAccounts, onChanged, viewing
       <div className="profile-hint">{t.account.addProfileHint}</div>
       {/* 覆盖面明示：切换本身只改设置（后端 profile/mod.rs 的既定行为，此前 UI 零提示）。
           会话能跟着搬的 agent 另说一句——它切完会问要不要把运行中的会话重启过去。 */}
-      <div className="profile-hint">
-        {movesSessionsAcrossAccounts ? t.account.switchCoverageRestart : t.account.switchCoverage}
-      </div>
+      {movesSessionsAcrossAccounts ? (
+        <div className="profile-switch-row" data-testid={"profile-switch-running-" + provider}>
+          <div className="profile-switch-text">
+            <div className="profile-switch-label">{t.account.switchRunningLabel}</div>
+            <div className="profile-hint">{t.account.switchRunningDesc}</div>
+          </div>
+          <Dropdown
+            value={switchRunning}
+            options={[
+              { value: "ask" as const, label: t.account.switchRunningAsk },
+              { value: "restart" as const, label: t.account.switchRunningRestart },
+              { value: "keep" as const, label: t.account.switchRunningKeep },
+            ]}
+            onChange={onSwitchRunningChange}
+          />
+        </div>
+      ) : (
+        <div className="profile-hint">{t.account.switchCoverage}</div>
+      )}
       {err && <div className="agent-install-error">{err}</div>}
     </div>
   );

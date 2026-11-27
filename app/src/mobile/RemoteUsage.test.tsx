@@ -10,6 +10,7 @@ const api = vi.hoisted(() => ({
   setActiveProfile: vi.fn(),
   sessionsOffActiveProfileCount: vi.fn(),
   applyActiveProfileToSessions: vi.fn(),
+  getSettings: vi.fn(),
 }));
 const confirm = vi.hoisted(() => ({ appConfirm: vi.fn() }));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), ...api }));
@@ -51,6 +52,7 @@ describe("RemoteUsage", () => {
     api.setActiveProfile.mockResolvedValue(undefined);
     api.sessionsOffActiveProfileCount.mockResolvedValue(0);
     api.applyActiveProfileToSessions.mockResolvedValue(0);
+    api.getSettings.mockResolvedValue({ profile_switch_running: "ask" });
     confirm.appConfirm.mockResolvedValue(true);
   });
   afterEach(() => {
@@ -224,6 +226,32 @@ describe("RemoteUsage", () => {
       const list = within(await screen.findByRole("group", { name: "Claude 账号" }));
       await waitFor(() => expect(list.getByRole("button", { name: "切换到默认账号" })).toBeTruthy());
       expect(list.queryByRole("button", { name: "切换到工作" })).toBeNull();
+    });
+
+    it("切换：与桌面同一份设置，直接重启不问、留在原账号不重启", async () => {
+      api.getAccounts.mockResolvedValue([payload("claude", { usage: usage(30) })]);
+      api.listProfiles.mockResolvedValue(twoProfiles());
+      api.sessionsOffActiveProfileCount.mockResolvedValue(2);
+      api.getSettings.mockResolvedValue({ profile_switch_running: "restart" });
+      const first = render(<RemoteUsage />);
+      fireEvent.click(await screen.findByRole("button", { name: "切换到工作" }));
+      await waitFor(() => expect(api.applyActiveProfileToSessions).toHaveBeenCalledWith("claude"));
+      expect(confirm.appConfirm).not.toHaveBeenCalled();
+      first.unmount();
+
+      vi.clearAllMocks();
+      api.getAccounts.mockResolvedValue([payload("claude", { usage: usage(30) })]);
+      api.listProfiles.mockResolvedValue(twoProfiles());
+      api.setActiveProfile.mockResolvedValue(undefined);
+      api.sessionsOffActiveProfileCount.mockResolvedValue(2);
+      api.getSettings.mockResolvedValue({ profile_switch_running: "keep" });
+      render(<RemoteUsage />);
+      fireEvent.click(await screen.findByRole("button", { name: "切换到工作" }));
+      await waitFor(() => expect(api.setActiveProfile).toHaveBeenCalledWith("claude", "work"));
+      await waitFor(() => expect(api.getAccounts).toHaveBeenCalledTimes(2));
+      expect(api.sessionsOffActiveProfileCount).not.toHaveBeenCalled();
+      expect(confirm.appConfirm).not.toHaveBeenCalled();
+      expect(api.applyActiveProfileToSessions).not.toHaveBeenCalled();
     });
 
     it("切换后丢掉旧账号的用量，自动拉一次新账号的", async () => {

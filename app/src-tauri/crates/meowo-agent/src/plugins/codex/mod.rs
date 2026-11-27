@@ -70,6 +70,38 @@ static PROFILE: crate::profile::ProfileSpec = crate::profile::ProfileSpec {
     envs: &[("CODEX_HOME", "")],
     data_rel: "",
     creds_rel: "auth.json",
+    share: &SHARE,
+};
+
+/// 默认账号里带进每个 codex 账号的东西。照 Orca 的 codex 配置镜像（`codex-config-mirror.ts`）：
+/// `config.toml` 的普通设置同步进账号，但不带 `model_provider`——固定的自定义 provider 会让账号
+/// 新登录的 OAuth 凭据用不上；`hooks`（Meowo 接线写的状态）与 `sqlite_home` 归账号自己。全局
+/// 规则 `AGENTS.md`（codex 只在 `$CODEX_HOME` 读它，项目里的 AGENTS.md 只从 git 根往下找，复制
+/// 不会重复加载）、自定义提示词与 agent 复制过去。会话历史共享（Orca 要迁移 codex 的 SQLite
+/// 库与线程锁）未做，见任务决定记录。
+static SHARE: [crate::profile::ShareSurface; 5] = {
+    use crate::profile::{ShareFormat::Toml, SharePick, ShareSurface as S};
+    [
+        S::File { path: "AGENTS.md" },
+        S::Entries { dir: "prompts", skip: &[] },
+        S::Entries { dir: "agents", skip: &[] },
+        S::Keys {
+            file: "config.toml",
+            format: Toml,
+            at: &[],
+            pick: SharePick::Except(&["model_provider", "hooks", "sqlite_home", "projects"]),
+            exact_first: true,
+        },
+        // 目录信任按项目合并：账号里 codex 自己记下的信任不因默认改了别的项目而丢（Orca 同样
+        // 「保留运行时信任」）。
+        S::Keys {
+            file: "config.toml",
+            format: Toml,
+            at: &["projects"],
+            pick: SharePick::All,
+            exact_first: false,
+        },
+    ]
 };
 
 /// codex 的会话可跨账号继续：resume 只按 `$CODEX_HOME/sessions/**` 找 rollout 文件，

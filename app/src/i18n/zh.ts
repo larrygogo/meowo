@@ -2602,7 +2602,6 @@ export const zh = {
     // 连运行中的会话一起重启；其余 agent 恢复时仍会回到会话原本的账号，只能如实说
     // 「仅对之后的会话生效」。判据是后端下发的能力位，不按 id 分。
     switchCoverage: "仅对之后新建或恢复的会话生效，运行中的会话不变",
-    switchCoverageRestart: "运行中的会话可在切换后重启到新账号，对话内容保留",
     // 进程中途换不了账号：要让运行中的会话也换过去，只能停掉再按新账号恢复（＝用户此前
     // 得手动做的「结束会话 → 恢复」）。杀进程必须先问，故先切设置、再问这一步。
     // 不说这 n 个都在旧账号上：其中可能有本来就跑在目标账号上的（后端会跳过它们），
@@ -2610,6 +2609,12 @@ export const zh = {
     switchRestartConfirm: (n: number) =>
       `账号已切换。要把该 Agent 运行中的 ${n} 个会话也重启到新账号吗？对话内容保留。`,
     switchRestartConfirmLabel: "重启这些会话",
+    // 照 Orca 的同名设置：切换后运行中的会话怎么办。重启时对话内容保留（按会话 id 恢复）。
+    switchRunningLabel: "切换后运行中的会话",
+    switchRunningDesc: "重启时对话内容保留",
+    switchRunningAsk: "每次问",
+    switchRunningRestart: "直接重启",
+    switchRunningKeep: "留在原账号",
     agentsLoadFailed: "无法获取 Agent 名单，请重试",
     switchProfile: "切换到此账号",
     activeProfile: "使用中",

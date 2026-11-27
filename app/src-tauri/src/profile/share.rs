@@ -76,6 +76,37 @@ pub(crate) fn share_skills(home_data: &Path, profile_data: &Path) -> Result<(), 
     }
 }
 
+/// 给共享目录里的一个子目录建链接（[`super::share_sync`] 的目录条目用）。路径含 cmd 特殊字符时
+/// 拒绝，理由同 [`share_skills`]。
+pub(crate) fn link_dir(link: &Path, target: &Path) -> Result<(), String> {
+    if !safe_for_shell(link) || !safe_for_shell(target) {
+        return Err(format!("{}: 名字含命令行特殊字符，未共享", target.display()));
+    }
+    make_dir_link(link, target).map_err(|e| format!("{}: {e}", link.display()))
+}
+
+/// 拆掉 `dst` 下「指向 `src` 里、但已不在 `wanted` 中（或目标已不是目录）」的链接，只拆链接本身。
+/// 用户自己建的、指向别处的链接和真实目录都不碰。
+pub(crate) fn prune_links(dst: &Path, src: &Path, wanted: &[String]) -> Result<(), String> {
+    let Ok(entries) = std::fs::read_dir(dst) else { return Ok(()) };
+    let mut first_error: Option<String> = None;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(target) = link_target(&path) else { continue };
+        if !path_starts_with(&target, src) {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if wanted.contains(&name) && target.is_dir() {
+            continue;
+        }
+        if let Err(e) = remove_dir_link(&path) {
+            first_error.get_or_insert(format!("{}: {e}", path.display()));
+        }
+    }
+    first_error.map_or(Ok(()), Err)
+}
+
 /// 默认目录里该共享的 skill 名（目录，跟随链接判断——用户的 skill 本身常是指向别处的 junction）。
 fn shareable_skills(src: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(src) else {
@@ -139,10 +170,12 @@ fn make_dir_link(link: &Path, target: &Path) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     // 标准库没有建 junction 的 API；mklink /J 不需要管理员权限或开发者模式（目录符号链接要）。
+    // cmd 把路径里的 `/` 当成开关（「Invalid switch」）：拼路径时混进来的 `/` 换成 `\`。
+    let native = |p: &Path| std::ffi::OsString::from(p.to_string_lossy().replace('/', "\\"));
     let out = std::process::Command::new("cmd")
         .args(["/C", "mklink", "/J"])
-        .arg(link)
-        .arg(target)
+        .arg(native(link))
+        .arg(native(target))
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| e.to_string())?;
@@ -160,7 +193,7 @@ fn make_dir_link(link: &Path, target: &Path) -> Result<(), String> {
 
 /// 只删链接本身。Windows 上目录型链接要用 RemoveDirectory（`remove_dir`），它不会进入目标；
 /// unix 上符号链接是文件，`remove_file` 同样只删链接。
-fn remove_dir_link(link: &Path) -> std::io::Result<()> {
+pub(super) fn remove_dir_link(link: &Path) -> std::io::Result<()> {
     #[cfg(windows)]
     {
         std::fs::remove_dir(link)

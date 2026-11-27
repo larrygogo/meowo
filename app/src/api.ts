@@ -1364,6 +1364,8 @@ export type Settings = {
   session_open_in: SessionOpenIn;
   /** 卡片菜单触发方式：button = 卡片菜单按钮（默认）/ context = 右键菜单，二选一。 */
   card_menu_mode: CardMenuMode;
+  /** 切换账号时运行中的会话：ask = 每次问（默认）/ restart = 直接重启到新账号 / keep = 留在原账号。 */
+  profile_switch_running: ProfileSwitchRunning;
   /** 是否在卡片显示对话预览（你的提问 + AI 回复两行）。缺省开启。 */
   preview_enabled: boolean;
   /** 已停用的「点击穿透」（灵动岛上打开会点不动，2026-11-05 移除），只为兼容旧配置保留。 */
@@ -1559,6 +1561,7 @@ export type LangSetting = "auto" | "zh" | "en";
 export type TerminalOpenMode = "card" | "button";
 export type SessionOpenIn = "chat" | "terminal";
 export type CardMenuMode = "context" | "button";
+export type ProfileSwitchRunning = "ask" | "restart" | "keep";
 export type StickerStyle = "elevated" | "flat";
 /** 灵动岛收起时的样式：状态计数 / 最要紧的会话 / 只有色点。 */
 export type IslandCompactStyle = "counts" | "focus" | "minimal";

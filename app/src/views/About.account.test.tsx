@@ -1158,6 +1158,38 @@ describe("AccountSection 多账号", () => {
     expect(api.applyActiveProfileToSessions).not.toHaveBeenCalled();
   });
 
+  /** 设置「切换后运行中的会话」（照 Orca）：直接重启不再弹确认；留在原账号连数都不问。 */
+  it("切账号：设成直接重启时不问，设成留在原账号时不重启", async () => {
+    api.listProfiles.mockResolvedValue([
+      { id: null, name: "", active: true, account: { email: "a@b.c" } },
+      { id: "work", name: "工作", active: false, account: { email: "w@b.c" } },
+    ]);
+    api.sessionsOffActiveProfileCount.mockResolvedValue(2);
+    api.setActiveProfile.mockResolvedValue(undefined);
+    api.getSettings.mockResolvedValue({ sticker_quota_providers: [], profile_switch_running: "restart" });
+    const first = render(<AccountSection />);
+    let row = await screen.findByTestId("profile-claude-work");
+    fireEvent.click(row.querySelector(".profile-row-main")!);
+    await waitFor(() => expect(api.applyActiveProfileToSessions).toHaveBeenCalledWith("claude"));
+    expect(dialog.confirm).not.toHaveBeenCalled();
+    first.unmount();
+
+    api.applyActiveProfileToSessions.mockClear();
+    api.sessionsOffActiveProfileCount.mockClear();
+    api.setActiveProfile.mockClear();
+    api.getSettings.mockResolvedValue({ sticker_quota_providers: [], profile_switch_running: "keep" });
+    render(<AccountSection />);
+    row = await screen.findByTestId("profile-claude-work");
+    // 设置读进来之后再点（与用户的实际顺序一致）。
+    await waitFor(() => expect(api.getSettings).toHaveBeenCalled());
+    await screen.findByTestId("profile-switch-running-claude");
+    fireEvent.click(row.querySelector(".profile-row-main")!);
+    await waitFor(() => expect(api.setActiveProfile).toHaveBeenCalledWith("claude", "work"));
+    expect(api.sessionsOffActiveProfileCount).not.toHaveBeenCalled();
+    expect(dialog.confirm).not.toHaveBeenCalled();
+    expect(api.applyActiveProfileToSessions).not.toHaveBeenCalled();
+  });
+
   /**
    * 会话搬不过去的 agent（opencode：会话存储没取证过，插件没声明 CrossAccountSession）连问都
    * 不问——它恢复时仍会回到会话原本的账号，重启只是白杀一次进程、把正在生成的回答丢掉。

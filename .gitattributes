@@ -12,3 +12,6 @@ app/src/views/chat/__fixtures__/lead/*.md -text
 app/src-tauri/crates/meowo-agent/tests/fixtures/program-status/*.bin -text
 # 带时间戳的录流旁边的 `<夹具>.times`（每行「块结束偏移 毫秒」），偏移按 LF 计。
 app/src-tauri/crates/meowo-agent/tests/fixtures/program-status/*.times -text
+
+# 终端页签注入的 claude 函数脚本被 include_str! 编进程序：bash/zsh 读到 CRLF 会报语法错误，钉死 LF。
+app/src-tauri/src/shell_claude/*.sh text eol=lf

@@ -62,6 +62,8 @@ static PROFILE: crate::profile::ProfileSpec = crate::profile::ProfileSpec {
     ],
     data_rel: "config",
     creds_rel: "data/opencode/auth.json",
+    // 不共享：opencode 的配置（opencode.json）里混着 provider 凭据，未取证前不碰。
+    share: &[],
 };
 
 /// 凭据是 `~/.local/share/opencode/auth.json`——**不在 data_dir 底下**。
