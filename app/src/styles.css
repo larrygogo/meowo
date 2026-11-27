@@ -7337,7 +7337,7 @@ button.lead-entry-head:hover { background: var(--fill-hover); }
 }
 @media (hover: hover) { .chat-statusbar-refresh:hover:not(:disabled) { background: var(--fill-hover); color: var(--cc-text); } }
 .chat-statusbar-refresh:disabled { opacity: .4; cursor: default; }
-.chat-statusbar-refresh .is-spinning { animation: spin 1s linear infinite; }
+.chat-statusbar-refresh .is-spinning { animation: spin var(--dur-spin) linear infinite; }
 @media (prefers-reduced-motion: reduce) { .chat-statusbar-refresh .is-spinning { animation: none; } }
 /* 详情面板：与圆环卡片、弹出菜单同一套外壳，锚在状态条上方左对齐（Orca：side=top align=start）。 */
 .chat-statusbar-card {
