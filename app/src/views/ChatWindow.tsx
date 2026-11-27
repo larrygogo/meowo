@@ -51,6 +51,7 @@ import { asTerminalRuntimeRequest, runtimeRequestBrokerLive, runtimeRequestTermi
 import { useModelPresets } from "./chat/useModelPresets";
 import { useModelControls } from "./chat/useModelControls";
 import { ContextMeter } from "./chat/ContextMeter";
+import { ChatStatusBar } from "./chat/ChatStatusBar";
 import { ImageRef, splitUserText } from "./chat/Message";
 import { parseUserText } from "./chat/localCommand";
 import { ChatActionsContext, type ChatActions } from "./chat/chatActions";
@@ -6106,15 +6107,11 @@ export function ChatWindow() {
           })()}
           {(history?.contextPct != null || currentAgentDescriptor?.supports_context === false) && (
             // 这家 CLI 不上报上下文（后端声明）时 pct=null：圆环留在原位置灰并说明，不整个消失。
-            // 卡片下半照 Orca 显示这个对话所用账号（history.profile）的额度。
+            // 账号额度照 Orca 的分工在窗口底部状态条（ChatStatusBar），圆环只管上下文。
             <ContextMeter
               pct={history?.contextPct ?? null}
               window={history?.contextWindow ?? null}
               t={t}
-              provider={provider ?? undefined}
-              profile={history?.profile ?? null}
-              agentName={agentDisplayName ?? undefined}
-              showUsage={currentAgentDescriptor?.supports_account === true}
             />
           )}
           {(modelPresets.length > 0 || modelMenuCommand || history?.model || switchTargets.length > 0) && <div className="chat-model chat-model-select" ref={modelPickerOpenUi.ref} onKeyDown={modelPickerOpenUi.onKeyDown}>
@@ -6462,6 +6459,16 @@ export function ChatWindow() {
       )}
       </div>
       </div>
+      {/* 窗口底部常驻状态条（照 Orca 的 StatusBar）：当前对话所用账号的额度。手机远程页、
+          会话管理页、新建会话页不放——没有「当前对话」。 */}
+      {!remoteUi() && !adminOpen && !newSessionOpen && history && provider && (
+        <ChatStatusBar
+          provider={provider}
+          profile={history.profile ?? null}
+          agentName={agentDisplayName ?? provider}
+          supportsAccount={currentAgentDescriptor?.supports_account === true}
+        />
+      )}
       {annotating && (
         <ImageAnnotator
           path={annotating.path}

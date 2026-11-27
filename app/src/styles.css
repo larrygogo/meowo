@@ -7299,6 +7299,68 @@ button.lead-entry-head:hover { background: var(--fill-hover); }
   background: transparent; color: var(--cc-text); font-size: var(--text-xs);
 }
 @media (hover: hover) { .chat-compose .chat-context-card .chat-context-retry:hover { background: var(--fill-hover); } }
+/* 对话窗底部常驻状态条（照 Orca 的 StatusBar：h-6 一行、text-xs、窗口底色、不换行不滚动）。
+   放在 L0 窗口底上、圆角内容面下方；内容面原本留的底边距让给状态条，免得上下两道空隙。 */
+.chat-window:has(> .chat-statusbar) .chat-surface { margin-bottom: 0; }
+.chat-statusbar {
+  flex: 0 0 auto; height: calc(24px * var(--cc-ui)); min-height: calc(24px * var(--cc-ui));
+  display: flex; align-items: center; gap: var(--sp-16); padding: 0 var(--sp-12);
+  white-space: nowrap; overflow: visible; font-size: var(--text-xs); color: var(--cc-text-dim);
+  user-select: none; position: relative; z-index: var(--z-dropdown);
+}
+.chat-statusbar-usage { position: relative; display: inline-flex; align-items: center; gap: var(--sp-4); min-width: 0; }
+.chat-statusbar-chip {
+  display: inline-flex; align-items: center; gap: var(--sp-6); min-width: 0;
+  height: calc(20px * var(--cc-ui)); padding: 0 var(--sp-4); margin: 0;
+  border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text);
+  font: inherit; font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.chat-statusbar-chip.is-muted { color: var(--cc-text-faint); cursor: default; }
+@media (hover: hover) { button.chat-statusbar-chip:hover { background: var(--fill-hover); } }
+.chat-statusbar-chip[aria-expanded="true"] { background: var(--fill-selected); }
+/* 「已用｜」单位标签：照 Orca 的 UsageUnitLabel，暗一档，细竖线隔开数字。 */
+.chat-statusbar-unit { display: inline-flex; align-items: center; gap: var(--sp-8); margin-right: var(--sp-4); color: var(--cc-text-dim); }
+.chat-statusbar-unit > i { width: 1px; height: calc(12px * var(--cc-ui)); background: var(--line-strong); }
+.chat-statusbar-icon.provider-card-icon { width: calc(14px * var(--cc-ui)); height: calc(14px * var(--cc-ui)); border-radius: 3px; }
+.chat-statusbar-icon.provider-card-icon svg { width: 100%; height: 100%; }
+/* 状态条上的迷你条不着色（Orca：只有详情卡里按阈值上色），灰填充、6×48。 */
+.chat-statusbar-mini { display: block; width: calc(48px * var(--cc-ui)); height: 6px; flex: 0 0 auto; border-radius: var(--radius-full); background: var(--usage-track-bg); overflow: hidden; }
+.chat-statusbar-mini > i { display: block; height: 100%; border-radius: inherit; background: var(--cc-text-faint); transition: width var(--dur-slow) var(--ease-in-out); }
+.chat-statusbar-num { color: var(--cc-text); }
+.chat-statusbar-reset { margin-left: 0.35em; color: var(--cc-text-dim); }
+.chat-statusbar-dim { display: inline-flex; align-items: center; gap: var(--sp-4); color: var(--cc-text-dim); }
+.chat-statusbar-stale { color: var(--cc-text-dim); }
+.chat-statusbar-refresh {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: calc(18px * var(--cc-ui)); height: calc(18px * var(--cc-ui)); padding: 0; margin: 0;
+  border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); cursor: pointer;
+}
+@media (hover: hover) { .chat-statusbar-refresh:hover:not(:disabled) { background: var(--fill-hover); color: var(--cc-text); } }
+.chat-statusbar-refresh:disabled { opacity: .4; cursor: default; }
+.chat-statusbar-refresh .is-spinning { animation: spin 1s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .chat-statusbar-refresh .is-spinning { animation: none; } }
+/* 详情面板：与圆环卡片、弹出菜单同一套外壳，锚在状态条上方左对齐（Orca：side=top align=start）。 */
+.chat-statusbar-card {
+  position: absolute; left: 0; bottom: calc(100% + var(--sp-6)); z-index: var(--z-dropdown);
+  width: calc(300px * var(--cc-ui)); max-width: calc(100vw - 16px);
+  padding: var(--sp-14); display: flex; flex-direction: column; gap: var(--sp-10);
+  border: var(--hairline) solid transparent; border-radius: var(--radius-lg);
+  background: var(--cc-menu-bg); box-shadow: var(--edge-float), var(--shadow-menu);
+  color: var(--cc-text); font-size: var(--text-xs); white-space: normal; text-align: left; cursor: default;
+}
+.chat-statusbar-card-account { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-8); min-width: 0; }
+.chat-statusbar-toggle, .chat-statusbar-card .chat-context-retry, .chat-statusbar-manage {
+  display: inline-flex; align-items: center; gap: var(--sp-4); flex: 0 0 auto;
+  height: auto; min-height: 0; padding: var(--sp-2) var(--sp-6); margin: 0;
+  border: 0; border-radius: var(--radius-md); background: transparent; color: var(--cc-text-dim);
+  font: inherit; cursor: pointer;
+}
+.chat-statusbar-card .chat-context-retry { border: var(--hairline) solid var(--line-strong); color: var(--cc-text); }
+.chat-statusbar-manage { justify-content: flex-start; margin: 0 calc(-1 * var(--sp-6)); padding-top: var(--sp-10); border-top: var(--hairline) solid var(--line-subtle); border-radius: 0; color: var(--cc-text); }
+@media (hover: hover) {
+  .chat-statusbar-toggle:hover, .chat-statusbar-card .chat-context-retry:hover { background: var(--fill-hover); color: var(--cc-text); }
+  .chat-statusbar-manage:hover { color: var(--cc-accent); }
+}
 /* 输入区 :is(button) 通用样式会改按钮高度与底色，斜杠菜单条目压回菜单条目（尺寸、悬停底见文末「弹出菜单」）。 */
 .chat-compose .chat-slash-menu .dd-item { height: auto; border: 0; color: var(--cc-text-dim); background: transparent; }
 /* 触屏点过会一直留着 :hover：菜单与下拉的悬停底色只在有悬停能力的指针下给（第四轮 L5，同 C4）。 */
