@@ -76,6 +76,10 @@ use meowo_protocol::ipc::{LoginDoneEvent, LoginOutcome};
 struct LoginSlot {
     epoch: u64,
     operation_id: Option<String>,
+    // 正在登进哪个账号（None = 默认账号）。取消时要按它判断「是不是其实已经登上了」：
+    // 之前一律查默认账号，默认账号登着时，「添加账号」登录到一半取消会被报成成功，
+    // 空账号就撤不掉（2026-11-27 本机实测发现）。
+    profile: Option<String>,
 }
 
 #[derive(Default)]
@@ -98,23 +102,28 @@ impl LoginOperations {
         self.slots.get(key.as_str()).map_or(0, |slot| slot.epoch)
     }
 
-    fn begin(&mut self, key: meowo_agent::AgentId, operation_id: &str) -> u64 {
+    fn begin(
+        &mut self,
+        key: meowo_agent::AgentId,
+        operation_id: &str,
+        profile: Option<String>,
+    ) -> u64 {
         let slot = self.slots.entry(key.as_str()).or_default();
         slot.epoch += 1;
         slot.operation_id = Some(operation_id.to_owned());
+        slot.profile = profile;
         slot.epoch
     }
 
-    fn cancel(&mut self, key: meowo_agent::AgentId, operation_id: &str) -> bool {
-        let Some(slot) = self.slots.get_mut(key.as_str()) else {
-            return false;
-        };
+    /// 取消成功时返回这次登录的目标账号（外层 Some），id 对不上返回 None。
+    fn cancel(&mut self, key: meowo_agent::AgentId, operation_id: &str) -> Option<Option<String>> {
+        let slot = self.slots.get_mut(key.as_str())?;
         if slot.operation_id.as_deref() != Some(operation_id) {
-            return false;
+            return None;
         }
         slot.epoch += 1;
         slot.operation_id = None;
-        true
+        Some(slot.profile.take())
     }
 
     /// 登出路径用：与 bump 一样递增代次让 watch 线程静默退场，但把被取消的 operationId
@@ -160,14 +169,18 @@ pub(crate) fn login_epoch(key: meowo_agent::AgentId) -> u64 {
         .epoch(key)
 }
 
-fn begin_login_operation(key: meowo_agent::AgentId, operation_id: &str) -> u64 {
+fn begin_login_operation(
+    key: meowo_agent::AgentId,
+    operation_id: &str,
+    profile: Option<String>,
+) -> u64 {
     LOGIN_STATE
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .begin(key, operation_id)
+        .begin(key, operation_id, profile)
 }
 
-fn cancel_login_operation(key: meowo_agent::AgentId, operation_id: &str) -> bool {
+fn cancel_login_operation(key: meowo_agent::AgentId, operation_id: &str) -> Option<Option<String>> {
     LOGIN_STATE
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -293,16 +306,17 @@ pub(crate) async fn cancel_login(
 ) -> Result<(), String> {
     let key = agent_id(&provider).ok_or("未知 agent")?;
     let provider = key.as_str().to_string();
-    if !cancel_login_operation(key, &operation_id) {
+    let Some(profile) = cancel_login_operation(key, &operation_id) else {
         return Err("登录操作已结束或已被替换".into());
-    }
+    };
     // 由本命令负责收尾 emit，让前端无论如何都能落回可点状态。
     tauri::async_runtime::spawn_blocking(move || {
         use tauri::Emitter;
-        let ok = account::account_of(key).is_some(); // 也许真登上了，只是用户嫌慢
-                                                     // 真登上了就和正常登录成功一样接线——否则「取消时其实已登录」这条路径会漏掉接线。
+        // 也许真登上了，只是用户嫌慢。查的是这次登录的目标账号，和 watch_login 同一个判断。
+        let ok = logged_in_as(key, profile.as_deref());
+        // 真登上了就和正常登录成功一样接线——否则「取消时其实已登录」这条路径会漏掉接线。
         if ok {
-            wire_hooks_best_effort(key, "登录");
+            wire_after_login(key, profile.as_deref());
         }
         let _ = app.emit(
             "login-done",
@@ -319,6 +333,50 @@ pub(crate) async fn cancel_login(
     })
     .await
     .map_err(|e| e.to_string())
+}
+
+/// 这次登录的目标账号（None = 默认账号）当前解析到的身份；没登录为 None。
+fn account_as(key: meowo_agent::AgentId, profile: Option<&str>) -> Option<meowo_agent::Account> {
+    match profile {
+        Some(p) => {
+            crate::profile::installation_of(key, p).and_then(|inst| account::account_in(key, &inst))
+        }
+        None => account::account_of(key),
+    }
+}
+
+fn logged_in_as(key: meowo_agent::AgentId, profile: Option<&str>) -> bool {
+    account_as(key, profile).is_some()
+}
+
+/// 这一轮能不能算「登录完成」。
+///
+/// 开始时就登着（点的是「重新登录」）：要么中途掉过线（CLI 发现凭据失效会先清掉），要么换成了
+/// 另一个身份，才算这次登录做完了。之前只看「有没有账号」，第一轮就报成功，按钮立刻退出等待态，
+/// 终端里的登录却还在跑（2026-11-27 本机实测）。同一个账号、凭据也还有效时就等到超时或用户取消，
+/// 取消方会按目标账号复查，真登着照样报成功。
+fn login_completed(
+    baseline: Option<&meowo_agent::Account>,
+    seen_signed_out: bool,
+    now: Option<&meowo_agent::Account>,
+) -> bool {
+    match now {
+        None => false,
+        Some(now) => baseline.is_none() || seen_signed_out || baseline != Some(now),
+    }
+}
+
+/// 登录成功后接线：多账号下接那个 profile 的线，默认账号接 agent 自己的。
+fn wire_after_login(key: meowo_agent::AgentId, profile: Option<&str>) {
+    match profile {
+        Some(p) => match crate::profile::wire_profile(key, p) {
+            None => eprintln!("Meowo repair[{key}/{p}]: 登录后已自动接线"),
+            Some(reason) => eprintln!(
+                "Meowo repair[{key}/{p}]: 登录后自动接线未生效（{reason:?}），留给用户手动修复"
+            ),
+        },
+        None => wire_hooks_best_effort(key, "登录"),
+    }
 }
 
 /// 轮询账号解析结果，直到出现（登录成功）或超时，然后 emit `login-done`。
@@ -348,6 +406,8 @@ pub(crate) fn watch_login(
     std::thread::spawn(move || {
         use tauri::Emitter;
         let start = std::time::Instant::now();
+        let baseline = account_as(key, profile.as_deref());
+        let mut seen_signed_out = false;
         // 先查再睡：账号若已就绪（用户很快登完，或本就登录着）立刻 emit，不白等一个轮询周期。
         // 每轮只是本地读一个 JSON——三家的 account() 都不联网、不 spawn 子进程（claude 读
         // ~/.claude.json；macOS 的 Keychain 只在读**凭据**/刷新 token 时才碰，不在此路径上）。
@@ -357,15 +417,11 @@ pub(crate) fn watch_login(
                 return; // 收尾 emit 归取消方 / 新线程
             }
             // 查的是**正在登录的那个账号**的凭据，不是当前活跃的。
-            let logged_in = match profile.as_deref() {
-                Some(p) => crate::profile::installation_of(key, p)
-                    .and_then(|inst| account::account_in(key, &inst))
-                    .is_some(),
-                None => account::account_of(key).is_some(),
-            };
-            if logged_in {
+            let now = account_as(key, profile.as_deref());
+            if login_completed(baseline.as_ref(), seen_signed_out, now.as_ref()) {
                 break true;
             }
+            seen_signed_out |= now.is_none();
             if start.elapsed() >= TIMEOUT {
                 eprintln!(
                     "Meowo login[{provider}]: 等待登录超时（{}s），停止轮询",
@@ -382,15 +438,7 @@ pub(crate) fn watch_login(
         // 它还没登录——kimi 那种「配置文件由 login 生成」的 agent，当时必然以 NeedLogin 失败。
         // 这里是它唯一的补救时机；接错了对象，profile 的会话就永远不会上板。
         if ok {
-            match profile.as_deref() {
-                Some(p) => match crate::profile::wire_profile(key, p) {
-                    None => eprintln!("Meowo repair[{key}/{p}]: 登录后已自动接线"),
-                    Some(reason) => eprintln!(
-                        "Meowo repair[{key}/{p}]: 登录后自动接线未生效（{reason:?}），留给用户手动修复"
-                    ),
-                },
-                None => wire_hooks_best_effort(key, "登录"),
-            }
+            wire_after_login(key, profile.as_deref());
         }
         if !finish_login_operation(key, epoch, &operation_id) {
             return;
@@ -464,7 +512,7 @@ pub(crate) async fn login_agent(
     // spawn 之前先注册操作：冷启动首次 spawn 可达数秒，这期间用户就可能点取消，
     // cancel_login 必须能按 operationId 找到它。取消发生在 spawn 期间时，epoch 已被
     // 递增，watcher 线程第一轮比对就会静默退出，不会复活已取消的操作。
-    let epoch = begin_login_operation(key, &operation_id);
+    let epoch = begin_login_operation(key, &operation_id, profile.clone());
     // 冷启动首次 spawn 控制台子进程可达数秒；放 blocking 池不挡事件循环。
     let ok =
         tauri::async_runtime::spawn_blocking(move || spawn_in_terminal(&argv, None, &term, &env))
@@ -1375,14 +1423,34 @@ pub(crate) async fn repair_provider_hooks(provider: String) -> Result<RepairResu
 
 #[cfg(test)]
 mod login_operation_tests {
-    use super::LoginOperations;
+    use super::{login_completed, LoginOperations};
+
+    #[test]
+    fn relogin_waits_for_a_real_change_before_reporting_success() {
+        let acct = |email: &str| meowo_agent::Account {
+            email: Some(email.into()),
+            display_name: None,
+            organization: None,
+            plan: None,
+            login_label: None,
+        };
+        let a = acct("a@b.c");
+        // 新账号 / 默认账号没登录：一出现账号就算完成。
+        assert!(login_completed(None, false, Some(&a)));
+        assert!(!login_completed(None, false, None));
+        // 重新登录：开始时就登着，第一轮看到同一个身份不能算完成。
+        assert!(!login_completed(Some(&a), false, Some(&a)));
+        // 中途掉过线再登上（凭据失效被 CLI 清掉的情形），或换了身份，才算完成。
+        assert!(login_completed(Some(&a), true, Some(&a)));
+        assert!(login_completed(Some(&a), false, Some(&acct("x@y.z"))));
+    }
 
     #[test]
     fn a_new_operation_invalidates_the_previous_completion() {
         let mut state = LoginOperations::default();
         let agent = meowo_agent::id::CLAUDE;
-        let first_epoch = state.begin(agent, "first");
-        let second_epoch = state.begin(agent, "second");
+        let first_epoch = state.begin(agent, "first", None);
+        let second_epoch = state.begin(agent, "second", None);
 
         assert!(second_epoch > first_epoch);
         assert!(!state.finish(agent, first_epoch, "first"));
@@ -1395,20 +1463,31 @@ mod login_operation_tests {
         let mut state = LoginOperations::default();
         let claude = meowo_agent::id::CLAUDE;
         let codex = meowo_agent::id::CODEX;
-        let codex_epoch = state.begin(codex, "codex-op");
-        state.begin(claude, "claude-op");
+        let codex_epoch = state.begin(codex, "codex-op", None);
+        state.begin(claude, "claude-op", None);
 
-        assert!(!state.cancel(claude, "stale-op"));
-        assert!(state.cancel(claude, "claude-op"));
-        assert!(!state.cancel(claude, "claude-op"));
+        assert!(state.cancel(claude, "stale-op").is_none());
+        assert!(state.cancel(claude, "claude-op").is_some());
+        assert!(state.cancel(claude, "claude-op").is_none());
         assert!(state.finish(codex, codex_epoch, "codex-op"));
+    }
+
+    #[test]
+    fn cancel_hands_back_the_profile_being_signed_into() {
+        // 取消方要按目标账号判断「其实已登上」：默认账号登着、新账号还空着时不能报成功。
+        let mut state = LoginOperations::default();
+        let claude = meowo_agent::id::CLAUDE;
+        state.begin(claude, "add", Some("account-2".into()));
+        assert_eq!(state.cancel(claude, "add"), Some(Some("account-2".into())));
+        state.begin(claude, "default", None);
+        assert_eq!(state.cancel(claude, "default"), Some(None));
     }
 
     #[test]
     fn take_returns_the_cancelled_operation_and_invalidates_its_watcher() {
         let mut state = LoginOperations::default();
         let claude = meowo_agent::id::CLAUDE;
-        let epoch = state.begin(claude, "op-1");
+        let epoch = state.begin(claude, "op-1", None);
 
         // 登出取走 operationId：等待线程的 finish 必然失败（代次已前进、id 已被取走），
         // 它静默退场、不 emit——补发 login-done 的责任移交给登出方，两边不会各发一个。

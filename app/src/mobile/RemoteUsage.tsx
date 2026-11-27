@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { profileLabel } from "../profileLabel";
 import {
   getSettings,
   applyActiveProfileToSessions,
@@ -453,7 +454,7 @@ function ProviderUsageSection({ account, switchError, refreshOnMount, onSwitchSt
         <div className="remote-profile-list" role="group" aria-label={t.remote.profilesOf(name)}>
           {profiles.map((p) => {
             const key = profileKey(p);
-            const label = p.name || t.account.defaultProfile;
+            const label = profileLabel(p, t);
             // 描述行说「这是哪个账号」，套餐是徽章（同桌面 ProfileList）。
             // 未登录的账号手机上登不了：切过去（还可能把会话重启过去）就是一条手机上修不好的路，
             // 不给切换，描述行说清去哪登录（桌面同一行就有「登录」，手机没有；独立审查 2026-11-15）。
@@ -497,7 +498,7 @@ function ProviderUsageSection({ account, switchError, refreshOnMount, onSwitchSt
       {shownSwitchError && <div className="remote-settings-error" role="alert">{shownSwitchError}</div>}
       {multi && (
         <div className="remote-usage-for">
-          {t.account.usageFor(viewing ? viewing.name || t.account.defaultProfile : activeProfile?.name || t.account.defaultProfile)}
+          {t.account.usageFor(viewing ? profileLabel(viewing, t) : activeProfile ? profileLabel(activeProfile, t) : t.account.systemDefault)}
         </div>
       )}
       <div className="remote-usage-body">{body}</div>

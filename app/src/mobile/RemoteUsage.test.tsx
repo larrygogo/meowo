@@ -147,8 +147,8 @@ describe("RemoteUsage", () => {
       render(<RemoteUsage />);
 
       const list = within(await screen.findByRole("group", { name: "Claude 账号" }));
-      const def = list.getByRole("button", { name: "查看默认账号的用量" });
-      expect(def.textContent).toContain("默认账号");
+      const def = list.getByRole("button", { name: "查看系统默认的用量" });
+      expect(def.textContent).toContain("系统默认");
       expect(def.textContent).toContain("me@home.com");
       expect(def.textContent).toContain("Max");
       expect(def.getAttribute("aria-pressed")).toBe("true");
@@ -159,7 +159,7 @@ describe("RemoteUsage", () => {
       expect(list.getByRole("button", { name: "查看备用的用量" }).textContent).toContain("未登录，在电脑上登录后可切换");
       expect(list.queryByRole("button", { name: "切换到备用" })).toBeNull();
       // 当前账号不给切换按钮
-      expect(list.queryByRole("button", { name: "切换到默认账号" })).toBeNull();
+      expect(list.queryByRole("button", { name: "切换到系统默认" })).toBeNull();
 
       const single = within(screen.getByRole("region", { name: "Codex" }));
       expect(single.queryByRole("group")).toBeNull();
@@ -184,7 +184,7 @@ describe("RemoteUsage", () => {
       expect(work.getAttribute("aria-pressed")).toBe("true");
       expect(screen.getByText("工作 · 用量")).toBeTruthy();
 
-      fireEvent.click(screen.getByRole("button", { name: "查看默认账号的用量" }));
+      fireEvent.click(screen.getByRole("button", { name: "查看系统默认的用量" }));
       expect(screen.getByRole("progressbar", { name: "5 小时配额" }).getAttribute("aria-valuenow")).toBe("30");
       expect(api.refreshProfileUsage).toHaveBeenCalledTimes(1);
       expect(api.refreshUsage).not.toHaveBeenCalled();
@@ -194,7 +194,7 @@ describe("RemoteUsage", () => {
       expect((await screen.findByRole("alert")).textContent).toContain("用量获取失败");
 
       api.refreshProfileUsage.mockRejectedValueOnce("usage/USAGE_UNSUPPORTED");
-      fireEvent.click(screen.getByRole("button", { name: "查看默认账号的用量" }));
+      fireEvent.click(screen.getByRole("button", { name: "查看系统默认的用量" }));
       fireEvent.click(work);
       expect(await screen.findByText("当前账号不支持用量查询")).toBeTruthy();
       expect(screen.queryByRole("alert")).toBeNull();
@@ -225,7 +225,7 @@ describe("RemoteUsage", () => {
       expect(String(confirm.appConfirm.mock.calls[0][0])).toContain("2 个会话");
       // 重载后「使用中」到了工作账号上
       const list = within(await screen.findByRole("group", { name: "Claude 账号" }));
-      await waitFor(() => expect(list.getByRole("button", { name: "切换到默认账号" })).toBeTruthy());
+      await waitFor(() => expect(list.getByRole("button", { name: "切换到系统默认" })).toBeTruthy());
       expect(list.queryByRole("button", { name: "切换到工作" })).toBeNull();
     });
 
@@ -303,7 +303,7 @@ describe("RemoteUsage", () => {
       active = "work";
       view.rerender(<RemoteUsage activeProfiles={{ claude: "work" }} />);
       await waitFor(() =>
-        expect(within(screen.getByRole("region", { name: "Claude" })).getByRole("button", { name: "切换到默认账号" })).toBeTruthy(),
+        expect(within(screen.getByRole("region", { name: "Claude" })).getByRole("button", { name: "切换到系统默认" })).toBeTruthy(),
       );
       await waitFor(() =>
         expect(within(screen.getByRole("region", { name: "Claude" })).getByRole("progressbar", { name: "5 小时配额" }).getAttribute("aria-valuenow")).toBe("7"),

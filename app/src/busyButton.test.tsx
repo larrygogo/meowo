@@ -58,7 +58,9 @@ const ALLOW: Record<string, string> = {
   "views/chat/NewSessionPage.tsx::busy": "WorktreeOption 启动中锁表单，焦点不在其上",
   "views/NewSessionPanel.tsx::busy": "同上（面板版新建会话）",
   // 别的账号正在登录时锁住本行「登录」：被锁的不是用户刚点的那颗（刚点的那颗变成「取消登录」）。
-  "views/settings/AccountSection.tsx::anotherLoginPending": "锁的是其他行，不是刚点的按钮",
+  "views/settings/ProfileAccounts.tsx::loginPending&&!mine": "锁的是其他行，不是刚点的按钮",
+  // 别的账号正在登录时锁住「添加账号」；自己发起的添加由同一元素上的 busyProps 标 aria-disabled。
+  "views/settings/ProfileAccounts.tsx::(loginPending&&!addingId)||undefined": "锁的是别处发起的登录，不是刚点的按钮",
   // busy 只作豁免：启动中这一项恒为 false，进行中由同一元素上的 busyProps 标 aria-disabled。
   "views/NewSessionPanel.tsx::!canLaunch&&!busy": "启动中恰好不 disabled",
   // sending 只作「输入为空才禁」的豁免：发送中整项为 false，发送钮靠 aria-disabled（同一元素）。

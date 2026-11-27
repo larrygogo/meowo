@@ -131,7 +131,70 @@ pub(crate) fn active_display_name_in(s: &crate::settings::Settings, agent: &str)
         .find(|p| p.id == id)?
         .name
         .clone();
-    Some(name)
+    if !name.trim().is_empty() {
+        return Some(name);
+    }
+    // 照 Orca：账号名是可选的，没起名就显示登录邮箱（「添加账号」直接登录，不先问名字）。
+    let email = meowo_agent::by_id(agent)
+        .and_then(|p| installation_of(p.id(), &id).and_then(|inst| crate::account::account_in(p.id(), &inst)))
+        .and_then(|a| a.email.or(a.display_name).or(a.login_label));
+    Some(email.unwrap_or(id))
+}
+
+/// [`adopt_orphan_dirs`] 的判据（纯函数，便于测）：目录名是 [`slug`] 的产物、没登记、读得出登录态。
+fn orphan_ids(dirs: impl Iterator<Item = String>, registered: &[Profile], logged_in: impl Fn(&str) -> bool) -> Vec<String> {
+    let mut out: Vec<String> = dirs
+        .filter(|id| slug(id) == *id && !registered.iter().any(|p| &p.id == id))
+        .filter(|id| logged_in(id))
+        .collect();
+    out.sort();
+    out
+}
+
+/// 账号目录还在、也登录着，却不在设置的账号列表里：把它登记回来（名字留空 = 显示登录邮箱）。
+///
+/// 实拍 2026-11-27：本机 `profiles/claude/` 下 6 个账号目录，设置里只登记了 1 个，其中一个带着
+/// 有效凭据——用户已经登录好的账号从设置页凭空消失，又没有任何入口找回。目录名必须是 [`slug`]
+/// 的产物（防止把用户自己放进来的东西当成账号），且必须读得出登录态：没登录的空目录不登记，
+/// 它可能是删到一半的残留。只增不删，不碰目录里的任何文件。返回登记回来的 id。
+fn adopt_orphan_dirs(agent: &str) -> Vec<String> {
+    let Some(plugin) = meowo_agent::by_id(agent) else { return Vec::new() };
+    if plugin.profile().is_none() {
+        return Vec::new();
+    }
+    let Ok(entries) = std::fs::read_dir(profiles_root().join(agent)) else { return Vec::new() };
+    let settings = crate::settings::load_settings();
+    let dirs = entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .map(|e| e.file_name().to_string_lossy().into_owned());
+    let registered = settings.profiles.get(agent).map(Vec::as_slice).unwrap_or_default();
+    let candidates = orphan_ids(dirs, registered, |id| {
+        installation_of(plugin.id(), id).and_then(|inst| crate::account::account_in(plugin.id(), &inst)).is_some()
+    });
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    let adopted = crate::settings::update_settings(|s| {
+        let list = s.profiles.entry(agent.to_string()).or_default();
+        let mut added = Vec::new();
+        for id in &candidates {
+            if !list.iter().any(|p| &p.id == id) {
+                list.push(Profile { id: id.clone(), name: String::new() });
+                added.push(id.clone());
+            }
+        }
+        Ok::<_, String>(added)
+    })
+    .unwrap_or_default();
+    for id in &adopted {
+        eprintln!("Meowo profile[{agent}/{id}]: 账号目录在且已登录、设置里却没登记，已登记回来");
+        if let Some(reason) = wire_profile(plugin.id(), id) {
+            eprintln!("Meowo profile[{agent}/{id}]: 接线未完成（{reason:?}），可稍后手动修复");
+        }
+        sync_user_extensions(agent, id);
+    }
+    adopted
 }
 
 /// 会话属于哪个账号——由 meowo 拉起 agent 时注入，reporter 作为 agent 的 hook 子进程会继承它，
@@ -374,6 +437,7 @@ pub(crate) async fn list_profiles(provider: String) -> Vec<ProfileView> {
             return Vec::new();
         };
         let id = plugin.id();
+        adopt_orphan_dirs(&provider);
         let s = crate::settings::load_settings();
         let active = active_id_in(&s, &provider);
 
@@ -440,7 +504,8 @@ fn coded(code: &str, detail: impl std::fmt::Display) -> String {
 
 /// 新建一个账号：建目录 → 接线 hooks → 存进 settings。返回它的 id。
 ///
-/// **不自动切过去**，也不自动登录：切换与登录是用户的两个独立动作，替他决定只会让人困惑。
+/// **不自动切过去**。名字可以留空（照 Orca：「添加账号」直接拉起登录，账号以登录邮箱显示）：
+/// 目录名取 `account`、`account-2`…，展示名存空串。登录没完成时由前端把这个空账号撤掉。
 #[tauri::command]
 pub(crate) async fn create_profile(provider: String, name: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -450,7 +515,8 @@ pub(crate) async fn create_profile(provider: String, name: String) -> Result<Str
 
         let created = crate::settings::update_settings(|s| {
             let existing = s.profiles.entry(provider.clone()).or_default();
-            let id = unique_id(existing, &slug(&name));
+            let base = if name.trim().is_empty() { "account".to_string() } else { slug(&name) };
+            let id = unique_id(existing, &base);
             let root = profile_root(&provider, &id);
             for dir in spec.dirs(&root) {
                 std::fs::create_dir_all(&dir).map_err(|e| coded("profile/create-dir-failed", e))?;
@@ -461,15 +527,7 @@ pub(crate) async fn create_profile(provider: String, name: String) -> Result<Str
                 );
             }
             sync_user_extensions(&provider, &id);
-            let display = name.trim();
-            existing.push(Profile {
-                id: id.clone(),
-                name: if display.is_empty() {
-                    id.clone()
-                } else {
-                    display.to_string()
-                },
-            });
+            existing.push(Profile { id: id.clone(), name: name.trim().to_string() });
             Ok(id)
         });
         // 新 kimi 账号的数据目录也登记面板浏览器的 MCP 服务器（同 hooks 接线，见 wire_profile）。
@@ -490,6 +548,9 @@ pub(crate) async fn create_profile(provider: String, name: String) -> Result<Str
 
 /// 给账号改名。`id = None` → **默认账号**（它的名字单独存在 `default_profile_names` 里）。
 ///
+/// 名字留空 = 恢复默认显示（照 Orca 的改名框「留空则显示登录邮箱」）：自定义账号存空串，
+/// 默认账号删掉自定义名。
+///
 /// **只动展示名，不动 id** —— id 是目录名，改了就等于换了个账号（凭据、会话历史全在那个目录里），
 /// 而用户以为自己只是改了个称呼。
 #[tauri::command]
@@ -500,12 +561,12 @@ pub(crate) async fn rename_profile(
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let name = name.trim();
-        if name.is_empty() {
-            return Err("账号名不能为空".to_string());
-        }
         crate::settings::update_settings(|s| {
             match id {
                 // 默认账号：它不在 profiles 里（是隐式的），名字单独存。
+                None if name.is_empty() => {
+                    s.default_profile_names.remove(&provider);
+                }
                 None => {
                     s.default_profile_names
                         .insert(provider.clone(), name.to_string());
@@ -872,6 +933,14 @@ mod tests {
             );
             assert!(!s.is_empty());
         }
+    }
+
+    #[test]
+    fn orphan_dirs_need_a_slug_name_a_login_and_no_registration() {
+        let registered = vec![Profile { id: "work".into(), name: "工作".into() }];
+        let dirs = ["work", "qh", "empty", "Bad Name", "x.meowo-profile-merge", "account-2"].map(String::from);
+        let logged_in = |id: &str| id != "empty";
+        assert_eq!(orphan_ids(dirs.into_iter(), &registered, logged_in), vec!["account-2".to_string(), "qh".to_string()]);
     }
 
     #[test]

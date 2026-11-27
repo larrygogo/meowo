@@ -106,7 +106,9 @@ export function ForgeAccountList() {
   const [busy, setBusy] = useState<"add" | "device" | "remove" | null>(null);
   const { shown: copied, flash: flashCopied, fx: copiedFx } = useFlash();
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  // 挂载时要重置为 true：dev 下 StrictMode 会「挂载→卸载→再挂载」，只在卸载里置 false 的话
+  // 再挂载后它一直是 false，异步结果全被丢掉（2026-11-27 dev 实例里账号列表一直不出来）。
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
   const reload = useCallback(() => {
     forgeAccounts()

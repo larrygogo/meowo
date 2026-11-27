@@ -140,10 +140,13 @@ beforeEach(() => {
   // 默认：切账号后没有会话要重启（个别用例再覆盖）。
   api.sessionsOffActiveProfileCount.mockResolvedValue(0);
   api.applyActiveProfileToSessions.mockResolvedValue(0);
-  // 默认：只有一个默认账号（没建过自定义账号）。
-  api.listProfiles.mockResolvedValue([
-    { id: null, name: "", active: true, account: { email: "a@b.c" } },
-  ]);
+  // 默认：只有一个默认账号（没建过自定义账号），登录态跟 getAccounts 当前给的一致（同真实后端：
+  // 默认账号的登录态就是 agent 自己目录的登录态）。直接调 mock 的实现，不记一次 getAccounts 调用。
+  api.listProfiles.mockImplementation(async (provider: string) => {
+    const accounts = ((await api.getAccounts.getMockImplementation()?.()) ?? []) as Array<{ provider: string; account: unknown }>;
+    const account = accounts.find((a) => a.provider === provider)?.account ?? null;
+    return [{ id: null, name: "", active: true, account, set_aside: [] }];
+  });
   ev.doneCbs.length = 0;
   ev.loginCbs.length = 0;
   ev.profileCbs.length = 0;
@@ -344,18 +347,12 @@ describe("AccountSection agent 卡", () => {
     expect(screen.queryByTestId("profiles-claude")).toBeNull();
   });
 
-  it("退出登录免确认直接执行（可逆操作），成功后重新读取账号状态", async () => {
-    api.getAccounts
-      .mockResolvedValueOnce([{ provider: "claude", account: { email: "a@b.c" }, usage: null, usage_supported: true }])
-      .mockResolvedValue([{ provider: "claude", account: null, usage: null, usage_supported: false }]);
+  /** 照 Orca 只有一处入口：有账号列表的 agent，卡片头不再放登录 / 退出，登录在账号卡上。 */
+  it("有账号列表的 agent，卡片头不放登录/退出按钮", async () => {
     render(<AccountSection />);
-
-    fireEvent.click(await screen.findByTestId("agent-logout-claude"));
-    await waitFor(() => expect(api.logoutAgent).toHaveBeenCalledWith("claude"));
-    // 可逆操作不再弹确认小窗。
-    expect(dialog.confirm).not.toHaveBeenCalled();
-    await waitFor(() => expect(screen.queryByTestId("agent-logout-claude")).toBeNull());
-    expect(screen.getByTestId("agent-login-claude")).toBeTruthy();
+    await screen.findByTestId("profiles-claude");
+    expect(screen.queryByTestId("agent-logout-claude")).toBeNull();
+    expect(screen.queryByTestId("agent-login-claude")).toBeNull();
   });
 
   /**
@@ -720,11 +717,11 @@ describe("AccountSection 登录", () => {
     expect(screen.queryByTestId("agent-login-claude")).toBeNull();
     // codex 已装但 getAccounts 没返回它 → account 为 null → 未登录，给登录按钮。
     await selectAgent("Codex");
-    expect(await screen.findByTestId("agent-login-codex")).toBeTruthy();
+    expect(await screen.findByTestId("profile-login-codex-__default__")).toBeTruthy();
     // kimi 未装 → 该先安装，不给登录按钮。
     await selectAgent("Kimi Code");
     await screen.findByTestId("agent-install-kimi");
-    expect(screen.queryByTestId("agent-login-kimi")).toBeNull();
+    expect(screen.queryByTestId("profile-login-kimi-__default__")).toBeNull();
   });
 
   /**
@@ -748,7 +745,7 @@ describe("AccountSection 登录", () => {
 
     // 对照：codex 有账号能力但没登录 → 照旧给按钮。
     await selectAgent("Codex");
-    expect(await screen.findByTestId("agent-login-codex")).toBeTruthy();
+    expect(await screen.findByTestId("profile-login-codex-__default__")).toBeTruthy();
 
     // 已装，但没有账号概念 → 卡片在，登录按钮不在。
     await selectAgent("Antigravity CLI");
@@ -762,13 +759,14 @@ describe("AccountSection 登录", () => {
     api.loginAgent.mockResolvedValue(undefined);
     render(<AccountSection />);
     await selectAgent("Codex");
-    const btn = await screen.findByTestId("agent-login-codex");
+    const btn = await screen.findByTestId("profile-login-codex-__default__");
     fireEvent.click(btn);
-    await waitFor(() => expect(api.loginAgent).toHaveBeenCalledWith("codex", undefined, undefined, expect.any(String)));
+    // 系统默认那张卡登录：显式传 null（= 默认账号），不是省略（= 当前活跃账号）。
+    await waitFor(() => expect(api.loginAgent).toHaveBeenCalledWith("codex", undefined, null, expect.any(String)));
     // spawn 成功后不落回 idle——等 login-done。按钮此时变成「取消等待」，而不是一个死掉的禁用按钮：
     // 终端可能已被关掉，而后端要 5 分钟才超时。
-    await waitFor(() => expect(screen.getByTestId("agent-login-codex").textContent).toBe(zh.account.cancelLogin));
-    expect((screen.getByTestId("agent-login-codex") as HTMLButtonElement).disabled).toBe(false);
+    await waitFor(() => expect(screen.getByTestId("profile-login-codex-__default__").textContent).toBe(zh.account.cancelLogin));
+    expect((screen.getByTestId("profile-login-codex-__default__") as HTMLButtonElement).disabled).toBe(false);
   });
 
   /// 等待态零指引曾是实测痛点：不说窗口开在哪个终端、最多等多久，用户对着「等待登录…」干等。
@@ -778,7 +776,7 @@ describe("AccountSection 登录", () => {
     api.loginAgent.mockResolvedValue(undefined);
     render(<AccountSection />);
     await selectAgent("Codex");
-    fireEvent.click(await screen.findByTestId("agent-login-codex"));
+    fireEvent.click(await screen.findByTestId("profile-login-codex-__default__"));
     await waitFor(() =>
       expect(screen.getByTestId("agent-login-error-codex").textContent).toBe(zh.account.loginWaiting("Windows Terminal")),
     );
@@ -789,15 +787,15 @@ describe("AccountSection 登录", () => {
     api.cancelLogin.mockResolvedValue(undefined);
     render(<AccountSection />);
     await selectAgent("Codex");
-    fireEvent.click(await screen.findByTestId("agent-login-codex"));
+    fireEvent.click(await screen.findByTestId("profile-login-codex-__default__"));
     await waitFor(() => expect(api.loginAgent).toHaveBeenCalled());
     const operationId = api.loginAgent.mock.calls[0][3];
 
     await selectAgent("Claude Code");
     await selectAgent("Codex");
-    await waitFor(() => expect(screen.getByTestId("agent-login-codex").textContent).toBe(zh.account.cancelLogin));
+    await waitFor(() => expect(screen.getByTestId("profile-login-codex-__default__").textContent).toBe(zh.account.cancelLogin));
 
-    fireEvent.click(screen.getByTestId("agent-login-codex"));
+    fireEvent.click(screen.getByTestId("profile-login-codex-__default__"));
     await waitFor(() => expect(api.cancelLogin).toHaveBeenCalledWith("codex", operationId));
   });
 
@@ -805,7 +803,7 @@ describe("AccountSection 登录", () => {
     api.loginAgent.mockResolvedValue(undefined);
     render(<AccountSection />);
     await selectAgent("Codex");
-    fireEvent.click(await screen.findByTestId("agent-login-codex"));
+    fireEvent.click(await screen.findByTestId("profile-login-codex-__default__"));
     await waitFor(() => expect(api.loginAgent).toHaveBeenCalled());
     const before = api.getAccounts.mock.calls.length;
     // 登录成功后 codex 也有账号了
@@ -815,17 +813,17 @@ describe("AccountSection 登录", () => {
     ]);
     fireLogin("codex", "success");
     await waitFor(() => expect(api.getAccounts.mock.calls.length).toBeGreaterThan(before));
-    await waitFor(() => expect(screen.queryByTestId("agent-login-codex")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("profile-login-codex-__default__")).toBeNull());
   });
 
   it("login-done 超时 → 落回可点 + 显示本地化提示（超时不是登录失败）", async () => {
     api.loginAgent.mockResolvedValue(undefined);
     render(<AccountSection />);
     await selectAgent("Codex");
-    fireEvent.click(await screen.findByTestId("agent-login-codex"));
-    await waitFor(() => expect(screen.getByTestId("agent-login-codex").textContent).toBe(zh.account.cancelLogin));
+    fireEvent.click(await screen.findByTestId("profile-login-codex-__default__"));
+    await waitFor(() => expect(screen.getByTestId("profile-login-codex-__default__").textContent).toBe(zh.account.cancelLogin));
     fireLogin("codex", "timeout");
-    await waitFor(() => expect(screen.getByTestId("agent-login-codex").textContent).toBe(zh.account.login));
+    await waitFor(() => expect(screen.getByTestId("profile-login-codex-__default__").textContent).toBe(zh.account.login));
     expect(screen.getByTestId("agent-login-error-codex").textContent).toBe(zh.account.loginTimeout);
   });
 
@@ -836,15 +834,15 @@ describe("AccountSection 登录", () => {
     api.cancelLogin.mockResolvedValue(undefined);
     render(<AccountSection />);
     await selectAgent("Codex");
-    fireEvent.click(await screen.findByTestId("agent-login-codex"));
-    await waitFor(() => expect(screen.getByTestId("agent-login-codex").textContent).toBe(zh.account.cancelLogin));
+    fireEvent.click(await screen.findByTestId("profile-login-codex-__default__"));
+    await waitFor(() => expect(screen.getByTestId("profile-login-codex-__default__").textContent).toBe(zh.account.cancelLogin));
 
-    fireEvent.click(screen.getByTestId("agent-login-codex"));
+    fireEvent.click(screen.getByTestId("profile-login-codex-__default__"));
     await waitFor(() => expect(api.cancelLogin).toHaveBeenCalledWith("codex", expect.any(String)));
 
     // 收尾由后端 emit login-done（它会再查一次账号；这里模拟「确实没登上」）。
     fireLogin("codex", "cancelled");
-    await waitFor(() => expect(screen.getByTestId("agent-login-codex").textContent).toBe(zh.account.login));
+    await waitFor(() => expect(screen.getByTestId("profile-login-codex-__default__").textContent).toBe(zh.account.login));
     // 取消 ≠ 超时：文案必须区分，否则用户以为是没检测到。
     expect(screen.getByTestId("agent-login-error-codex").textContent).toBe(zh.account.loginCancelled);
   });
@@ -855,9 +853,9 @@ describe("AccountSection 登录", () => {
     api.cancelLogin.mockResolvedValue(undefined);
     render(<AccountSection />);
     await selectAgent("Codex");
-    fireEvent.click(await screen.findByTestId("agent-login-codex"));
-    await waitFor(() => expect(screen.getByTestId("agent-login-codex").textContent).toBe(zh.account.cancelLogin));
-    fireEvent.click(screen.getByTestId("agent-login-codex"));
+    fireEvent.click(await screen.findByTestId("profile-login-codex-__default__"));
+    await waitFor(() => expect(screen.getByTestId("profile-login-codex-__default__").textContent).toBe(zh.account.cancelLogin));
+    fireEvent.click(screen.getByTestId("profile-login-codex-__default__"));
     await waitFor(() => expect(api.cancelLogin).toHaveBeenCalled());
 
     api.getAccounts.mockResolvedValue([
@@ -865,7 +863,7 @@ describe("AccountSection 登录", () => {
       { provider: "codex", account: { login_label: "API Key" }, usage: null, usage_supported: false },
     ]);
     fireLogin("codex", "success"); // 后端复查发现真登上了
-    await waitFor(() => expect(screen.queryByTestId("agent-login-codex")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("profile-login-codex-__default__")).toBeNull());
     expect(screen.queryByTestId("agent-login-error-codex")).toBeNull();
   });
 
@@ -891,7 +889,7 @@ describe("AccountSection 登录", () => {
     // 未接入 → 提示条 + 修复按钮在。
     expect(await screen.findByTestId("agent-repair-hooks-codex")).toBeTruthy();
 
-    fireEvent.click(screen.getByTestId("agent-login-codex"));
+    fireEvent.click(screen.getByTestId("profile-login-codex-__default__"));
     fireLogin("codex", "success");
     // 登录成功 → 重查 hooks 得 installed → 提示条消失。
     await waitFor(() => expect(screen.queryByTestId("agent-repair-hooks-codex")).toBeNull());
@@ -901,9 +899,9 @@ describe("AccountSection 登录", () => {
     api.loginAgent.mockRejectedValue(new Error("启动终端失败"));
     render(<AccountSection />);
     await selectAgent("Codex");
-    fireEvent.click(await screen.findByTestId("agent-login-codex"));
+    fireEvent.click(await screen.findByTestId("profile-login-codex-__default__"));
     await waitFor(() => expect(screen.getByTestId("agent-login-error-codex")).toBeTruthy());
-    expect((screen.getByTestId("agent-login-codex") as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByTestId("profile-login-codex-__default__") as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("装完自动引导：install-done 成功后，该 agent 的登录按钮被标为主要动作", async () => {
@@ -914,12 +912,12 @@ describe("AccountSection 登录", () => {
     await selectAgent("Kimi Code");
     fireEvent.click(await screen.findByTestId("agent-install-kimi"));
     fireDone("kimi", true);
-    const loginBtn = await screen.findByTestId("agent-login-kimi");
+    const loginBtn = await screen.findByTestId("profile-login-kimi-__default__");
     // 「装完 → 登录」串成一条链路：按钮升为 primary，而非埋在一堆次要按钮里。
     expect(loginBtn.className).toContain("btn-primary");
     // 未经安装流程的 codex 则是普通次要按钮（切过去看）。
     await selectAgent("Codex");
-    expect((await screen.findByTestId("agent-login-codex")).className).not.toContain("btn-primary");
+    expect((await screen.findByTestId("profile-login-codex-__default__")).className).not.toContain("btn-primary");
   });
 });
 
@@ -1098,13 +1096,13 @@ describe("AccountSection 多账号", () => {
     render(<AccountSection />);
 
     const row = await screen.findByTestId("profile-claude-work");
-    fireEvent.click(row.querySelector(".profile-row-main")!);
+    fireEvent.click(row.querySelector(".acct-main")!);
     await waitFor(() => expect(api.setActiveProfile).toHaveBeenCalledWith("claude", "work"));
 
     // 活跃那行（默认账号）的主按钮不可点——点它没有意义。用 aria-disabled（做空第一轮 #4）：
     // 刚切过去的那行会变成活跃，真 disabled 会把焦点踢到 body。
     const def = screen.getByTestId("profile-claude-__default__");
-    const main = def.querySelector(".profile-row-main") as HTMLButtonElement;
+    const main = def.querySelector(".acct-main") as HTMLButtonElement;
     expect(main.getAttribute("aria-disabled")).toBe("true");
     api.setActiveProfile.mockClear();
     fireEvent.click(main);
@@ -1127,7 +1125,7 @@ describe("AccountSection 多账号", () => {
     render(<AccountSection />);
 
     const row = await screen.findByTestId("profile-claude-work");
-    fireEvent.click(row.querySelector(".profile-row-main")!);
+    fireEvent.click(row.querySelector(".acct-main")!);
     await waitFor(() => expect(api.setActiveProfile).toHaveBeenCalledWith("claude", "work"));
     // 待重启数问的是后端（看板列表分页，自己数会漏），且必须切完再问。
     await waitFor(() => expect(api.sessionsOffActiveProfileCount).toHaveBeenCalledWith("claude"));
@@ -1152,7 +1150,7 @@ describe("AccountSection 多账号", () => {
     render(<AccountSection />);
 
     const row = await screen.findByTestId("profile-claude-work");
-    fireEvent.click(row.querySelector(".profile-row-main")!);
+    fireEvent.click(row.querySelector(".acct-main")!);
     await waitFor(() => expect(api.setActiveProfile).toHaveBeenCalledWith("claude", "work"));
     await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
     expect(api.applyActiveProfileToSessions).not.toHaveBeenCalled();
@@ -1169,7 +1167,7 @@ describe("AccountSection 多账号", () => {
     api.getSettings.mockResolvedValue({ sticker_quota_providers: [], profile_switch_running: "restart" });
     const first = render(<AccountSection />);
     let row = await screen.findByTestId("profile-claude-work");
-    fireEvent.click(row.querySelector(".profile-row-main")!);
+    fireEvent.click(row.querySelector(".acct-main")!);
     await waitFor(() => expect(api.applyActiveProfileToSessions).toHaveBeenCalledWith("claude"));
     expect(dialog.confirm).not.toHaveBeenCalled();
     first.unmount();
@@ -1183,7 +1181,7 @@ describe("AccountSection 多账号", () => {
     // 设置读进来之后再点（与用户的实际顺序一致）。
     await waitFor(() => expect(api.getSettings).toHaveBeenCalled());
     await screen.findByTestId("profile-switch-running-claude");
-    fireEvent.click(row.querySelector(".profile-row-main")!);
+    fireEvent.click(row.querySelector(".acct-main")!);
     await waitFor(() => expect(api.setActiveProfile).toHaveBeenCalledWith("claude", "work"));
     expect(api.sessionsOffActiveProfileCount).not.toHaveBeenCalled();
     expect(dialog.confirm).not.toHaveBeenCalled();
@@ -1209,7 +1207,7 @@ describe("AccountSection 多账号", () => {
     expect((await screen.findByTestId("profiles-opencode")).textContent)
       .toContain(zh.account.switchCoverage);
     const row = await screen.findByTestId("profile-opencode-work");
-    fireEvent.click(row.querySelector(".profile-row-main")!);
+    fireEvent.click(row.querySelector(".acct-main")!);
     await waitFor(() => expect(api.setActiveProfile).toHaveBeenCalledWith("opencode", "work"));
     expect(api.sessionsOffActiveProfileCount).not.toHaveBeenCalled();
     expect(dialog.confirm).not.toHaveBeenCalled();
@@ -1251,57 +1249,199 @@ describe("AccountSection 多账号", () => {
   });
 
   /**
-   * 会员等级是**徽章**，不是描述行。
-   *
-   * 描述行说的是「这是哪个账号」（邮箱；kimi 给不出邮箱，退到 userId 短码）。把等级写进那一行，
-   * 账号看起来就像叫「Allegretto」——而且两个同档账号会长得一模一样。
-   *
-   * 等级由用量接口捎回（kimi 本地读不到），所以只有活跃账号拿得到，非活跃行没有徽章。
+   * 照 Orca：套餐写在详情行（组织 · 套餐 · 邮箱），标题是名字；没起名的账号标题就是登录身份。
+   * kimi 给不出邮箱，身份退到 userId 短码。
    */
-  it("kimi 的会员等级是徽章，描述行仍是账号标识", async () => {
+  it("托管账号的详情行写套餐和登录身份；没起名的标题用登录身份", async () => {
     api.listAgents.mockResolvedValue([
       { id: "kimi", display_name: "Kimi Code", installed: true, supports_proxy: true, supports_account: true, supports_profiles: true },
     ]);
     api.listProfiles.mockResolvedValue([
-      { id: null, name: "", active: true, account: { login_label: "cnta…5a4g", plan: "Allegretto" } },
-      { id: "alt", name: "小号", active: false, account: { login_label: "d0ah…9x2k" } },
+      { id: null, name: "", active: false, account: { login_label: "cnta…5a4g" } },
+      { id: "alt", name: "小号", active: true, account: { login_label: "d0ah…9x2k", plan: "Allegretto" } },
+      { id: "account", name: "", active: false, account: { login_label: "e1bc…7z0q" } },
     ]);
     render(<AccountSection />);
 
-    const active = await screen.findByTestId("profile-kimi-__default__");
-    expect(active.querySelector(".profile-badge-plan")?.textContent).toBe("Allegretto");
-    // 描述行不被等级顶掉：它得说清这是哪个账号。
-    expect(active.querySelector(".profile-desc")?.textContent).toBe("cnta…5a4g");
-
-    // 非活跃行拿不到等级（用量缓存不按 profile 分键，只讲活跃账号的事）→ 无徽章，但仍有标识。
+    const sys = await screen.findByTestId("profile-kimi-__default__");
+    expect(sys.querySelector(".acct-name")?.textContent).toBe(zh.account.systemDefaultNamed("cnta…5a4g"));
     const alt = screen.getByTestId("profile-kimi-alt");
-    expect(alt.querySelector(".profile-badge-plan")).toBeNull();
-    expect(alt.querySelector(".profile-desc")?.textContent).toBe("d0ah…9x2k");
+    expect(alt.querySelector(".acct-name")?.textContent).toBe("小号");
+    expect(alt.querySelector(".acct-desc")?.textContent).toBe("Allegretto · d0ah…9x2k");
+    expect(alt.querySelector(".acct-badge")?.textContent).toBe(zh.account.activeProfile);
+    const unnamed = screen.getByTestId("profile-kimi-account");
+    expect(unnamed.querySelector(".acct-name")?.textContent).toBe("e1bc…7z0q");
+  });
+
+  /** 没登录的账号不能切过去（Orca：needsSignIn 时禁用选择）：切过去新会话直接卡在登录页。 */
+  it("没登录的账号写明要重新登录，且点它不切换", async () => {
+    api.listProfiles.mockResolvedValue([
+      { id: null, name: "", active: true, account: { email: "a@b.c" } },
+      { id: "work", name: "工作", active: false, account: null },
+    ]);
+    render(<AccountSection />);
+    const row = await screen.findByTestId("profile-claude-work");
+    expect(row.querySelector(".acct-desc")?.textContent).toBe(zh.account.signInRequired);
+    fireEvent.click(row.querySelector(".acct-main")!);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(api.setActiveProfile).not.toHaveBeenCalled();
+    expect(screen.getByTestId("profile-login-claude-work").textContent).toBe(zh.account.login);
+  });
+
+  it("一个账号都没加时显示空状态", async () => {
+    render(<AccountSection />);
+    expect((await screen.findByTestId("profiles-empty-claude")).textContent).toBe(zh.account.accountsEmpty("Claude Code"));
   });
 });
 
-describe("AccountSection 账号的增删改", () => {
+describe("AccountSection 添加账号（照 Orca：直接登录）", () => {
+  /** 点「添加账号」不先问名字：建一个没名字的账号，立刻在它里面登录（带它自己的 id）。 */
+  it("建一个没名字的账号并立刻在它里面登录", async () => {
+    api.createProfile.mockResolvedValue("account");
+    api.loginAgent.mockResolvedValue(undefined);
+    render(<AccountSection />);
+    fireEvent.click(await screen.findByTestId("profile-add-claude"));
+    await waitFor(() => expect(api.createProfile).toHaveBeenCalledWith("claude", ""));
+    await waitFor(() => expect(api.loginAgent).toHaveBeenCalledWith("claude", undefined, "account", expect.any(String)));
+    expect(screen.getByTestId("profile-add-cancel-claude")).toBeTruthy();
+  });
+
+  /** 登录没完成（取消 / 超时）：刚建的空账号撤掉，不留未登录的空壳。 */
+  it("登录取消后撤掉刚建的空账号", async () => {
+    api.createProfile.mockResolvedValue("account");
+    api.loginAgent.mockResolvedValue(undefined);
+    api.cancelLogin.mockResolvedValue(undefined);
+    api.deleteProfile.mockResolvedValue(undefined);
+    render(<AccountSection />);
+    fireEvent.click(await screen.findByTestId("profile-add-claude"));
+    await waitFor(() => expect(api.loginAgent).toHaveBeenCalled());
+    api.listProfiles.mockResolvedValue([
+      { id: null, name: "", active: true, account: { email: "a@b.c" } },
+      { id: "account", name: "", active: false, account: null },
+    ]);
+    fireEvent.click(screen.getByTestId("profile-add-cancel-claude"));
+    await waitFor(() => expect(api.cancelLogin).toHaveBeenCalled());
+    fireLogin("claude", "cancelled");
+    await waitFor(() => expect(api.deleteProfile).toHaveBeenCalledWith("claude", "account"));
+    expect(await screen.findByText(zh.account.addRolledBack)).toBeTruthy();
+  });
+
+  /** 取消前一刻其实已经登完（后端复查到账号）：留着，不能把刚登好的账号删了。 */
+  it("登录成功不撤账号", async () => {
+    api.createProfile.mockResolvedValue("account");
+    api.loginAgent.mockResolvedValue(undefined);
+    render(<AccountSection />);
+    fireEvent.click(await screen.findByTestId("profile-add-claude"));
+    await waitFor(() => expect(api.loginAgent).toHaveBeenCalled());
+    api.listProfiles.mockResolvedValue([
+      { id: null, name: "", active: true, account: { email: "a@b.c" } },
+      { id: "account", name: "", active: false, account: { email: "new@b.c" } },
+    ]);
+    fireLogin("claude", "success");
+    expect((await screen.findByTestId("profile-claude-account")).querySelector(".acct-name")?.textContent).toBe("new@b.c");
+    expect(api.deleteProfile).not.toHaveBeenCalled();
+  });
+
+  /** 老后端取消时查的是默认账号，默认账号登着就报 success：按新账号自己的凭据判断，照样撤掉。 */
+  it("报了 success 但新账号其实没登上，照样撤掉", async () => {
+    api.createProfile.mockResolvedValue("account");
+    api.loginAgent.mockResolvedValue(undefined);
+    api.deleteProfile.mockResolvedValue(undefined);
+    render(<AccountSection />);
+    fireEvent.click(await screen.findByTestId("profile-add-claude"));
+    await waitFor(() => expect(api.loginAgent).toHaveBeenCalled());
+    api.listProfiles.mockResolvedValue([
+      { id: null, name: "", active: true, account: { email: "a@b.c" } },
+      { id: "account", name: "", active: false, account: null },
+    ]);
+    fireLogin("claude", "success");
+    await waitFor(() => expect(api.deleteProfile).toHaveBeenCalledWith("claude", "account"));
+  });
+
+  it("拉起登录失败也撤掉刚建的账号并说明", async () => {
+    api.createProfile.mockResolvedValue("account");
+    api.loginAgent.mockRejectedValue(new Error("启动终端失败"));
+    api.deleteProfile.mockResolvedValue(undefined);
+    api.listProfiles.mockResolvedValue([
+      { id: null, name: "", active: true, account: { email: "a@b.c" } },
+      { id: "account", name: "", active: false, account: null },
+    ]);
+    render(<AccountSection />);
+    fireEvent.click(await screen.findByTestId("profile-add-claude"));
+    await waitFor(() => expect(api.deleteProfile).toHaveBeenCalledWith("claude", "account"));
+    expect((await screen.findByRole("alert")).textContent).toContain(zh.account.loginFailed);
+  });
+});
+
+describe("AccountSection 移除与改名", () => {
   const twoProfiles = () =>
     api.listProfiles.mockResolvedValue([
       { id: null, name: "", active: false, account: { email: "a@b.c" } },
       { id: "work", name: "工作", active: true, account: { email: "w@b.c" } }, // 正在使用
     ]);
 
-  /**
-   * **正在使用的账号也必须删得掉**（后端会把活跃标记落回默认账号）。
-   *
-   * 确认框走 `appConfirm`，**不是 `window.confirm`**——后者在 Tauri 的
-   * webview 里会被直接吞掉、恒返回 false：按钮看着能点，点了却什么都不发生。这正是它此前删不掉的原因。
-   */
-  it("正在使用的账号也能删除，且走 appConfirm", async () => {
+  /** 正在使用的账号也能移除（后端把活跃标记落回系统默认）；确认框走 appConfirm，说清删什么不删什么。 */
+  it("正在使用的账号也能移除，确认框说历史保留", async () => {
     twoProfiles();
     api.deleteProfile.mockResolvedValue(undefined);
     render(<AccountSection />);
-
-    fireEvent.click(await screen.findByTestId("profile-menu-claude-work"));
-    fireEvent.click(screen.getByTestId("profile-menu-claude-work-delete"));
+    fireEvent.click(await screen.findByTestId("profile-remove-claude-work"));
     await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
+    expect(dialog.confirm.mock.calls[0][0]).toBe(zh.account.removeAccountConfirmShared("工作"));
+    expect(dialog.confirm.mock.calls[0][1]).toMatchObject({ danger: true, confirmLabel: zh.account.removeAccountConfirmLabel });
     await waitFor(() => expect(api.deleteProfile).toHaveBeenCalledWith("claude", "work"));
+  });
+
+  it("确认框点取消 → 不删", async () => {
+    twoProfiles();
+    dialog.confirm.mockResolvedValue(false);
+    render(<AccountSection />);
+    fireEvent.click(await screen.findByTestId("profile-remove-claude-work"));
+    await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
+    expect(api.deleteProfile).not.toHaveBeenCalled();
+  });
+
+  /** 系统默认是 agent 自己的目录：没有移除、改名，也不再有退出登录（照 Orca）。 */
+  it("系统默认卡没有移除和改名", async () => {
+    twoProfiles();
+    render(<AccountSection />);
+    await screen.findByTestId("profile-claude-__default__");
+    expect(screen.queryByTestId("profile-remove-claude-__default__")).toBeNull();
+    expect(screen.queryByTestId("profile-rename-claude-__default__")).toBeNull();
+  });
+
+  /** 改名只动展示名，不动 id——id 是目录名，改了等于换了个账号。 */
+  it("改名弹窗：保存新名字", async () => {
+    twoProfiles();
+    api.renameProfile.mockResolvedValue(undefined);
+    render(<AccountSection />);
+    fireEvent.click(await screen.findByTestId("profile-rename-claude-work"));
+    const input = await screen.findByTestId("profile-rename-input");
+    expect(screen.getByText(zh.account.renameHint("w@b.c"))).toBeTruthy();
+    fireEvent.change(input, { target: { value: "个人" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(api.renameProfile).toHaveBeenCalledWith("claude", "work", "个人"));
+  });
+
+  /** 照 Orca：名字留空 = 显示登录邮箱；「恢复默认」就是存空名字。 */
+  it("改名弹窗：恢复默认存空名字", async () => {
+    twoProfiles();
+    api.renameProfile.mockResolvedValue(undefined);
+    render(<AccountSection />);
+    fireEvent.click(await screen.findByTestId("profile-rename-claude-work"));
+    fireEvent.click(await screen.findByTestId("profile-rename-reset"));
+    await waitFor(() => expect(api.renameProfile).toHaveBeenCalledWith("claude", "work", ""));
+  });
+
+  it("改名可以取消——不调后端", async () => {
+    twoProfiles();
+    render(<AccountSection />);
+    fireEvent.click(await screen.findByTestId("profile-rename-claude-work"));
+    const input = await screen.findByTestId("profile-rename-input");
+    fireEvent.change(input, { target: { value: "别的名字" } });
+    fireEvent.click(screen.getByText(zh.account.cancelEdit));
+    await waitFor(() => expect(screen.queryByTestId("profile-rename-input")).toBeNull());
+    expect(api.renameProfile).not.toHaveBeenCalled();
   });
 
   /** 账号区顶部「共用 / 各自」按后端 profile_shares 出：claude 会话历史共用，opencode 的归到「各自」。 */
@@ -1346,197 +1486,11 @@ describe("AccountSection 账号的增删改", () => {
     await waitFor(() => expect(api.revealTerminalPath).toHaveBeenCalledWith("", "C:/p/work/keybindings.json.meowo-profile-merge"));
   });
 
-  /** 会话历史共用时删账号不会带走历史：确认框照实说，不再说「会话历史一并删除」。 */
-  it("会话历史共用的 agent 删账号时，确认框说历史保留", async () => {
-    twoProfiles();
-    dialog.confirm.mockResolvedValue(false);
+  /** 列表读失败不再静默当成空列表（看着像账号全丢了），就地报错。 */
+  it("账号列表读取失败时就地报错", async () => {
+    api.listProfiles.mockRejectedValue("boom");
     render(<AccountSection />);
-    fireEvent.click(await screen.findByTestId("profile-menu-claude-work"));
-    fireEvent.click(screen.getByTestId("profile-menu-claude-work-delete"));
-    await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
-    expect(dialog.confirm.mock.calls[0][0]).toBe(zh.account.deleteProfileConfirmShared("工作"));
-  });
-
-  it("确认框点取消 → 不删", async () => {
-    twoProfiles();
-    dialog.confirm.mockResolvedValue(false);
-    render(<AccountSection />);
-
-    fireEvent.click(await screen.findByTestId("profile-menu-claude-work"));
-    fireEvent.click(screen.getByTestId("profile-menu-claude-work-delete"));
-    await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
-    expect(api.deleteProfile).not.toHaveBeenCalled();
-  });
-
-  /** 改名只动展示名，不动 id——id 是目录名，改了等于换了个账号（凭据和历史都在那个目录里）。 */
-  it("可以给已有账号改名", async () => {
-    twoProfiles();
-    api.renameProfile.mockResolvedValue(undefined);
-    render(<AccountSection />);
-
-    fireEvent.click(await screen.findByTestId("profile-menu-claude-work"));
-    fireEvent.click(screen.getByTestId("profile-menu-claude-work-rename"));
-    const input = await screen.findByTestId("profile-rename-input-claude-work");
-    fireEvent.change(input, { target: { value: "个人" } });
-    fireEvent.keyDown(input, { key: "Enter" });
-
-    await waitFor(() => expect(api.renameProfile).toHaveBeenCalledWith("claude", "work", "个人"));
-  });
-
-  it("改名可以取消——不调后端", async () => {
-    twoProfiles();
-    render(<AccountSection />);
-
-    fireEvent.click(await screen.findByTestId("profile-menu-claude-work"));
-    fireEvent.click(screen.getByTestId("profile-menu-claude-work-rename"));
-    const input = await screen.findByTestId("profile-rename-input-claude-work");
-    fireEvent.change(input, { target: { value: "别的名字" } });
-    // mouseDown 而非 click：要抢在 input 的 onBlur（会提交）之前。
-    fireEvent.mouseDown(screen.getByTestId("profile-rename-cancel-claude-work"));
-
-    await waitFor(() => expect(screen.queryByTestId("profile-rename-input-claude-work")).toBeNull());
-    expect(api.renameProfile).not.toHaveBeenCalled();
-  });
-
-  /** 点了「添加账号」之后得能反悔——只给 Esc 是让人去猜。 */
-  it("添加账号可以取消", async () => {
-    render(<AccountSection />);
-
-    fireEvent.click(await screen.findByTestId("profile-add-claude"));
-    const input = screen.getByPlaceholderText(zh.account.newProfileName);
-    fireEvent.change(input, { target: { value: "半途而废" } });
-
-    fireEvent.click(screen.getByTestId("profile-add-cancel-claude"));
-
-    await waitFor(() => expect(screen.getByTestId("profile-add-claude")).toBeTruthy());
-    expect(api.createProfile).not.toHaveBeenCalled();
-  });
-});
-
-describe("AccountSection 合并进默认账号", () => {
-  const twoProfiles = () =>
-    api.listProfiles.mockResolvedValue([
-      { id: null, name: "", active: false, account: { email: "a@b.c" } },
-      { id: "work", name: "工作", active: true, account: { email: "w@b.c" } },
-    ]);
-
-  /**
-   * 合并是「数据已拆散」的自救出口：会话与历史并入默认账号，账号本身消失。不可逆，
-   * 故与删除同规——必须弹确认（appConfirm，不是 window.confirm），确认框里写明不可逆。
-   */
-  it("确认后调 mergeProfileIntoDefault，确认框写明不可逆", async () => {
-    twoProfiles();
-    api.mergeProfileIntoDefault.mockResolvedValue(undefined);
-    render(<AccountSection />);
-
-    fireEvent.click(await screen.findByTestId("profile-menu-claude-work"));
-    fireEvent.click(screen.getByTestId("profile-menu-claude-work-merge"));
-    await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
-    // 确认文案必须讲清后果：数据并入默认账号 + 不可逆。
-    expect(dialog.confirm.mock.calls[0][0]).toContain("工作");
-    expect(dialog.confirm.mock.calls[0][0]).toContain("不可逆");
-    await waitFor(() =>
-      expect(api.mergeProfileIntoDefault).toHaveBeenCalledWith("claude", "work")
-    );
-  });
-
-  it("确认框点取消 → 不合并", async () => {
-    twoProfiles();
-    dialog.confirm.mockResolvedValue(false);
-    render(<AccountSection />);
-
-    fireEvent.click(await screen.findByTestId("profile-menu-claude-work"));
-    fireEvent.click(screen.getByTestId("profile-menu-claude-work-merge"));
-    await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
-    expect(api.mergeProfileIntoDefault).not.toHaveBeenCalled();
-  });
-
-  /** 默认账号没有「合并进自己」——它是合并的终点，菜单里不该出现这一项。 */
-  it("默认账号的操作菜单没有合并项", async () => {
-    twoProfiles();
-    render(<AccountSection />);
-
-    fireEvent.click(await screen.findByTestId("profile-menu-claude-__default__"));
-    expect(screen.queryByTestId("profile-menu-claude-__default__-merge")).toBeNull();
-    // 删除项同样不给（既有纪律），合并项与它并列管理。
-    expect(screen.queryByTestId("profile-menu-claude-__default__-delete")).toBeNull();
-  });
-
-  /** 后端拒绝（如有进行中的会话）时错误就地展示，不静默。reason 码（S-9）按当前语言映射。 */
-  it("合并失败（后端拒绝）时错误就地展示", async () => {
-    twoProfiles();
-    api.mergeProfileIntoDefault.mockRejectedValue("profile/has-live-sessions: 2");
-    render(<AccountSection />);
-
-    fireEvent.click(await screen.findByTestId("profile-menu-claude-work"));
-    fireEvent.click(screen.getByTestId("profile-menu-claude-work-merge"));
-    await waitFor(() => expect(api.mergeProfileIntoDefault).toHaveBeenCalled());
-    await screen.findByText(/进行中的会话/);
-  });
-});
-
-describe("AccountSection 退出登录 vs 删除账号", () => {
-  const twoProfiles = () =>
-    api.listProfiles.mockResolvedValue([
-      { id: null, name: "", active: false, account: { email: "a@b.c" } }, // 默认账号，已登录
-      { id: "work", name: "工作", active: true, account: { email: "w@b.c" } },
-    ]);
-
-  /**
-   * **登出必须带上那一行自己的 id。**
-   *
-   * 回归：`logout_agent` 原本写死默认账号（`install_for`），且跑 `claude auth logout` 时不注入
-   * `CLAUDE_CONFIG_DIR`——于是你切到另一个账号后点「退出登录」，被清掉的是**默认账号**的凭据，
-   * 而你想登出的那个原封不动。删凭据不可逆，这种错尤其伤。
-   */
-  it("登出某个账号时把它的 id 传下去", async () => {
-    twoProfiles();
-    api.logoutAgent.mockResolvedValue(undefined);
-    render(<AccountSection />);
-
-    fireEvent.click(await screen.findByTestId("profile-menu-claude-work"));
-    fireEvent.click(screen.getByTestId("profile-menu-claude-work-logout"));
-    // 退出登录可逆,不再弹确认,直接执行。
-    await waitFor(() => expect(api.logoutAgent).toHaveBeenCalledWith("claude", "work"));
-    expect(dialog.confirm).not.toHaveBeenCalled();
-  });
-
-  /**
-   * **默认账号只能登出，不能删除**——它是 agent 自己的目录（`~/.claude`），不归 meowo 管。
-   * 这正是「有了删除账号就不再需要退出登录」不成立的地方。
-   */
-  /**
-   * **默认账号能登出、能改名，但不能删除。**
-   *
-   * 删不得是因为它就是 agent 自己的目录（`~/.claude`）——删它等于抹掉用户的凭据、配置和**全部
-   * 会话历史**，那不是 meowo 该替他做的决定（自定义账号删的是 `~/.meowo/profiles/…`，那才是
-   * 我们自己造的目录）。
-   *
-   * 但**改名没有理由不给**：名字只是个显示串，不碰任何文件。
-   */
-  it("默认账号可登出、可改名，但不可删除", async () => {
-    twoProfiles();
-    render(<AccountSection />);
-
-    fireEvent.click(await screen.findByTestId("profile-menu-claude-__default__"));
-    expect(screen.getByTestId("profile-menu-claude-__default__-logout")).toBeTruthy();
-    expect(screen.getByTestId("profile-menu-claude-__default__-rename")).toBeTruthy();
-    expect(screen.queryByTestId("profile-menu-claude-__default__-delete")).toBeNull();
-  });
-
-  /** 默认账号的名字单独存（它不在 settings.profiles 里），故 id 传 null。 */
-  it("给默认账号改名时 id 传 null", async () => {
-    twoProfiles();
-    api.renameProfile.mockResolvedValue(undefined);
-    render(<AccountSection />);
-
-    fireEvent.click(await screen.findByTestId("profile-menu-claude-__default__"));
-    fireEvent.click(screen.getByTestId("profile-menu-claude-__default__-rename"));
-    const input = await screen.findByTestId("profile-rename-input-claude-__default__");
-    fireEvent.change(input, { target: { value: "个人号" } });
-    fireEvent.keyDown(input, { key: "Enter" });
-
-    await waitFor(() => expect(api.renameProfile).toHaveBeenCalledWith("claude", null, "个人号"));
+    expect((await screen.findByTestId("profiles-claude")).textContent).toContain("boom");
   });
 });
 
