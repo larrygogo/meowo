@@ -101,3 +101,65 @@ describe("ChatStatusBar 底部状态条", () => {
     expect(refreshProfileUsage).not.toHaveBeenCalled();
   });
 });
+
+describe("ChatStatusBar 多账号面板（照 Orca 的 Claude 账号面板）", () => {
+  const acct = (email: string, plan: string) => ({ email, display_name: null, login_label: null, plan, org: null });
+  const rows = () => [
+    { id: null, name: "", active: true, account: acct("me@example.com", "Max 5x"), set_aside: [] },
+    { id: "p1", name: "工作", active: false, account: acct("work@example.com", "Max 20x"), set_aside: [] },
+    { id: "p2", name: "", active: false, account: acct("side@example.com", "Pro"), set_aside: [] },
+    { id: "p3", name: "", active: false, account: null, set_aside: [] },
+  ] as unknown as Awaited<ReturnType<typeof listProfiles>>;
+
+  it("列出系统默认和所有账号；其余账号一个接一个读，未登录的不读；此对话的账号打勾", async () => {
+    vi.mocked(listProfiles).mockResolvedValue(rows());
+    const pending: Record<string, (u: ProviderUsage) => void> = {};
+    vi.mocked(refreshProfileUsage).mockImplementation((_p, profile) => new Promise((res) => { pending[String(profile)] = res; }));
+    render(bar({ profile: "p1" }));
+    await waitFor(() => expect(pending.p1).toBeTruthy());
+    await act(async () => { pending.p1(usage([93, 64])); });
+    fireEvent.click(screen.getByTestId("chat-statusbar-usage"));
+    await screen.findByTestId("chat-statusbar-roster");
+    // 系统默认先问；它回来之前不问下一个（不会几个账号同时打官方接口）。
+    await waitFor(() => expect(pending.null).toBeTruthy());
+    expect(pending.p2).toBeUndefined();
+    await act(async () => { pending.null(usage([16, 81])); });
+    await waitFor(() => expect(pending.p2).toBeTruthy());
+    await act(async () => { pending.p2(usage([5, 10])); });
+    const calls = vi.mocked(refreshProfileUsage).mock.calls.map((c) => c[1]);
+    expect(calls).toEqual(["p1", null, "p2"]);
+    const rowsEl = screen.getAllByTestId("chat-statusbar-acct");
+    expect(rowsEl).toHaveLength(4);
+    expect(rowsEl[1].getAttribute("aria-current")).toBe("true");
+    expect(rowsEl[1].textContent).toContain(zh.chat.usageThisChat);
+    expect(rowsEl[0].textContent).toContain("81%");
+    expect(rowsEl[3].textContent).toContain(zh.chat.usageSignIn);
+  });
+
+  it("60 秒内重开面板不再来一轮；点刷新不受限", async () => {
+    vi.mocked(listProfiles).mockResolvedValue(rows().slice(0, 2));
+    vi.mocked(refreshProfileUsage).mockResolvedValue(usage([10]));
+    render(bar({ profile: "p1" }));
+    const chip = await screen.findByTestId("chat-statusbar-usage");
+    fireEvent.click(chip);
+    await waitFor(() => expect(refreshProfileUsage).toHaveBeenCalledTimes(2));
+    fireEvent.click(chip);
+    fireEvent.click(chip);
+    await screen.findByTestId("chat-statusbar-roster");
+    expect(refreshProfileUsage).toHaveBeenCalledTimes(2);
+    await act(async () => { fireEvent.click(screen.getByTestId("chat-statusbar-refresh-all")); });
+    await waitFor(() => expect(refreshProfileUsage).toHaveBeenCalledTimes(4));
+  });
+
+  it("精简：状态条只留最紧的百分比，不带倒计时", async () => {
+    vi.mocked(refreshProfileUsage).mockResolvedValue(usage([9, 79]));
+    render(bar());
+    const chip = await screen.findByTestId("chat-statusbar-usage");
+    await waitFor(() => expect(chip.textContent).toContain("3h 39m"));
+    fireEvent.click(chip);
+    fireEvent.click(screen.getByTestId("chat-statusbar-mode-compact"));
+    expect(chip.textContent).toContain("79%");
+    expect(chip.textContent).not.toContain("9%·");
+    expect(chip.textContent).not.toContain("3h 39m");
+  });
+});

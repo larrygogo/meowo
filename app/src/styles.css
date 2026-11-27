@@ -7342,12 +7342,47 @@ button.lead-entry-head:hover { background: var(--fill-hover); }
 /* 详情面板：与圆环卡片、弹出菜单同一套外壳，锚在状态条上方左对齐（Orca：side=top align=start）。 */
 .chat-statusbar-card {
   position: absolute; left: 0; bottom: calc(100% + var(--sp-6)); z-index: var(--z-dropdown);
-  width: calc(300px * var(--cc-ui)); max-width: calc(100vw - 16px);
+  width: calc(360px * var(--cc-ui)); max-width: calc(100vw - 16px);
   padding: var(--sp-14); display: flex; flex-direction: column; gap: var(--sp-10);
   border: var(--hairline) solid transparent; border-radius: var(--radius-lg);
   background: var(--cc-menu-bg); box-shadow: var(--edge-float), var(--shadow-menu);
   color: var(--cc-text); font-size: var(--text-xs); white-space: normal; text-align: left; cursor: default;
 }
+/* 面板头：「用量 ⟳ ……… 已用 ⇄」，下面一条「详细 | 精简」分段（照 Orca 的用量面板头）。 */
+.chat-statusbar-card-head { display: flex; align-items: center; gap: var(--sp-4); }
+.chat-statusbar-spacer { flex: 1; }
+.chat-statusbar-seg { display: flex; padding: 2px; border-radius: var(--radius-md); background: var(--fill-hover); }
+.chat-statusbar-seg > button {
+  flex: 1; height: calc(24px * var(--cc-ui)); padding: 0; margin: 0; border: 0; border-radius: calc(var(--radius-md) - 2px);
+  background: transparent; color: var(--cc-text-dim); font: inherit; cursor: pointer;
+}
+.chat-statusbar-seg > button.is-on { background: var(--cc-menu-bg); color: var(--cc-text); box-shadow: var(--shadow-sm); }
+.chat-statusbar-current { display: flex; flex-direction: column; gap: var(--sp-6); padding: var(--sp-10) var(--sp-12); border-radius: var(--radius-md); box-shadow: 0 0 0 var(--hairline) var(--line-subtle); }
+.chat-context-account.is-strong { color: var(--cc-text); font-weight: var(--fw-medium); }
+/* 账号列表（照 Orca 的 AccountSwitchList：小标题 + 右侧「已用/剩余」列头，未登录单独一组）。 */
+.chat-statusbar-roster { display: flex; flex-direction: column; gap: 2px; max-height: min(320px, 40vh); overflow-y: auto; margin: 0 calc(-1 * var(--sp-6)); }
+.chat-statusbar-roster-head { display: flex; justify-content: space-between; padding: var(--sp-4) var(--sp-6); color: var(--cc-text-dim); font-size: var(--text-2xs); font-weight: var(--fw-medium); }
+.chat-statusbar-roster-head.is-group { margin-top: var(--sp-4); }
+.chat-statusbar-acct { display: flex; align-items: center; gap: var(--sp-6); min-height: calc(36px * var(--cc-ui)); padding: var(--sp-4) var(--sp-6); border-radius: var(--radius-md); }
+.chat-statusbar-acct.is-current { background: var(--fill-selected); }
+.chat-statusbar-acct-check { width: 14px; flex: 0 0 auto; display: inline-flex; justify-content: center; color: var(--cc-text-dim); }
+.chat-statusbar-acct-name { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.chat-statusbar-acct-label, .chat-statusbar-acct-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-statusbar-acct-detail { color: var(--cc-text-dim); font-size: var(--text-2xs); }
+.chat-statusbar-acct-note { flex: 0 0 auto; color: var(--cc-text-dim); font-size: var(--text-2xs); }
+.chat-statusbar-acct-usage { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-6); font-variant-numeric: tabular-nums; }
+.chat-statusbar-acct-usage.is-detailed { flex-direction: column; align-items: flex-end; gap: 2px; }
+.chat-statusbar-acct-usage.is-fetching { opacity: .6; }
+.chat-statusbar-gauge { display: inline-flex; align-items: center; gap: var(--sp-6); }
+.chat-statusbar-gauge-label { min-width: 2.6em; text-align: right; color: var(--cc-text-dim); font-size: var(--text-2xs); }
+.chat-statusbar-gauge-bar { display: block; width: 30px; height: 5px; border-radius: var(--radius-full); background: var(--usage-track-bg); overflow: hidden; }
+.chat-statusbar-gauge-bar > i { display: block; height: 100%; border-radius: inherit; background: var(--cc-accent); }
+.chat-statusbar-gauge-bar.is-warn > i { background: var(--cc-warn-vivid); }
+.chat-statusbar-gauge-bar.is-full > i { background: var(--cc-err-vivid); }
+.chat-statusbar-gauge-pct { min-width: 2.6em; text-align: right; font-weight: var(--fw-medium); }
+.chat-statusbar-gauge-reset { min-width: 4.2em; text-align: right; color: var(--cc-text-dim); font-size: var(--text-2xs); }
+.chat-statusbar-signin { flex: 0 0 auto; padding: var(--sp-2) var(--sp-6); margin: 0; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--cc-accent); font: inherit; cursor: pointer; }
+@media (hover: hover) { .chat-statusbar-signin:hover { background: var(--fill-hover); } }
 .chat-statusbar-card-account { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-8); min-width: 0; }
 .chat-statusbar-toggle, .chat-statusbar-card .chat-context-retry, .chat-statusbar-manage {
   display: inline-flex; align-items: center; gap: var(--sp-4); flex: 0 0 auto;

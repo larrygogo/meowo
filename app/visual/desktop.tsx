@@ -146,6 +146,24 @@ async function boot(): Promise<React.ReactNode> {
     setExtraMock((cmd, args) => {
       // ?usage=warn|limited|expired：对话页上下文卡片里「此对话使用的账号」的几种状态（照 Orca 对照用）。
       const usageCase = q.get("usage");
+      // ?usage=multi：底部状态条面板里的多账号列表（系统默认 + 两个已登录 + 一个已退出，照 Orca 对照用）。
+      if (usageCase === "multi" && cmd === "list_profiles") {
+        const acct = (email: string, plan: string) => ({ email, display_name: null, login_label: null, plan, org: null });
+        return [
+          { id: null, name: "", active: true, account: acct("me@example.com", "Max 5x"), set_aside: [] },
+          { id: "work", name: "工作", active: false, account: acct("work@example.com", "Max 20x"), set_aside: [] },
+          { id: "side", name: "", active: false, account: acct("side@example.com", "Pro"), set_aside: [] },
+          { id: "old", name: "", active: false, account: null, set_aside: [] },
+        ];
+      }
+      if (usageCase === "multi" && cmd === "refresh_profile_usage") {
+        const at = (h: number) => new Date(Date.now() + h * 3_600_000).toISOString();
+        const lane = (kind: string, used_pct: number, h: number, label?: string) => ({ kind, used_pct, used: null, limit: null, unit: null, resets_at: at(h), ...(label ? { label } : {}) });
+        const who = (args as { profile?: string | null } | undefined)?.profile ?? null;
+        if (who === "side") return Promise.reject("USAGE_EXPIRED");
+        if (who === "work") return { note: null, lanes: [lane("five_hour", 93, 1.2), lane("seven_day", 64, 90), lane("model_weekly", 41, 90, "Fable")] };
+        return { note: null, lanes: [lane("five_hour", 16, 3.2), lane("seven_day", 81, 84), lane("model_weekly", 23, 84, "Fable")] };
+      }
       if (usageCase && cmd === "refresh_profile_usage") {
         if (usageCase === "limited") return Promise.reject("USAGE_RATE_LIMITED:300");
         if (usageCase === "expired") return Promise.reject("USAGE_EXPIRED");
