@@ -126,4 +126,11 @@ pub(super) static DEPS: &[D] = &[
         "plan · Gemini 4 Neon · high",
         "运行时拼接：同 auto · ",
     ),
+    // ── 用量接口地址（account.rs）──
+    D::record(
+        "record:quota-endpoint",
+        "daily-cloudcode-pa.googleapis.com",
+        "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+        "1.5.18 运行日志（~/.gemini/antigravity-cli/log）里的请求地址；agy.exe 1 处，是 cloud_code_endpoint 的默认值。         agy 换了地址时用量会静默变成永远满额。CLI 升级后在程序文件里搜一下这个地址还在不在",
+    ),
 ];
