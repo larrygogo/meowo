@@ -2288,9 +2288,7 @@ export const en: Dict = {
     contextUnsupported: "Context usage: not available for this Agent",
     // Multi-account
     profiles: "Accounts",
-    defaultProfile: "Default account",
     addProfile: "Add account",
-    newProfileName: "Account name (e.g. Work)",
     sharedLabel: "Shared",
     ownLabel: "Separate",
     ownLogin: "Sign-in",
@@ -2313,30 +2311,45 @@ export const en: Dict = {
         ? "Account switched. Restart the 1 running session of this Agent onto the new account too? Its conversation is kept."
         : `Account switched. Restart the ${n} running sessions of this Agent onto the new account too? Their conversations are kept.`,
     switchRestartConfirmLabel: "Restart them",
-    switchRunningLabel: "Running sessions after a switch",
-    switchRunningDesc: "Restarting keeps the conversation",
+    // Accounts section rebuilt after Orca's Settings › Accounts (2026-11-27).
+    accountsSub: (agent: string) => `Optional. Without accounts Meowo uses your normal ${agent} login. Add accounts for quick switching. Switching applies to sessions you start next.`,
+    systemDefault: "System default",
+    systemDefaultNamed: (email: string) => `System default: ${email}`,
+    systemDefaultDesc: (agent: string) => `Use your current ${agent} login`,
+    systemDefaultSignedOut: (agent: string) => `${agent} isn't signed in on this computer`,
+    accountsEmpty: (agent: string) => `No accounts added. New sessions use your normal ${agent} login until you add one here.`,
+    unnamedAccount: "Account not signed in",
+    signInRequired: "Sign in again to use this account",
+    signedIn: "Signed in",
+    signInAgain: "Sign in again",
+    removeAccount: "Remove",
+    removeAccountTitle: "Remove account?",
+    removeAccountConfirmLabel: "Remove account",
+    removeAccountConfirm: (name: string) =>
+      `${name}
+Deletes this account's own folder, the sign-in saved in it and its chat history. This can't be undone. Your system default login stays. If it is selected, sessions you start next use System default.`,
+    removeAccountConfirmShared: (name: string) =>
+      `${name}
+Deletes this account's own folder and the sign-in saved in it. Your system default login and shared chat history stay. If it is selected, sessions you start next use System default.`,
+    renameTitle: "Rename account",
+    renameHint: (email: string) => `Only the name Meowo shows changes. Leave it blank to show ${email}.`,
+    renameHintPlain: "Only the name Meowo shows changes.",
+    renameSave: "Save",
+    renameReset: "Reset to default",
+    addWaiting: "A sign-in window is open. Finish signing in there and the account shows up here.",
+    addRolledBack: "Sign-in didn't finish, so the new account was removed.",
+    switchRunningLabel: "When you switch while sessions are running",
+    switchRunningDesc: "Restarting continues each conversation on the new account. Busy sessions stop their current turn.",
     switchRunningAsk: "Ask each time",
-    switchRunningRestart: "Restart them",
-    switchRunningKeep: "Keep old account",
+    switchRunningRestart: "Always restart",
+    switchRunningKeep: "Never restart",
     agentsLoadFailed: "Couldn't load the Agent list. Please retry",
     switchProfile: "Switch to this account",
     activeProfile: "In use",
     // Active-account hint shared by the session badge, account card, and new-session panel.
     // Hidden on the default account — users without custom accounts see nothing.
     activeProfileBadge: (name: string) => `Account: ${name}`,
-    profileActions: "Account actions",
-    renameProfile: "Rename",
     cancelEdit: "Cancel",
-    mergeProfile: "Merge into default account",
-    mergeProfileConfirm: (name: string) =>
-      `Merge "${name}" into the default account? This cannot be undone.`,
-    mergeProfileConfirmShared: (name: string) =>
-      `Merge "${name}" into the default account? The account is removed and its sessions continue under the default account. This cannot be undone.`,
-    deleteProfile: "Delete account",
-    deleteProfileConfirm: (name: string) =>
-      `Delete account "${name}"? Its credentials and session history will be deleted for good.`,
-    deleteProfileConfirmShared: (name: string) =>
-      `Delete account "${name}"? Its sign-in is removed for good; session history lives in the default account and stays.`,
     login: "Sign in",
     loggingIn: "Waiting for sign-in…",
     loginWaiting: (terminal) =>

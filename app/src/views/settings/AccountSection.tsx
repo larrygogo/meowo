@@ -1,24 +1,15 @@
 // 设置窗口「账号」页：每个 provider 的安装 / 登录 / 用量三态卡片。
 // 从 About.tsx 抽出（体量最大、最内聚，且已被 About.account.test.tsx 单独覆盖）。
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { appConfirm } from "../../confirm";
 import {
   listAgents,
-  listProfiles,
-  createProfile,
-  setActiveProfile,
-  applyActiveProfileToSessions,
-  sessionsOffActiveProfileCount,
-  renameProfile,
-  deleteProfile,
-  mergeProfileIntoDefault,
   availableTerminals,
   type AgentId,
   type AgentDescriptor,
   type ProfileView,
   type ResumeTerminal,
   type Settings,
-  type ProfileSwitchRunning,
 } from "../../api";
 import {
   getAccounts,
@@ -48,9 +39,11 @@ import { formatBackendError } from "../../i18n/errors";
 import type { Dict } from "../../i18n/zh";
 import { Switch, SettingsError, Segmented } from "./widgets";
 import { ExtensionsSection } from "./ExtensionsSection";
-import { ActionMenu, Dropdown } from "../menu";
+import { Dropdown } from "../menu";
 import { useSettingsState } from "./state";
 import { RelayAccess } from "./RelayAccess";
+import { ProfileList } from "./ProfileAccounts";
+import { profileLabel, sameAccountName } from "../../profileLabel";
 import { useTauriEvent } from "../../hooks/useTauriEvent";
 import { ACTIVE_PROFILE_CHANGED } from "../island/useIslandUsage";
 import { useLoginOperations, type LoginOperationState } from "../../hooks/useLoginOperations";
@@ -62,7 +55,6 @@ import { remoteUi } from "../../remoteMode";
 import { icInfo } from "../../icons/glyphs.settings";
 import { busyProps } from "../../busyButton";
 import type { ShareTopic } from "../../generated/contracts/ShareTopic";
-import type { ProfileSetAside } from "../../api";
 
 function RefreshIcon({ spinning }: { spinning?: boolean }) {
   return (
@@ -82,20 +74,7 @@ function displayVersion(raw: string): string {
   return raw.match(/\d+\.\d+(?:\.\d+)?(?:[-+][\w.]+)?/)?.[0] ?? raw.trim();
 }
 
-/** 账号名和下面那行邮箱指的是不是同一个邮箱。大小写不计；Gmail 不认本地部分的点和 `+后缀`
- *  （`ar.b@gmail.com` 与 `arb@gmail.com` 是同一个收件箱），按 Gmail 的规则比。
- *  实拍：账号名起成 `ar.xxx@gmail.com`、登录邮箱是 `arxxx@gmail.com`，徽章重复一遍还被挤成「账…」。 */
-export function sameAccountName(name: string, email: string): boolean {
-  const norm = (raw: string) => {
-    const s = raw.trim().toLowerCase();
-    const at = s.lastIndexOf("@");
-    if (at <= 0) return s;
-    const domain = s.slice(at + 1);
-    if (domain !== "gmail.com" && domain !== "googlemail.com") return s;
-    return s.slice(0, at).split("+")[0].replace(/\./g, "") + "@gmail.com";
-  };
-  return norm(name) === norm(email);
-}
+export { sameAccountName } from "../../profileLabel";
 
 function fmtResetIn(iso: string, t: Dict): string {
   const ts = Date.parse(iso);
@@ -564,6 +543,9 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsLogi
   const isInstalled = installed === true;
   // 设置页切换接入方式后应立即反映，不等待账号接口下一次刷新；老后端 payload 仍作为加载前回退。
   const relayEnabled = settings?.relay?.per_agent[provider]?.enabled ?? payload?.relay_enabled ?? false;
+  // 有账号列表时，登录 / 退出都在列表的卡片上做（照 Orca：只有一处入口）。之前卡片头和列表各一套同名按钮，
+  // 头部那套作用于「当前活跃账号」，用户分不清点的是哪个账号。
+  const listsProfiles = isInstalled && supportsProfiles && !relayEnabled;
   const isLoggedIn = isInstalled && (acc != null || relayEnabled);
   // 无账号概念的 agent：已装即到此为止——它没有「登录」这回事，所以不报「未登录」、也不给登录按钮。
   const statusBadge = relayEnabled
@@ -691,7 +673,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsLogi
         {/* 顶部这两个按钮作用于**当前活跃账号**（卡片头部显示的正是它的信息）。下面账号列表里的
             同名按钮则针对具体某一行——两者并存不是冗余：一个是「当前账号」的快捷方式，
             一个是「哪一个账号」的精确操作。 */}
-        {isInstalled && !isLoggedIn && !relayEnabled && supportsAccount && supportsLogin && (
+        {isInstalled && !isLoggedIn && !relayEnabled && supportsAccount && supportsLogin && !listsProfiles && (
           <button
             type="button"
             className={"provider-card-action" + (justInstalled ? " btn-primary" : "")}
@@ -719,7 +701,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsLogi
             {t.account.apiKeyLogin}
           </button>
         )}
-        {isInstalled && acc && !relayEnabled && supportsLogout && (
+        {isInstalled && acc && !relayEnabled && supportsLogout && !listsProfiles && (
           <button
             type="button"
             className="provider-card-action"
@@ -874,7 +856,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsLogi
       {(isLoggedIn || viewingProfile) && !relayEnabled && (
         <div className="provider-usage">
           <div className="usage-bar-head">
-            <span className="usage-card-title">{viewingProfile ? t.account.usageFor(viewingProfile.name || t.account.defaultProfile) : t.account.quota}</span>
+            <span className="usage-card-title">{viewingProfile ? t.account.usageFor(profileLabel(viewingProfile, t)) : t.account.quota}</span>
             {/* 数据时刻：没有它，开着设置页越久显示的越陈旧且毫无提示——用户判断
                 「要不要现在跑大任务」依据的可能是十几分钟前的额度。 */}
             {shownUpdatedAt != null && (
@@ -924,9 +906,11 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsLogi
       {/* 多账号：已装且支持时才给。不支持的（antigravity）连列表都不显示——它只有一个账号，
           列一个孤零零的「默认账号」除了占地方没有任何信息。
           中转模式下也不给：账号列表管的是官方登录身份，中转与之互斥，列出来只会误导。 */}
-      {isInstalled && supportsProfiles && !relayEnabled && (
+      {listsProfiles && (
         <ProfileList
           provider={provider}
+          agentName={name}
+          highlightLogin={justInstalled}
           movesSessionsAcrossAccounts={movesSessionsAcrossAccounts}
           profileShares={profileShares}
           switchRunning={settings?.profile_switch_running ?? "ask"}
@@ -939,486 +923,6 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsLogi
           onCancelLogin={onCancelLogin}
         />
       )}
-    </div>
-  );
-}
-
-/**
- * 某个 agent 的账号列表：默认账号 + 自定义账号，可切换 / 查看用量 / 登录 / 删除 / 添加。
- *
- * 「默认账号」是隐式的（`id === null`）——它就是 agent 自己的目录（`~/.claude`），不可删除。
- * 没建过任何自定义账号的用户，这里只会看到它一条 + 一个「添加账号」按钮。
- */
-/** 默认账号在前端的行 key —— 后端给的 id 是 `null`（它不在 settings.profiles 里）。 */
-const DEFAULT_KEY = "__default__";
-
-function ProfileList({ provider, movesSessionsAcrossAccounts, profileShares, switchRunning, onSwitchRunningChange, onChanged, viewingProfile, onViewUsage, loginState, onStartLogin, onCancelLogin }: {
-  provider: AgentId;
-  /** 见 ProviderCard 同名 prop：决定切换后要不要处理「运行中的会话」。 */
-  movesSessionsAcrossAccounts: boolean;
-  /** 见 ProviderCard 同名 prop。 */
-  profileShares: ShareTopic[];
-  /** 设置「切换后运行中的会话」：每次问 / 直接重启 / 留在原账号（照 Orca）。 */
-  switchRunning: ProfileSwitchRunning;
-  onSwitchRunningChange: (v: ProfileSwitchRunning) => void;
-  onChanged: () => void;
-  /** null = 正在看 active；仅决定用量按钮的按下态，不改变 active。 */
-  viewingProfile: ProfileView | null;
-  onViewUsage: (profile: ProfileView) => void;
-  loginState: LoginOperationState | undefined;
-  onStartLogin: (profile?: string | null) => Promise<boolean>;
-  onCancelLogin: () => Promise<boolean>;
-}) {
-  const t = useT();
-  const [rows, setRows] = useState<ProfileView[] | null>(null);
-  const sharesHistory = profileShares.includes("history");
-  const [adding, setAdding] = useState(false);
-  const [name, setName] = useState("");
-  // 正在改名的**行 key**（null = 没在改名）。默认账号用 DEFAULT_KEY——它没有 profile id，
-  // 但照样可以改名（名字只是个显示串，不碰任何文件）。
-  const [editing, setEditing] = useState<string | null>(null);
-  const [editName, setEditName] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const reload = useCallback(() => {
-    listProfiles(provider)
-      .then(setRows)
-      .catch(() => setRows([]));
-  }, [provider]);
-
-  useEffect(reload, [reload]);
-
-  // 登录完成 → 该账号的登录态变了，重查。
-  useTauriEvent("login-done", () => reload());
-  // 手机远程切换账号后桌面要跟上（2026-11-15 手机切换上线，独立审查指出列表停在旧的「使用中」）。
-  useTauriEvent<string>(ACTIVE_PROFILE_CHANGED, ({ payload }) => {
-    if (payload === provider) reload();
-  });
-
-  const run = async (fn: () => Promise<unknown>) => {
-    if (busy) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      await fn();
-      reload();
-      onChanged();
-    } catch (e) {
-      setErr(formatBackendError(e, t.locale));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const add = () => {
-    const n = name.trim();
-    if (!n) return;
-    run(async () => {
-      await createProfile(provider, n);
-      setName("");
-      setAdding(false);
-    });
-  };
-
-  /**
-   * 删除账号（连同它的目录）。**活跃账号也能删** —— 后端会把活跃标记落回默认账号。
-   *
-   * 确认框走 `appConfirm`（应用主题原生小窗，全应用统一），**不是 `window.confirm`**：
-   * 后者在 Tauri 的 webview 里会被直接吞掉，返回值恒为 false。
-   */
-  const remove = async (p: ProfileView) => {
-    if (!p.id) return; // 默认账号是 agent 自己的目录，删不得
-    const label = p.name || p.id;
-    // 会话历史共用时它在默认账号里，删账号不会带走（之前的文案说「一并删除」，会把人吓住）。
-    const confirmText = sharesHistory ? t.account.deleteProfileConfirmShared(label) : t.account.deleteProfileConfirm(label);
-    const yes = await appConfirm(confirmText, {
-      title: t.account.deleteProfile,
-      danger: true,
-      // 主按钮说清后果（S-14）：不可逆操作不给通用「确定」。
-      confirmLabel: t.account.deleteProfile,
-    });
-    if (!yes) return;
-    run(() => deleteProfile(provider, p.id!));
-  };
-
-  /**
-   * 合并进默认账号：会话与历史数据并入默认账号，账号本身从列表消失——与删除的根本区别是
-   * **数据全留下**（删除是连目录一起抹掉）。有进行中的会话时后端会拒绝，错误就地显示。
-   *
-   * 不可逆，故与删除同规：走 appConfirm 确认。
-   */
-  const merge = async (p: ProfileView) => {
-    if (!p.id) return; // 默认账号没有「合并进自己」
-    const label = p.name || p.id;
-    const confirmText = sharesHistory ? t.account.mergeProfileConfirmShared(label) : t.account.mergeProfileConfirm(label);
-    const yes = await appConfirm(confirmText, {
-      title: t.account.mergeProfile,
-      danger: true,
-      confirmLabel: t.account.mergeProfile,
-    });
-    if (!yes) return;
-    run(() => mergeProfileIntoDefault(provider, p.id!));
-  };
-
-  /**
-   * 退出登录。**与删除账号不是一回事**：登出只清凭据，目录、配置、会话历史都留着，之后还能登回来。
-   * 可逆操作不设确认，直接执行（失败由 run 就地显示）。
-   */
-  const logout = (p: ProfileView) => {
-    run(() => logoutAgent(provider, p.id));
-  };
-
-  /**
-   * 切换活跃账号。
-   *
-   * 后端的 `set_active_profile` 只改设置——进程中途换不了账号，运行中的会话仍带着启动时
-   * 注入的那套账号环境变量。此前用户只能手动「结束会话 → 恢复」才把它们换过去（用户报障：
-   * 「切换账号时已经存在的会话不会立刻应用新账号」）。这里替他做掉那两步：先切设置，
-   * 再问一句，点头后由后端把运行中的会话就地重启到新账号。
-   *
-   * **先切后问**，不是「问完再切」：设置该不该写与他要不要重启会话是两件事。不点头就退回
-   * 老行为（账号已切，运行中的会话留在原账号上），而不是连账号都没切成。
-   *
-   * 待重启的会话数**问后端**，不自己翻看板列表数：那份列表是分页的，连着但久未活动的会话
-   * 按 last_event_at 排在后面、翻页翻不到，于是漏数成 0——不弹确认、也不重启，账号切了
-   * 会话却还挂在旧账号上，正是本次要修的那种静默。后端的计数与重启共用同一条判据。
-   */
-  const switchTo = async (p: ProfileView) => {
-    if (busy || p.active) return;
-    run(async () => {
-      await setActiveProfile(provider, p.id);
-      // 搬不了会话的 agent 不必问后端：它恒为 0（后端同样先判这一条）。
-      if (!movesSessionsAcrossAccounts) return;
-      // 必须切完再问：判据是「和当前活跃账号不同」。
-      // 设成「留在原账号」：只切设置，不碰运行中的会话。
-      if (switchRunning === "keep") return;
-      const running = await sessionsOffActiveProfileCount(provider);
-      if (running === 0) return;
-      // 「直接重启」是用户在设置里预先给的答复，不再弹确认。
-      const ok =
-        switchRunning === "restart" ||
-        (await appConfirm(t.account.switchRestartConfirm(running), {
-          title: t.account.switchProfile,
-          // 会杀进程（正在生成的那一轮回答会丢），按危险操作办。
-          danger: true,
-          confirmLabel: t.account.switchRestartConfirmLabel,
-        }));
-      if (!ok) return;
-      // 重启失败不该连累账号切换：设置已经写进去了，账号列表照常刷新，错误就地显示。
-      await applyActiveProfileToSessions(provider).catch((e) =>
-        setErr(formatBackendError(e, t.locale)),
-      );
-    });
-  };
-
-  /**
-   * 改名。只动展示名，**不动 id**（它是目录名，改了就等于换了个账号）。
-   *
-   * 默认账号也能改：它的 id 是 null，名字单独存在 settings 的 `default_profile_names` 里。
-   */
-  const commitRename = (p: ProfileView) => {
-    const next = editName.trim();
-    setEditing(null);
-    if (!next || next === p.name) return;
-    run(() => renameProfile(provider, p.id, next));
-  };
-
-  if (!rows) return null;
-
-  return (
-    <div className="provider-card-body profile-list" data-testid={"profiles-" + provider}>
-      <div className="profile-list-head">{t.account.profiles}</div>
-      <ProfileShareSummary shares={profileShares} provider={provider} />
-
-      {rows.map((p) => {
-        const key = p.id ?? DEFAULT_KEY;
-        const profileLoginPending = loginState?.phase === "pending" && loginState.profile === p.id;
-        const anotherLoginPending = loginState?.phase === "pending" && !profileLoginPending;
-        // 登录态：有账号信息就是登录了。邮箱 > 登录方式标签（codex 的 "API Key"、
-        // opencode 的 "Anthropic, OpenAI" 一串 provider、kimi 的 userId 短码）。
-        //
-        // 描述行说的是**这是哪个账号**，套餐不在此列——它是徽章（见下），与卡片标题那排一致。
-        const desc =
-          p.account?.email ??
-          p.account?.display_name ??
-          p.account?.login_label ??
-          t.account.notLoggedIn;
-        // 正在改名的那一行：整行让位给输入框（其余按钮此时无从谈起）。
-        if (editing === key) {
-          return (
-            <div key={key} className="profile-row profile-add-row">
-              <input
-                className="profile-add-input"
-                autoFocus
-                value={editName}
-                data-testid={"profile-rename-input-" + provider + "-" + key}
-                onChange={(e) => setEditName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") commitRename(p);
-                  if (e.key === "Escape") setEditing(null);
-                }}
-                onBlur={() => commitRename(p)}
-              />
-              <button
-                type="button"
-                className="provider-card-action"
-                data-testid={"profile-rename-cancel-" + provider + "-" + key}
-                // onMouseDown：抢在 input 的 onBlur（会提交）之前把改名取消掉。
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  setEditing(null);
-                }}
-              >
-                {t.account.cancelEdit}
-              </button>
-            </div>
-          );
-        }
-        return (
-          <Fragment key={key}>
-          <div
-            className={"profile-row" + (p.active ? " profile-row-active" : "")}
-            data-testid={"profile-" + provider + "-" + key}
-          >
-            <button
-              type="button"
-              className="profile-row-main"
-              data-tip={t.account.switchProfile}
-              {...busyProps(busy || p.active, () => void switchTo(p))}
-            >
-              <span className="profile-name-row">
-                <span className="profile-name">{p.name || t.account.defaultProfile}</span>
-                {/* 套餐/会员等级：徽章，不写进描述行——那一行是「这是哪个账号」。
-                    kimi 的等级由用量接口捎回（本地读不到），故只有活跃账号拿得到。 */}
-                {p.account?.plan && (
-                  <span className="profile-badge profile-badge-plan">{p.account.plan}</span>
-                )}
-              </span>
-              <span className="profile-desc" data-tip={desc}>
-                {desc}
-              </span>
-            </button>
-
-            {p.active && <span className="profile-badge">{t.account.activeProfile}</span>}
-
-            {p.account && (
-              <button
-                type="button"
-                className="provider-card-action"
-                data-testid={"profile-usage-" + provider + "-" + key}
-                aria-label={t.account.viewProfileUsage(p.name || t.account.defaultProfile)}
-                aria-pressed={viewingProfile ? (viewingProfile.id ?? DEFAULT_KEY) === key : p.active}
-                {...busyProps(busy, () => onViewUsage(p))}
-              >
-                {t.account.viewUsage}
-              </button>
-            )}
-
-            {/* 登录是未登录时的主操作，留作显眼的按钮；其余（退出/改名/删除）收进菜单。
-                **必须带上这一行自己的 id**：漏了它，登录会把凭据写进默认账号（用户以为加了个账号，
-                其实把原来那个覆盖了）。 */}
-            {!p.account && (
-              <button
-                type="button"
-                className="provider-card-action"
-                data-testid={"profile-login-" + provider + "-" + key}
-                disabled={anotherLoginPending}
-                {...busyProps(busy, () => {
-                  setErr(null);
-                  const request = profileLoginPending ? onCancelLogin() : onStartLogin(p.id);
-                  void request.catch((e) => setErr(formatBackendError(e, t.locale)));
-                })}
-              >
-                {profileLoginPending ? t.account.cancelLogin : t.account.login}
-              </button>
-            )}
-
-            <ActionMenu
-              label={t.account.profileActions}
-              testId={"profile-menu-" + provider + "-" + key}
-              items={[
-                // 登出 ≠ 删除：它只清凭据，目录、配置、会话历史都留着，之后还能登回来。
-                // 默认账号更是**只有**这一条退出路径——它是 agent 自己的目录，删不掉。
-                ...(p.account
-                  ? [{ key: "logout", label: t.account.logout, onSelect: () => logout(p) }]
-                  : []),
-                // 默认账号**也能改名**：名字只是个显示串，不碰任何文件。两个账号里有一个永远
-                // 叫「默认账号」，用起来很别扭。
-                {
-                  key: "rename",
-                  label: t.account.renameProfile,
-                  onSelect: () => {
-                    setEditName(p.name);
-                    setEditing(p.id ?? DEFAULT_KEY);
-                  },
-                },
-                // 删除只给自定义账号。默认账号是 agent 自己的目录（`~/.claude`）——删它等于抹掉
-                // 用户的凭据、配置和**全部会话历史**，那不是 meowo 该替他做的决定。
-                ...(p.id
-                  ? [
-                      // 合并也只给自定义账号：它是「数据已拆散」的自救出口，默认账号无需合并进自己。
-                      {
-                        key: "merge",
-                        label: t.account.mergeProfile,
-                        onSelect: () => merge(p),
-                      },
-                      {
-                        key: "delete",
-                        label: t.account.deleteProfile,
-                        danger: true,
-                        onSelect: () => remove(p),
-                      },
-                    ]
-                  : []),
-              ]}
-            />
-          </div>
-          {p.set_aside?.length > 0 && <ProfileSetAsideNote provider={provider} rowKey={key} items={p.set_aside} />}
-          </Fragment>
-        );
-      })}
-
-      {adding ? (
-        <div className="profile-add-row">
-          <input
-            className="profile-add-input"
-            autoFocus
-            placeholder={t.account.newProfileName}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") add();
-              if (e.key === "Escape") setAdding(false);
-            }}
-          />
-          <button
-            type="button"
-            className="provider-card-action btn-primary"
-            data-testid={"profile-add-confirm-" + provider}
-            disabled={!name.trim()}
-            {...busyProps(busy, add)}
-          >
-            {t.account.addProfile}
-          </button>
-          {/* 反悔的出口。Esc 也行，但一个明摆着的按钮不该让人去猜。 */}
-          <button
-            type="button"
-            className="provider-card-action"
-            data-testid={"profile-add-cancel-" + provider}
-            {...busyProps(busy, () => {
-              setAdding(false);
-              setName("");
-            })}
-          >
-            {t.account.cancelEdit}
-          </button>
-        </div>
-      ) : (
-        <button
-          type="button"
-          className="profile-add-btn"
-          data-testid={"profile-add-" + provider}
-          {...busyProps(busy, () => setAdding(true))}
-        >
-          + {t.account.addProfile}
-        </button>
-      )}
-
-      {/* 覆盖面明示：切换本身只改设置（后端 profile/mod.rs 的既定行为，此前 UI 零提示）。
-          会话能跟着搬的 agent 另说一句——它切完会问要不要把运行中的会话重启过去。 */}
-      {movesSessionsAcrossAccounts ? (
-        <div className="profile-switch-row" data-testid={"profile-switch-running-" + provider}>
-          <div className="profile-switch-text">
-            <div className="profile-switch-label">{t.account.switchRunningLabel}</div>
-            <div className="profile-hint">{t.account.switchRunningDesc}</div>
-          </div>
-          <Dropdown
-            value={switchRunning}
-            options={[
-              { value: "ask" as const, label: t.account.switchRunningAsk },
-              { value: "restart" as const, label: t.account.switchRunningRestart },
-              { value: "keep" as const, label: t.account.switchRunningKeep },
-            ]}
-            onChange={onSwitchRunningChange}
-          />
-        </div>
-      ) : (
-        <div className="profile-hint">{t.account.switchCoverage}</div>
-      )}
-      {err && <div className="agent-install-error">{err}</div>}
-    </div>
-  );
-}
-
-/** 共用项的显示顺序（与后端枚举一致；前端只管出名字）。 */
-const SHARE_TOPIC_ORDER: ShareTopic[] = ["rules", "settings", "plugins", "skills", "commands", "mcp", "history"];
-
-/**
- * 账号区顶部「共用 / 各自」两排标签：一眼看出新账号带不带得上默认账号的规则、设置、会话历史，
- * 哪些是每个账号自己的。之前只有一句「新账号的登录与会话历史相互独立」，多账号照 Orca 共用后
- * 这句成了错的（2026-11-27）。三版样稿里选了两排标签：比一整句话扫得快，「各自」一排把对照摆明。
- * 没写会话历史共用的 agent（codex/kimi/opencode），会话历史归到「各自」。
- */
-function ProfileShareSummary({ shares, provider }: { shares: ShareTopic[]; provider: AgentId }) {
-  const t = useT();
-  const shared = SHARE_TOPIC_ORDER.filter((topic) => shares.includes(topic));
-  const own = [t.account.ownLogin, t.account.ownQuota, ...(shares.includes("history") ? [] : [t.account.shareTopic.history])];
-  return (
-    <div className="profile-share" data-testid={"profile-share-" + provider}>
-      {shared.length > 0 && (
-        <>
-          <span className="profile-share-label">{t.account.sharedLabel}</span>
-          <span className="profile-share-chips">
-            {shared.map((topic) => (
-              <span key={topic} className="profile-chip">{t.account.shareTopic[topic]}</span>
-            ))}
-          </span>
-        </>
-      )}
-      <span className="profile-share-label">{t.account.ownLabel}</span>
-      <span className="profile-share-chips">
-        {own.map((label) => (
-          <span key={label} className="profile-chip profile-chip-own">{label}</span>
-        ))}
-      </span>
-    </div>
-  );
-}
-
-/**
- * 账号首次对齐时和默认账号冲突、没合进来的条目：提醒摊开在这个账号下面（taste I14：做决定前必须
- * 知道的警示明细直接摊开），不收进徽章。之前只写日志（红队 1 问题 4），用户不知道账号里还有东西。
- * 提醒色底块不用报错红：账号照常能用，这些只是待挑拣的旧版本。
- */
-function ProfileSetAsideNote({ provider, rowKey, items }: { provider: AgentId; rowKey: string; items: ProfileSetAside[] }) {
-  const t = useT();
-  const [msg, setMsg] = useState<string | null>(null);
-  const reveal = () => {
-    setMsg(null);
-    revealTerminalPath("", items[0].path).catch((e: unknown) => setMsg(formatBackendError(e, t.locale)));
-  };
-  return (
-    <div className="profile-aside" role="note" data-testid={"profile-aside-" + provider + "-" + rowKey}>
-      <div className="profile-aside-head">
-        <Icon glyph={icAlert} size={14} />
-        <strong>{t.account.setAsideTitle(items.length)}</strong>
-      </div>
-      <div className="profile-aside-hint">{t.account.setAsideHint}</div>
-      <ul className="profile-aside-list">
-        {items.map((item) => (
-          <li key={item.path}>
-            {item.name}
-            {item.files > 1 && <span className="profile-aside-count">{t.account.setAsideFiles(item.files)}</span>}
-          </li>
-        ))}
-      </ul>
-      {!remoteUi() && (
-        <button type="button" className="agent-path-gap-btn profile-aside-reveal" data-testid={"profile-aside-reveal-" + provider + "-" + rowKey} onClick={reveal}>
-          {t.account.mcpConfigReveal}
-        </button>
-      )}
-      {msg && <span className="agent-mcp-unreadable-err">{msg}</span>}
     </div>
   );
 }

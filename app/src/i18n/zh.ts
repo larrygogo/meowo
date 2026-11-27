@@ -2592,9 +2592,7 @@ export const zh = {
     contextUnsupported: "上下文占用：该 Agent 不支持显示",
     // 多账号
     profiles: "账号",
-    defaultProfile: "默认账号",
     addProfile: "添加账号",
-    newProfileName: "账号名称（如：工作）",
     // 账号区顶部「共用 / 各自」两排（后端 profile_shares）。多账号照 Orca 共用后，旧的
     // 「新账号的登录与会话历史相互独立」成了错的（2026-11-27）。
     sharedLabel: "共用",
@@ -2611,8 +2609,8 @@ export const zh = {
       history: "会话历史",
     },
     // 首次对齐时和默认账号冲突、留在账号目录里的条目。
-    setAsideTitle: (n: number) => `${n} 项和默认账号冲突，没合进来`,
-    setAsideHint: "这个账号原来的版本留在账号目录里。需要的话挑着合进默认账号，处理完删掉即可。",
+    setAsideTitle: (n: number) => `${n} 项和系统默认冲突，没合进来`,
+    setAsideHint: "这个账号原来的版本留在账号目录里。需要的话挑着合进系统默认的目录，处理完删掉即可。",
     setAsideFiles: (n: number) => `（${n >= 10000 ? "10000+" : n} 个文件）`,
     // 覆盖面必须明说（后端 profile/mod.rs 的行为注释）：中转/代理都如实标注了范围，唯独
     // 账号切换此前一字不提——用户切完以为正在跑的会话也换了额度池。
@@ -2628,31 +2626,44 @@ export const zh = {
       `账号已切换。要把该 Agent 运行中的 ${n} 个会话也重启到新账号吗？对话内容保留。`,
     switchRestartConfirmLabel: "重启这些会话",
     // 照 Orca 的同名设置：切换后运行中的会话怎么办。重启时对话内容保留（按会话 id 恢复）。
-    switchRunningLabel: "切换后运行中的会话",
-    switchRunningDesc: "重启时对话内容保留",
+    // 照 Orca 设置 › Accounts 重做的账号区（2026-11-27）。
+    accountsSub: (agent: string) => `可选。不添加就用本机的 ${agent} 登录，添加后可以一键切换。切换对之后新开的会话生效。`,
+    systemDefault: "系统默认",
+    systemDefaultNamed: (email: string) => `系统默认：${email}`,
+    systemDefaultDesc: (agent: string) => `用本机当前的 ${agent} 登录`,
+    systemDefaultSignedOut: (agent: string) => `本机还没登录 ${agent}`,
+    accountsEmpty: (agent: string) => `还没有添加账号。新会话会一直用本机的 ${agent} 登录。`,
+    unnamedAccount: "未登录的账号",
+    signInRequired: "重新登录后才能使用这个账号",
+    signedIn: "已登录",
+    signInAgain: "重新登录",
+    removeAccount: "移除",
+    removeAccountTitle: "移除账号？",
+    removeAccountConfirmLabel: "移除账号",
+    removeAccountConfirm: (name: string) =>
+      `「${name}」
+删除这个账号自己的目录、保存在里面的登录和它的会话历史，无法恢复。系统默认的登录不受影响。如果它正在使用，之后新开的会话改用系统默认。`,
+    removeAccountConfirmShared: (name: string) =>
+      `「${name}」
+删除这个账号自己的目录和保存在里面的登录。系统默认的登录和共用的会话历史不受影响。如果它正在使用，之后新开的会话改用系统默认。`,
+    renameTitle: "重命名账号",
+    renameHint: (email: string) => `只改 Meowo 里显示的名字。留空则显示 ${email}。`,
+    renameHintPlain: "只改 Meowo 里显示的名字。",
+    renameSave: "保存",
+    renameReset: "恢复默认",
+    addWaiting: "已打开登录窗口。在终端里登录完，账号会自动出现在这里。",
+    addRolledBack: "没有登录成功，刚添加的账号已撤掉。",
+    switchRunningLabel: "切换账号时正在运行的会话",
+    switchRunningDesc: "重启后在新账号上接着对话，正在回答的会话会中断这一轮",
     switchRunningAsk: "每次问",
-    switchRunningRestart: "直接重启",
-    switchRunningKeep: "留在原账号",
+    switchRunningRestart: "总是重启",
+    switchRunningKeep: "从不重启",
     agentsLoadFailed: "无法获取 Agent 名单，请重试",
     switchProfile: "切换到此账号",
     activeProfile: "使用中",
     // 活跃账号提示：会话徽章/账号卡片/新建面板共用。默认账号不显示——没建过账号的用户零感知。
     activeProfileBadge: (name: string) => `账号：${name}`,
-    profileActions: "账号操作",
-    renameProfile: "重命名",
     cancelEdit: "取消",
-    mergeProfile: "合并进默认账号",
-    mergeProfileConfirm: (name: string) =>
-      `把「${name}」并入默认账号？此操作不可逆。`,
-    // 会话历史已共用：并入只剩「账号删掉、它的会话改到默认账号下继续」。
-    mergeProfileConfirmShared: (name: string) =>
-      `把「${name}」并入默认账号？账号会删除，它的会话改到默认账号下继续。此操作不可逆。`,
-    deleteProfile: "删除账号",
-    deleteProfileConfirm: (name: string) =>
-      `删除「${name}」？登录凭据与会话历史将一并删除，无法恢复。`,
-    // 会话历史共用时存在默认账号里，删账号带不走；只删登录和这个账号自己的东西。
-    deleteProfileConfirmShared: (name: string) =>
-      `删除「${name}」？它的登录会删除，无法恢复。会话历史在默认账号里，不受影响。`,
     login: "登录",
     loggingIn: "等待登录…",
     // pending 指引：窗口开在哪个终端（后端按 settings.resume_terminal 选）、最多等多久，一次说清。

@@ -3513,6 +3513,73 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
   line-height: 1.5;
 }
 
+/* ── 账号区：照 Orca 设置 › Accounts（2026-11-27 重做）──
+   头部「账号 + 说明」左、「添加账号」右；系统默认与每个托管账号各一张描边卡，整卡点击切换，
+   使用中的卡描边加深、垫一层选中底（Orca：border-foreground/20 bg-accent/15）；行内动作是小号幽灵按钮。 */
+.acct { display: flex; flex-direction: column; gap: var(--sp-10); padding-top: var(--sp-14); border-top: var(--hairline) solid var(--cc-border); }
+.acct-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-12); }
+.acct-head-text { min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.acct-head-title { font-size: var(--text-sm); font-weight: var(--fw-semibold); color: var(--cc-text); }
+.acct-head-sub { font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--cc-text-faint); }
+.acct-head-acts { flex: none; display: flex; align-items: center; gap: var(--sp-4); }
+.acct-add {
+  display: inline-flex; align-items: center; gap: var(--sp-6);
+  box-sizing: border-box; height: var(--btn-h-md); padding: 0 var(--sp-10);
+  border-radius: var(--radius-md); border: var(--hairline) solid var(--line-strong);
+  background: none; color: var(--cc-text); font-size: var(--text-xs); white-space: nowrap; cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-in-out);
+}
+.acct-add:hover:not(:disabled, [aria-disabled="true"]) { background: var(--fill-hover); }
+.acct-add:is(:disabled, [aria-disabled="true"]) { cursor: default; color: var(--cc-text-dim); }
+.acct-list { display: flex; flex-direction: column; gap: var(--sp-8); }
+/* 名字放不下时动作整排换到下一行、靠右（Orca 窄屏 max-md:flex-col 的做法），不挤省略名字。 */
+.acct-card {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--sp-6) var(--sp-10);
+  box-sizing: border-box; min-height: 52px; padding: var(--sp-8) var(--sp-10) var(--sp-8) var(--sp-12);
+  border-radius: var(--radius-md); border: var(--hairline) solid var(--cc-border);
+  transition: background var(--dur-fast) var(--ease-in-out), border-color var(--dur-fast) var(--ease-in-out);
+}
+.acct-card.is-active { border-color: var(--line-strong); background: var(--fill-selected); }
+@media (hover: hover) {
+  .acct-card:not(.is-active, .needs-sign-in):hover { border-color: var(--line-strong); background: var(--fill-hover); }
+}
+.acct-main {
+  flex: 1 1 280px; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2);
+  padding: 0; border: 0; background: none; color: inherit; text-align: left; cursor: pointer;
+}
+.acct-main:is(:disabled, [aria-disabled="true"]) { cursor: default; }
+.acct-title-row { display: flex; align-items: center; gap: var(--sp-6); min-width: 0; }
+.acct-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); font-weight: var(--fw-medium); color: var(--cc-text); }
+.acct-badge {
+  flex: none; padding: 0 var(--sp-6); border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 var(--hairline) var(--line-strong);
+  font-size: var(--text-2xs); font-weight: var(--fw-medium); line-height: 16px; color: var(--cc-text-dim); white-space: nowrap;
+}
+.acct-desc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); color: var(--cc-text-faint); }
+.acct-desc.is-warn { color: var(--cc-warn-text); }
+.acct-acts { flex: none; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: var(--sp-2); margin-right: calc(var(--sp-4) * -1); }
+.acct-act {
+  display: inline-flex; align-items: center; gap: var(--sp-4);
+  box-sizing: border-box; height: var(--btn-h-sm); padding: 0 var(--sp-8);
+  border: 0; border-radius: var(--radius-sm); background: none;
+  color: var(--cc-text-dim); font-size: var(--text-xs); white-space: nowrap; cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-in-out), color var(--dur-fast) var(--ease-in-out);
+}
+.acct-act-icon { width: var(--btn-h-sm); padding: 0; justify-content: center; }
+.acct-act:hover:not(:disabled, [aria-disabled="true"]) { color: var(--cc-text); background: var(--fill-hover); }
+.acct-act-danger:hover:not(:disabled, [aria-disabled="true"]) { color: var(--cc-err); }
+.acct-act.btn-primary:hover:not(:disabled, [aria-disabled="true"]) { color: var(--cc-on-accent); background: var(--cc-accent-dim); }
+.acct-act[aria-pressed="true"] { color: var(--cc-text); background: var(--fill-selected); }
+.acct-act:is(:disabled, [aria-disabled="true"]) { cursor: default; opacity: 0.5; }
+.acct-empty {
+  padding: var(--sp-12); border-radius: var(--radius-md); border: var(--hairline) dashed var(--line-strong);
+  font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--cc-text-faint);
+}
+.acct-notice { font-size: var(--text-xs); color: var(--cc-text-dim); }
+.acct-modal-hint { font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--cc-text-faint); }
+.acct-modal-reset { margin-right: auto; }
+.acct > .profile-share { margin: 0; }
+
 /* 「切换后运行中的会话」设置行：文字在左、下拉在右，与设置页其它行同一排法。 */
 .profile-switch-row {
   display: flex;
