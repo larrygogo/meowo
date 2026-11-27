@@ -692,3 +692,28 @@ fn kimi_invalid_waiter_target_is_explicitly_rejected() {
         assert!(out.stderr.unwrap().contains("关卡 id 不能用于目标等待"));
     }
 }
+
+/// Lead 没装到 agent 时只有普通上报 hook：它送来的原生载荷照样能认领（实拍 2026-11-27：Antigravity 没装 Lead，
+/// 借用别处的 skill 建了任务，`.owner` 一直为空，面板和关卡卡片都看不到）。只认领，不记回合状态。
+#[test]
+fn status_hook_claims_when_lead_hooks_are_missing() {
+    for provider in ["codex", "kimi", "antigravity"] {
+        let e = env();
+        let raw = claim(&e, provider, "s-status");
+        claim_from_status_hook(provider, &raw.to_string(), &e.registry);
+        assert_eq!(fs::read_to_string(e.task.join(".owner")).unwrap(), "s-status", "{provider}");
+        assert!(!state_path(&e.task, Provider::parse(provider).unwrap()).exists(), "{provider} 不该记回合状态");
+    }
+    // Claude 的普通上报载荷就是规范形状
+    let e = env();
+    let raw = json!({"hook_event_name":"PostToolUse","session_id":"s-cc","cwd":e.root.path(),
+        "tool_name":"Write","tool_input":{"file_path":e.task.join("progress.md")}});
+    claim_from_status_hook("claude", &raw.to_string(), &e.registry);
+    assert_eq!(fs::read_to_string(e.task.join(".owner")).unwrap(), "s-cc");
+    // 不碰 `.lead` 的调用直接返回
+    let e = env();
+    let raw = json!({"hook_event_name":"PostToolUse","session_id":"s-x","cwd":e.root.path(),
+        "tool_name":"Write","tool_input":{"file_path":e.root.path().join("a.txt")}});
+    claim_from_status_hook("claude", &raw.to_string(), &e.registry);
+    assert!(!e.task.join(".owner").exists());
+}

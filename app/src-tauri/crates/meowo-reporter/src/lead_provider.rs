@@ -380,28 +380,69 @@ pub fn run(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
     std::panic::catch_unwind(|| run_inner(provider, mode, raw, registry)).unwrap_or_default()
 }
 
-fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
-    let Some(provider) = Provider::parse(provider) else {
-        return Output::default();
-    };
+/// 原生载荷 → (Provider, 规范化后的载荷, Native, 会话 id)；不归 Meowo 管或形状不对返回 None。
+fn prepare(provider: &str, raw: &str) -> Option<(Provider, Value, Native, String)> {
+    let provider = Provider::parse(provider)?;
     // agy 的负载是 camelCase、部分字段是 JSON 字符串，还会送来 App/IDE 的会话：先经插件改写成规范形状
-    // （与普通上报同一个入口，reporter 不按 agent 身份解析）。
+    // （与普通上报同一个入口，reporter 不按 agent 身份解析）。已是规范形状的（普通上报改写过的）插件原样放过。
     let rewritten = meowo_agent::by_id(provider.id()).map(|plugin| plugin.normalize_hook_payload(raw));
     let raw = match &rewritten {
-        Some(meowo_agent::HookPayload::Ignore) => return Output::default(),
+        Some(meowo_agent::HookPayload::Ignore) => return None,
         Some(meowo_agent::HookPayload::Rewrite(text)) => text.as_str(),
         _ => raw,
     };
-    let Ok(raw) = serde_json::from_str::<Value>(raw) else {
+    let raw = serde_json::from_str::<Value>(raw).ok()?;
+    let native = normalize(provider, &raw)?;
+    let session = native.data["session_id"].as_str().unwrap_or_default().to_string();
+    Some((provider, raw, native, session))
+}
+
+/// 认出这次写入类调用写的是哪个任务，记到会话名下。返回规范化的调用（记进回合状态用）和 Claude 认领的输出。
+fn take_ownership(
+    provider: Provider,
+    native: &mut Native,
+    raw: &Value,
+    session: &str,
+    registry: &Path,
+) -> Option<(Value, Output)> {
+    let call = write_call(provider, native, raw)?;
+    native.data["tool_name"] = call["name"].clone();
+    native.data["tool_input"] = call["input"].clone();
+    let task = claim_target(&native.data)?;
+    if !reserve_owner(&task, session) {
+        return None;
+    }
+    // claim 的提示是 Claude PostToolUse 的输出格式，其他 Provider 不认，丢掉。
+    let out = Output { stdout: None, ..lead::run("claim", &native.data.to_string(), registry) };
+    Some((call, out))
+}
+
+/// 普通上报 hook（PostToolUse）顺手认领 Lead 任务。
+///
+/// Lead 没装到这个 agent 时，agent 仍可能照着别处的 Lead skill 建任务（实拍 2026-11-27：Antigravity 没装 Lead，
+/// 自己搜到 `~/.claude/skills/lead` 照做，建任务、发关卡都成功），但没有 `lead claim` hook，任务永远无主；
+/// 无主任务进入面板只能靠 `.lead/active`，新流程不写它，结果面板和关卡卡片谁都看不到。普通上报 hook 是
+/// 每个 agent 都装的，由它补认领。只认领、不记回合状态：Lead 装了时 lead hook 会记，两边都记会重复。
+/// 认领本身幂等（同一会话重复写 `.owner`），Lead 装了时两条 hook 都跑也无妨。
+/// OpenCode 的普通上报载荷与 lead 插件送来的形状不同，normalize 认不出，自然不认领。
+pub fn claim_from_status_hook(provider: &str, raw: &str, registry: &Path) {
+    if !raw.contains(".lead") {
+        return;
+    }
+    if provider == "claude" {
+        let _ = lead::run("claim", raw, registry);
+        return;
+    }
+    let _ = std::panic::catch_unwind(|| {
+        let (provider, raw, mut native, session) = prepare(provider, raw)?;
+        take_ownership(provider, &mut native, &raw, &session, registry)
+    });
+}
+
+fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
+    let Some((provider, raw, mut native, session)) = prepare(provider, raw) else {
         return Output::default();
     };
-    let Some(mut native) = normalize(provider, &raw) else {
-        return Output::default();
-    };
-    let session = native.data["session_id"]
-        .as_str()
-        .unwrap_or_default()
-        .to_string();
     if mode == "gate" {
         return match (provider, native.event.as_str()) {
             (Provider::Kimi | Provider::Antigravity, "PreToolUse") => {
@@ -411,19 +452,9 @@ fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
         };
     }
     if mode == "claim" {
-        let Some(call) = write_call(provider, &native, &raw) else {
+        let Some((call, out)) = take_ownership(provider, &mut native, &raw, &session, registry) else {
             return Output::default();
         };
-        native.data["tool_name"] = call["name"].clone();
-        native.data["tool_input"] = call["input"].clone();
-        let Some(task) = claim_target(&native.data) else {
-            return Output::default();
-        };
-        if !reserve_owner(&task, &session) {
-            return Output::default();
-        }
-        // claim 的提示是 Claude PostToolUse 的输出格式，其他 Provider 不认，丢掉。
-        let out = Output { stdout: None, ..lead::run("claim", &native.data.to_string(), registry) };
         let Some(task) = lead::task_of_session(&session, registry) else {
             return out;
         };

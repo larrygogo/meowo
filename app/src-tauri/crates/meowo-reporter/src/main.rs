@@ -154,6 +154,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 负载形状与规范不同的 agent 先由插件改写（见 AgentPlugin::normalize_hook_payload）；
     // 不归 Meowo 管的事件直接以 0 退出，什么都不输出。
+    // 原始载荷留一份给 Lead 认领（它自己按 Provider 改写）；只有写到 `.lead` 的调用才需要，免得每次都复制。
+    let lead_raw = buf.contains(".lead").then(|| buf.clone());
     let buf = match meowo_agent::by_id(&parse_provider()).map(|p| p.normalize_hook_payload(&buf)) {
         Some(meowo_agent::HookPayload::Ignore) => return Ok(()),
         Some(meowo_agent::HookPayload::Rewrite(text)) => text,
@@ -194,6 +196,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         timing::arm_watchdog(timing::budget(), started, ev.hook_event_name.clone(), provider.clone());
     }
     let result = handle(&ev, &path, &provider, canonical_event, hook_decides);
+    // Lead 没装到这个 agent 时，这是任务唯一的认领来源（见 lead_provider::claim_from_status_hook）。
+    if canonical_event == "PostToolUse" {
+        if let (Some(raw), Some(dir)) = (lead_raw.as_deref(), path.parent()) {
+            meowo_reporter::lead_provider::claim_from_status_hook(&provider, raw, &dir.join("lead-sessions.json"));
+        }
+    }
     let elapsed = started.elapsed();
     if !waits_for_user && elapsed > timing::SLOW {
         timing::log_slow(&ev.hook_event_name, &provider, elapsed, timing::phase(), false);
