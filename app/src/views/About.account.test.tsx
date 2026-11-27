@@ -1342,6 +1342,22 @@ describe("AccountSection 添加账号（照 Orca：直接登录）", () => {
     expect(api.deleteProfile).not.toHaveBeenCalled();
   });
 
+  /** 老后端取消时查的是默认账号，默认账号登着就报 success：按新账号自己的凭据判断，照样撤掉。 */
+  it("报了 success 但新账号其实没登上，照样撤掉", async () => {
+    api.createProfile.mockResolvedValue("account");
+    api.loginAgent.mockResolvedValue(undefined);
+    api.deleteProfile.mockResolvedValue(undefined);
+    render(<AccountSection />);
+    fireEvent.click(await screen.findByTestId("profile-add-claude"));
+    await waitFor(() => expect(api.loginAgent).toHaveBeenCalled());
+    api.listProfiles.mockResolvedValue([
+      { id: null, name: "", active: true, account: { email: "a@b.c" } },
+      { id: "account", name: "", active: false, account: null },
+    ]);
+    fireLogin("claude", "success");
+    await waitFor(() => expect(api.deleteProfile).toHaveBeenCalledWith("claude", "account"));
+  });
+
   it("拉起登录失败也撤掉刚建的账号并说明", async () => {
     api.createProfile.mockResolvedValue("account");
     api.loginAgent.mockRejectedValue(new Error("启动终端失败"));

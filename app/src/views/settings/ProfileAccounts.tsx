@@ -81,7 +81,9 @@ export function ProfileList({ provider, agentName, highlightLogin = false, moves
   const addingRef = useRef<string | null>(null);
   const [addingId, setAddingId] = useState<string | null>(null);
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  // 挂载时要重置为 true：dev 下 StrictMode 会「挂载→卸载→再挂载」，只在卸载里置 false 的话
+  // 再挂载后它一直是 false，异步结果全被丢掉（2026-11-27 dev 实例里账号列表一直不出来）。
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
   const reload = useCallback(() => {
     listProfiles(provider)
@@ -116,10 +118,10 @@ export function ProfileList({ provider, agentName, highlightLogin = false, moves
     if (adding) {
       addingRef.current = null;
       setAddingId(null);
-      if (payload.outcome !== "success") {
-        void rollback(adding);
-        return;
-      }
+      // 不信 outcome，按这个账号自己的凭据决定：rollback 只撤还没登录的。老后端取消时查的是
+      // 默认账号，默认账号登着就把「取消」报成 success，空账号会留下（2026-11-27 本机实测）。
+      void rollback(adding).then(onChanged);
+      return;
     }
     reload();
     onChanged();
@@ -441,7 +443,7 @@ function RenameAccountModal({ profile, onClose, onSubmit }: {
     <AppModal label={a.renameTitle} onClose={onClose}>
       <div className="chat-modal-title">{a.renameTitle}</div>
       <input
-        className="ns-input"
+        className="ns-input acct-modal-input"
         autoFocus
         value={value}
         placeholder={email ?? ""}

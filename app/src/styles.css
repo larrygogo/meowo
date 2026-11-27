@@ -3576,6 +3576,8 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
   font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--cc-text-faint);
 }
 .acct-notice { font-size: var(--text-xs); color: var(--cc-text-dim); }
+/* 弹窗是列方向 flex，.ns-input 的 flex: 1 会把输入框高度压扁（改名弹窗真机实拍，同 .forge-field）。 */
+.acct-modal-input.ns-input { flex: none; width: 100%; }
 .acct-modal-hint { font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--cc-text-faint); }
 .acct-modal-reset { margin-right: auto; }
 .acct > .profile-share { margin: 0; }
