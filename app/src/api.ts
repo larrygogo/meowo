@@ -1966,6 +1966,18 @@ export type ProfileView = {
   active: boolean;
   /** 该账号自己的登录态。null = 未登录。 */
   account: Account | null;
+  /** 首次对齐时和默认账号冲突、留在账号目录里待用户处理的条目。默认账号恒为空。 */
+  set_aside: ProfileSetAside[];
+};
+
+/** 一项留存的冲突（后端 profile::SetAside）。 */
+export type ProfileSetAside = {
+  /** 绝对路径（「在文件夹中显示」用）。 */
+  path: string;
+  /** 相对账号数据目录的名字。 */
+  name: string;
+  /** 是目录时里面的文件数（数到一万为止）；是文件时为 1。 */
+  files: number;
 };
 
 /**

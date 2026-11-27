@@ -39,6 +39,7 @@ function profile(id: string | null, name: string, active: boolean, patch: Partia
     name,
     active,
     account: { email: `${id ?? "default"}@example.com`, display_name: null, organization: null, plan: null, login_label: null },
+    set_aside: [],
     ...patch,
   };
 }

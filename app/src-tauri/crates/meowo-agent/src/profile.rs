@@ -93,6 +93,32 @@ pub struct ProfileSpec {
     /// 默认账号里哪些东西要带进每个账号（规则文件、设置、MCP、插件清单……）。宿主按声明
     /// 执行同步，见 [`ShareSurface`]。凭据、会话、运行时状态一概不在这里声明。
     pub share: &'static [ShareSurface],
+    /// 给用户看的「和默认账号共用哪些东西」（设置页账号区的「共用」一排）。`share` 是怎么同步，
+    /// 这里是用户认得的名字；skill 由宿主对所有 agent 共享，也写在这里。没写 `History` 的
+    /// agent，界面上把会话历史归到「各自」。
+    pub topics: &'static [ShareTopic],
+}
+
+/// 账号间共用的一类东西，前端按它出本地化的名字。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub enum ShareTopic {
+    /// 全局规则（CLAUDE.md / AGENTS.md）。
+    Rules,
+    /// 设置（语言、模型、权限……）。
+    Settings,
+    /// 插件。
+    Plugins,
+    /// skill。
+    Skills,
+    /// 自定义命令、子 agent。
+    Commands,
+    /// MCP 服务器。
+    Mcp,
+    /// 会话历史（含 ↑ 输入历史）。
+    History,
 }
 
 /// 默认账号里**用户配置的东西**带进每个账号的一种方式。照 Orca（stablyai/orca c1bd89d 的

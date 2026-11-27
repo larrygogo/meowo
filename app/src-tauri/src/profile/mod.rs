@@ -290,6 +290,64 @@ pub(crate) struct ProfileView {
     pub(crate) active: bool,
     /// 该账号的登录态（读它自己的凭据）。None = 未登录。
     pub(crate) account: Option<meowo_agent::Account>,
+    /// 首次对齐时和默认账号冲突、留在账号目录里待用户处理的条目。默认账号恒为空。
+    /// 之前只写日志（红队 1 问题 4）：用户不知道账号里有东西没合进来。
+    pub(crate) set_aside: Vec<SetAside>,
+}
+
+/// 一项留存的冲突。
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct SetAside {
+    /// 绝对路径（「在文件夹中显示」用）。
+    pub(crate) path: String,
+    /// 相对账号数据目录的名字（界面上列出来的）。
+    pub(crate) name: String,
+    /// 是目录时里面的文件数；是文件时为 1。
+    pub(crate) files: u32,
+}
+
+/// 账号数据目录顶层里我们留存的条目：`*.meowo-profile-merge*`（共享目录合并剩下的冲突、首次对齐
+/// 改名留存的文件）、`*.meowo-profile-conflict*`（输入历史被换掉时留存的旧份）。
+fn set_aside_in(data: &std::path::Path) -> Vec<SetAside> {
+    fn count(path: &std::path::Path, budget: &mut u32) -> u32 {
+        let Ok(entries) = std::fs::read_dir(path) else { return 0 };
+        let mut n = 0;
+        for entry in entries.flatten() {
+            // 很大的目录（插件缓存）不必数完：数到上限就停，界面显示「N+ 个文件」量级足够。
+            if *budget == 0 {
+                break;
+            }
+            let p = entry.path();
+            if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                n += count(&p, budget);
+            } else {
+                *budget -= 1;
+                n += 1;
+            }
+        }
+        n
+    }
+    let Ok(entries) = std::fs::read_dir(data) else { return Vec::new() };
+    let mut out: Vec<SetAside> = entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if !(name.contains(share_link::MERGE_PENDING_SUFFIX) || name.contains(share_link::CONFLICT_SUFFIX)) {
+                return None;
+            }
+            // 输入历史改名出来待并的旧文件（`history.jsonl.meowo-profile-merge`）和它的游标是合并
+            // 过程的中间状态，下次同步就并完删掉，不是冲突。
+            if name.ends_with(".offset") || name.contains(&format!(".jsonl{}", share_link::MERGE_PENDING_SUFFIX)) {
+                return None;
+            }
+            let path = e.path();
+            let files = if e.file_type().is_ok_and(|t| t.is_dir()) { count(&path, &mut 10_000) } else { 1 };
+            // 合并做完、冲突都处理掉之后剩下的空目录不算。
+            (files > 0).then(|| SetAside { path: path.to_string_lossy().into_owned(), name, files })
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
 }
 
 /// 某 agent 的账号列表：默认账号 + 自定义 profile，每个都带自己的登录态。
@@ -331,6 +389,7 @@ pub(crate) async fn list_profiles(provider: String) -> Vec<ProfileView> {
                 .cloned()
                 .unwrap_or_default(),
             active: default_active,
+            set_aside: Vec::new(),
             account: {
                 let a = plugin
                     .resolve()
@@ -356,6 +415,7 @@ pub(crate) async fn list_profiles(provider: String) -> Vec<ProfileView> {
                 id: Some(p.id.clone()),
                 name: p.name.clone(),
                 active: is_active,
+                set_aside: data_dir(&provider, Some(&p.id)).map(|d| set_aside_in(&d)).unwrap_or_default(),
                 account: if is_active {
                     crate::account::with_cached_plan(id, account)
                 } else {
@@ -1083,5 +1143,36 @@ mod tests {
             "{}"
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 设置页账号区的冲突提醒读这份清单：留存的文件和目录都列出、目录数里面的文件；
+    /// 输入历史合并的中间文件、合并完剩下的空目录不列。
+    #[test]
+    fn set_aside_lists_conflicts_but_not_merge_internals() {
+        let root = std::env::temp_dir().join(format!("meowo-set-aside-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let w = |rel: &str| {
+            let p = root.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, "x").unwrap();
+        };
+        w("keybindings.json.meowo-profile-merge");
+        w("plugins.meowo-profile-merge/a.json");
+        w("plugins.meowo-profile-merge/cache/b.txt");
+        w("history.jsonl.meowo-profile-conflict");
+        w("history.jsonl.meowo-profile-merge");
+        w("history.jsonl.meowo-profile-merge.offset");
+        w("settings.json");
+        std::fs::create_dir_all(root.join("projects.meowo-profile-merge/empty")).unwrap();
+        let got: Vec<(String, u32)> = set_aside_in(&root).into_iter().map(|a| (a.name, a.files)).collect();
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(
+            got,
+            vec![
+                ("history.jsonl.meowo-profile-conflict".to_string(), 1),
+                ("keybindings.json.meowo-profile-merge".to_string(), 1),
+                ("plugins.meowo-profile-merge".to_string(), 2),
+            ]
+        );
     }
 }

@@ -1,6 +1,6 @@
 // 设置窗口「账号」页：每个 provider 的安装 / 登录 / 用量三态卡片。
 // 从 About.tsx 抽出（体量最大、最内聚，且已被 About.account.test.tsx 单独覆盖）。
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { appConfirm } from "../../confirm";
 import {
   listAgents,
@@ -61,6 +61,8 @@ import { icAlert, icDownload, icRefreshCw } from "../../icons/glyphs";
 import { remoteUi } from "../../remoteMode";
 import { icInfo } from "../../icons/glyphs.settings";
 import { busyProps } from "../../busyButton";
+import type { ShareTopic } from "../../generated/contracts/ShareTopic";
+import type { ProfileSetAside } from "../../api";
 
 function RefreshIcon({ spinning }: { spinning?: boolean }) {
   return (
@@ -177,7 +179,7 @@ function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
 
 // 单个 provider 卡片：安装/登录/用量三态。已装且登录 = 现有账号信息 + 用量泳道 + 刷新按钮 + 贴纸显示开关；
 // 已装未登录 = 提示语；未装 = 一键安装按钮。
-function ProviderCard({ provider, name, installed, supportsAccount, supportsLogin = true, supportsLogout = true, supportsApiKeyLogin, supportsProfiles, movesSessionsAcrossAccounts, supportsContext, relay, payload, usage, err, onRefresh, installOp, onStartInstall, onCancelInstall, onLoggedIn, loginState, onStartLogin, onCancelLogin, refreshing, settings, patchSettings, onToggleQuota, usageRefreshedAt, updateInfo, mcpConfigUnreadable = null }: {
+function ProviderCard({ provider, name, installed, supportsAccount, supportsLogin = true, supportsLogout = true, supportsApiKeyLogin, supportsProfiles, movesSessionsAcrossAccounts, profileShares = [], supportsContext, relay, payload, usage, err, onRefresh, installOp, onStartInstall, onCancelInstall, onLoggedIn, loginState, onStartLogin, onCancelLogin, refreshing, settings, patchSettings, onToggleQuota, usageRefreshedAt, updateInfo, mcpConfigUnreadable = null }: {
   provider: AgentId;
   /** 展示名，来自后端 list_agents()（产品名，不翻译）。 */
   name: string;
@@ -213,6 +215,8 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsLogi
    * **不得按 id 判断**——覆盖面是插件声明的事实，会随取证进展变。
    */
   movesSessionsAcrossAccounts: boolean;
+  /** 后端 `profile_shares`：各账号和默认账号共用哪些东西（插件声明，前端不按 id 推）。 */
+  profileShares?: ShareTopic[];
   /** meowo 能否显示该 agent 的上下文占用。false（opencode）→ 卡片显式标注「不支持」。 */
   supportsContext: boolean;
   relay: AgentDescriptor["relay"];
@@ -924,6 +928,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsLogi
         <ProfileList
           provider={provider}
           movesSessionsAcrossAccounts={movesSessionsAcrossAccounts}
+          profileShares={profileShares}
           switchRunning={settings?.profile_switch_running ?? "ask"}
           onSwitchRunningChange={(v) => void patchSettings({ profile_switch_running: v })}
           onChanged={profilesChanged}
@@ -947,10 +952,12 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsLogi
 /** 默认账号在前端的行 key —— 后端给的 id 是 `null`（它不在 settings.profiles 里）。 */
 const DEFAULT_KEY = "__default__";
 
-function ProfileList({ provider, movesSessionsAcrossAccounts, switchRunning, onSwitchRunningChange, onChanged, viewingProfile, onViewUsage, loginState, onStartLogin, onCancelLogin }: {
+function ProfileList({ provider, movesSessionsAcrossAccounts, profileShares, switchRunning, onSwitchRunningChange, onChanged, viewingProfile, onViewUsage, loginState, onStartLogin, onCancelLogin }: {
   provider: AgentId;
   /** 见 ProviderCard 同名 prop：决定切换后要不要处理「运行中的会话」。 */
   movesSessionsAcrossAccounts: boolean;
+  /** 见 ProviderCard 同名 prop。 */
+  profileShares: ShareTopic[];
   /** 设置「切换后运行中的会话」：每次问 / 直接重启 / 留在原账号（照 Orca）。 */
   switchRunning: ProfileSwitchRunning;
   onSwitchRunningChange: (v: ProfileSwitchRunning) => void;
@@ -964,6 +971,7 @@ function ProfileList({ provider, movesSessionsAcrossAccounts, switchRunning, onS
 }) {
   const t = useT();
   const [rows, setRows] = useState<ProfileView[] | null>(null);
+  const sharesHistory = profileShares.includes("history");
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   // 正在改名的**行 key**（null = 没在改名）。默认账号用 DEFAULT_KEY——它没有 profile id，
@@ -1022,7 +1030,9 @@ function ProfileList({ provider, movesSessionsAcrossAccounts, switchRunning, onS
   const remove = async (p: ProfileView) => {
     if (!p.id) return; // 默认账号是 agent 自己的目录，删不得
     const label = p.name || p.id;
-    const yes = await appConfirm(t.account.deleteProfileConfirm(label), {
+    // 会话历史共用时它在默认账号里，删账号不会带走（之前的文案说「一并删除」，会把人吓住）。
+    const confirmText = sharesHistory ? t.account.deleteProfileConfirmShared(label) : t.account.deleteProfileConfirm(label);
+    const yes = await appConfirm(confirmText, {
       title: t.account.deleteProfile,
       danger: true,
       // 主按钮说清后果（S-14）：不可逆操作不给通用「确定」。
@@ -1041,7 +1051,8 @@ function ProfileList({ provider, movesSessionsAcrossAccounts, switchRunning, onS
   const merge = async (p: ProfileView) => {
     if (!p.id) return; // 默认账号没有「合并进自己」
     const label = p.name || p.id;
-    const yes = await appConfirm(t.account.mergeProfileConfirm(label), {
+    const confirmText = sharesHistory ? t.account.mergeProfileConfirmShared(label) : t.account.mergeProfileConfirm(label);
+    const yes = await appConfirm(confirmText, {
       title: t.account.mergeProfile,
       danger: true,
       confirmLabel: t.account.mergeProfile,
@@ -1118,6 +1129,7 @@ function ProfileList({ provider, movesSessionsAcrossAccounts, switchRunning, onS
   return (
     <div className="provider-card-body profile-list" data-testid={"profiles-" + provider}>
       <div className="profile-list-head">{t.account.profiles}</div>
+      <ProfileShareSummary shares={profileShares} provider={provider} />
 
       {rows.map((p) => {
         const key = p.id ?? DEFAULT_KEY;
@@ -1164,8 +1176,8 @@ function ProfileList({ provider, movesSessionsAcrossAccounts, switchRunning, onS
           );
         }
         return (
+          <Fragment key={key}>
           <div
-            key={key}
             className={"profile-row" + (p.active ? " profile-row-active" : "")}
             data-testid={"profile-" + provider + "-" + key}
           >
@@ -1262,6 +1274,8 @@ function ProfileList({ provider, movesSessionsAcrossAccounts, switchRunning, onS
               ]}
             />
           </div>
+          {p.set_aside?.length > 0 && <ProfileSetAsideNote provider={provider} rowKey={key} items={p.set_aside} />}
+          </Fragment>
         );
       })}
 
@@ -1311,7 +1325,6 @@ function ProfileList({ provider, movesSessionsAcrossAccounts, switchRunning, onS
         </button>
       )}
 
-      <div className="profile-hint">{t.account.addProfileHint}</div>
       {/* 覆盖面明示：切换本身只改设置（后端 profile/mod.rs 的既定行为，此前 UI 零提示）。
           会话能跟着搬的 agent 另说一句——它切完会问要不要把运行中的会话重启过去。 */}
       {movesSessionsAcrossAccounts ? (
@@ -1334,6 +1347,78 @@ function ProfileList({ provider, movesSessionsAcrossAccounts, switchRunning, onS
         <div className="profile-hint">{t.account.switchCoverage}</div>
       )}
       {err && <div className="agent-install-error">{err}</div>}
+    </div>
+  );
+}
+
+/** 共用项的显示顺序（与后端枚举一致；前端只管出名字）。 */
+const SHARE_TOPIC_ORDER: ShareTopic[] = ["rules", "settings", "plugins", "skills", "commands", "mcp", "history"];
+
+/**
+ * 账号区顶部「共用 / 各自」两排标签：一眼看出新账号带不带得上默认账号的规则、设置、会话历史，
+ * 哪些是每个账号自己的。之前只有一句「新账号的登录与会话历史相互独立」，多账号照 Orca 共用后
+ * 这句成了错的（2026-11-27）。三版样稿里选了两排标签：比一整句话扫得快，「各自」一排把对照摆明。
+ * 没写会话历史共用的 agent（codex/kimi/opencode），会话历史归到「各自」。
+ */
+function ProfileShareSummary({ shares, provider }: { shares: ShareTopic[]; provider: AgentId }) {
+  const t = useT();
+  const shared = SHARE_TOPIC_ORDER.filter((topic) => shares.includes(topic));
+  const own = [t.account.ownLogin, t.account.ownQuota, ...(shares.includes("history") ? [] : [t.account.shareTopic.history])];
+  return (
+    <div className="profile-share" data-testid={"profile-share-" + provider}>
+      {shared.length > 0 && (
+        <>
+          <span className="profile-share-label">{t.account.sharedLabel}</span>
+          <span className="profile-share-chips">
+            {shared.map((topic) => (
+              <span key={topic} className="profile-chip">{t.account.shareTopic[topic]}</span>
+            ))}
+          </span>
+        </>
+      )}
+      <span className="profile-share-label">{t.account.ownLabel}</span>
+      <span className="profile-share-chips">
+        {own.map((label) => (
+          <span key={label} className="profile-chip profile-chip-own">{label}</span>
+        ))}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * 账号首次对齐时和默认账号冲突、没合进来的条目：提醒摊开在这个账号下面（taste I14：做决定前必须
+ * 知道的警示明细直接摊开），不收进徽章。之前只写日志（红队 1 问题 4），用户不知道账号里还有东西。
+ * 提醒色底块不用报错红：账号照常能用，这些只是待挑拣的旧版本。
+ */
+function ProfileSetAsideNote({ provider, rowKey, items }: { provider: AgentId; rowKey: string; items: ProfileSetAside[] }) {
+  const t = useT();
+  const [msg, setMsg] = useState<string | null>(null);
+  const reveal = () => {
+    setMsg(null);
+    revealTerminalPath("", items[0].path).catch((e: unknown) => setMsg(formatBackendError(e, t.locale)));
+  };
+  return (
+    <div className="profile-aside" role="note" data-testid={"profile-aside-" + provider + "-" + rowKey}>
+      <div className="profile-aside-head">
+        <Icon glyph={icAlert} size={14} />
+        <strong>{t.account.setAsideTitle(items.length)}</strong>
+      </div>
+      <div className="profile-aside-hint">{t.account.setAsideHint}</div>
+      <ul className="profile-aside-list">
+        {items.map((item) => (
+          <li key={item.path}>
+            {item.name}
+            {item.files > 1 && <span className="profile-aside-count">{t.account.setAsideFiles(item.files)}</span>}
+          </li>
+        ))}
+      </ul>
+      {!remoteUi() && (
+        <button type="button" className="agent-path-gap-btn profile-aside-reveal" data-testid={"profile-aside-reveal-" + provider + "-" + rowKey} onClick={reveal}>
+          {t.account.mcpConfigReveal}
+        </button>
+      )}
+      {msg && <span className="agent-mcp-unreadable-err">{msg}</span>}
     </div>
   );
 }
@@ -1640,6 +1725,7 @@ export function AccountSection({ view = "account", onViewChange, showAll = false
         supportsApiKeyLogin={cur.supports_api_key_login ?? false}
         supportsProfiles={cur.supports_profiles}
         movesSessionsAcrossAccounts={cur.moves_sessions_across_accounts ?? false}
+        profileShares={cur.profile_shares ?? []}
         supportsContext={cur.supports_context ?? true}
         relay={cur.relay}
         payload={payload}

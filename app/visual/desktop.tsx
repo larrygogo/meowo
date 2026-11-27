@@ -68,7 +68,10 @@ function whenReady<T extends Element>(selector: string, act: (el: T) => void): v
 
 // 带启动选项的 agent 名单：设置「会话」分区的默认值行、新建会话的权限 / 模型下拉都靠它才出现。
 const AGENTS_WITH_OPTIONS = [
-  { id: "claude", display_name: "Claude Code", installed: true, supports_profiles: true, launch_options: [
+  // 多账号照 Orca 共用（2026-11-27）：账号区顶部「共用 / 各自」两排按 profile_shares 出，切换后运行中的会话那一行按
+  // moves_sessions_across_accounts 出。
+  { id: "claude", display_name: "Claude Code", installed: true, supports_profiles: true, moves_sessions_across_accounts: true,
+    profile_shares: ["rules", "settings", "plugins", "skills", "commands", "mcp", "history"], launch_options: [
     { id: "permission", default: "default", choices: [
       { id: "default", label: "Default", args: [], risk: false },
       { id: "acceptEdits", label: "Accept edits", args: [], risk: false },
@@ -493,7 +496,11 @@ async function boot(): Promise<React.ReactNode> {
         const account = (email: string, plan: string) => ({ email, display_name: null, organization: null, plan, login_label: null });
         return [
           { id: null, name: "", active: true, account: account("demo@example.com", "Pro") },
-          { id: "work", name: "work-account-with-a-rather-long-name@company.example.com", active: false, account: account("work-account-with-a-rather-long-name@company.example.com", "Max") },
+          // 首次对齐留下冲突的账号：提醒摊开在它下面。
+          { id: "work", name: "work-account-with-a-rather-long-name@company.example.com", active: false, account: account("work-account-with-a-rather-long-name@company.example.com", "Max"), set_aside: [
+            { path: "C:\Users\demo\.meowo\profiles\claude\work\keybindings.json.meowo-profile-merge", name: "keybindings.json.meowo-profile-merge", files: 1 },
+            { path: "C:\Users\demo\.meowo\profiles\claude\work\plugins.meowo-profile-merge", name: "plugins.meowo-profile-merge", files: 111 },
+          ] },
           { id: "spare", name: "备用", active: false, account: null },
         ];
       }

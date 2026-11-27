@@ -2595,7 +2595,25 @@ export const zh = {
     defaultProfile: "默认账号",
     addProfile: "添加账号",
     newProfileName: "账号名称（如：工作）",
-    addProfileHint: "新账号的登录与会话历史相互独立",
+    // 账号区顶部「共用 / 各自」两排（后端 profile_shares）。多账号照 Orca 共用后，旧的
+    // 「新账号的登录与会话历史相互独立」成了错的（2026-11-27）。
+    sharedLabel: "共用",
+    ownLabel: "各自",
+    ownLogin: "登录",
+    ownQuota: "额度",
+    shareTopic: {
+      rules: "规则",
+      settings: "设置",
+      plugins: "插件",
+      skills: "skill",
+      commands: "命令",
+      mcp: "MCP",
+      history: "会话历史",
+    },
+    // 首次对齐时和默认账号冲突、留在账号目录里的条目。
+    setAsideTitle: (n: number) => `${n} 项和默认账号冲突，没合进来`,
+    setAsideHint: "这个账号原来的版本留在账号目录里。需要的话挑着合进默认账号，处理完删掉即可。",
+    setAsideFiles: (n: number) => `（${n >= 10000 ? "10000+" : n} 个文件）`,
     // 覆盖面必须明说（后端 profile/mod.rs 的行为注释）：中转/代理都如实标注了范围，唯独
     // 账号切换此前一字不提——用户切完以为正在跑的会话也换了额度池。
     // 两句按能力分：能把会话搬去新账号的（后端 moves_sessions_across_accounts）切完可以
@@ -2626,9 +2644,15 @@ export const zh = {
     mergeProfile: "合并进默认账号",
     mergeProfileConfirm: (name: string) =>
       `把「${name}」并入默认账号？此操作不可逆。`,
+    // 会话历史已共用：并入只剩「账号删掉、它的会话改到默认账号下继续」。
+    mergeProfileConfirmShared: (name: string) =>
+      `把「${name}」并入默认账号？账号会删除，它的会话改到默认账号下继续。此操作不可逆。`,
     deleteProfile: "删除账号",
     deleteProfileConfirm: (name: string) =>
       `删除「${name}」？登录凭据与会话历史将一并删除，无法恢复。`,
+    // 会话历史共用时存在默认账号里，删账号带不走；只删登录和这个账号自己的东西。
+    deleteProfileConfirmShared: (name: string) =>
+      `删除「${name}」？它的登录会删除，无法恢复。会话历史在默认账号里，不受影响。`,
     login: "登录",
     loggingIn: "等待登录…",
     // pending 指引：窗口开在哪个终端（后端按 settings.resume_terminal 选）、最多等多久，一次说清。

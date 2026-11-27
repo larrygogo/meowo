@@ -1304,6 +1304,59 @@ describe("AccountSection 账号的增删改", () => {
     await waitFor(() => expect(api.deleteProfile).toHaveBeenCalledWith("claude", "work"));
   });
 
+  /** 账号区顶部「共用 / 各自」按后端 profile_shares 出：claude 会话历史共用，opencode 的归到「各自」。 */
+  it("共用/各自两排按插件声明出；没共用会话历史的归到各自", async () => {
+    api.listAgents.mockResolvedValue(descriptors(["claude", "opencode"]));
+    twoProfiles();
+    render(<AccountSection />);
+    const claude = await screen.findByTestId("profile-share-claude");
+    const chips = (el: Element, own: boolean) =>
+      [...el.querySelectorAll(own ? ".profile-chip-own" : ".profile-chip:not(.profile-chip-own)")].map((c) => c.textContent);
+    expect(chips(claude, false)).toEqual(["规则", "设置", "插件", "skill", "命令", "MCP", "会话历史"]);
+    expect(chips(claude, true)).toEqual(["登录", "额度"]);
+    expect(screen.getByTestId("profiles-claude").textContent).not.toContain("相互独立");
+
+    await selectAgent("OpenCode");
+    const opencode = await screen.findByTestId("profile-share-opencode");
+    expect(chips(opencode, false)).toEqual(["skill"]);
+    expect(chips(opencode, true)).toEqual(["登录", "额度", "会话历史"]);
+  });
+
+  /** 首次对齐留存的冲突：摊开在该账号下面，列出条目和文件数，能在文件夹中显示。 */
+  it("账号有留存的冲突时在它下面摊开提醒，点按钮在文件夹中显示", async () => {
+    api.listProfiles.mockResolvedValue([
+      { id: null, name: "", active: true, account: { email: "a@b.c" }, set_aside: [] },
+      {
+        id: "work", name: "工作", active: false, account: { email: "w@b.c" },
+        set_aside: [
+          { path: "C:/p/work/keybindings.json.meowo-profile-merge", name: "keybindings.json.meowo-profile-merge", files: 1 },
+          { path: "C:/p/work/plugins.meowo-profile-merge", name: "plugins.meowo-profile-merge", files: 111 },
+        ],
+      },
+    ]);
+    api.revealTerminalPath.mockResolvedValue(undefined);
+    render(<AccountSection />);
+    const note = await screen.findByTestId("profile-aside-claude-work");
+    expect(note.textContent).toContain(zh.account.setAsideTitle(2));
+    expect(note.textContent).toContain("plugins.meowo-profile-merge" + zh.account.setAsideFiles(111));
+    // 紧跟在该账号行后面，不在列表底部。
+    expect(screen.getByTestId("profile-claude-work").nextElementSibling).toBe(note);
+    expect(screen.queryByTestId("profile-aside-claude-default")).toBeNull();
+    fireEvent.click(screen.getByTestId("profile-aside-reveal-claude-work"));
+    await waitFor(() => expect(api.revealTerminalPath).toHaveBeenCalledWith("", "C:/p/work/keybindings.json.meowo-profile-merge"));
+  });
+
+  /** 会话历史共用时删账号不会带走历史：确认框照实说，不再说「会话历史一并删除」。 */
+  it("会话历史共用的 agent 删账号时，确认框说历史保留", async () => {
+    twoProfiles();
+    dialog.confirm.mockResolvedValue(false);
+    render(<AccountSection />);
+    fireEvent.click(await screen.findByTestId("profile-menu-claude-work"));
+    fireEvent.click(screen.getByTestId("profile-menu-claude-work-delete"));
+    await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
+    expect(dialog.confirm.mock.calls[0][0]).toBe(zh.account.deleteProfileConfirmShared("工作"));
+  });
+
   it("确认框点取消 → 不删", async () => {
     twoProfiles();
     dialog.confirm.mockResolvedValue(false);

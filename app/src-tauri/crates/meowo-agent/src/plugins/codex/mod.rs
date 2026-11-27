@@ -66,11 +66,14 @@ static HOOKS: HookSpec = HookSpec {
 /// codex 的 `auth.json` 由 CLI 自己维护（含 OIDC id_token），Meowo 只读不刷新 → `refresh: None`。
 /// 用量走 rollout 文件与 auth.json 内的字段，无独立 base_url。
 /// 多账号：`CODEX_HOME` 一个变量搬走整个数据目录（凭据 auth.json、hooks.json、rollout 全在里面）。
+use crate::profile::ShareTopic;
 static PROFILE: crate::profile::ProfileSpec = crate::profile::ProfileSpec {
     envs: &[("CODEX_HOME", "")],
     data_rel: "",
     creds_rel: "auth.json",
     share: &SHARE,
+    // MCP 写在 config.toml 里，随普通设置一起同步。
+    topics: &[ShareTopic::Rules, ShareTopic::Settings, ShareTopic::Skills, ShareTopic::Commands, ShareTopic::Mcp],
 };
 
 /// 默认账号里带进每个 codex 账号的东西。照 Orca 的 codex 配置镜像（`codex-config-mirror.ts`）：

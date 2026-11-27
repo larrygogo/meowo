@@ -16,6 +16,8 @@ use std::path::{Path, PathBuf};
 
 /// 条目等着并进共享目录时待的地方；冲突的名字留在这里（Orca 叫 `.orca-profile-merge`）。
 pub(crate) const MERGE_PENDING_SUFFIX: &str = ".meowo-profile-merge";
+/// 输入历史被 CLI 换掉时，账号里那份旧内容的留存名后缀（不并回，等用户处理）。
+pub(crate) const CONFLICT_SUFFIX: &str = ".meowo-profile-conflict";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LinkOutcome {
@@ -513,7 +515,7 @@ pub(crate) fn merge_prompt_history(
     let aside = match current {
         Some(_) => {
             let base = if replaced {
-                profile.join(format!("{file}.meowo-profile-conflict"))
+                profile.join(format!("{file}{CONFLICT_SUFFIX}"))
             } else {
                 profile.join(&pending_base)
             };

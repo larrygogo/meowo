@@ -54,6 +54,7 @@ use crate::{
 /// 数据目录的覆盖变量是 **`XDG_DATA_HOME`**（实测：`OPENCODE_DATA_DIR` 无效，而设了 XDG_DATA_HOME
 /// 后 `opencode db path` 确实跟着搬家）。opencode 在它下面再拼一层 `opencode/`，故凭据落在
 /// `<root>/data/opencode/auth.json`。
+use crate::profile::ShareTopic;
 static PROFILE: crate::profile::ProfileSpec = crate::profile::ProfileSpec {
     envs: &[
         // 首条必须是 data_dir（hooks/插件落这儿）——profile.rs 有绊线测试盯着。
@@ -64,6 +65,7 @@ static PROFILE: crate::profile::ProfileSpec = crate::profile::ProfileSpec {
     creds_rel: "data/opencode/auth.json",
     // 不共享：opencode 的配置（opencode.json）里混着 provider 凭据，未取证前不碰。
     share: &[],
+    topics: &[ShareTopic::Skills],
 };
 
 /// 凭据是 `~/.local/share/opencode/auth.json`——**不在 data_dir 底下**。

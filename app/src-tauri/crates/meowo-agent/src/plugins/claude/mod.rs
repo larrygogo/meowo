@@ -94,11 +94,21 @@ static HOOKS: HookSpec = HookSpec {
 /// 各 profile 的 hooks / settings / 历史都各自独立，而 Keychain 那份凭据是全局的，等于所有 profile
 /// 共享同一个登录身份。**这一条尚未解决**（见 `creds_rel` 指向的文件回退路径），macOS 上要真正切换
 /// 账号还需要额外轮换 Keychain 条目。Windows / Linux 无此问题。
+use crate::profile::ShareTopic;
 static PROFILE: crate::profile::ProfileSpec = crate::profile::ProfileSpec {
     envs: &[("CLAUDE_CONFIG_DIR", "")],
     data_rel: "",
     creds_rel: ".credentials.json",
     share: &SHARE,
+    topics: &[
+        ShareTopic::Rules,
+        ShareTopic::Settings,
+        ShareTopic::Plugins,
+        ShareTopic::Skills,
+        ShareTopic::Commands,
+        ShareTopic::Mcp,
+        ShareTopic::History,
+    ],
 };
 
 /// 默认账号里带进每个 Claude 账号的东西：完全照 Orca（stablyai/orca c1bd89d
