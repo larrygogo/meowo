@@ -235,8 +235,8 @@ fn shell_command() -> (CommandBuilder, String) {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| "shell".into());
-        let mut command = CommandBuilder::new(&shell);
-        command.arg("-l");
+        // `-l`（登录 shell）由 shell_claude::prepare 按 shell 种类加：bash 要换成 --rcfile。
+        let command = CommandBuilder::new(&shell);
         (command, title)
     }
 }
@@ -284,6 +284,8 @@ impl ShellTerminals {
             })
             .map_err(|e| e.to_string())?;
         let (mut command, title) = shell_command();
+        // 手打 claude 跟随 Meowo 当前选中的账号（照 Orca）。
+        crate::shell_claude::prepare(&mut command, &title);
         command.cwd(cwd);
         command.env_remove("NO_COLOR");
         command.env("TERM", "xterm-256color");

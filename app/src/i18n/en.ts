@@ -2291,14 +2291,33 @@ export const en: Dict = {
     defaultProfile: "Default account",
     addProfile: "Add account",
     newProfileName: "Account name (e.g. Work)",
-    addProfileHint: "Each account keeps its own sign-in and session history",
+    sharedLabel: "Shared",
+    ownLabel: "Separate",
+    ownLogin: "Sign-in",
+    ownQuota: "Quota",
+    shareTopic: {
+      rules: "Rules",
+      settings: "Settings",
+      plugins: "Plugins",
+      skills: "Skills",
+      commands: "Commands",
+      mcp: "MCP",
+      history: "Session history",
+    },
+    setAsideTitle: (n: number) => `${n} ${n === 1 ? "item conflicts" : "items conflict"} with the default account and wasn't merged`,
+    setAsideHint: "This account's own versions are kept in its folder. Merge what you need into the default account, then delete them.",
+    setAsideFiles: (n: number) => ` (${n >= 10000 ? "10000+" : n} files)`,
     switchCoverage: "Applies to new or resumed sessions only; running sessions keep their account",
-    switchCoverageRestart: "Running sessions can be restarted onto the new account; conversations are kept",
     switchRestartConfirm: (n) =>
       n === 1
         ? "Account switched. Restart the 1 running session of this Agent onto the new account too? Its conversation is kept."
         : `Account switched. Restart the ${n} running sessions of this Agent onto the new account too? Their conversations are kept.`,
     switchRestartConfirmLabel: "Restart them",
+    switchRunningLabel: "Running sessions after a switch",
+    switchRunningDesc: "Restarting keeps the conversation",
+    switchRunningAsk: "Ask each time",
+    switchRunningRestart: "Restart them",
+    switchRunningKeep: "Keep old account",
     agentsLoadFailed: "Couldn't load the Agent list. Please retry",
     switchProfile: "Switch to this account",
     activeProfile: "In use",
@@ -2311,9 +2330,13 @@ export const en: Dict = {
     mergeProfile: "Merge into default account",
     mergeProfileConfirm: (name: string) =>
       `Merge "${name}" into the default account? This cannot be undone.`,
+    mergeProfileConfirmShared: (name: string) =>
+      `Merge "${name}" into the default account? The account is removed and its sessions continue under the default account. This cannot be undone.`,
     deleteProfile: "Delete account",
     deleteProfileConfirm: (name: string) =>
       `Delete account "${name}"? Its credentials and session history will be deleted for good.`,
+    deleteProfileConfirmShared: (name: string) =>
+      `Delete account "${name}"? Its sign-in is removed for good; session history lives in the default account and stays.`,
     login: "Sign in",
     loggingIn: "Waiting for sign-in…",
     loginWaiting: (terminal) =>

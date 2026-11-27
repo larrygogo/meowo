@@ -111,10 +111,26 @@ static LEGACY_HOOKS: HookSpec = HookSpec {
 ///
 /// profile 恒取 `variants().first()`（＝modern），故这里只声明 modern 的变量；legacy 的
 /// Python kimi-cli 走不到 profile 这条路。
+use crate::profile::ShareTopic;
 static PROFILE: crate::profile::ProfileSpec = crate::profile::ProfileSpec {
     envs: &[("KIMI_CODE_HOME", "")],
     data_rel: "",
     creds_rel: "credentials/kimi-code.json",
+    share: &SHARE,
+    topics: &[ShareTopic::Skills, ShareTopic::Mcp],
+};
+
+/// 默认账号里带进每个 kimi 账号的东西：只有 `mcp.json` 的 MCP 服务器。`config.toml` 不共享：
+/// 它的 `providers.*` 里是用户配的第三方 API 凭据，属于账号。
+static SHARE: [crate::profile::ShareSurface; 1] = {
+    use crate::profile::{ShareFormat::Json, SharePick, ShareSurface as S};
+    [S::Keys {
+        file: "mcp.json",
+        format: Json,
+        at: &["mcpServers"],
+        pick: SharePick::All,
+        exact_first: false,
+    }]
 };
 
 /// kimi 的会话可跨账号继续：会话目录整棵搬进目标账号的数据根即可，**不必**改

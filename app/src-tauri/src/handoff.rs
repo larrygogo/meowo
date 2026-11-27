@@ -88,7 +88,7 @@ pub(crate) async fn copy_session_to_provider(
         // 本次痛点：目标 kimi 停在「是否信任此目录」屏，对话页答不了、hook 不来、新会话不落库，
         // 看板上表现为「复制后新会话没出现」。起进程前替用户预写信任记录
         // （用户亲手选定目录与目标 agent，语义上已表达这份信任；codex 的 trusted_hash 是同一先例）。
-        crate::terminal::pretrust_workspace(&target_provider, active_profile.as_deref(), &dir);
+        crate::terminal::prepare_launch_profile(&target_provider, active_profile.as_deref(), &dir);
         let temp_id = broker
             .start_pending(
                 app.clone(),

@@ -76,6 +76,8 @@ pub struct AgentDescriptor {
     /// 覆盖面是**插件声明的事实**、会随取证进展变（谁声明了看各插件的 `CROSS_ACCOUNT`，
     /// 有绊线测试钉着矩阵），前端不得按 id 反推。
     pub moves_sessions_across_accounts: bool,
+    /// 账号间和默认账号共用的东西（插件 `ProfileSpec::topics`）。不支持多账号时为空。
+    pub profile_shares: Vec<crate::profile::ShareTopic>,
     /// 新建会话的启动选项（选择 → CLI flag 映射，由插件声明）。空 = 面板不给选项栏。
     /// 前端只回传 choice id，翻译成 argv 在后端按这张表进行——用户输入进不了命令行。
     pub launch_options: &'static [crate::LaunchOption],
@@ -118,6 +120,7 @@ impl AgentDescriptor {
                 .and_then(|telemetry| telemetry.transcript())
                 .is_some_and(|spec| spec.supports_chat()),
             moves_sessions_across_accounts: plugin.cross_account_session().is_some(),
+            profile_shares: plugin.profile().map(|p| p.topics.to_vec()).unwrap_or_default(),
             launch_options: plugin.launch_options(),
             relay,
             mcp_config_unreadable: crate::mcp_config::unreadable(plugin.id().as_str()),

@@ -3466,10 +3466,67 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
   color: var(--cc-text);
   background: var(--fill-hover);
 }
+/* 账号区顶部「共用 / 各自」两排标签（2026-11-27 三版样稿选 B 的这部分）：标签描边是共用的，填底是各自的，
+   对照一眼可见。字号随账号行的描述行，不抢账号名。 */
+.profile-share {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--sp-6) var(--sp-10);
+  align-items: center;
+  margin: calc(var(--sp-2) * -1) 0 var(--sp-8);
+  font-size: var(--text-xs);
+  color: var(--cc-text-faint);
+}
+.profile-share-chips { display: flex; flex-wrap: wrap; gap: var(--sp-4); }
+.profile-chip {
+  font-size: var(--text-2xs);
+  line-height: 18px;
+  padding: 0 var(--sp-6);
+  border-radius: var(--radius-full);
+  box-shadow: inset 0 0 0 var(--hairline) var(--line-strong);
+  color: var(--cc-text-dim);
+  white-space: nowrap;
+}
+.profile-chip-own { box-shadow: none; background: var(--fill-selected); }
+/* 首次对齐留存的冲突：摊开在该账号行下面（样稿 A 的这部分）。提醒色底块同 .lead-stale，不用报错红。 */
+.profile-aside {
+  margin: 0 0 var(--sp-6);
+  padding: var(--sp-8) var(--sp-10);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--cc-warn-vivid) 10%, transparent);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--cc-text);
+}
+.profile-aside-head { display: flex; align-items: flex-start; gap: var(--sp-6); font-size: var(--text-sm); }
+.profile-aside-head svg { flex: none; margin-top: calc(0.75em - 7px); color: var(--cc-warn-text); }
+.profile-aside-head strong { color: var(--cc-warn-text); font-weight: var(--fw-semibold); }
+/* 说明、清单、按钮都和标题文字对齐（让过 14px 图标 + 6px 间距）。 */
+.profile-aside-hint { margin: var(--sp-2) 0 0 20px; color: var(--cc-text-dim); }
+.profile-aside-list { margin: var(--sp-4) 0 0 20px; padding-left: var(--sp-14); font-family: var(--cc-mono); color: var(--cc-text-dim); }
+.profile-aside-list li { overflow-wrap: anywhere; }
+.profile-aside-count { font-family: var(--cc-font, inherit); color: var(--cc-text-faint); }
+.profile-aside-reveal { margin: var(--sp-6) 0 0 20px; }
 .profile-hint {
   font-size: var(--text-xs);
   color: var(--cc-text-faint);
   line-height: 1.5;
+}
+
+/* 「切换后运行中的会话」设置行：文字在左、下拉在右，与设置页其它行同一排法。 */
+.profile-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+}
+.profile-switch-text {
+  min-width: 0;
+}
+.profile-switch-label {
+  font-size: var(--text-sm);
+  color: var(--cc-text);
 }
 
 /* 动作菜单里的危险项（删除账号）：连目录一起抹掉且不可逆，值得一眼看出来。 */

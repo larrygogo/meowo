@@ -568,8 +568,19 @@ fn sync_session_files(
         .ancestors()
         .nth(spec.transcript_depth)
         .ok_or("会话路径格式异常")?;
-    if source_root == target_root {
+    // 会话历史已合成一份时（账号的 projects 等是指向默认目录的链接），两个根的路径不同、指的却是
+    // 同一批文件：按路径比会把文件拷到它自己身上。
+    let same_place = |a: &std::path::Path, b: &std::path::Path| {
+        a == b || matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
+    };
+    if same_place(source_root, target_root) {
         return Ok(());
+    }
+    let relative_probe = source.strip_prefix(source_root).ok();
+    if let Some(rel) = relative_probe {
+        if same_place(source, &target_root.join(rel)) {
+            return Ok(());
+        }
     }
     // 一律**按原相对路径**落到目标账号下：日期分层（codex）、工作区哈希目录（kimi）、
     // 项目目录（claude）都原样保留——各家 resume 就是按自己那套路径找会话的，宿主不必
@@ -737,6 +748,35 @@ mod cross_account_resume_tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    /// 会话历史合成一份后，账号的 projects 是指向默认目录的链接：从账号路径找到的 transcript
+    /// 「同步」回默认账号时，两条路径是同一个文件，不能拷到自己身上（会截断或报错）。
+    #[cfg(windows)]
+    #[test]
+    fn linked_history_is_not_copied_onto_itself() {
+        let root = temp_root("linked");
+        let default_root = root.join("default");
+        let profile_root = root.join("profile");
+        let session = "session-linked";
+        let transcript = default_root.join("projects").join("p").join(format!("{session}.jsonl"));
+        std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        std::fs::write(&transcript, "conversation").unwrap();
+        std::fs::create_dir_all(&profile_root).unwrap();
+        let ok = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(profile_root.join("projects"))
+            .arg(default_root.join("projects"))
+            .output()
+            .unwrap()
+            .status
+            .success();
+        assert!(ok);
+        let via_profile = profile_root.join("projects").join("p").join(format!("{session}.jsonl"));
+
+        sync_session_files(claude_spec(), &via_profile, &default_root, session).unwrap();
+        assert_eq!(std::fs::read_to_string(&transcript).unwrap(), "conversation");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     /// codex 的会话正文埋在**日期分层**下、文件名还带 `rollout-<时刻>-` 前缀：证明搬运
     /// 只认「相对数据根的原路径」，不再假定 claude 那套 `<项目>/<id>.jsonl`。
     /// 账号级的聚合文件（history.jsonl / thread_history_1.sqlite）必须留在原地。
@@ -888,13 +928,18 @@ pub(crate) fn launch_env_for_profile(
 /// 写进默认目录等于没写。`profile = None` 明确表示默认账号（不是「当前活跃」——调用方已经把
 /// 活跃账号解析出来了，与它随后注入的 env 同源，两边不能各推一次）。
 ///
+/// 用的是 profile 时，同一步里还把默认账号的配置同步进该账号（[`crate::profile::sync_shared`]）。
+///
 /// 只做文件 IO，须在 blocking 闭包内调用。失败只打日志：最坏退化成用户手动信任一次。
-pub(crate) fn pretrust_workspace(provider: &str, profile: Option<&str>, cwd: &str) {
+pub(crate) fn prepare_launch_profile(provider: &str, profile: Option<&str>, cwd: &str) {
     let Some(agent) = meowo_agent::resolve(Some(provider)) else {
         return;
     };
     match profile {
         Some(id) => {
+            // 先把默认账号里的规则、设置、MCP、插件清单同步进这个账号：用户在默认目录里刚改的
+            // 设置，这个会话就能用上（不必重启 Meowo）。无变化时只读不写。
+            crate::profile::sync_shared(agent.id().as_str(), id);
             if let Some(inst) = crate::profile::installation_of(agent.id(), id) {
                 inst.pretrust_workspace(cwd);
             }
@@ -2013,7 +2058,7 @@ pub(crate) async fn new_session_inner(
         ));
         let argv = crate::relay::augment_argv(agent.id(), argv);
         // 预信任工作目录（与上面的 env 同一个账号），否则 kimi 会停在信任屏、hook 不来、会话不落库。
-        pretrust_workspace(&provider, active_profile.as_deref(), &dir);
+        prepare_launch_profile(&provider, active_profile.as_deref(), &dir);
         broker.start_pending(
             app,
             &argv,
@@ -2195,7 +2240,7 @@ pub(crate) async fn fork_session(
             // 跨账号的 agent 先把资料迁到活跃账号（与恢复同一纪律），分叉命令与新进程都按它的 env 跑。
             let target_profile =
                 prepare_session_for_active_profile(&provider, &session.cc_session_id)?;
-            pretrust_workspace(&provider, target_profile.as_deref(), &dir);
+            prepare_launch_profile(&provider, target_profile.as_deref(), &dir);
             let env = launch_env_for_resume_target(&provider, target_profile.as_deref());
             match mode {
                 meowo_agent::ForkMode::Args { before, after } => {
@@ -2916,7 +2961,7 @@ fn prepare_resume_launch(
     // 预信任工作目录（按**实际**恢复账号，与下面的 env 同源）：resume/接管重启的进程同样会撞上
     // 信任屏——kimi 升级后旧信任记录像被清空一样重新弹提示（键算法换代，见 trust.rs）。
     if let Some(dir) = resolved.as_deref() {
-        pretrust_workspace(provider, target_profile.as_deref(), dir);
+        prepare_launch_profile(provider, target_profile.as_deref(), dir);
     }
     let revived = prepare_resume(app, session_id);
     // 一律按 prepare 算出的**实际**账号取 env，不再按 agent 身份分支重新推导。
@@ -3768,7 +3813,7 @@ pub(crate) fn reopen_pending_with(
         return Err("terminal/restart_stuck".into());
     }
     if let Some(dir) = launch.cwd.as_deref() {
-        pretrust_workspace(&launch.provider, active_profile.as_deref(), dir);
+        prepare_launch_profile(&launch.provider, active_profile.as_deref(), dir);
     }
     let new_id = broker.start_pending(
         app.clone(),

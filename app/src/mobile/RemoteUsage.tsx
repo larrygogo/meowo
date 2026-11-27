@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
+  getSettings,
   applyActiveProfileToSessions,
   getAccounts,
   listProfiles,
@@ -357,16 +358,21 @@ function ProviderUsageSection({ account, switchError, refreshOnMount, onSwitchSt
     }
     let restartError: string | null = null;
     try {
+      // 与桌面同一份设置「切换后运行中的会话」：留在原账号 → 不碰；直接重启 → 不问。
+      // 读不到设置按「每次问」，最保守。
+      const mode = (await getSettings().catch(() => null))?.profile_switch_running ?? "ask";
       // 必须切完再问：判据是「和当前活跃账号不同」。
-      const running = await sessionsOffActiveProfileCount(provider);
+      const running = mode === "keep" ? 0 : await sessionsOffActiveProfileCount(provider);
       // 切换途中离开了设置页：不在别的页面上凭空弹「要不要重启」，按不重启收场（账号已切）。
       if (running > 0 && mounted.current) {
-        const ok = await appConfirm(t.account.switchRestartConfirm(running), {
-          title: t.account.switchProfile,
-          // 会杀进程（正在生成的那一轮回答会丢），按危险操作办。
-          danger: true,
-          confirmLabel: t.account.switchRestartConfirmLabel,
-        });
+        const ok =
+          mode === "restart" ||
+          (await appConfirm(t.account.switchRestartConfirm(running), {
+            title: t.account.switchProfile,
+            // 会杀进程（正在生成的那一轮回答会丢），按危险操作办。
+            danger: true,
+            confirmLabel: t.account.switchRestartConfirmLabel,
+          }));
         if (ok) await applyActiveProfileToSessions(provider);
       }
     } catch (e) {

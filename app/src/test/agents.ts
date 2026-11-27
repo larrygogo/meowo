@@ -1,3 +1,4 @@
+import type { ShareTopic } from "../generated/contracts/ShareTopic";
 import approvalFrames from "./fixtures/approval-frames.json";
 import composerFrames from "./fixtures/composer-frames.json";
 import switchConfirm from "./fixtures/switch-confirm.json";
@@ -88,6 +89,14 @@ const SUPPORTS_CHAT_EXPORT = new Set(["claude", "codex", "kimi", "antigravity"])
  * opencode 的会话存储没取证过，antigravity 压根不支持多账号。
  */
 const MOVES_SESSIONS_ACROSS_ACCOUNTS = new Set(["claude", "codex", "kimi"]);
+
+/** 与各插件 `ProfileSpec::topics` 同源：账号间和默认账号共用的东西。 */
+const PROFILE_SHARES: Record<string, ShareTopic[]> = {
+  claude: ["rules", "settings", "plugins", "skills", "commands", "mcp", "history"],
+  codex: ["rules", "settings", "skills", "commands", "mcp"],
+  kimi: ["skills", "mcp"],
+  opencode: ["skills"],
+};
 
 /**
  * 对话页内置 `/` 补全候选。与后端 `AgentPlugin::slash_commands()` 同源——各家命令表是插件
@@ -417,6 +426,7 @@ export function descriptors(installed: string[]): AgentDescriptor[] {
     // 与后端事实对齐:claude/codex/kimi 声明了 CrossAccountSession(会话能搬去另一个账号);
     // opencode 的会话存储没取证过,antigravity 压根不支持多账号。
     moves_sessions_across_accounts: MOVES_SESSIONS_ACROSS_ACCOUNTS.has(id),
+    profile_shares: PROFILE_SHARES[id] ?? [],
     // 与后端事实对齐:目前只有 claude 声明了附加目录 flag(--add-dir)。
     launch_options: LAUNCH_OPTIONS[id] ?? [],
     relay: RELAYS[id],

@@ -27,6 +27,7 @@ export const store: Store = {
     terminal_open_mode: "card",
     session_open_in: "terminal",
     card_menu_mode: "button",
+    profile_switch_running: "ask",
     preview_enabled: true,
     click_through_enabled: false,
     browser_agent: true,

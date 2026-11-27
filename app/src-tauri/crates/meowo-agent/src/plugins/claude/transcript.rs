@@ -1675,10 +1675,15 @@ pub fn image_cache_dirs() -> Vec<std::path::PathBuf> {
 
 /// Meowo 管理的 Claude 账号数据目录。Claude 会把 transcript 一并放进
 /// `CLAUDE_CONFIG_DIR/projects`，所以跨账号查看/恢复时必须把这些目录也纳入候选。
+///
+/// 账号的 `projects` 已是指向默认目录的链接（Meowo 照 Orca 把会话历史合成一份后）时跳过：
+/// 同一批文件再扫一遍只会多花一倍时间，还会让同一个 transcript 以两条路径出现在候选里。
 fn managed_projects_dirs() -> Vec<std::path::PathBuf> {
+    let default = projects_dir().and_then(|d| std::fs::canonicalize(d).ok());
     managed_config_dirs()
         .into_iter()
         .map(|dir| dir.join("projects"))
+        .filter(|dir| default.is_none() || std::fs::canonicalize(dir).ok() != default)
         .collect()
 }
 
