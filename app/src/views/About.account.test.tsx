@@ -356,6 +356,21 @@ describe("AccountSection agent 卡", () => {
     expect(screen.queryByTestId("agent-login-claude")).toBeNull();
   });
 
+  // 真实账号实拍 2026-11-28：当前账号要重新登录时后端 usage_supported=false，开关跟着没了；
+  // 其余账号仍在被状态条轮询，开关得看 usage_supported_any。
+  it("当前账号查不了用量、别的账号能查：仍显示用量轮询开关", async () => {
+    api.getAccounts.mockResolvedValue([{ provider: "claude", account: { email: "a@b.c" }, usage: null, usage_supported: false, usage_supported_any: true }]);
+    render(<AccountSection />);
+    expect(await screen.findByTestId("profile-usage-polling-claude")).toBeTruthy();
+  });
+
+  it("没有一个账号能查用量：不显示用量轮询开关", async () => {
+    api.getAccounts.mockResolvedValue([{ provider: "claude", account: { email: "a@b.c" }, usage: null, usage_supported: false, usage_supported_any: false }]);
+    render(<AccountSection />);
+    await screen.findByTestId("profiles-claude");
+    expect(screen.queryByTestId("profile-usage-polling-claude")).toBeNull();
+  });
+
   /**
    * 活跃账号持续可见：切到过自定义账号，provider 卡片标题行就一直挂着「账号：<名>」徽章——
    * 这是「切过一次就忘了，之后会话全写进隔离账号」的防线。默认账号（active_profile_name 缺席）

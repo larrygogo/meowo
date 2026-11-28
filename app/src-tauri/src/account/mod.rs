@@ -50,6 +50,9 @@ pub struct ProviderAccountPayload {
     pub account: Option<Account>,
     pub usage: Option<ProviderUsage>,
     pub usage_supported: bool,
+    /// 任一账号（默认或已建）能查用量。设置页「用量轮询」开关看它：当前账号要重新登录时
+    /// usage_supported 为 false，但状态条还在轮询其余账号，开关不能跟着消失（真实账号实拍 2026-11-28）。
+    pub usage_supported_any: bool,
     pub relay_enabled: bool,
     /// 当前活跃 profile 的展示名；None = 默认账号（前端不显示任何账号提示——
     /// 没建过 profile 的用户零感知，与 profile 功能的安全底线一致）。
@@ -134,6 +137,19 @@ pub fn usage_supported_for_profile(id: AgentId, profile: Option<&str>) -> bool {
     };
     let p = crate::ports::HostPorts::for_agent(id);
     account_cap(id).is_some_and(|c| c.usage_supported(&inst, &p.as_ports()))
+}
+
+/// 默认账号或任一已建账号支持用量查询。
+pub fn usage_supported_any(id: AgentId) -> bool {
+    if usage_supported_for_profile(id, None) {
+        return true;
+    }
+    let s = crate::settings::load_settings();
+    s.profiles
+        .get(id.as_str())
+        .into_iter()
+        .flatten()
+        .any(|p| usage_supported_for_profile(id, Some(&p.id)))
 }
 
 /// 取用量，失败带分类码（`USAGE_*`，见 meowo-agent `account.rs`）。

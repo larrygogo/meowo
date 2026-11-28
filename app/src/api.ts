@@ -1786,6 +1786,8 @@ export type ProviderAccountPayload = {
   account: Account | null;
   usage: ProviderUsage | null;
   usage_supported: boolean;
+  /** 任一账号能查用量（当前账号要重新登录时 usage_supported 为 false，这个仍可能为 true）。缺省按 usage_supported。 */
+  usage_supported_any?: boolean;
   relay_enabled?: boolean;
   /** 当前活跃账号的展示名；null/缺省 = 默认账号（不显示任何账号提示）。 */
   active_profile_name?: string | null;

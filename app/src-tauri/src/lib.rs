@@ -633,6 +633,7 @@ async fn get_accounts() -> Vec<account::ProviderAccountPayload> {
                     account::read_cached_usage(p.id())
                 },
                 usage_supported: account::usage_supported(p.id()),
+                usage_supported_any: account::usage_supported_any(p.id()),
                 relay_enabled: settings::load_settings().relay.enabled(p.id()),
                 active_profile_name: profile::active_display_name_in(
                     &settings::load_settings(),

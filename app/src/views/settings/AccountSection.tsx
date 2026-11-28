@@ -872,7 +872,8 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsLogi
         profileShares={profileShares}
         switchRunning={settings?.profile_switch_running ?? "ask"}
         onSwitchRunningChange={(v) => void patchSettings({ profile_switch_running: v })}
-        usagePolling={payload?.usage_supported ? !(settings?.usage_polling_disabled ?? []).includes(provider) : null}
+        // 看「任一账号能查」：当前账号要重新登录时状态条仍在轮询其余账号，开关不能消失（真实账号实拍 2026-11-28）。
+        usagePolling={(payload?.usage_supported_any ?? payload?.usage_supported) ? !(settings?.usage_polling_disabled ?? []).includes(provider) : null}
         onUsagePollingChange={(on) => {
           const rest = (settings?.usage_polling_disabled ?? []).filter((p) => p !== provider);
           void patchSettings({ usage_polling_disabled: on ? rest : [...rest, provider] });
