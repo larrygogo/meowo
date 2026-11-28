@@ -873,15 +873,14 @@ describe("ChatWindow", () => {
     // agent logo（标题栏最前，aria-label=provider）+ 运行指示（有活动时显示活动文本）。
     // agent 徽标已从标题栏移除（实拍反馈），不再断言它。
     expect(screen.getByText("Bash: cargo test")).toBeTruthy();
-    // 上下文用量只显示圆环；百分比与窗口详情保留在 tooltip，不再上屏。
-    const meter = screen.getByRole("img", { name: "上下文已用 63%（窗口 200K）" });
-    expect(meter.getAttribute("data-tip")).toBe("上下文已用 63%（窗口 200K）");
-    expect(meter.querySelector(".chat-context-pct")).toBeNull();
-    expect(meter.querySelector(".chat-context-usage")).toBeNull();
+    // 上下文用量只显示圆环；详情在悬停/点击才出的卡片里，不常驻上屏。
+    const meter = screen.getByRole("button", { name: "上下文已用 63%（窗口 200K）" });
+    expect(meter.getAttribute("aria-expanded")).toBe("false");
+    expect(document.querySelector(".chat-context-card")).toBeNull();
     expect(screen.queryByText("126K/200K")).toBeNull();
     // 截图入口移除；用量紧邻模型左侧。
     expect(screen.queryByRole("button", { name: "截图" })).toBeNull();
-    const model = meter.parentElement!.querySelector(".chat-model-select")!;
+    const model = meter.closest(".chat-compose-actions")!.querySelector(".chat-model-select")!;
     expect(meter.compareDocumentPosition(model) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // "/" 前缀弹补全；选中后填入输入框并留出参数位，不自动发送。
     const input = screen.getByRole("combobox", { name: "发送消息给 Agent" }) as HTMLTextAreaElement;
@@ -978,12 +977,12 @@ describe("ChatWindow", () => {
     render(<ChatWindow />);
     await screen.findByText("初始标题");
     expect(screen.getByText("Bash: 第一步")).toBeTruthy();
-    expect(screen.getByRole("img", { name: "上下文已用 10%（窗口 200K）" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "上下文已用 10%（窗口 200K）" })).toBeTruthy();
     // 模式按钮只显示当前值，维度名在 aria-label/tooltip 里。
     expect(screen.getByText("默认")).toBeTruthy();
     // 工具行顺序固定为附件 → 权限 → 用量 → 模型。
-    const meter = screen.getByRole("img", { name: "上下文已用 10%（窗口 200K）" });
-    const actions = meter.parentElement!;
+    const meter = screen.getByRole("button", { name: "上下文已用 10%（窗口 200K）" });
+    const actions = meter.closest(".chat-compose-actions")!;
     const ordered = [
       actions.querySelector(".chat-attach-button")!,
       screen.getByRole("button", { name: /^切换模式: 权限模式 · / }),
@@ -1005,7 +1004,7 @@ describe("ChatWindow", () => {
     expect(await screen.findByText("Bash: 第二步")).toBeTruthy();
 
     current = { ...base, currentActivity: "Bash: 第二步", contextPct: 42 };
-    await waitFor(() => expect(document.querySelector(".chat-context")?.getAttribute("data-tip")).toBe("上下文已用 42%（窗口 200K）"));
+    await waitFor(() => expect(document.querySelector(".chat-context")?.getAttribute("aria-label")).toBe("上下文已用 42%（窗口 200K）"));
 
     current = { ...base, currentActivity: "Bash: 第二步", contextPct: 42, title: "改后标题" };
     expect(await screen.findByText("改后标题")).toBeTruthy();

@@ -147,6 +147,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(store) = db_path().and_then(|p| Store::open(p).ok()) {
             meowo_reporter::statusline::record(&store, &buf, now_ms());
         }
+        // 订阅额度（rate_limits）按账号记一份，宿主优先用它，不去轮询官方用量接口（照 Orca）。
+        if let Some(path) = db_path().map(|p| p.with_file_name(meowo_agent::plugins::claude::statusline_usage::FILE)) {
+            let config_dir = std::env::var("CLAUDE_CONFIG_DIR").ok();
+            meowo_agent::plugins::claude::statusline_usage::record(&path, config_dir.as_deref(), &buf, now_ms());
+        }
         // 无下游时这行就是状态栏；被包装脚本链下游时其 stdout 会被丢弃，仅写库生效。
         print!("{}", meowo_reporter::statusline::minimal_line(&buf));
         return Ok(());

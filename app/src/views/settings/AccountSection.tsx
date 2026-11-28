@@ -43,6 +43,7 @@ import { Dropdown } from "../menu";
 import { useSettingsState } from "./state";
 import { RelayAccess } from "./RelayAccess";
 import { ProfileList } from "./ProfileAccounts";
+import { fmtResetIn, laneLabel, renderNote, usageFailure, usageFailureText, usageTone, type UsageFailure } from "../usage/usageView";
 import { profileLabel, sameAccountName } from "../../profileLabel";
 import { useTauriEvent } from "../../hooks/useTauriEvent";
 import { ACTIVE_PROFILE_CHANGED } from "../island/useIslandUsage";
@@ -76,57 +77,6 @@ function displayVersion(raw: string): string {
 
 export { sameAccountName } from "../../profileLabel";
 
-function fmtResetIn(iso: string, t: Dict): string {
-  const ts = Date.parse(iso);
-  if (Number.isNaN(ts)) return "";
-  const now = Date.now();
-  const diffMs = ts - now;
-  if (diffMs <= 0) return t.account.resetSoon;
-  // 按自然日差判断：今天显示剩余小时/分钟，跨天则用相对词/日期并精确到钟点。
-  const startOf = (ms: number) => {
-    const d = new Date(ms);
-    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  };
-  const dayDiff = Math.round((startOf(ts) - startOf(now)) / 86_400_000);
-  if (dayDiff <= 0) {
-    const min = Math.round(diffMs / 60000);
-    if (min < 1) return t.account.resetSoon; // 剩余不足半分钟时 round 得 0，归入「即将重置」
-    if (min < 60) return t.account.resetInMin(min);
-    const h = Math.floor(min / 60);
-    const m = min % 60;
-    return m > 0 ? t.account.resetInHourMin(h, m) : t.account.resetInHour(h);
-  }
-  // 时刻/日期走 Intl：手拼 `pad(getHours())` 是硬编码 24 小时制，英文用户看到的是
-  // "Resets tomorrow 14:30" 而非 "2:30 PM"；月/日顺序同理随 locale。
-  const r = new Date(ts);
-  const clock = new Intl.DateTimeFormat(t.locale, { hour: "numeric", minute: "2-digit" }).format(r);
-  if (dayDiff === 1) return t.account.resetTomorrow(clock);
-  if (dayDiff === 2) return t.account.resetDayAfter(clock);
-  const date = new Intl.DateTimeFormat(t.locale, { month: "short", day: "numeric" }).format(r);
-  return t.account.resetOnDate(date, clock);
-}
-
-function laneLabel(lane: UsageLane, t: Dict): string {
-  switch (lane.kind) {
-    case "five_hour": return lane.label ? t.account.laneGroupFiveHour(lane.label) : t.account.laneFiveHour;
-    case "seven_day": return t.account.laneSevenDay;
-    case "opus": return t.account.laneOpus;
-    case "weekly": return lane.label ? t.account.laneModelWeekly(lane.label) : t.account.laneWeekly;
-    // 模型专属周限(claude 的 Fable/Opus 周配额):模型名由 API 下发,缺失时退回通用周配额文案。
-    case "model_weekly": return lane.label ? t.account.laneModelWeekly(lane.label) : t.account.laneWeekly;
-    case "balance": return t.account.laneBalance;
-    default: return lane.kind;
-  }
-}
-
-// note 是后端机器哨兵串（claude 发 "extra_usage_enabled"、codex 发 "credits:45.5"），
-// 映射为本地化文案；未知格式原样显示以向后兼容。
-function renderNote(note: string, t: Dict): string {
-  if (note === "extra_usage_enabled") return t.account.extraUsage;
-  if (note.startsWith("credits:")) return t.account.credits(note.slice("credits:".length));
-  return note;
-}
-
 function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
   const t = useT();
   if (lane.used_pct != null) {
@@ -137,7 +87,7 @@ function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
           <span className="usage-label">{label}</span>
           <span className="usage-pct">{pct.toFixed(0)}%</span>
         </div>
-        <div className="usage-track" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(pct)}>
+        <div className={"usage-track" + usageTone(pct)} role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(pct)}>
           <i style={{ width: `${pct}%` }} />
         </div>
         {lane.resets_at && <div className="usage-reset">{fmtResetIn(lane.resets_at, t)}</div>}
@@ -201,7 +151,8 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsLogi
   relay: AgentDescriptor["relay"];
   payload: ProviderAccountPayload | null;
   usage: ProviderUsage | null;
-  err: "unsupported" | "error" | null;
+  /** 最近一次取用量失败的分类；null = 没失败。 */
+  err: UsageFailure | null;
   onRefresh: () => void;
   /** 页面级安装状态（useInstallOperations）；切换 provider 导致卡片重挂载时仍会保留。 */
   installOp: InstallOperationState | undefined;
@@ -235,7 +186,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsLogi
   // null = 看 active 账号。非 active 的数据只住在这张卡片里，不进 active 缓存，也不影响贴纸。
   const [viewingProfile, setViewingProfile] = useState<ProfileView | null>(null);
   const [profileUsage, setProfileUsage] = useState<ProviderUsage | null>(null);
-  const [profileErr, setProfileErr] = useState<"unsupported" | "error" | null>(null);
+  const [profileErr, setProfileErr] = useState<UsageFailure | null>(null);
   const [profileRefreshing, setProfileRefreshing] = useState(false);
   const [profileUpdatedAt, setProfileUpdatedAt] = useState<number | null>(null);
   const profileRequest = useRef(0);
@@ -253,7 +204,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsLogi
       })
       .catch((e) => {
         if (profileRequest.current !== request) return;
-        setProfileErr(String(e).includes("USAGE_UNSUPPORTED") ? "unsupported" : "error");
+        setProfileErr(usageFailure(e));
       })
       .finally(() => {
         if (profileRequest.current === request) setProfileRefreshing(false);
@@ -571,6 +522,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsLogi
     : "";
 
   return (
+    <>
     <div className="row-card provider-card" data-testid={"agent-card-" + provider}>
       <div className="provider-card-head">
         {/* 与新建会话页、欢迎面板同一枚应用图标（AgentAppIcon），卡片里不套方底（44px 外框）。 */}
@@ -864,7 +816,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsLogi
                 {t.account.usageUpdatedAt(new Intl.DateTimeFormat(t.locale, { hour: "numeric", minute: "2-digit" }).format(shownUpdatedAt))}
               </span>
             )}
-            <button className="icon-btn" data-tip={t.account.refresh} aria-label={t.account.refresh} disabled={shownErr === "unsupported" || (!viewingProfile && !(payload?.usage_supported ?? false) && !shownUsage)} {...busyProps(shownRefreshing, () => viewingProfile ? loadProfileUsage(viewingProfile) : onRefresh())}>
+            <button className="icon-btn" data-tip={t.account.refresh} aria-label={t.account.refresh} disabled={shownErr?.kind === "unsupported" || (!viewingProfile && !(payload?.usage_supported ?? false) && !shownUsage)} {...busyProps(shownRefreshing, () => viewingProfile ? loadProfileUsage(viewingProfile) : onRefresh())}>
               <RefreshIcon spinning={shownRefreshing} />
             </button>
           </div>
@@ -874,12 +826,16 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsLogi
                 <UsageBar key={`${lane.kind}-${i}`} lane={lane} label={laneLabel(lane, t)} />
               ))}
               {shownUsage.note && <div className="usage-extra">{renderNote(shownUsage.note, t)}</div>}
-              {shownErr === "error" && <div className="usage-stale">{t.account.refreshFailed}</div>}
+              {/* 失败时保留上次的数字，并说清为什么没更新（照 Orca：出错保留旧数据）。 */}
+              {shownErr && shownErr.kind !== "unsupported" && (
+                // 原因不明时沿用原来那句「刷新失败，显示缓存值」；认得出原因才换成具体说法。
+                <div className="usage-stale">{shownErr.kind === "unknown" ? t.account.refreshFailed : `${usageFailureText(shownErr, t, name)}。${t.account.usageStale}`}</div>
+              )}
             </>
-          ) : (!viewingProfile && !(payload?.usage_supported ?? false)) || shownErr === "unsupported" ? (
+          ) : (!viewingProfile && !(payload?.usage_supported ?? false)) || shownErr?.kind === "unsupported" ? (
             <div className="usage-stale">{t.account.usageUnsupported}</div>
-          ) : shownErr === "error" ? (
-            <div className="usage-stale">{t.account.usageUnavailable}</div>
+          ) : shownErr ? (
+            <div className="usage-stale">{usageFailureText(shownErr, t, name)}</div>
           ) : (
             <div className="usage-stale">{t.account.loading}</div>
           )}
@@ -903,27 +859,34 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsLogi
       )}
 
 
-      {/* 多账号：已装且支持时才给。不支持的（antigravity）连列表都不显示——它只有一个账号，
-          列一个孤零零的「默认账号」除了占地方没有任何信息。
-          中转模式下也不给：账号列表管的是官方登录身份，中转与之互斥，列出来只会误导。 */}
-      {listsProfiles && (
-        <ProfileList
-          provider={provider}
-          agentName={name}
-          highlightLogin={justInstalled}
-          movesSessionsAcrossAccounts={movesSessionsAcrossAccounts}
-          profileShares={profileShares}
-          switchRunning={settings?.profile_switch_running ?? "ask"}
-          onSwitchRunningChange={(v) => void patchSettings({ profile_switch_running: v })}
-          onChanged={profilesChanged}
-          viewingProfile={viewingProfile}
-          onViewUsage={viewProfile}
-          loginState={loginState}
-          onStartLogin={onStartLogin}
-          onCancelLogin={onCancelLogin}
-        />
-      )}
     </div>
+    {/* 多账号：已装且支持时才给。不支持的（antigravity）连列表都不显示——它只有一个账号，
+        列一个孤零零的「默认账号」除了占地方没有任何信息。
+        中转模式下也不给：账号列表管的是官方登录身份，中转与之互斥，列出来只会误导。 */}
+    {listsProfiles && (
+      <ProfileList
+        provider={provider}
+        agentName={name}
+        highlightLogin={justInstalled}
+        movesSessionsAcrossAccounts={movesSessionsAcrossAccounts}
+        profileShares={profileShares}
+        switchRunning={settings?.profile_switch_running ?? "ask"}
+        onSwitchRunningChange={(v) => void patchSettings({ profile_switch_running: v })}
+        // 看「任一账号能查」：当前账号要重新登录时状态条仍在轮询其余账号，开关不能消失（真实账号实拍 2026-11-28）。
+        usagePolling={(payload?.usage_supported_any ?? payload?.usage_supported) ? !(settings?.usage_polling_disabled ?? []).includes(provider) : null}
+        onUsagePollingChange={(on) => {
+          const rest = (settings?.usage_polling_disabled ?? []).filter((p) => p !== provider);
+          void patchSettings({ usage_polling_disabled: on ? rest : [...rest, provider] });
+        }}
+        onChanged={profilesChanged}
+        viewingProfile={viewingProfile}
+        onViewUsage={viewProfile}
+        loginState={loginState}
+        onStartLogin={onStartLogin}
+        onCancelLogin={onCancelLogin}
+      />
+    )}
+    </>
   );
 }
 
@@ -958,7 +921,7 @@ export function AccountSection({ view = "account", onViewChange, showAll = false
   const [usageMap, setUsageMap] = useState<Record<string, ProviderUsage>>({});
   const [refreshingSet, setRefreshingSet] = useState<Set<string>>(new Set());
   // errMap: provider key → 错误类型（unsupported/error/null）
-  const [errMap, setErrMap] = useState<Record<string, "unsupported" | "error" | null>>({});
+  const [errMap, setErrMap] = useState<Record<string, UsageFailure | null>>({});
   // agents: 后端下发的 agent 名单（含展示名与安装态）。前端不再自己维护这份名单。
   // 初值 null = 检测中：首帧不判定任何一张卡为未安装，避免 listAgents() resolve 前误闪「未安装 + 安装按钮」。
   const [agents, setAgents] = useState<AgentDescriptor[] | null>(null);
@@ -1053,8 +1016,7 @@ export function AccountSection({ view = "account", onViewChange, showAll = false
         setUsageRefreshedAt((m) => ({ ...m, [provider]: Date.now() }));
       })
       .catch((e) => {
-        const unsupported = String(e).includes("USAGE_UNSUPPORTED");
-        setErrMap((m) => ({ ...m, [provider]: unsupported ? "unsupported" : "error" }));
+        setErrMap((m) => ({ ...m, [provider]: usageFailure(e) }));
       })
       .finally(() => {
         // 最短转 500ms：本地(codex)/缓存(60s 内)刷新近乎瞬时，否则 spinner 一闪即逝、看不见动画。

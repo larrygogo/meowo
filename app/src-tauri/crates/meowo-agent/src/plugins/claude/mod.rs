@@ -27,6 +27,7 @@ pub mod fleet;
 pub mod install;
 mod screen;
 pub mod setup;
+pub mod statusline_usage;
 mod subagent_prompt;
 pub mod telemetry;
 pub mod transcript;

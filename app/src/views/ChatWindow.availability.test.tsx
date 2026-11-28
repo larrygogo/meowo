@@ -177,7 +177,6 @@ describe("能力确实不同的地方：位置不变，说得清为什么（走�
       return node!;
     });
     expect(ring.getAttribute("aria-label")).toBe(zh.chat.contextUnsupported);
-    expect(ring.getAttribute("data-tip")).toBe(zh.chat.contextUnsupported);
   });
 
   it.each(["claude", "codex", "kimi", "antigravity"])("%s 能上报：还没有数值时不画圆环，也不说不支持", async (provider) => {

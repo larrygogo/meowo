@@ -28,6 +28,7 @@ export const store: Store = {
     session_open_in: "terminal",
     card_menu_mode: "button",
     profile_switch_running: "ask",
+    usage_polling_disabled: [],
     preview_enabled: true,
     click_through_enabled: false,
     browser_agent: true,
@@ -143,7 +144,7 @@ export function installMocks(windowLabel = "main"): void {
         // 后端 list_agents:agent 名单(展示名 + 安装态),前端 useAgents 取展示名并交叉过滤底栏配额。
         // demo 演示多 Agent:装了 Claude Code / Codex / Kimi / Antigravity CLI（不独尊 Claude）。
         return [
-          { id: "claude", display_name: "Claude Code", installed: true, supports_profiles: true },
+          { id: "claude", display_name: "Claude Code", installed: true, supports_profiles: true, supports_account: true },
           { id: "codex", display_name: "Codex", installed: true },
           { id: "kimi", display_name: "Kimi Code", installed: true },
           { id: "antigravity", display_name: "Antigravity CLI", installed: true },

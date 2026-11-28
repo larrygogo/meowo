@@ -237,6 +237,7 @@ fn load_chat_history(
         agent_modes: Vec::new(),
         context_pct: context.used_pct,
         context_window: context.window_size,
+        profile: header.profile.clone(),
         current_activity: header.current_activity.clone(),
         // 与看板 tab_class 的地基同源（session_connected）：DB 的 running 在进程死后、
         // reaper 收尾前是滞留值，直接展示会出现「假运行中」。

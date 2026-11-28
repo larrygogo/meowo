@@ -63,7 +63,8 @@ pub mod wiring;
 mod replay_tests;
 
 pub use account::{
-    Account, AccountCap, ApiKeyLoginCap, ProviderUsage, UsageKind, UsageLane, USAGE_UNSUPPORTED,
+    Account, AccountCap, ApiKeyLoginCap, ProviderUsage, UsageKind, UsageLane, USAGE_EXPIRED, USAGE_NETWORK,
+    USAGE_RATE_LIMITED, USAGE_SERVER, USAGE_UNSUPPORTED,
 };
 pub use auth::{AuthScheme, CredentialSource, OAuthRefresh};
 pub use caps::{

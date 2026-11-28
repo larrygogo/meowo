@@ -694,6 +694,49 @@ pub(crate) async fn delete_profile(
     result
 }
 
+/// 「改用系统默认」：把这个账号留存的冲突项（[`set_aside_in`] 列出的那些）整个**移走**到
+/// `~/.meowo/profile-merge-archive/<agent>/<id>/<时间>/`，账号界面上就不再提示。
+///
+/// 只移动不删除：里面可能有这个账号自己写过的 memory、子任务元数据（本机实测），用户日后还能翻出来。
+/// 账号里对应的条目早已是指向默认目录的链接，CLI 用的本来就是系统默认的那份，移走不影响任何会话。
+/// 返回归档目录（前端「打开文件夹」用）。
+#[tauri::command]
+pub(crate) async fn archive_profile_set_aside(provider: String, id: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let known = crate::settings::load_settings()
+            .profiles
+            .get(&provider)
+            .is_some_and(|v| v.iter().any(|p| p.id == id));
+        if !known {
+            return Err("没有这个账号".to_string());
+        }
+        let data = data_dir(&provider, Some(&id)).ok_or("没有这个账号")?;
+        // 毫秒时间戳做子目录：同一账号归档多次互不覆盖。
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis().to_string())
+            .unwrap_or_default();
+        let dest = profiles_root().with_file_name("profile-merge-archive").join(&provider).join(&id).join(stamp);
+        archive_set_aside(&data, &dest).map(|_| dest.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 归档的同步实现。逐项改名移动；某项失败就停下报错，已移走的留在归档目录（不回滚，也不丢）。
+fn archive_set_aside(data: &std::path::Path, dest: &std::path::Path) -> Result<usize, String> {
+    let items = set_aside_in(data);
+    if items.is_empty() {
+        return Ok(0);
+    }
+    std::fs::create_dir_all(dest).map_err(|e| coded("profile/archive-failed", e))?;
+    for item in &items {
+        std::fs::rename(&item.path, dest.join(&item.name))
+            .map_err(|e| coded("profile/archive-failed", format!("{}: {e}", item.name)))?;
+    }
+    Ok(items.len())
+}
+
 /// 把一个账号**合并进默认账号**：数据目录递归并入、会话改挂默认账号、账号从设置移除。
 ///
 /// 与删除账号的根本区别是**数据全留下**。安全约束（顺序不能换）：
@@ -1243,5 +1286,37 @@ mod tests {
                 ("plugins.meowo-profile-merge".to_string(), 2),
             ]
         );
+    }
+
+    #[test]
+    fn archive_moves_set_asides_without_touching_the_rest() {
+        let root = std::env::temp_dir().join(format!("meowo-archive-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let data = root.join("data");
+        let dest = root.join("archive/1");
+        let w = |rel: &str, body: &str| {
+            let p = data.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, body).unwrap();
+        };
+        w("skills.meowo-profile-merge/team/SKILL.md", "old");
+        w("projects.meowo-profile-merge/p/memory/MEMORY.md", "mine");
+        w("history.jsonl.meowo-profile-merge", "pending");
+        w("settings.json", "{}");
+        assert_eq!(archive_set_aside(&data, &dest), Ok(2));
+        let moved = std::fs::read_to_string(dest.join("projects.meowo-profile-merge/p/memory/MEMORY.md"));
+        let left = set_aside_in(&data);
+        let pending = data.join("history.jsonl.meowo-profile-merge").exists();
+        let settings = data.join("settings.json").exists();
+        // 第二次没东西可移：不建空目录。
+        let again = archive_set_aside(&data, &root.join("archive/2"));
+        let second_dir = root.join("archive/2").exists();
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(moved.as_deref().ok(), Some("mine"), "内容原样搬走，不删");
+        assert!(left.is_empty());
+        assert!(pending, "合并过程的中间文件不动");
+        assert!(settings);
+        assert_eq!(again, Ok(0));
+        assert!(!second_dir);
     }
 }

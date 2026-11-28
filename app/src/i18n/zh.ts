@@ -1642,6 +1642,58 @@ export const zh = {
     // 这家 CLI 不上报 token 用量（如 OpenCode）：圆环留在原位置灰，悬停说明原因，
     // 不留空白让人以为是 bug（走查输入 C6）。
     contextUnsupported: "这个 CLI 不提供上下文占用",
+    // 输入框旁上下文圆环的悬停卡片（照 Orca 的 NativeChatContextUsageRing + /usage 账号卡）。
+    contextCardTitle: "上下文",
+    contextCardAmount: (used: string, total: string) => `${used}/${total}`,
+    contextCardPct: (pct: number) => `已用 ${pct}%`,
+    contextCardNoWindow: "CLI 没给窗口大小",
+    chatAccountUsage: "此对话使用的账号",
+    chatUsageLoading: "正在读取额度…",
+    chatUsageRetry: "重试",
+    chatUsageUpdated: (ago: string) => `更新于${ago}`,
+    // 对话窗底部常驻状态条的额度（照 Orca 的 status bar usage）。
+    usageBarTitle: "用量",
+    usageUsed: "已用",
+    usageRemaining: "剩余",
+    usageShowRemaining: "改看剩余",
+    usageShowUsed: "改看已用",
+    usageRefresh: "刷新用量",
+    usageManageAccounts: "管理账号…",
+    usageBarUnsupported: (agent: string) => `${agent} 不提供账号额度`,
+    usageShortExpired: "需重新登录",
+    usageShortRateLimited: "限流中",
+    usageShortNetwork: "网络不通",
+    usageShortServer: "服务异常",
+    usageShortUnsupported: "不支持",
+    usageShortUnknown: "取不到用量",
+    usageModeLabel: "显示详略",
+    usageModeDetailed: "详细",
+    usageModeCompact: "精简",
+    usageAccounts: "账号",
+    usageRosterTitle: "使用量",
+    usageRosterScope: "此对话",
+    usageModeDetailedTip: "完整使用情况，包含条形图、标签和百分比",
+    usageModeCompactTip: "精简使用情况：每家只显示一项汇总",
+    usageWeekly: "每周",
+    usageJustNow: "刚刚",
+    usageMinutesAgo: (n: number) => `${n} 分钟前`,
+    usageHoursAgo: (n: number) => `${n} 小时前`,
+    usageUnit: { minute: (v: number) => `${v}分钟`, hour: (v: number) => `${v}小时`, day: (v: number) => `${v}天` },
+    usageResetsIn: (d: string) => `${d}后重置`,
+    usageResetsNow: "现在重置",
+    usageNow: "现在",
+    usageLoading: "正在加载使用量…",
+    usageNoData: "无使用数据",
+    usageUpdatedAgo: (x: string) => `更新于 ${x}`,
+    usageNotYetUpdated: "尚未更新",
+    usageRefreshFailedCached: "刷新失败，显示缓存数据",
+    usagePersonal: "个人",
+    usageSignInToSee: "登录查看使用情况",
+    usageWeekShort: "周",
+    usageNotChecked: "未检查",
+    usageNotCheckedTip: "还没读过这个账号的额度，打开面板时会依次读取",
+    usageSignedOut: "已退出登录",
+    usageSignIn: "登录",
     toolRunning: "正在执行，结果尚未返回…",
     toolNoOutput: "（无输出）",
     // 工具详情（对话页像终端那样看写了什么/改了什么/跑了什么）。
@@ -2593,10 +2645,10 @@ export const zh = {
     // 多账号
     profiles: "账号",
     addProfile: "添加账号",
-    // 账号区顶部「共用 / 各自」两排（后端 profile_shares）。多账号照 Orca 共用后，旧的
+    // 卡片头第二行「共用什么、各自什么」（后端 profile_shares）。多账号照 Orca 共用后，旧的
     // 「新账号的登录与会话历史相互独立」成了错的（2026-11-27）。
-    sharedLabel: "共用",
-    ownLabel: "各自",
+    shareLine: (shared: string[], own: string[]) =>
+      (shared.length ? `各账号共用${shared.join("、")}，` : "") + `${own.join("和")}各自独立。`,
     ownLogin: "登录",
     ownQuota: "额度",
     shareTopic: {
@@ -2608,10 +2660,14 @@ export const zh = {
       mcp: "MCP",
       history: "会话历史",
     },
-    // 首次对齐时和默认账号冲突、留在账号目录里的条目。
-    setAsideTitle: (n: number) => `${n} 项和系统默认冲突，没合进来`,
-    setAsideHint: "这个账号原来的版本留在账号目录里。需要的话挑着合进系统默认的目录，处理完删掉即可。",
-    setAsideFiles: (n: number) => `（${n >= 10000 ? "10000+" : n} 个文件）`,
+    // 和系统默认内容不同、单独留下的条目（照 Orca 提示行：一行灰字 + 两个按钮，不用黄底大块）。
+    setAsideLine: (n: number) => `${n} 项和系统默认的版本不同，保留了这个账号的`,
+    setAsideUseDefault: "改用系统默认",
+    setAsideArchiveTitle: "改用系统默认的版本？",
+    setAsideArchiveConfirm: (n: number, names: string) =>
+      `这个账号自己的 ${n} 项（${names}）会移到归档文件夹，不会删除。
+新会话本来就在用系统默认的版本，会话历史不受影响。`,
+    setAsideArchived: "已移到归档文件夹 ~/.meowo/profile-merge-archive",
     // 覆盖面必须明说（后端 profile/mod.rs 的行为注释）：中转/代理都如实标注了范围，唯独
     // 账号切换此前一字不提——用户切完以为正在跑的会话也换了额度池。
     // 两句按能力分：能把会话搬去新账号的（后端 moves_sessions_across_accounts）切完可以
@@ -2627,7 +2683,11 @@ export const zh = {
     switchRestartConfirmLabel: "重启这些会话",
     // 照 Orca 的同名设置：切换后运行中的会话怎么办。重启时对话内容保留（按会话 id 恢复）。
     // 照 Orca 设置 › Accounts 重做的账号区（2026-11-27）。
-    accountsSub: (agent: string) => `可选。不添加就用本机的 ${agent} 登录，添加后可以一键切换。切换对之后新开的会话生效。`,
+    accountsGroupDesc: (agent: string) => `可选。Meowo 直接用本机的 ${agent} 登录，需要快速切换时再添加账号。`,
+    usagePollingLabel: (agent: string) => `${agent} 用量轮询`,
+    usagePollingDesc: (agent: string) => `用 ${agent} 的登录定时查用量和其余账号。关掉后只在打开用量面板或手动刷新时查。`,
+    usagePollingAbout: (agent: string) => `关于 ${agent} 用量轮询`,
+    accountsSub: "切换对之后新开的会话生效",
     systemDefault: "系统默认",
     systemDefaultNamed: (email: string) => `系统默认：${email}`,
     systemDefaultDesc: (agent: string) => `用本机当前的 ${agent} 登录`,
@@ -2647,20 +2707,22 @@ export const zh = {
       `「${name}」
 删除这个账号自己的目录和保存在里面的登录。系统默认的登录和共用的会话历史不受影响。如果它正在使用，之后新开的会话改用系统默认。`,
     renameTitle: "重命名账号",
+    rename: "重命名",
+    renameLabel: "显示名称",
     renameHint: (email: string) => `只改 Meowo 里显示的名字。留空则显示 ${email}。`,
     renameHintPlain: "只改 Meowo 里显示的名字。",
     renameSave: "保存",
     renameReset: "恢复默认",
     addWaiting: "已打开登录窗口。在终端里登录完，账号会自动出现在这里。",
     addRolledBack: "没有登录成功，刚添加的账号已撤掉。",
-    switchRunningLabel: "切换账号时正在运行的会话",
+    switchRunningLabel: (agent: string) => `${agent} 在终端中运行时切换账号`,
     switchRunningDesc: "重启后在新账号上接着对话，正在回答的会话会中断这一轮",
     switchRunningAsk: "每次问",
     switchRunningRestart: "总是重启",
     switchRunningKeep: "从不重启",
     agentsLoadFailed: "无法获取 Agent 名单，请重试",
     switchProfile: "切换到此账号",
-    activeProfile: "使用中",
+    activeProfile: "当前",
     // 活跃账号提示：会话徽章/账号卡片/新建面板共用。默认账号不显示——没建过账号的用户零感知。
     activeProfileBadge: (name: string) => `账号：${name}`,
     cancelEdit: "取消",
@@ -2732,6 +2794,12 @@ export const zh = {
     // 只在已登录分支渲染——说「请确认已登录」自相矛盾。规则：发生了什么 + 能做什么（指向可见控件）。
     usageUnavailable: "用量获取失败，请检查网络后点上方「刷新」重试",
     usageUnsupported: "当前账号不支持用量查询",
+    // 取用量失败的分类（照 Orca：过期 / 限流 / 服务端 / 网络）。过期不替 CLI 刷新 token，等它下次运行自己刷新。
+    usageExpired: (agent: string) => `登录凭据已过期，下次运行 ${agent} 时会更新`,
+    usageRateLimited: (min: number | null) => (min ? `查询太频繁，${min} 分钟后再试` : "查询太频繁，稍后自动重试"),
+    usageServer: "用量服务暂时不可用，稍后自动重试",
+    usageNetwork: "连不上用量服务，检查网络或代理",
+    usageStale: "显示的是上次的数据",
     loading: "加载中…",
     resetSoon: "即将重置",
     resetInMin: (m: number) => `${m} 分钟后重置`,

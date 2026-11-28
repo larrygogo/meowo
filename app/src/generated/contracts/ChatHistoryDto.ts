@@ -30,7 +30,11 @@ undone?: boolean, pendingReview: PendingReviewKind | null, model: string | null,
  * 当前思考程度（statusline 的 `effort.level`，如 "high"）。模型不支持思考程度时
  * CLI 不报，这里为 None，前端据此不显示档位控件。
  */
-effort?: string, agentModes: Array<AgentModeDto>, contextPct: number | null, contextWindow: number | null, currentActivity: string | null, 
+effort?: string, agentModes: Array<AgentModeDto>, contextPct: number | null, contextWindow: number | null, 
+/**
+ * 会话跑在哪个账号（profile id）上；缺省 = 默认账号。上下文卡片据此查这个对话所用账号的额度。
+ */
+profile?: string, currentActivity: string | null, 
 /**
  * 会话进程是否仍被认为存活（与看板 `session_connected` 同口径：pid 在进程表里，
  * 或距最近事件不足宽限期）。status 是 hook 驱动的离散快照，进程死后 reaper 收尾前

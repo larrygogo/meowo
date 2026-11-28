@@ -369,6 +369,7 @@ export const ENTRIES: ErrorEntry[] = [
   // 前后端约定:错误串 = `profile/<code>: <detail>`,tail 把 detail(路径/错误原文)透传保留排障信息。
   // 长前缀在前:delete-dir-failed-unrestored 会被 delete-dir-failed 抢先命中。
   { m: "profile/delete-dir-failed-unrestored", tail: true, zh: "账号已从列表移除，目录没能删掉", en: "Removed from the list, but its folder couldn't be deleted" },
+  { m: "profile/archive-failed", tail: true, zh: "没能移到归档文件夹，可能有程序占用。关掉后重试", en: "Couldn't move them to the archive folder. Something may be using them. Close it and retry" },
   { m: "profile/delete-dir-failed", tail: true, zh: "账号目录没能删掉，入口已恢复。关掉占用它的程序后重试", en: "Couldn't delete the account folder, so the entry was restored. Close whatever is using it and retry" },
   { m: "profile/has-live-sessions", tail: true, zh: "该账号还有进行中的会话，请先结束这些会话再合并；进行中会话数", en: "End this account's live sessions before merging; live sessions" },
   { m: "profile/create-dir-failed", tail: true, zh: "创建账号目录失败", en: "Couldn't create the account folder" },

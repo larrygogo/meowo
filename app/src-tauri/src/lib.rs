@@ -633,6 +633,7 @@ async fn get_accounts() -> Vec<account::ProviderAccountPayload> {
                     account::read_cached_usage(p.id())
                 },
                 usage_supported: account::usage_supported(p.id()),
+                usage_supported_any: account::usage_supported_any(p.id()),
                 relay_enabled: settings::load_settings().relay.enabled(p.id()),
                 active_profile_name: profile::active_display_name_in(
                     &settings::load_settings(),
@@ -645,18 +646,37 @@ async fn get_accounts() -> Vec<account::ProviderAccountPayload> {
     .unwrap_or_default()
 }
 
-/// 刷新指定 provider 的用量（可触发网络请求，含 60s 限频）。
-/// None 时按 usage_supported 返回 UNAVAILABLE 或 USAGE_UNSUPPORTED。
+/// 刷新指定 provider 的用量（可触发网络请求，含 60s 限频与失败退避）。
+/// 失败返回分类码：`USAGE_UNSUPPORTED` / `USAGE_EXPIRED` / `USAGE_RATE_LIMITED[:秒]` / `USAGE_SERVER` /
+/// `USAGE_NETWORK` / `UNAVAILABLE`，前端按码说清原因（之前一律「用量获取失败」）。
 #[tauri::command]
 async fn refresh_usage(provider: String) -> Result<meowo_agent::ProviderUsage, String> {
     let key = agent_id(&provider).ok_or("未知 agent")?;
-    tauri::async_runtime::spawn_blocking(move || match account::usage_of(key, true) {
-        Some(u) => Ok(u),
-        None if account::usage_supported(key) => Err("UNAVAILABLE".into()),
-        None => Err(account::USAGE_UNSUPPORTED.to_string()),
+    tauri::async_runtime::spawn_blocking(move || {
+        account::usage_of(key, true).map_err(|e| usage_error_code(e, account::usage_supported(key)))
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// 读不到可用凭据时插件可能报得更具体，但「这个登录方式不支持」以能力判定为准；其余分类码原样给，
+/// 认不出的（插件自由文本）收成 `UNAVAILABLE`，不把内部说明漏到界面上。
+fn usage_error_code(e: String, supported: bool) -> String {
+    if !supported {
+        return account::USAGE_UNSUPPORTED.to_string();
+    }
+    const CODES: [&str; 5] = [
+        meowo_agent::USAGE_UNSUPPORTED,
+        meowo_agent::USAGE_EXPIRED,
+        meowo_agent::USAGE_RATE_LIMITED,
+        meowo_agent::USAGE_SERVER,
+        meowo_agent::USAGE_NETWORK,
+    ];
+    if CODES.iter().any(|c| e == *c || e.starts_with(&format!("{c}:"))) {
+        e
+    } else {
+        account::UNAVAILABLE.to_string()
+    }
 }
 
 /// 查看指定 profile 的用量，不改变 active 账号。非 active 结果不写 active 缓存。
@@ -672,13 +692,8 @@ async fn refresh_profile_usage(
         }
     }
     tauri::async_runtime::spawn_blocking(move || {
-        match account::usage_of_profile(key, profile.as_deref()) {
-            Some(u) => Ok(u),
-            None if account::usage_supported_for_profile(key, profile.as_deref()) => {
-                Err("UNAVAILABLE".into())
-            }
-            None => Err(account::USAGE_UNSUPPORTED.to_string()),
-        }
+        account::usage_of_profile(key, profile.as_deref())
+            .map_err(|e| usage_error_code(e, account::usage_supported_for_profile(key, profile.as_deref())))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1780,6 +1795,7 @@ pub fn run() {
             profile::set_active_profile,
             profile::delete_profile,
             profile::merge_profile_into_default,
+            profile::archive_profile_set_aside,
             new_session,
             copy_session_to_provider,
             get_session_lineage,

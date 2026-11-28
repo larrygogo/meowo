@@ -152,7 +152,7 @@ describe("RemoteUsage", () => {
       expect(def.textContent).toContain("me@home.com");
       expect(def.textContent).toContain("Max");
       expect(def.getAttribute("aria-pressed")).toBe("true");
-      expect(list.getByText("使用中")).toBeTruthy();
+      expect(list.getByText("当前")).toBeTruthy();
       expect(list.getByRole("button", { name: "查看工作的用量" }).textContent).toContain("API Key");
       expect(list.getByRole("button", { name: "切换到工作" })).toBeTruthy();
       // 未登录的账号手机上登不了：不给切换，说清去电脑上登录
@@ -163,7 +163,7 @@ describe("RemoteUsage", () => {
 
       const single = within(screen.getByRole("region", { name: "Codex" }));
       expect(single.queryByRole("group")).toBeNull();
-      expect(single.queryByText("使用中")).toBeNull();
+      expect(single.queryByText("当前")).toBeNull();
       expect(screen.getByText("登录、退出和管理账号请在电脑上操作")).toBeTruthy();
       // 打开只读本地：不联网查用量
       expect(api.refreshUsage).not.toHaveBeenCalled();

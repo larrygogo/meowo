@@ -1,9 +1,10 @@
 // 灵动岛的额度数据。取法与贴纸底栏一致（Sticker.tsx 的用量 effect）：先用账号快照里的缓存
-// 预填，再对有账号、支持用量、没走中转的 provider 每 5 分钟刷新一次。岛常驻，贴纸只在展开
+// 预填，再对有账号、支持用量、没走中转的 provider 每 15 分钟刷新一次。岛常驻，贴纸只在展开
 // 完整列表时挂载，所以这里单独取，不依赖贴纸。
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getAccounts, refreshUsage, type ProviderUsage } from "../../api";
+import { getAccounts, getSettings, refreshUsage, type ProviderUsage } from "../../api";
 import { useTauriEvent } from "../../hooks/useTauriEvent";
+import { useSettingsEffect } from "../../hooks/useSettings";
 
 export type IslandUsage = {
   provider: string;
@@ -28,6 +29,8 @@ export const USAGE_ACCOUNT_EVENTS = ["login-done", "install-done"] as const;
  *  岛上那份数字属于上一个账号：立刻丢掉并重取，不等五分钟的定时刷新（用户实拍 2026-11-15：
  *  「切换账号之后灵动岛上的用量没有刷新成新的账号的」）。 */
 export const ACTIVE_PROFILE_CHANGED = "active-profile-changed";
+/** 额度自动刷新的间隔（照 Orca 默认 15 分钟）。 */
+export const USAGE_POLL_MS = 15 * 60_000;
 
 export function useIslandUsage(): { usage: Record<string, ProviderUsage>; meta: Record<string, IslandUsageMeta> } {
   const [usage, setUsage] = useState<Record<string, ProviderUsage>>({});
@@ -37,6 +40,10 @@ export function useIslandUsage(): { usage: Record<string, ProviderUsage>; meta: 
   const bump = useCallback(() => setGeneration((g) => g + 1), []);
   useTauriEvent(USAGE_ACCOUNT_EVENTS[0], bump);
   useTauriEvent(USAGE_ACCOUNT_EVENTS[1], bump);
+  // 设置里关掉「用量轮询」的 agent（照 Orca 的 Claude 用量轮询开关）：岛不主动取，只用账号快照里的缓存，
+  // 等用户打开用量面板或手动刷新。这里只订阅变化：名单拼成字符串当依赖，开关一变就按新名单重排定时器。
+  const [pollingOff, setPollingOff] = useState("");
+  useSettingsEffect((s) => setPollingOff((s.usage_polling_disabled ?? []).slice().sort().join(",")));
   // 刚换过账号的那几家：账号快照里即使还带着缓存也不拿来预填。后端按理已清缓存，但这里不赌
   // 它每条路径都清了（删除账号那条就漏过，独立审查 2026-11-15）——预填回去就是旧账号的数字。
   const switched = useRef(new Set<string>());
@@ -56,8 +63,10 @@ export function useIslandUsage(): { usage: Record<string, ProviderUsage>; meta: 
   useEffect(() => {
     let cancelled = false;
     const timers: number[] = [];
-    getAccounts()
-      .then((accounts) => {
+    // 每轮自己读一次设置再排定时器：不等上面的订阅回来，开关关着时启动那一下也不会先打一轮接口。
+    // 读不到设置（非 Tauri 环境等）就当轮询开着，不能因此让岛永远不取额度。
+    Promise.all([getAccounts(), getSettings().then((s) => s.usage_polling_disabled ?? []).catch(() => [] as string[])])
+      .then(([accounts, off]) => {
         if (cancelled || !Array.isArray(accounts)) return;
         setUsage((cur) => {
           const next = { ...cur };
@@ -68,7 +77,7 @@ export function useIslandUsage(): { usage: Record<string, ProviderUsage>; meta: 
           return next;
         });
         accounts
-          .filter((a) => a.account != null && a.usage_supported && !a.relay_enabled)
+          .filter((a) => a.account != null && a.usage_supported && !a.relay_enabled && !off.includes(a.provider))
           .forEach(({ provider }) => {
             const refresh = () => {
               if (cancelled) return;
@@ -86,7 +95,9 @@ export function useIslandUsage(): { usage: Record<string, ProviderUsage>; meta: 
                 });
             };
             refresh();
-            timers.push(window.setInterval(refresh, 5 * 60_000));
+            // 15 分钟一轮（照 Orca 的默认轮询）：Claude 跑着时额度来自 statusline，不用联网；没跑时才问
+            // 官方用量接口，那个接口额度紧，原来 5 分钟一轮、几个账号叠加就容易被 429。
+            timers.push(window.setInterval(refresh, USAGE_POLL_MS));
           });
       })
       .catch(() => {});
@@ -94,7 +105,7 @@ export function useIslandUsage(): { usage: Record<string, ProviderUsage>; meta: 
       cancelled = true;
       timers.forEach((id) => window.clearInterval(id));
     };
-  }, [generation]);
+  }, [generation, pollingOff]);
   return { usage, meta };
 }
 

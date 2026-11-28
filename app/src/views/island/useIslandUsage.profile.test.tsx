@@ -80,3 +80,21 @@ describe("useIslandUsage 切换账号", () => {
     expect(view.result.current.usage.claude).toBeUndefined();
   });
 });
+
+describe("useIslandUsage 用量轮询开关", () => {
+  it("设置里关了 claude 的用量轮询：岛不去取 claude，别家照常取", async () => {
+    listeners.clear();
+    invoke.mockReset();
+    invoke.mockImplementation((command: string, args?: { provider?: string }) => {
+      if (command === "get_accounts") return Promise.resolve([account("claude", usageOf(40)), account("codex", null)]);
+      if (command === "get_settings") return Promise.resolve({ usage_polling_disabled: ["claude"] });
+      if (command === "refresh_usage") return Promise.resolve(usageOf(args!.provider === "codex" ? 30 : 99));
+      return Promise.resolve(null);
+    });
+    const view = renderHook(() => useIslandUsage());
+    await waitFor(() => expect(view.result.current.usage.codex?.lanes[0].used_pct).toBe(30));
+    // claude 只用账号快照里的缓存，不联网取。
+    expect(view.result.current.usage.claude?.lanes[0].used_pct).toBe(40);
+    expect(invoke.mock.calls.some(([c, a]) => c === "refresh_usage" && a?.provider === "claude")).toBe(false);
+  });
+});

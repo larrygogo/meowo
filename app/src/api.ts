@@ -1366,6 +1366,8 @@ export type Settings = {
   card_menu_mode: CardMenuMode;
   /** 切换账号时运行中的会话：ask = 每次问（默认）/ restart = 直接重启到新账号 / keep = 留在原账号。 */
   profile_switch_running: ProfileSwitchRunning;
+  /** 关掉了定时用量轮询的 agent：只在打开用量面板或手动刷新时取额度（照 Orca「Claude 用量轮询」）。缺省空。 */
+  usage_polling_disabled: string[];
   /** 是否在卡片显示对话预览（你的提问 + AI 回复两行）。缺省开启。 */
   preview_enabled: boolean;
   /** 已停用的「点击穿透」（灵动岛上打开会点不动，2026-11-05 移除），只为兼容旧配置保留。 */
@@ -1784,6 +1786,8 @@ export type ProviderAccountPayload = {
   account: Account | null;
   usage: ProviderUsage | null;
   usage_supported: boolean;
+  /** 任一账号能查用量（当前账号要重新登录时 usage_supported 为 false，这个仍可能为 true）。缺省按 usage_supported。 */
+  usage_supported_any?: boolean;
   relay_enabled?: boolean;
   /** 当前活跃账号的展示名；null/缺省 = 默认账号（不显示任何账号提示）。 */
   active_profile_name?: string | null;
@@ -2044,6 +2048,11 @@ export function applyActiveProfileToSessions(provider: AgentId): Promise<number>
 /** 删除账号，**连同它的整个目录**（凭据、配置、该账号的会话历史）。不可逆。 */
 export function deleteProfile(provider: AgentId, id: string): Promise<void> {
   return invoke("delete_profile", { provider, id });
+}
+
+/** 「改用系统默认」：把账号留存的冲突项移到 `~/.meowo/profile-merge-archive/…`（不删除），返回归档目录。 */
+export function archiveProfileSetAside(provider: AgentId, id: string): Promise<string> {
+  return invoke("archive_profile_set_aside", { provider, id });
 }
 
 /**
