@@ -123,26 +123,30 @@ export function useChatAccountUsage(provider: string | null, profile: string | n
   };
 }
 
-/** 面板里的账号列表：系统默认 + 所有已添加的账号；打开面板时按上面的规则读其余账号。 */
-export function useAccountRoster(provider: string, conversationProfile: string | null, open: boolean) {
+/**
+ * 面板里的账号列表：系统默认 + 所有已添加的账号。`open` 时读一次账号清单（用量面板那一行要套餐名）；
+ * `fetchOthers` 时按上面的规则读其余账号——照 Orca，只在点开 Claude 账号面板时读
+ * （ClaudeSwitcherForOwner.handleOpenChange → fetchInactiveClaudeAccountUsage）。
+ */
+export function useAccountRoster(provider: string, conversationProfile: string | null, open: boolean, fetchOthers = open) {
   useCacheVersion();
   const [rows, setRows] = useState<ProfileView[] | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
   useEffect(() => {
     if (!open) return;
-    let stop = () => {};
     let cancelled = false;
     listProfiles(provider as AgentId)
-      .then((list) => {
-        if (cancelled) return;
-        setRows(list);
-        // 未登录的不问（问了也只会回「需要登录」），这个对话的账号由状态条那条常驻读管。
-        const others = list.filter((p) => p.account && p.id !== conversationProfile).map((p) => p.id);
-        stop = loadOtherAccounts(provider, others, refreshTick > 0);
-      })
+      .then((list) => { if (!cancelled) setRows(list); })
       .catch(() => { if (!cancelled) setRows([]); });
-    return () => { cancelled = true; stop(); };
-  }, [provider, conversationProfile, open, refreshTick]);
+    return () => { cancelled = true; };
+  }, [provider, open, refreshTick]);
+  useEffect(() => {
+    if (!fetchOthers || !rows) return;
+    // 未登录的不问（问了也只会回「需要登录」），这个对话的账号由状态条那条常驻读管。
+    const others = rows.filter((p) => p.account && p.id !== conversationProfile).map((p) => p.id);
+    return loadOtherAccounts(provider, others, refreshTick > 0);
+    // rows 换了引用但账号没变时不该再来一轮：loadOtherAccounts 自己有 60 秒去抖兜着。
+  }, [provider, conversationProfile, fetchOthers, rows, refreshTick]);
   return { rows, refreshAll: () => setRefreshTick((n) => n + 1) };
 }
 

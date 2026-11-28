@@ -25,6 +25,12 @@ const bar = (extra: Partial<Parameters<typeof ChatStatusBar>[0]> = {}) => (
   <ChatStatusBar provider="claude" profile="p1" agentName="Claude Code" supportsAccount {...extra} />
 );
 
+/** 点状态条打开用量面板，再点 Claude 行打开账号面板（Orca 的子菜单）。 */
+const openPanel = (chip: HTMLElement) => {
+  fireEvent.click(chip);
+  fireEvent.click(screen.getByTestId("chat-statusbar-provider-row"));
+};
+
 beforeEach(() => {
   resetChatUsageCache();
   resetUsageDisplay();
@@ -58,15 +64,16 @@ describe("ChatStatusBar 底部状态条", () => {
     render(bar());
     const chip = await screen.findByTestId("chat-statusbar-usage");
     await waitFor(() => expect(chip.textContent).toContain("92%"));
-    fireEvent.click(chip);
-    const bars = screen.getAllByRole("progressbar");
-    expect(bars[0].className).toContain("is-full");
-    expect(bars[1].className).toContain("is-warn");
-    fireEvent.click(screen.getByTestId("chat-statusbar-toggle"));
+    openPanel(chip);
+    const fills = () => [...screen.getByTestId("chat-statusbar-panel").querySelectorAll<HTMLElement>(".ou-window-bar .ou-bar-fill")];
+    expect(fills()[0].className).toContain("is-urgent");
+    expect(fills()[1].className).toContain("is-warning");
+    fireEvent.click(screen.getAllByTestId("chat-statusbar-toggle")[0]);
     expect(chip.textContent).toContain(zh.chat.usageRemaining);
     expect(chip.textContent).toContain("8%");
-    expect(screen.getAllByRole("progressbar")[0].className).toContain("is-full");
-    expect(screen.getAllByRole("progressbar")[0].getAttribute("aria-valuenow")).toBe("8");
+    // 色阶始终按已用算（Orca：Tone always follows consumption），条长按显示的数字。
+    expect(fills()[0].className).toContain("is-urgent");
+    expect(fills()[0].style.width).toBe("8%");
     fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() => expect(screen.queryByTestId("chat-statusbar-card")).toBeNull());
   });
@@ -76,7 +83,7 @@ describe("ChatStatusBar 底部状态条", () => {
     render(bar());
     const chip = await screen.findByTestId("chat-statusbar-usage");
     await waitFor(() => expect(chip.textContent).toContain(zh.chat.usageShortExpired));
-    fireEvent.click(chip);
+    openPanel(chip);
     expect(screen.getByRole("status").textContent).toContain(zh.account.usageExpired("Claude Code"));
     expect(screen.queryByTestId("chat-statusbar-retry")).toBeNull();
   });
@@ -118,7 +125,7 @@ describe("ChatStatusBar 多账号面板（照 Orca 的 Claude 账号面板）", 
     render(bar({ profile: "p1" }));
     await waitFor(() => expect(pending.p1).toBeTruthy());
     await act(async () => { pending.p1(usage([93, 64])); });
-    fireEvent.click(screen.getByTestId("chat-statusbar-usage"));
+    openPanel(screen.getByTestId("chat-statusbar-usage"));
     await screen.findByTestId("chat-statusbar-roster");
     // 系统默认先问；它回来之前不问下一个（不会几个账号同时打官方接口）。
     await waitFor(() => expect(pending.null).toBeTruthy());
@@ -131,7 +138,8 @@ describe("ChatStatusBar 多账号面板（照 Orca 的 Claude 账号面板）", 
     const rowsEl = screen.getAllByTestId("chat-statusbar-acct");
     expect(rowsEl).toHaveLength(4);
     expect(rowsEl[1].getAttribute("aria-current")).toBe("true");
-    expect(rowsEl[1].textContent).toContain(zh.chat.usageThisChat);
+    expect(rowsEl[1].querySelector(".ou-acct-check svg")).not.toBeNull();
+    expect(rowsEl[2].textContent).toContain(zh.chat.usagePersonal);
     expect(rowsEl[0].textContent).toContain("81%");
     expect(rowsEl[3].textContent).toContain(zh.chat.usageSignIn);
   });
@@ -141,10 +149,10 @@ describe("ChatStatusBar 多账号面板（照 Orca 的 Claude 账号面板）", 
     vi.mocked(refreshProfileUsage).mockResolvedValue(usage([10]));
     render(bar({ profile: "p1" }));
     const chip = await screen.findByTestId("chat-statusbar-usage");
-    fireEvent.click(chip);
+    openPanel(chip);
     await waitFor(() => expect(refreshProfileUsage).toHaveBeenCalledTimes(2));
     fireEvent.click(chip);
-    fireEvent.click(chip);
+    openPanel(chip);
     await screen.findByTestId("chat-statusbar-roster");
     expect(refreshProfileUsage).toHaveBeenCalledTimes(2);
     await act(async () => { fireEvent.click(screen.getByTestId("chat-statusbar-refresh-all")); });

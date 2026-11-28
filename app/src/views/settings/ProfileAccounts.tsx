@@ -350,7 +350,7 @@ export function ProfileList({ provider, agentName, highlightLogin = false, moves
   };
 
   return (
-    <section className="acct-group" data-testid={"profiles-" + provider}>
+    <section className="acct-group ou" data-testid={"profiles-" + provider}>
       {/* 照 Orca 的 SettingsGroup：分区标题和说明在卡片外，卡片里是「账号」块和设置行。 */}
       <div className="acct-group-head">
         <div className="acct-group-title">

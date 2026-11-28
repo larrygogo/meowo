@@ -35,7 +35,8 @@ describe("U1 暗色字重降一档", () => {
     for (const [name, css] of [["styles.css", styles], ["mobile.css", mobile]] as const) {
       const hits: string[] = [];
       for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-        if (/@font-face|\.isl|\.island/.test(m[1])) continue;
+        // .ou / .acct-：照 Orca 移植的状态条、用量面板和设置账号区，字重取 Orca 原值（主人要求同主题下和 Orca 分不出）。
+        if (/@font-face|\.isl|\.island|\.ou\b|\.acct-/.test(m[1])) continue;
         if (/font-weight:\s*(400|500|600|700)\b/.test(m[2])) hits.push(m[1].trim().slice(0, 60));
       }
       expect(hits, name).toEqual([]);

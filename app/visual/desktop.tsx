@@ -146,23 +146,23 @@ async function boot(): Promise<React.ReactNode> {
     setExtraMock((cmd, args) => {
       // ?usage=warn|limited|expired：对话页上下文卡片里「此对话使用的账号」的几种状态（照 Orca 对照用）。
       const usageCase = q.get("usage");
-      // ?usage=multi：底部状态条面板里的多账号列表（系统默认 + 两个已登录 + 一个已退出，照 Orca 对照用）。
+      // ?usage=multi：底部状态条的多账号面板，和 Orca 夹具（MeowoParity）同一套假数据：
+      // 系统默认（此对话所用，20% / 81% / Fable 23%）、work（凭据过期，需重新登录）、old（已退出）。
       if (usageCase === "multi" && cmd === "list_profiles") {
-        const acct = (email: string, plan: string) => ({ email, display_name: null, login_label: null, plan, org: null });
+        const acct = (email: string, plan: string, organization: string | null) => ({ email, display_name: null, login_label: null, plan, organization });
         return [
-          { id: null, name: "", active: true, account: acct("me@example.com", "Max 5x"), set_aside: [] },
-          { id: "work", name: "工作", active: false, account: acct("work@example.com", "Max 20x"), set_aside: [] },
-          { id: "side", name: "", active: false, account: acct("side@example.com", "Pro"), set_aside: [] },
-          { id: "old", name: "", active: false, account: null, set_aside: [] },
+          { id: null, name: "", active: true, account: acct("me@example.com", "Max 5x", null), set_aside: [] },
+          { id: "work", name: "", active: false, account: acct("work@example.com", "Max 5x", "Acme"), set_aside: [] },
+          { id: "old", name: "old@example.com", active: false, account: null, set_aside: [] },
         ];
       }
       if (usageCase === "multi" && cmd === "refresh_profile_usage") {
-        const at = (h: number) => new Date(Date.now() + h * 3_600_000).toISOString();
-        const lane = (kind: string, used_pct: number, h: number, label?: string) => ({ kind, used_pct, used: null, limit: null, unit: null, resets_at: at(h), ...(label ? { label } : {}) });
+        const at = (min: number) => new Date(Date.now() + min * 60_000 + 30_000).toISOString();
+        const lane = (kind: string, used_pct: number, min: number, label?: string) => ({ kind, used_pct, used: null, limit: null, unit: null, resets_at: at(min), ...(label ? { label } : {}) });
         const who = (args as { profile?: string | null } | undefined)?.profile ?? null;
-        if (who === "side") return Promise.reject("USAGE_EXPIRED");
-        if (who === "work") return { note: null, lanes: [lane("five_hour", 93, 1.2), lane("seven_day", 64, 90), lane("model_weekly", 41, 90, "Fable")] };
-        return { note: null, lanes: [lane("five_hour", 16, 3.2), lane("seven_day", 81, 84), lane("model_weekly", 23, 84, "Fable")] };
+        if (who === "work") return Promise.reject("USAGE_EXPIRED");
+        const wk = (3 * 24 + 11) * 60;
+        return { note: null, lanes: [lane("five_hour", 20, 2 * 60 + 43), lane("seven_day", 81, wk), lane("model_weekly", 23, wk, "Fable")] };
       }
       if (usageCase && cmd === "refresh_profile_usage") {
         if (usageCase === "limited") return Promise.reject("USAGE_RATE_LIMITED:300");
@@ -529,6 +529,12 @@ async function boot(): Promise<React.ReactNode> {
         const account = (email: string, plan: string | null, organization: string | null = null) => ({ email, display_name: null, organization, plan, login_label: null });
         const system = { id: null, name: "", active: false, account: account("me@example.com", "Pro"), set_aside: [] };
         if (q.get("acct") === "empty") return [{ ...system, active: true }];
+        // ?usage=multi：和状态条、Orca 夹具（MeowoParity）同一套三个账号，设置页并排对照用。
+        if (q.get("usage") === "multi") return [
+          { ...system, active: true, account: account("me@example.com", "Max 5x") },
+          { id: "work", name: "", active: false, account: account("work@example.com", "Max 5x", "Acme"), set_aside: [] },
+          { id: "old", name: "old@example.com", active: false, account: null, set_aside: [] },
+        ];
         const at = (rel: string) => "C:\Users\demo\.meowo\profiles\claude\side\\" + rel;
         return [
           system,
