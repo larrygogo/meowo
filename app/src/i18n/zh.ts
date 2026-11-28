@@ -2683,7 +2683,10 @@ export const zh = {
     switchRestartConfirmLabel: "重启这些会话",
     // 照 Orca 的同名设置：切换后运行中的会话怎么办。重启时对话内容保留（按会话 id 恢复）。
     // 照 Orca 设置 › Accounts 重做的账号区（2026-11-27）。
-    accountsGroupDesc: (agent: string) => `可选。Meowo 直接用本机的 ${agent} 登录，需要快速切换时再添加账号`,
+    accountsGroupDesc: (agent: string) => `可选。Meowo 直接用本机的 ${agent} 登录，需要快速切换时再添加账号。`,
+    usagePollingLabel: (agent: string) => `${agent} 用量轮询`,
+    usagePollingDesc: (agent: string) => `用 ${agent} 的登录定时查用量和其余账号。关掉后只在打开用量面板或手动刷新时查。`,
+    usagePollingAbout: (agent: string) => `关于 ${agent} 用量轮询`,
     accountsSub: "切换对之后新开的会话生效",
     systemDefault: "系统默认",
     systemDefaultNamed: (email: string) => `系统默认：${email}`,

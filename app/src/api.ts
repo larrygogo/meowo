@@ -1366,6 +1366,8 @@ export type Settings = {
   card_menu_mode: CardMenuMode;
   /** 切换账号时运行中的会话：ask = 每次问（默认）/ restart = 直接重启到新账号 / keep = 留在原账号。 */
   profile_switch_running: ProfileSwitchRunning;
+  /** 关掉了定时用量轮询的 agent：只在打开用量面板或手动刷新时取额度（照 Orca「Claude 用量轮询」）。缺省空。 */
+  usage_polling_disabled: string[];
   /** 是否在卡片显示对话预览（你的提问 + AI 回复两行）。缺省开启。 */
   preview_enabled: boolean;
   /** 已停用的「点击穿透」（灵动岛上打开会点不动，2026-11-05 移除），只为兼容旧配置保留。 */

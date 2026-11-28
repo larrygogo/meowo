@@ -2366,7 +2366,10 @@ New sessions already use System default's versions, and session history isn't af
         : `Account switched. Restart the ${n} running sessions of this Agent onto the new account too? Their conversations are kept.`,
     switchRestartConfirmLabel: "Restart them",
     // Accounts section rebuilt after Orca's Settings › Accounts (2026-11-27).
-    accountsGroupDesc: (agent: string) => `Optional. Meowo can use your normal ${agent} login. Add accounts only if you want quick switching`,
+    accountsGroupDesc: (agent: string) => `Optional. Meowo can use your normal ${agent} login. Add accounts only if you want quick switching. `,
+    usagePollingLabel: (agent: string) => `${agent} usage polling`,
+    usagePollingDesc: (agent: string) => `Uses your ${agent} sign-in to check usage on a schedule. Turn off to check only when you open the usage panel or refresh.`,
+    usagePollingAbout: (agent: string) => `About ${agent} usage polling`,
     accountsSub: "Switching applies to sessions you start next",
     systemDefault: "System default",
     systemDefaultNamed: (email: string) => `System default: ${email}`,

@@ -3478,16 +3478,21 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 /* ── 账号区：照 Orca 设置 › 账户（stablyai/orca SettingsGroup + accounts-pane-claude-*）──
    主人第三次打回后的标准是「同数据同主题放一起分不出两个产品」，所以卡片里的东西不再套 Meowo 的 token：
    section 带上 .ou（Geist 字体、Orca 的前景/弱化/描边色），字号、字重、行高、圆角、内边距照 Orca 夹具的计算样式。
-   卡片外壳仍是本页的 row-card：同一页上方的配额卡、其他分组都用它，换成 Orca 的描边卡会让设置页里出现两种卡片。
-   Orca 的边框都是 1px（保留 1px）。 */
+   卡片外壳也照 Orca 的 SettingsGroup：1px 描边的圆角卡、底色几乎和页面一样（card 50%），不用本页 row-card
+   的浅一档填充（协调人 2026-11-28 对照后要求，只改这个区）。Orca 的边框都是 1px（保留 1px）。 */
 .acct-group { margin-top: var(--sp-24); }
 .acct-group-head { display: flex; flex-direction: column; gap: 4px; margin: 0 0 12px; padding: 0 4px; }
 .acct-group-title { display: flex; align-items: center; gap: 8px; font-size: 15px; line-height: 18.75px; font-weight: 600; color: var(--ou-fg); }
 .acct-group-title .provider-card-icon { width: 16px; height: 16px; border-radius: var(--radius-sm); }
 .acct-group-title .provider-card-icon svg { width: 16px; height: 16px; }
 .acct-group-desc { font-size: 12.5px; line-height: 16.875px; color: var(--ou-muted-fg); }
-.acct-group-card { padding: 0 20px; }
-.acct { display: flex; flex-direction: column; gap: 12px; padding: 12px 0; }
+.row-card.acct-group-card {
+  padding: 0 20px; border-radius: 14px; overflow: visible;
+  border: 1px solid var(--ou-border); /* 保留 1px：照 Orca */
+  background: color-mix(in srgb, var(--ou-card) 50%, transparent);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+}
+.acct { display: flex; flex-direction: column; gap: 12px; padding: 9px 0; }
 .acct-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .acct-head-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .acct-head-title { font-size: 14px; line-height: 19.6px; font-weight: 500; color: var(--ou-fg); }
@@ -3527,10 +3532,11 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 .acct-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .acct-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 20px; font-weight: 500; color: var(--ou-fg); }
 /* Orca Badge outline：h-4 rounded px-1.5 text-[10px] font-medium，1px 描边。 */
+/* Orca Badge outline：h-4 rounded px-1.5 py-0.5 leading-none text-[10px] font-medium，1px 描边、透明底。 */
 .acct-badge {
-  flex: none; box-sizing: border-box; height: 16px; padding: 0 6px; border-radius: 4px;
+  flex: none; display: inline-flex; align-items: center; box-sizing: border-box; height: 16px; padding: 2px 6px; border-radius: 4px;
   border: 1px solid var(--ou-border); /* 保留 1px：照 Orca */
-  font-size: 10px; font-weight: 500; line-height: 14px; color: color-mix(in srgb, var(--ou-fg) 80%, transparent); white-space: nowrap;
+  background: transparent; font-size: 10px; font-weight: 500; line-height: 10px; color: color-mix(in srgb, var(--ou-fg) 80%, transparent); white-space: nowrap;
 }
 .acct-badge-runtime { color: color-mix(in srgb, var(--ou-fg) 70%, transparent); }
 .acct-desc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; line-height: 16.5px; color: var(--ou-muted-fg); }
@@ -3560,9 +3566,32 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 .acct-aside-acts { flex: none; display: flex; gap: 2px; }
 /* 卡片里的设置行（Orca SearchableSetting 行）：上方一道细线，文字左、控件右。 */
 .acct-setting-row {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 12px 0; border-top: 1px solid var(--ou-border); /* 保留 1px：照 Orca */
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 9px 0; border-top: 1px solid var(--ou-border); /* 保留 1px：照 Orca */
 }
+.acct-setting-title { display: flex; align-items: center; gap: 4px; min-width: 0; }
+/* ⓘ：Orca Button ghost icon-xs（24 方、圆角 8），图标 14 弱化色；说明在悬停提示里。 */
+.acct-info {
+  flex: none; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px;
+  padding: 0; border: 0; border-radius: 8px; background: none; color: var(--ou-muted-fg); cursor: help;
+  transition: background var(--dur-fast) var(--ease-in-out);
+}
+.acct-info:hover { background: var(--ou-accent); }
+/* 开关照 Orca Switch：36×20 全圆，开 = 前景色轨 + 底色滑块（深色是白轨黑钮），关 = 输入框描边色轨。 */
+.acct-group .pswitch { width: 36px; height: 20px; background: var(--ou-input-border); }
+.acct-group .pswitch.on { background: var(--ou-fg); }
+.acct-group .pswitch-knob { left: 3px; width: 14px; height: 14px; background: var(--ou-switch-knob-off); box-shadow: none; }
+.acct-group .pswitch.on .pswitch-knob { left: 19px; background: var(--ou-bg); }
+/* 下拉框照 Orca SelectTrigger（size sm）：140×28、1px 输入框描边、圆角 8、14px 字、16px 弱化色箭头，
+   不用 Meowo 设置页的灰底下拉。 */
+.acct-setting-row .dd-btn {
+  box-sizing: border-box; width: 140px; height: 28px; padding: 0 12px;
+  border: 1px solid var(--ou-input-border); /* 保留 1px：照 Orca */
+  border-radius: 8px; background: var(--ou-input-bg); color: var(--ou-fg); font-size: 14px; line-height: 20px;
+}
+@media (hover: hover) { .acct-setting-row .dd-btn:hover { background: var(--ou-input-bg); border-color: var(--ou-input-border); } }
+.acct-setting-row .dd-btn.open { background: var(--ou-input-bg); }
+.acct-setting-row .dd-chev { width: 16px; height: 16px; opacity: 1; color: var(--ou-muted-fg); }
 .acct-setting-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .acct-setting-label { font-size: 14px; line-height: 19.6px; font-weight: 500; color: var(--ou-fg); }
 .acct-setting-desc { font-size: 12.5px; line-height: 16.875px; color: var(--ou-muted-fg); }
@@ -7328,6 +7357,8 @@ button.lead-entry-head:hover { background: var(--fill-hover); }
   --ou-bg: #0a0a0a;
   --ou-link: #4493f8;
   --ou-input-bg: rgb(255 255 255 / 0.045);
+  --ou-input-border: rgb(255 255 255 / 0.15);
+  --ou-switch-knob-off: #f0f0f0;
   --ou-row-hover: rgb(255 255 255 / 0.14);
   --ou-menu-border: rgb(255 255 255 / 0.09);
   --ou-menu-rule: rgb(255 255 255 / 0.1);
@@ -7354,7 +7385,9 @@ button.lead-entry-head:hover { background: var(--fill-hover); }
   --ou-secondary: #f5f5f5;
   --ou-bg: #fff;
   --ou-link: #0969da;
-  --ou-input-bg: #fff;
+  --ou-input-bg: transparent;
+  --ou-input-border: #e5e5e5;
+  --ou-switch-knob-off: #fff;
   --ou-row-hover: rgb(0 0 0 / 0.08);
   --ou-menu-border: rgb(0 0 0 / 0.07);
   --ou-menu-rule: rgb(0 0 0 / 0.07);

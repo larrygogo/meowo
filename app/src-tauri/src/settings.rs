@@ -199,6 +199,11 @@ pub(crate) struct Settings {
     /// 由前端在切换后执行（桌面设置页与手机端同一份判断），兼容老 settings.json（缺席 → ask）。
     #[serde(default = "default_profile_switch_running")]
     pub(crate) profile_switch_running: String,
+    /// 关掉了定时用量轮询的 agent（照 Orca 的「Claude 用量轮询」开关 `claudeOAuthUsageEnabled`）。
+    /// 在名单里的只在打开用量面板或手动刷新时才取额度。存「关掉的」而不是「开着的」：
+    /// 缺席即全开，老 settings.json 和以后新接入的 agent 都不用迁移。
+    #[serde(default)]
+    pub(crate) usage_polling_disabled: Vec<String>,
     /// 是否显示卡片 hover「轻推」预览（最近一条 AI 正文）。缺省开启，兼容老 settings.json。
     #[serde(default = "default_true")]
     pub(crate) preview_enabled: bool,
@@ -366,6 +371,7 @@ impl Default for Settings {
             session_open_in: default_session_open_in(),
             card_menu_mode: default_card_menu_mode(),
             profile_switch_running: default_profile_switch_running(),
+            usage_polling_disabled: Vec::new(),
             preview_enabled: true,
             click_through_enabled: false,
             browser_agent: true,

@@ -84,10 +84,12 @@ export type UsageState = {
   fetching: boolean;
   fetchedAt: number | null;
   retry: () => void;
+  /** 打开用量面板时取一次（5 分钟内取过就用缓存）；轮询关掉时靠它和 retry 取数。 */
+  open: () => void;
 };
 
 /** 这个对话所用账号的额度：常驻读（见文件头）。 */
-export function useChatAccountUsage(provider: string | null, profile: string | null, active: boolean): UsageState {
+export function useChatAccountUsage(provider: string | null, profile: string | null, active: boolean, poll = true): UsageState {
   useCacheVersion();
   const [label, setLabel] = useState<string | null>(null);
   const t = useT();
@@ -97,18 +99,21 @@ export function useChatAccountUsage(provider: string | null, profile: string | n
 
   useEffect(() => {
     if (!active || !provider) return;
-    load(false);
     listProfiles(provider as AgentId)
       .then((rows) => {
         const row = rows.find((p) => p.id === profile);
         setLabel(row ? [profileLabel(row, t), row.account?.plan].filter(Boolean).join(" · ") : null);
       })
       .catch(() => setLabel(null));
+    // 设置里关了「用量轮询」：不在挂载、回到前台、定时这三处主动取，只用手里的缓存，
+    // 等打开用量面板（open()）或点刷新（照 Orca claudeOAuthUsageEnabled 关掉后的行为）。
+    if (!poll) return;
+    load(false);
     const onFocus = () => load(false);
     window.addEventListener("focus", onFocus);
     const tick = window.setInterval(() => { if (document.visibilityState === "visible") load(false); }, REUSE_MS);
     return () => { window.removeEventListener("focus", onFocus); window.clearInterval(tick); };
-  }, [active, provider, profile, load, t]);
+  }, [active, provider, profile, load, t, poll]);
 
   const hit = provider ? getUsageEntry(provider, profile) : undefined;
   const fetching = provider ? isUsageFetching(provider, profile) : false;
@@ -120,6 +125,7 @@ export function useChatAccountUsage(provider: string | null, profile: string | n
     fetching,
     fetchedAt: hit?.fetchedAt ?? null,
     retry: () => load(true),
+    open: () => load(false),
   };
 }
 

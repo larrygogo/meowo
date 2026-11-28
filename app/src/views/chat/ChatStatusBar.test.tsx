@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderUsage } from "../../api";
-import { listProfiles, refreshProfileUsage } from "../../api";
+import { getSettings, listProfiles, refreshProfileUsage, type Settings } from "../../api";
 import { zh } from "../../i18n/zh";
 import { ChatStatusBar } from "./ChatStatusBar";
 import { fmtResetShort, resetChatUsageCache, resetUsageDisplay } from "./chatAccountUsage";
@@ -10,6 +10,7 @@ vi.mock("../../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../api")>()),
   refreshProfileUsage: vi.fn(),
   listProfiles: vi.fn(async () => []),
+  getSettings: vi.fn(async () => ({ usage_polling_disabled: [] })),
 }));
 
 const usage = (pcts: number[]): ProviderUsage => ({
@@ -36,6 +37,7 @@ beforeEach(() => {
   resetUsageDisplay();
   vi.mocked(refreshProfileUsage).mockReset();
   vi.mocked(listProfiles).mockResolvedValue([]);
+  vi.mocked(getSettings).mockResolvedValue({ usage_polling_disabled: [] } as unknown as Settings);
 });
 afterEach(() => cleanup());
 
@@ -50,7 +52,7 @@ describe("ChatStatusBar 底部状态条", () => {
   it("不用悬停：挂上就读这个对话所用账号的额度并常驻显示 5h / 7 天", async () => {
     vi.mocked(refreshProfileUsage).mockResolvedValue(usage([9, 79]));
     render(bar());
-    expect(refreshProfileUsage).toHaveBeenCalledWith("claude", "p1");
+    await waitFor(() => expect(refreshProfileUsage).toHaveBeenCalledWith("claude", "p1"));
     const chip = await screen.findByTestId("chat-statusbar-usage");
     await waitFor(() => expect(chip.textContent).toContain("9%"));
     expect(chip.textContent).toContain("3h 39m");
@@ -99,6 +101,18 @@ describe("ChatStatusBar 底部状态条", () => {
     expect(refreshProfileUsage).toHaveBeenCalledTimes(1);
     await act(async () => { fireEvent.click(screen.getByTestId("chat-statusbar-refresh")); });
     await waitFor(() => expect(refreshProfileUsage).toHaveBeenCalledTimes(2));
+  });
+
+  it("设置里关了用量轮询：挂上不取，打开用量面板才取", async () => {
+    vi.mocked(getSettings).mockResolvedValue({ usage_polling_disabled: ["claude"] } as unknown as Settings);
+    vi.mocked(refreshProfileUsage).mockResolvedValue(usage([12]));
+    render(bar());
+    const chip = await screen.findByTestId("chat-statusbar-usage");
+    await act(async () => { await Promise.resolve(); });
+    expect(refreshProfileUsage).not.toHaveBeenCalled();
+    fireEvent.click(chip);
+    await waitFor(() => expect(refreshProfileUsage).toHaveBeenCalledWith("claude", "p1"));
+    await waitFor(() => expect(chip.textContent).toContain("12%"));
   });
 
   it("不支持账号额度的 agent：只显示 --，不发请求", () => {

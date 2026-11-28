@@ -1,8 +1,9 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
-import type { ProfileView } from "../../api";
+import { getSettings, type ProfileView } from "../../api";
 import type { Dict } from "../../i18n/zh";
 import { useDismissable } from "../../hooks/useDismissable";
+import { useSettingsEffect } from "../../hooks/useSettings";
 import { profileLabel } from "../../profileLabel";
 import { openSettingsAt } from "../../settingsNav";
 import { usageFailureText, type UsageFailure } from "../usage/usageView";
@@ -41,8 +42,17 @@ export function ChatStatusBar({ provider, profile, agentName, supportsAccount }:
   const t = useT();
   const display = useUsageDisplay();
   const mode = useUsageMode();
-  const usage = useChatAccountUsage(supportsAccount ? provider : null, profile, supportsAccount);
+  // 设置里关掉了这家的「用量轮询」：状态条不主动取，打开面板时才取。
+  // 设置读到之前（null）也不取：不然开关关着时每开一个对话窗还是先打一次接口。
+  const [pollingOff, setPollingOff] = useState<boolean | null>(null);
+  useSettingsEffect((s) => setPollingOff((s.usage_polling_disabled ?? []).includes(provider)));
+  // 读不到设置（非 Tauri 环境等）就当轮询开着，不能因此永远不取额度。
+  useEffect(() => { getSettings().catch(() => setPollingOff((v) => v ?? false)); }, []);
+  const usage = useChatAccountUsage(supportsAccount ? provider : null, profile, supportsAccount, pollingOff === false);
   const [open, setOpen] = useState(false);
+  const openUsage = useRef(usage.open);
+  openUsage.current = usage.open;
+  useEffect(() => { if (open) openUsage.current(); }, [open]);
   const wrapRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   useDismissable(wrapRef, { open, onClose: () => setOpen(false), escFocusReturn: () => btnRef.current });

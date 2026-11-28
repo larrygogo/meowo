@@ -872,6 +872,11 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsLogi
         profileShares={profileShares}
         switchRunning={settings?.profile_switch_running ?? "ask"}
         onSwitchRunningChange={(v) => void patchSettings({ profile_switch_running: v })}
+        usagePolling={payload?.usage_supported ? !(settings?.usage_polling_disabled ?? []).includes(provider) : null}
+        onUsagePollingChange={(on) => {
+          const rest = (settings?.usage_polling_disabled ?? []).filter((p) => p !== provider);
+          void patchSettings({ usage_polling_disabled: on ? rest : [...rest, provider] });
+        }}
         onChanged={profilesChanged}
         viewingProfile={viewingProfile}
         onViewUsage={viewProfile}

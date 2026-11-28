@@ -39,6 +39,8 @@ import { ACTIVE_PROFILE_CHANGED } from "../island/useIslandUsage";
 import type { LoginOperationState } from "../../hooks/useLoginOperations";
 import { Icon } from "../../icons/Icon";
 import { icClose, icPencil, icPlus, icRefreshCw, icTrash } from "../../icons/glyphs";
+import { icInfo } from "../../icons/glyphs.settings";
+import { Switch } from "./widgets";
 import { AgentAppIcon } from "../chat/AgentAppIcon";
 import { isMac, isWindows } from "../../platform";
 import { remoteUi } from "../../remoteMode";
@@ -50,7 +52,7 @@ import { profileIdentity as identity, profileLabel, sameAccountName } from "../.
 /** 默认账号在前端的行 key —— 后端给的 id 是 `null`（它不在 settings.profiles 里）。 */
 const DEFAULT_KEY = "__default__";
 
-export function ProfileList({ provider, agentName, highlightLogin = false, movesSessionsAcrossAccounts, profileShares, switchRunning, onSwitchRunningChange, onChanged, viewingProfile, onViewUsage, loginState, onStartLogin, onCancelLogin }: {
+export function ProfileList({ provider, agentName, highlightLogin = false, movesSessionsAcrossAccounts, profileShares, switchRunning, onSwitchRunningChange, usagePolling, onUsagePollingChange, onChanged, viewingProfile, onViewUsage, loginState, onStartLogin, onCancelLogin }: {
   provider: AgentId;
   /** agent 的展示名（「用本机当前的 Claude 登录」）。 */
   agentName: string;
@@ -63,6 +65,9 @@ export function ProfileList({ provider, agentName, highlightLogin = false, moves
   /** 设置「切换账号时正在运行的会话」：每次问 / 总是重启 / 从不重启（照 Orca）。 */
   switchRunning: ProfileSwitchRunning;
   onSwitchRunningChange: (v: ProfileSwitchRunning) => void;
+  /** 「用量轮询」开关（照 Orca 的 Claude 用量轮询）。null = 这家没有账号额度，不显示这一行。 */
+  usagePolling: boolean | null;
+  onUsagePollingChange: (on: boolean) => void;
   onChanged: () => void;
   /** null = 正在看 active；仅决定用量按钮的按下态，不改变 active。 */
   viewingProfile: ProfileView | null;
@@ -357,7 +362,11 @@ export function ProfileList({ provider, agentName, highlightLogin = false, moves
           <AgentAppIcon provider={provider} className="acct-group-icon" />
           {agentName}
         </div>
-        <div className="acct-group-desc">{a.accountsGroupDesc(agentName)}</div>
+        {/* 共用说明并进分区说明：Orca「账户」下只有一行说明，这里也压成一行（协调人 2026-11-28 对照）。 */}
+        <div className="acct-group-desc">
+          {a.accountsGroupDesc(agentName)}
+          <span data-testid={"profile-share-" + provider}>{shareLine(profileShares, t)}</span>
+        </div>
       </div>
       <div className="row-card acct-group-card">
         <div className="acct">
@@ -365,7 +374,6 @@ export function ProfileList({ provider, agentName, highlightLogin = false, moves
             <div className="acct-head-text">
               <div className="acct-head-title">{a.profiles}</div>
               <div className="acct-head-sub">{a.accountsSub}</div>
-              <div className="acct-head-sub" data-testid={"profile-share-" + provider}>{shareLine(profileShares, t)}</div>
             </div>
             <div className="acct-head-acts">
               <button
@@ -401,6 +409,18 @@ export function ProfileList({ provider, agentName, highlightLogin = false, moves
           {notice && <div className="acct-notice" role="status">{notice}</div>}
           {err && <div className="agent-install-error" role="alert">{err}</div>}
         </div>
+        {usagePolling !== null && (
+          <div className="acct-setting-row" data-testid={"profile-usage-polling-" + provider}>
+            <div className="acct-setting-title">
+              <span className="acct-setting-label">{a.usagePollingLabel(agentName)}</span>
+              {/* 说明照 Orca 放进 ⓘ 的悬停提示，不占一行字。 */}
+              <button type="button" className="acct-info" aria-label={a.usagePollingAbout(agentName)} data-tip={a.usagePollingDesc(agentName)}>
+                <Icon glyph={icInfo} size={14} />
+              </button>
+            </div>
+            <Switch checked={usagePolling} onChange={() => onUsagePollingChange(!usagePolling)} label={a.usagePollingLabel(agentName)} />
+          </div>
+        )}
         {movesSessionsAcrossAccounts ? (
           <div className="acct-setting-row" data-testid={"profile-switch-running-" + provider}>
             <div className="acct-setting-text">
